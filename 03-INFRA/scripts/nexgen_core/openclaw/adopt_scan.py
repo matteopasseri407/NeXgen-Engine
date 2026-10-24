@@ -1,0 +1,199 @@
+"""What OpenClaw created and the canonical library does not know about yet, read-only.
+
+OpenClaw is where the owner creates: the Skill Workshop learns a skill, and a
+server added from its panel lands in `openclaw.json`. The engine keeps the
+canonical library -- the skills manifest and the MCP manifest -- and
+distributes it to every CLI, so a resource that exists only on the OpenClaw
+side is invisible everywhere else.
+
+One job: put a name on each of those resources. It reads, it never writes, so
+the doctor (which only reports) and `nexgen openclaw adopt` (which acts) ask
+the same code and cannot disagree about what is pending.
+"""
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from nexgen_core.config import load_mcp_manifest, load_skills_manifest
+from nexgen_core.i18n import t
+from nexgen_core.openclaw.config_file import read_config
+from nexgen_core.openclaw.doctor_runtime import workshop_dir
+from nexgen_core.paths import mcp_manifest, skills_manifest
+
+SKILL = "skill"
+SERVER = "mcp"
+
+
+@dataclass(frozen=True)
+class WorkshopSkill:
+    """One learned skill, in one agent's workshop folder."""
+
+    name: str
+    agent_id: str
+    path: Path
+
+
+@dataclass(frozen=True)
+class UnmanagedServer:
+    """One `mcp.servers` entry the canonical manifest does not declare."""
+
+    name: str
+    spec: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class Scan:
+    """Everything waiting to be adopted, plus what stopped the scan from being sure."""
+
+    skills: tuple[WorkshopSkill, ...] = ()
+    servers: tuple[UnmanagedServer, ...] = ()
+    notes: tuple[str, ...] = ()
+
+    @property
+    def total(self) -> int:
+        return len(self.skills) + len(self.servers)
+
+
+@dataclass(frozen=True)
+class Library:
+    """The two manifests the engine owns, or None where one cannot be read.
+
+    A manifest that cannot be read is not an empty library: treating it as one
+    would make every resource look unmanaged and invite the engine to adopt
+    back what it already wrote.
+    """
+
+    skills: Mapping[str, Any] | None
+    mcp: Mapping[str, Any] | None
+
+    @property
+    def complete(self) -> bool:
+        return self.skills is not None and self.mcp is not None
+
+
+def _read(path: Path, reader: Callable[..., dict[str, Any]]) -> dict[str, Any] | None:
+    """One manifest, or None when it cannot be read: a finding, never a crash."""
+    try:
+        return reader(path)
+    except Exception:  # noqa: BLE001 - nexgen: allow reason="an unreadable manifest is reported by the caller that needed it"
+        return None
+
+
+def library(vault_data: Path) -> Library:
+    """Both manifests of the canonical library, read the way the engine reads them."""
+    root = Path(vault_data)
+    return Library(
+        skills=_read(skills_manifest(root), load_skills_manifest),
+        mcp=_read(mcp_manifest(root), load_mcp_manifest),
+    )
+
+
+def agent_entries(config: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The per-agent entries of `openclaw.json`, tolerating a file with no agents."""
+    agents = config.get("agents") if isinstance(config, Mapping) else None
+    if not isinstance(agents, Mapping):
+        return {}
+    entries = agents.get("entries")
+    return dict(entries) if isinstance(entries, Mapping) else {}
+
+
+def live_skill_folders(folder: Path) -> list[Path]:
+    """The skills in one workshop folder; `.archive` is history, not a live skill."""
+    try:
+        children = sorted(folder.iterdir())
+    except OSError:  # nexgen: allow reason="a workshop folder that cannot be read holds nothing this scan can report"
+        return []
+    return [child for child in children if child.is_dir() and not child.name.startswith(".")]
+
+
+def workshop_skills(
+    config: Mapping[str, Any] | None,
+    state_dir: Path,
+    home: Path,
+    declared: set[str],
+) -> list[WorkshopSkill]:
+    """Every live learned skill whose name the skills manifest does not declare."""
+    found: list[WorkshopSkill] = []
+    for agent_id, entry in sorted(agent_entries(config).items(), key=lambda item: str(item[0])):
+        folder = workshop_dir(Path(state_dir), Path(home), str(agent_id), entry)
+        for child in live_skill_folders(folder):
+            if child.name not in declared:
+                found.append(WorkshopSkill(child.name, str(agent_id), child))
+    return found
+
+
+def declared_names(manifest: Mapping[str, Any] | None) -> set[str]:
+    """Every server name the engine owns: declared, retired, or a tombstone it keeps.
+
+    A name the manifest knows is the engine's decision whatever its placement:
+    a server the engine deliberately keeps off OpenClaw must not come back in
+    through adoption, and a retired one must not be resurrected by a scan that
+    finds its old entry still written in the file.
+    """
+    if not isinstance(manifest, Mapping):
+        return set()
+    servers = manifest.get("servers")
+    names = {str(name) for name in servers} if isinstance(servers, Mapping) else set()
+    retired = manifest.get("retired_servers")
+    if isinstance(retired, list):
+        names.update(str(name) for name in retired)
+    return names
+
+
+def unmanaged_servers(
+    live: Mapping[str, Any] | None,
+    manifest: Mapping[str, Any] | None,
+) -> list[UnmanagedServer]:
+    """The live `mcp.servers` entries the engine did not write, sorted by name.
+
+    Keyed on the name, and the name is enough: `mcp_render.openclaw` writes a
+    manifest key as itself, drops the retired ones, and leaves every other
+    entry of the file alone. So anything the engine wrote carries a manifest
+    name, everything else was written by a person or another tool, and there is
+    no cycle to guard against: once adopted, the name is in the manifest and
+    the next scan no longer sees it.
+    """
+    engine_owned = declared_names(manifest)
+    return [
+        UnmanagedServer(str(name), spec if isinstance(spec, Mapping) else {})
+        for name, spec in sorted((live or {}).items())
+        if str(name) not in engine_owned
+    ]
+
+
+def live_servers(config: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The `mcp.servers` table of a parsed `openclaw.json`, or an empty one."""
+    mcp = config.get("mcp") if isinstance(config, Mapping) else None
+    servers = mcp.get("servers") if isinstance(mcp, Mapping) else None
+    return dict(servers) if isinstance(servers, Mapping) else {}
+
+
+def scan(
+    *,
+    config_path: Path,
+    state_dir: Path,
+    home: Path,
+    skills_manifest: Mapping[str, Any] | None,
+    mcp_manifest: Mapping[str, Any] | None,
+    config: Mapping[str, Any] | None = None,
+) -> Scan:
+    """Everything waiting to be adopted: `openclaw.json` read once, never written."""
+    notes: list[str] = []
+    loaded = dict(config) if isinstance(config, Mapping) else None
+    if loaded is None:
+        loaded, error = read_config(Path(config_path))
+        if error:
+            notes.append(t("openclaw.json is not readable ({error}): no server can be listed", error=error))
+    if loaded is None:
+        return Scan(notes=tuple(notes))
+    declared = {
+        str(name) for name in (skills_manifest or {}).get("skills", {})
+    } if isinstance(skills_manifest, Mapping) else set()
+    return Scan(
+        skills=tuple(workshop_skills(loaded, Path(state_dir), Path(home), declared)),
+        servers=tuple(unmanaged_servers(live_servers(loaded), mcp_manifest)),
+        notes=tuple(notes),
+    )

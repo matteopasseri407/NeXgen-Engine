@@ -19,6 +19,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.doctor_runtime import (  # noqa: E402 - sys.path shim for cloned checkout
     check_companion_gateway,
+    check_unadopted,
     check_workshop_skills,
 )
 from nexgen_core.report import Severity  # noqa: E402 - sys.path shim for cloned checkout
@@ -104,6 +105,75 @@ def test_every_agent_gets_its_own_line(tmp_path):
     counts = {o.id: o.message for o in outcomes}
     assert "0 learned skills" in counts["openclaw.workshop_skills.main"]
     assert "1 learned skills" in counts["openclaw.workshop_skills.capo"]
+
+
+# ------------------------------------------------------------------ unadopted
+
+def a_library(tmp_path: Path, *, skills: str = "skills: {}", servers: str = "servers: {}") -> Path:
+    """The two manifests the engine reads, in the shape a Vault keeps them."""
+    vault = tmp_path / "vault"
+    skills_dir = vault / "03-INFRA" / "agent-universal-layer" / "skills"
+    skills_dir.mkdir(parents=True)
+    (skills_dir / "skills.manifest.yaml").write_text(f"schema_version: 1\n{skills}\n", encoding="utf-8")
+    mcp_dir = vault / "03-INFRA" / "agent-universal-layer" / "mcp"
+    mcp_dir.mkdir(parents=True)
+    (mcp_dir / "manifest.yaml").write_text(f"schema_version: 1\n{servers}\n", encoding="utf-8")
+    return vault
+
+
+def a_hand_added_server_config() -> dict:
+    return {**an_agent_config("main"), "mcp": {"servers": {
+        "hand-added": {"command": "npx", "args": ["-y", "some-mcp"]},
+    }}}
+
+
+def test_a_library_that_knows_everything_is_a_pass(tmp_path):
+    outcome = check_unadopted(
+        an_agent_config("main"), tmp_path / "state" / "openclaw.json", tmp_path / "home", a_library(tmp_path),
+    )
+
+    assert outcome is not None
+    assert outcome.severity is Severity.OK
+    assert outcome.action is None
+
+
+def test_a_learned_skill_and_a_hand_added_server_are_both_counted(tmp_path):
+    a_skill(tmp_path / "state" / "agents" / "main" / "agent" / "workshop-skills", "fresh", NOW - 60)
+
+    outcome = check_unadopted(
+        a_hand_added_server_config(), tmp_path / "state" / "openclaw.json", tmp_path / "home",
+        a_library(tmp_path),
+    )
+
+    assert outcome is not None and outcome.severity is Severity.WARN
+    assert "2 resources created in OpenClaw are not adopted yet" in outcome.message
+    assert "nexgen openclaw adopt" in outcome.action
+
+
+def test_what_the_manifests_already_declare_is_not_counted(tmp_path):
+    a_skill(tmp_path / "state" / "agents" / "main" / "agent" / "workshop-skills", "fresh", NOW - 60)
+    vault = a_library(
+        tmp_path,
+        skills="skills:\n  fresh:\n    origin: vault",
+        servers="servers:\n  hand-added:\n    transport: stdio\n    command: npx",
+    )
+
+    outcome = check_unadopted(
+        a_hand_added_server_config(), tmp_path / "state" / "openclaw.json", tmp_path / "home", vault,
+    )
+
+    assert outcome is not None and outcome.severity is Severity.OK
+
+
+def test_a_manifest_that_cannot_be_read_makes_the_check_silent(tmp_path):
+    vault = a_library(tmp_path)
+    (vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml").write_text(
+        "servers: not-a-map\n", encoding="utf-8",
+    )
+
+    assert check_unadopted(
+        a_hand_added_server_config(), tmp_path / "state" / "openclaw.json", tmp_path / "home", vault,
+    ) is None
 
 
 # ----------------------------------------------------------------- the Companion

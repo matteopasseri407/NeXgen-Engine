@@ -1758,4 +1758,115 @@ MESSAGES: dict[str, str] = {
         "Su questa macchina non è leggibile la percentuale di nessun fornitore.",
     "Known quotas: {known}":
         "Quote note: {known}",
+    # L'adozione: ciò che nasce in OpenClaw diventa canonico
+    "Adopt what OpenClaw created into the canonical library":
+        "Adotta nella libreria canonica ciò che ha creato OpenClaw",
+    "Only the skills the Skill Workshop learned":
+        "Solo le skill imparate dallo Skill Workshop",
+    "Only the MCP servers added in OpenClaw":
+        "Solo i server MCP aggiunti in OpenClaw",
+    "Show the plan and the checks, and change nothing":
+        "Mostra il piano e i controlli, e non cambia niente",
+    "Do not ask: adopt what is safe, and leave what needs a person":
+        "Non chiedere: adotta ciò che è sicuro e lascia stare ciò che richiede una persona",
+    "the {kind} manifest cannot be read ({path}): nothing of that kind can be listed":
+        "il manifest {kind} non si riesce a leggere ({path}): niente di quel tipo può essere elencato",
+    "cannot be adopted ({reasons})":
+        "non adottabile ({reasons})",
+    "Adopt the skill '{name}' too? It {reasons}":
+        "Adotto anche la skill '{name}'? {reasons}",
+    "safe to adopt":
+        "adottabile senza domande",
+    "needs a person first ({reasons})":
+        "serve una persona prima ({reasons})",
+    "needs a person first":
+        "serve una persona prima",
+    "cannot be adopted":
+        "non adottabile",
+    "Nothing to adopt: everything OpenClaw created is already in the canonical library.":
+        "Niente da adottare: tutto ciò che OpenClaw ha creato è già nella libreria canonica.",
+    "{count} resources created in OpenClaw are not in the canonical library yet:":
+        "{count} risorse create in OpenClaw non sono ancora nella libreria canonica:",
+    "  note: {note}":
+        "  nota: {note}",
+    "Dry run: nothing was written.":
+        "Prova a vuoto: non è stato scritto niente.",
+    "Nothing adopted.":
+        "Non ho adottato niente.",
+    "Left alone: {items}. A person decides; run 'nexgen openclaw adopt' to be asked.":
+        "Lasciate stare: {items}. Decide una persona; lancia 'nexgen openclaw adopt' per farti chiedere.",
+    "Adopt the resources above into the canonical library now?":
+        "Adotto adesso nella libreria canonica le risorse qui sopra?",
+    "the manifest would no longer validate ({problems}); put back as it was":
+        "il manifest non sarebbe più valido ({problems}); l'ho rimesso com'era",
+    "a skill named '{name}' is already in the Vault: nothing was overwritten":
+        "una skill chiamata '{name}' è già nel Vault: non ho sovrascritto niente",
+    "a skill named '{name}' is already declared in the manifest":
+        "una skill chiamata '{name}' è già dichiarata nel manifest",
+    "the manifest cannot be backed up: nothing was written":
+        "non riesco a fare il backup del manifest: non ho scritto niente",
+    "archived in the Workshop, so OpenClaw loads the canonical copy":
+        "archiviata nel Workshop, così OpenClaw carica la copia canonica",
+    "in the Vault and in the manifest ({changes} views written). OpenClaw: {note}":
+        "nel Vault e nel manifest ({changes} viste scritte). OpenClaw: {note}",
+    "`openclaw` is not on PATH: archive the learned copy by hand when it is":
+        "`openclaw` non è nel PATH: archivia a mano la copia imparata quando c'è",
+    "OpenClaw refused the archive: {reason}":
+        "OpenClaw ha rifiutato l'archiviazione: {reason}",
+    "there is no skills manifest here: the Vault is not this machine's library":
+        "qui non c'è il manifest delle skill: questo Vault non è la libreria di questa macchina",
+    "the copy failed ({error}); nothing was written":
+        "la copia è fallita ({error}); non ho scritto niente",
+    "'{name}' carries a credential in its headers: replace it with ${{VARIABLE}} and store the value with `nexgen-secrets set`":
+        "'{name}' porta una credenziale negli header: sostituiscila con ${{VARIABLE}} e metti il valore in `nexgen-secrets set`",
+    "'{name}' has no usable URL to adopt":
+        "'{name}' non ha un URL utilizzabile da adottare",
+    "'{name}' passes environment variables to a remote server, and the manifest has no place for them: nothing was adopted and nothing was dropped":
+        "'{name}' passa variabili d'ambiente a un server remoto, e il manifest non ha un posto per loro: non ho adottato niente e non ho perso niente",
+    "openclaw.json is not readable ({error}): no server can be listed":
+        "openclaw.json non si riesce a leggere ({error}): nessun server può essere elencato",
+    "{count} files: a skill is a handful, this is a tree":
+        "{count} file: una skill è una manciata, questa è un albero",
+    "the whole skill weighs {size} bytes (limit {limit})":
+        "la skill intera pesa {size} byte (limite {limit})",
+    "holds files a person should read first: {files}":
+        "contiene file che una persona deve leggere prima: {files}",
+    "carries what looks like a credential in {files}: move it into a secret reference first":
+        "porta quello che sembra una credenziale in {files}: spostala prima in un riferimento a un segreto",
+    "the frontmatter declares no name":
+        "il frontmatter non dichiara un nome",
+    "the frontmatter declares no description":
+        "il frontmatter non dichiara una descrizione",
+    "its folder is '{folder}' but its frontmatter says '{name}'":
+        "la sua cartella è '{folder}' ma il frontmatter dice '{name}'",
+    "{keys}: this entry carries a credential in plain text. Store it with `nexgen-secrets set` and reference it as ${{VARIABLE}} instead":
+        "{keys}: questa voce porta una credenziale in chiaro. Mettila in `nexgen-secrets set` e referenziala come ${{VARIABLE}}",
+    "{name} weighs {size} bytes (limit {limit})":
+        "{name} pesa {size} byte (limite {limit})",
+    "{name} is a link: the copy would hold bytes that are not in the skill":
+        "{name} è un collegamento: la copia conterrebbe byte che non sono nella skill",
+    "SKILL.md has no readable frontmatter: OpenClaw needs a name and a description":
+        "SKILL.md non ha un frontmatter leggibile: OpenClaw vuole un nome e una descrizione",
+    "the description is longer than {limit} bytes":
+        "la descrizione supera {limit} byte",
+    "'{name}' cannot become a folder name":
+        "'{name}' non può diventare il nome di una cartella",
+    "the skill folder is a link or is gone: nothing to copy":
+        "la cartella della skill è un collegamento o non c'è più: niente da copiare",
+    "no SKILL.md in the folder: OpenClaw would not load it either":
+        "nella cartella non c'è SKILL.md: nemmeno OpenClaw la caricherebbe",
+    "its URL is not http(s)":
+        "il suo URL non è http(s)",
+    "it has neither a URL nor a command":
+        "non ha né un URL né un comando",
+    "'{name}' is not a safe manifest key":
+        "'{name}' non è una chiave sicura per il manifest",
+    "its command carries a newline":
+        "il suo comando contiene un a capo",
+    "{count} resources created in OpenClaw are not adopted yet.":
+        "{count} risorse create in OpenClaw non sono ancora adottate.",
+    "Run 'nexgen openclaw adopt': it shows each one and asks before writing.":
+        "Lancia 'nexgen openclaw adopt': te le mostra una per una e chiede prima di scrivere.",
+    "Every skill and server OpenClaw created is in the canonical library.":
+        "Ogni skill e ogni server creati da OpenClaw sono nella libreria canonica.",
 }

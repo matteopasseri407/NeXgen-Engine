@@ -221,7 +221,7 @@ def check_store_gateway(home: Path, env: Mapping[str, str], platform: str) -> Ch
 # --------------------------------------------------------------- learned skills
 
 
-def _agent_path(value: str, home: Path, base: Path) -> Path:
+def agent_path(value: str, home: Path, base: Path) -> Path:
     """A path from OpenClaw's own config, with `~` expanded against `home`."""
     if value == "~":
         return home
@@ -231,7 +231,7 @@ def _agent_path(value: str, home: Path, base: Path) -> Path:
     return candidate if candidate.is_absolute() else base / candidate
 
 
-def _workshop_dir(state_dir: Path, home: Path, agent_id: str, entry: Any) -> Path:
+def workshop_dir(state_dir: Path, home: Path, agent_id: str, entry: Any) -> Path:
     """Where Skill Workshop keeps this agent's learned skills.
 
     OpenClaw's default is `<state dir>/agents/<id>/agent/workshop-skills`; an
@@ -240,7 +240,7 @@ def _workshop_dir(state_dir: Path, home: Path, agent_id: str, entry: Any) -> Pat
     """
     custom = entry.get("agentDir") if isinstance(entry, dict) else None
     if isinstance(custom, str) and custom.strip():
-        base = _agent_path(custom.strip(), home, state_dir)
+        base = agent_path(custom.strip(), home, state_dir)
     else:
         base = state_dir / "agents" / str(agent_id) / "agent"
     return base / "workshop-skills"
@@ -285,7 +285,7 @@ def check_workshop_skills(
     cutoff = (time.time() if now is None else now) - WORKSHOP_WINDOW_SECONDS
     outcomes: list[CheckOutcome] = []
     for agent_id in sorted(entries, key=str):
-        count = _recent_skills(_workshop_dir(state_dir, home, agent_id, entries[agent_id]), cutoff)
+        count = _recent_skills(workshop_dir(state_dir, home, agent_id, entries[agent_id]), cutoff)
         too_many = count > WORKSHOP_WARN_OVER
         outcomes.append(CheckOutcome(
             id=f"openclaw.workshop_skills.{agent_id}",
@@ -299,6 +299,46 @@ def check_workshop_skills(
             ),
         ))
     return outcomes
+
+
+def check_unadopted(
+    config: dict[str, Any],
+    config_path: Path,
+    home: Path,
+    vault_data: Path,
+) -> CheckOutcome | None:
+    """What OpenClaw created and the canonical library does not declare yet.
+
+    One line and one action, because adoption is the person's act: the doctor
+    only says how much is waiting. Silent when either manifest cannot be read
+    -- the configuration checks own that finding, and a count computed without
+    the manifest would name the engine's own resources as the person's.
+    """
+    from nexgen_core.openclaw import adopt_scan
+
+    known = adopt_scan.library(Path(vault_data))
+    if not known.complete:
+        return None
+    found = adopt_scan.scan(
+        config_path=Path(config_path),
+        state_dir=Path(config_path).parent,
+        home=Path(home),
+        skills_manifest=known.skills,
+        mcp_manifest=known.mcp,
+        config=config,
+    )
+    if found.total == 0:
+        return CheckOutcome(
+            id="openclaw.unadopted",
+            severity=Severity.OK,
+            message=t("Every skill and server OpenClaw created is in the canonical library."),
+        )
+    return CheckOutcome(
+        id="openclaw.unadopted",
+        severity=Severity.WARN,
+        message=t("{count} resources created in OpenClaw are not adopted yet.", count=found.total),
+        action=t("Run 'nexgen openclaw adopt': it shows each one and asks before writing."),
+    )
 
 
 # ------------------------------------------------------------- the Companion app

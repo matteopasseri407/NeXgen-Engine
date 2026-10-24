@@ -46,6 +46,15 @@ def _register(sub) -> None:
     q.add_argument("--json", action="store_true", help=t("Output in JSON format"))
     q.set_defaults(func=cmd_doctor)
 
+    q = psub.add_parser("adopt", help=t("Adopt what OpenClaw created into the canonical library"))
+    q.add_argument("--skills", action="store_true", help=t("Only the skills the Skill Workshop learned"))
+    q.add_argument("--mcp", action="store_true", help=t("Only the MCP servers added in OpenClaw"))
+    q.add_argument("--dry-run", action="store_true",
+                   help=t("Show the plan and the checks, and change nothing"))
+    q.add_argument("--yes", action="store_true",
+                   help=t("Do not ask: adopt what is safe, and leave what needs a person"))
+    q.set_defaults(func=cmd_adopt)
+
     q = psub.add_parser("restart", help=t("Restart the gateway and wait for its port"))
     q.add_argument("--timeout", type=float, default=None, metavar="SECONDS",
                    help=t("How long to wait for the port (default: 600)"))
@@ -99,6 +108,20 @@ def cmd_doctor(args) -> int:
     else:
         print(render(outcomes))
     return exit_code(outcomes)
+
+
+def cmd_adopt(args) -> int:
+    from nexgen_core.openclaw.adopt import run_adopt
+
+    wants_skills = bool(getattr(args, "skills", False))
+    wants_mcp = bool(getattr(args, "mcp", False))
+    both = not wants_skills and not wants_mcp
+    return run_adopt(
+        skills=wants_skills or both,
+        mcp=wants_mcp or both,
+        dry_run=bool(getattr(args, "dry_run", False)),
+        yes=bool(getattr(args, "yes", False)),
+    )
 
 
 def cmd_restart(args) -> int:

@@ -60,7 +60,7 @@ def _step(emit: Emit, number: int, title: str) -> None:
     emit(f"[{number}/9] {title}")
 
 
-def _ask(question: str) -> bool:
+def ask_yes_no(question: str) -> bool:
     """A yes/no question with a safe default, and no crash without a terminal."""
     try:
         answer = input(f"{question} [y/N] ")
@@ -73,7 +73,7 @@ def _confirm(setup: Setup, yes: bool, confirm: Callable[[str], bool] | None) -> 
     """Step 3's question, skipped by `--yes` and answerable by a fake in tests."""
     if yes:
         return True
-    ask = confirm or _ask
+    ask = confirm or ask_yes_no
     return ask(t("Write this configuration and start the gateway?"))
 
 
@@ -285,7 +285,7 @@ def run_pair(
     out: Emit = print,
 ) -> int:
     """`nexgen openclaw pair`: what is waiting, and the approval of one request."""
-    ask = confirm or _ask
+    ask = confirm or ask_yes_no
     listing = pairing_pending(runner=runner)
     devices = listing.get("devices") or []
     if devices:

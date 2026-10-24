@@ -433,7 +433,7 @@ def collect(
         outcomes.append(declaration)
     outcomes.append(_check_config(path, config, error))
     if config is not None:
-        outcomes.extend([
+        outcomes.extend(filter(None, [
             _check_ollama_latest(config),
             _check_cage(config),
             _check_heartbeat(config),
@@ -443,10 +443,9 @@ def collect(
             _check_agent_models(config, snapshot),
             _listening(config, connect, home_dir),
             *doctor_runtime.check_workshop_skills(config, path.parent, home_dir),
-        ])
-        bindings = doctor_runtime.check_bindings(config)
-        if bindings is not None:
-            outcomes.append(bindings)
+            doctor_runtime.check_unadopted(config, path, home_dir, resolve_vault_data(home_dir, vault_data)),
+            doctor_runtime.check_bindings(config),
+        ]))
     store = doctor_runtime.check_store_gateway(home_dir, values, system)
     if store is not None:
         outcomes.append(store)
