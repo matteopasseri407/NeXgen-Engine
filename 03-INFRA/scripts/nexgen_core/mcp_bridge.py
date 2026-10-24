@@ -133,6 +133,7 @@ def _run_capture(argv: list[str], timeout: float = 5.0) -> str | None:
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             errors="replace",
             timeout=timeout,
             check=False,

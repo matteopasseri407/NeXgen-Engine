@@ -62,3 +62,19 @@ def test_every_text_mode_child_read_uses_utf8_with_replacement():
     assert offenders == [], (
         "un figlio si legge con encoding=\"utf-8\", errors=\"replace\": " + ", ".join(offenders)
     )
+
+
+def test_the_scan_catches_a_codec_left_to_the_machine():
+    """`errors="replace"` alone is not enough.
+
+    The bridge had `text=True` and `errors="replace"` and no `encoding`: no byte could
+    raise, but on a cp1252 machine every UTF-8 name came back as mojibake, so the scan
+    has to see the difference between "cannot crash" and "reads the right codec".
+    """
+    unsafe = ast.parse("subprocess.run(cmd, capture_output=True, text=True, errors='replace')").body[0].value
+    safe = ast.parse(
+        "subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')"
+    ).body[0].value
+
+    assert _text_mode_call(unsafe) and not _encoded_safely(unsafe)
+    assert _text_mode_call(safe) and _encoded_safely(safe)

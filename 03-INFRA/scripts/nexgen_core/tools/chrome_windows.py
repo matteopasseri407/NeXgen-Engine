@@ -175,7 +175,8 @@ def run_task(cmd: list[str], desktop: str) -> bool:
         )
         for step in steps:
             result = subprocess.run(
-                step, capture_output=True, text=True, timeout=60, check=False, **no_window_kwargs()
+                step, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=60, check=False, **no_window_kwargs(),
             )
             if result.returncode != 0:
                 print(
