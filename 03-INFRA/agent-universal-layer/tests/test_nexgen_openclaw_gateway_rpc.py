@@ -8,6 +8,8 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
+import subprocess
 import sys
 import threading
 from collections.abc import Iterator
@@ -24,6 +26,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from nexgen_core.cli.openclaw_cmds import cmd_rpc_health  # noqa: E402
 from nexgen_core.openclaw.gateway_rpc import (  # noqa: E402
+    DEFAULT_GATEWAY_PORT,
     GatewayAuthError,
     GatewayConflictError,
     GatewayConnectionError,
@@ -475,3 +478,65 @@ def test_cli_rpc_health_command():
         code_err = cmd_rpc_health(err_args)
     assert code_err == 1
     assert "Error:" in err_out.getvalue()
+
+
+#: A child interpreter where the socket library is not installed, as in the V2 smoke
+#: job (it installs pytest and pyyaml only). The finder refuses the name before any
+#: site-packages lookup, so the result never depends on what this machine has.
+_WITHOUT_WEBSOCKETS = """
+import sys
+
+
+class _NoWebsockets:
+    def find_spec(self, name, path=None, target=None):
+        if name == "websockets" or name.startswith("websockets."):
+            raise ModuleNotFoundError(f"No module named {name!r}", name=name)
+        return None
+
+
+sys.meta_path.insert(0, _NoWebsockets())
+"""
+
+
+def _run_without_websockets(script: str) -> subprocess.CompletedProcess:
+    """Run `script` in a fresh interpreter that cannot import the socket library."""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(SCRIPTS_DIR), env.get("PYTHONPATH", "")]))
+    return subprocess.run(
+        [sys.executable, "-c", _WITHOUT_WEBSOCKETS + script],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, check=False, env=env,
+    )
+
+
+def test_the_gateway_module_imports_without_the_socket_library():
+    """Importing this package never required a socket, and must not require the library.
+
+    `nexgen_core.runtimes.openclaw` reaches this module through the package, so
+    collection of the V2 smoke file died on `ModuleNotFoundError: No module named
+    'websockets'` before a single test ran.
+    """
+    result = _run_without_websockets(
+        "import nexgen_core.openclaw.gateway_rpc as rpc\n"
+        "print(rpc.DEFAULT_GATEWAY_PORT)\n"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(DEFAULT_GATEWAY_PORT)
+
+
+def test_a_missing_socket_library_is_a_sentence_when_a_connection_is_asked_for():
+    """Asked for a connection, the same child names the missing package instead of raising an import error."""
+    result = _run_without_websockets(
+        "from nexgen_core.openclaw.gateway_rpc import GatewayConnectionError, GatewayRpcClient\n"
+        "try:\n"
+        "    GatewayRpcClient(url='ws://127.0.0.1:1', timeout=1.0).connect()\n"
+        "except GatewayConnectionError as exc:\n"
+        "    print(type(exc).__name__, '|', exc)\n"
+        "else:\n"
+        "    print('NO-ERROR')\n"
+    )
+
+    assert result.returncode == 0, result.stderr
+    kind, _, sentence = result.stdout.strip().partition(" | ")
+    assert kind == "GatewayConnectionError"
+    assert "websockets" in sentence

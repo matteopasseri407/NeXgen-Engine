@@ -14,12 +14,13 @@ import sys
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
-import websockets.sync.client as ws_sync
-from websockets.exceptions import ConnectionClosed, WebSocketException
+if TYPE_CHECKING:  # annotations only: the library itself is imported when a socket opens
+    import websockets.sync.client as ws_sync
 
 from nexgen_core import __version__ as ENGINE_VERSION
+from nexgen_core.openclaw import ws_transport
 from nexgen_core.paths import openclaw_config
 
 DEFAULT_GATEWAY_PORT = 18789
@@ -69,6 +70,14 @@ class GatewayResponseError(GatewayRpcError):
         super().__init__(message)
         self.code = code
         self.details = details or {}
+
+
+def _socket_api() -> tuple[Any, tuple[type[BaseException], ...]]:
+    """The socket client and its errors; a missing library is this module's own error."""
+    try:
+        return ws_transport.socket_api()
+    except ws_transport.SocketLibraryMissing as exc:
+        raise GatewayConnectionError(str(exc)) from exc
 
 
 def resolve_gateway_url(
@@ -198,15 +207,16 @@ class GatewayRpcClient:
         """Connect to the gateway, wait for optional challenge, and complete handshake."""
         if self._ws is not None:
             return
+        client, transport_errors = _socket_api()
         try:
-            ws = ws_sync.connect(
+            ws = client.connect(
                 self.url,
                 open_timeout=self.default_timeout,
                 close_timeout=2.0,
             )
         except TimeoutError:
             raise GatewayTimeoutError(f"Connection to gateway at {self.url} timed out") from None
-        except (OSError, WebSocketException) as e:
+        except (OSError, *transport_errors) as e:
             raise GatewayConnectionError(f"Gateway is not reachable at {self.url}: {e}") from None
 
         self._ws = ws
@@ -219,6 +229,7 @@ class GatewayRpcClient:
     def _perform_handshake(self) -> None:
         """Execute the OpenClaw connect challenge / hello-ok handshake."""
         assert self._ws is not None
+        _, transport_errors = _socket_api()
         try:
             raw_challenge = self._ws.recv(timeout=0.2)
             parsed_ch = json.loads(raw_challenge)
@@ -226,7 +237,7 @@ class GatewayRpcClient:
                 pass
         except TimeoutError:  # nexgen: allow reason="pre-connect challenge is optional in older or fast gateways"
             pass
-        except (ConnectionClosed, WebSocketException, OSError, json.JSONDecodeError):  # nexgen: allow reason="non-challenge initial frame is handled by connect handshake"
+        except (*transport_errors, OSError, json.JSONDecodeError):  # nexgen: allow reason="non-challenge initial frame is handled by connect handshake"
             pass
 
         req_id = str(uuid.uuid4())
@@ -253,7 +264,7 @@ class GatewayRpcClient:
             raw_res = self._ws.recv(timeout=self.default_timeout)
         except TimeoutError:
             raise GatewayTimeoutError("Gateway handshake timed out") from None
-        except (ConnectionClosed, WebSocketException, OSError) as e:
+        except (*transport_errors, OSError) as e:
             raise GatewayConnectionError(f"Gateway disconnected during handshake: {e}") from None
 
         try:
@@ -296,6 +307,7 @@ class GatewayRpcClient:
         if not self.is_connected:
             self.connect()
         assert self._ws is not None
+        _, transport_errors = _socket_api()
 
         req_id = str(uuid.uuid4())
         frame = {
@@ -308,7 +320,7 @@ class GatewayRpcClient:
 
         try:
             self._ws.send(json.dumps(frame))
-        except (ConnectionClosed, WebSocketException, OSError) as e:
+        except (*transport_errors, OSError) as e:
             self.close()
             raise GatewayConnectionError(f"Failed to send RPC request {method!r}: {e}") from None
 
@@ -317,7 +329,7 @@ class GatewayRpcClient:
                 raw = self._ws.recv(timeout=t_limit)
             except TimeoutError:
                 raise GatewayTimeoutError(f"Gateway request {method!r} timed out after {t_limit}s") from None
-            except (ConnectionClosed, WebSocketException, OSError) as e:
+            except (*transport_errors, OSError) as e:
                 self.close()
                 raise GatewayConnectionError(f"Gateway connection lost during {method!r}: {e}") from None
 
@@ -405,9 +417,10 @@ class GatewayRpcClient:
         ws = self._ws
         self._ws = None
         if ws is not None:
+            _, transport_errors = _socket_api()
             try:
                 ws.close()
-            except (WebSocketException, OSError):  # nexgen: allow reason="best-effort socket closure on cleanup"
+            except (*transport_errors, OSError):  # nexgen: allow reason="best-effort socket closure on cleanup"
                 pass
 
     def __enter__(self) -> Self:
