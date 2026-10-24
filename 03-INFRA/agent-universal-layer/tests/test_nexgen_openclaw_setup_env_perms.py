@@ -145,3 +145,41 @@ def test_plugin_step_when_plugin_already_present(tmp_path: Path) -> None:
 
     assert is_plugin_verified(setup) is True
     assert plugin_step(setup) is True
+
+
+def test_is_plugin_verified_requires_manifest_and_index(tmp_path: Path) -> None:
+    setup = _make_dummy_setup(tmp_path)
+    plugin_dir = setup.state_dir / "extensions" / "nexgen"
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "index.mjs").write_text("// ok", encoding="utf-8")
+    assert is_plugin_verified(setup) is False
+    (plugin_dir / "openclaw.plugin.json").write_text("{}", encoding="utf-8")
+    assert is_plugin_verified(setup) is True
+
+
+def test_plugin_step_deposits_and_verifies_plugin(tmp_path: Path) -> None:
+    setup = _make_dummy_setup(tmp_path)
+    plugin_dir = setup.state_dir / "extensions" / "nexgen"
+    assert not plugin_dir.exists()
+
+    hooks_dir = setup.engine_root / "03-INFRA" / "agent-universal-layer" / "hooks"
+    plugin_src = hooks_dir / "openclaw-guardrail-plugin"
+    plugin_src.mkdir(parents=True, exist_ok=True)
+    (plugin_src / "openclaw.plugin.json").write_text('{"id": "nexgen"}', encoding="utf-8")
+    (plugin_src / "index.mjs").write_text("// entrypoint", encoding="utf-8")
+    (hooks_dir / "nexgen-guardrail-core.mjs").write_text("// core", encoding="utf-8")
+    (hooks_dir / "vault-briefing.txt").write_text("briefing", encoding="utf-8")
+
+    assert plugin_step(setup) is True
+    assert (plugin_dir / "openclaw.plugin.json").is_file()
+    assert (plugin_dir / "index.mjs").is_file()
+    assert is_plugin_verified(setup) is True
+
+
+def test_plugin_step_retries_and_errors_when_deposit_fails(tmp_path: Path, monkeypatch) -> None:
+    setup = _make_dummy_setup(tmp_path)
+    monkeypatch.setattr("nexgen_core.openclaw.setup_steps._find_engine_hooks_dir", lambda r: None)
+    assert plugin_step(setup) is False
+    calls = [str(c[0][0]) for c in setup.out.call_args_list]
+    assert any("retrying once" in msg for msg in calls)
+    assert any("Error: engine plugin nexgen could not be deposited or verified." in msg for msg in calls)

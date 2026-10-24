@@ -448,17 +448,49 @@ def phone_step(setup: Setup) -> None:
                 "'nexgen openclaw pair --approve <id>' approves it."))
 
 
+def _find_engine_hooks_dir(engine_root: Path | None) -> Path | None:
+    candidates = []
+    if engine_root:
+        candidates.extend([
+            engine_root / "03-INFRA" / "agent-universal-layer" / "hooks",
+            engine_root / "agent-universal-layer" / "hooks",
+        ])
+    candidates.append(Path(__file__).resolve().parents[3] / "agent-universal-layer" / "hooks")
+    return next((c for c in candidates if c.is_dir()), None)
+
+
 def is_plugin_verified(setup: Setup) -> bool:
-    """True when the plugin folder exists and contains its executable entrypoint."""
-    plugin_dir = engine_plugin_path(setup)
-    return plugin_dir.is_dir() and (plugin_dir / "index.mjs").is_file()
+    """True when the plugin folder exists and contains its manifest and entrypoint."""
+    p = engine_plugin_path(setup)
+    return p.is_dir() and (p / "openclaw.plugin.json").is_file() and (p / "index.mjs").is_file()
+
+
+def _deposit_plugin_attempt(setup: Setup) -> bool:
+    from nexgen_core.runtimes.openclaw import OpenClawRuntime, plugin_files
+
+    hooks = _find_engine_hooks_dir(setup.engine_root)
+    if not hooks:
+        return False
+    try:
+        OpenClawRuntime()._deploy_plugin(engine_plugin_path(setup), plugin_files(hooks))
+    except Exception as exc:  # noqa: BLE001
+        setup.out(t("Plugin deposit exception: {error}", error=exc))
+        return False
+    return is_plugin_verified(setup)
 
 
 def plugin_step(setup: Setup) -> bool:
-    """The engine's plugin is verified before enabling in configuration."""
+    """The engine's plugin is verified and deposited in the same setup turn."""
     if is_plugin_verified(setup):
         setup.out(t("The engine plugin {plugin} is deposited and enabled.", plugin=PLUGIN_ID))
         return True
 
-    setup.out(t("The engine plugin {plugin} is not deposited on this machine: not enabled.", plugin=PLUGIN_ID))
+    setup.out(t("Engine plugin not deposited: depositing now..."))
+    if not _deposit_plugin_attempt(setup):
+        setup.out(t("First deposit attempt unverified; retrying once..."))
+        if not _deposit_plugin_attempt(setup):
+            setup.out(t("Error: engine plugin {plugin} could not be deposited or verified.", plugin=PLUGIN_ID))
+            return False
+
+    setup.out(t("The engine plugin {plugin} is deposited and enabled.", plugin=PLUGIN_ID))
     return True
