@@ -191,6 +191,7 @@ def _serve_client(
     scope_error: bool,
     hang: bool,
     send_challenge: bool,
+    recorded_requests: list[dict] | None = None,
 ) -> None:
     """Serve a single client connection with handshake and RPC loop."""
     if hang:
@@ -206,6 +207,8 @@ def _serve_client(
     try:
         connect_raw = ws.recv(timeout=2.0)
         connect_req = json.loads(connect_raw)
+        if recorded_requests is not None:
+            recorded_requests.append(connect_req)
     except (TimeoutError, OSError, json.JSONDecodeError, WebSocketException):
         return
     req_id = str(connect_req.get("id"))
@@ -236,6 +239,7 @@ def fake_gateway_server(
     scope_error: bool = False,
     hang: bool = False,
     send_challenge: bool = True,
+    recorded_requests: list[dict] | None = None,
 ) -> Iterator[str]:
     """Ephemeral WebSocket server implementing the OpenClaw Gateway Protocol mock."""
 
@@ -249,6 +253,7 @@ def fake_gateway_server(
             scope_error=scope_error,
             hang=hang,
             send_challenge=send_challenge,
+            recorded_requests=recorded_requests,
         )
 
     with ws_server.serve(handler, "127.0.0.1", 0) as s:
@@ -260,6 +265,39 @@ def fake_gateway_server(
         finally:
             s.shutdown()
             t.join(timeout=1.0)
+
+
+def test_rpc_operations_request_minimum_scopes():
+    """Each RPC helper asks only for the minimum scope required by the OpenClaw protocol."""
+    # health requests only operator.read
+    reqs: list[dict] = []
+    with fake_gateway_server(expected_token="tok", recorded_requests=reqs) as url:
+        health(url=url, token="tok", timeout=2.0)
+    assert reqs[0]["params"]["scopes"] == ["operator.read"]
+
+    # config_get requests only operator.read
+    reqs = []
+    with fake_gateway_server(expected_token="tok", recorded_requests=reqs) as url:
+        config_get(url=url, token="tok", timeout=2.0)
+    assert reqs[0]["params"]["scopes"] == ["operator.read"]
+
+    # config_patch requests operator.admin (reserved config.* prefix in protocol)
+    reqs = []
+    with fake_gateway_server(expected_token="tok", current_hash="hash-v1", recorded_requests=reqs) as url:
+        config_patch({"foo": "bar"}, base_hash="hash-v1", url=url, token="tok", timeout=2.0)
+    assert reqs[0]["params"]["scopes"] == ["operator.admin"]
+
+    # plugins_install requests operator.admin
+    reqs = []
+    with fake_gateway_server(expected_token="tok", recorded_requests=reqs) as url:
+        plugins_install("npm:foo", url=url, token="tok", timeout=2.0)
+    assert reqs[0]["params"]["scopes"] == ["operator.admin"]
+
+    # plugins_reload requests operator.admin
+    reqs = []
+    with fake_gateway_server(expected_token="tok", recorded_requests=reqs) as url:
+        plugins_reload("foo", url=url, token="tok", timeout=2.0)
+    assert reqs[0]["params"]["scopes"] == ["operator.admin"]
 
 
 def test_handshake_and_health():

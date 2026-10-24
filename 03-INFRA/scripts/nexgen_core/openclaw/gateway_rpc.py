@@ -25,6 +25,9 @@ DEFAULT_GATEWAY_PORT = 18789
 DEFAULT_GATEWAY_URL = f"ws://127.0.0.1:{DEFAULT_GATEWAY_PORT}"
 DEFAULT_TIMEOUT = 10.0
 PROTOCOL_VERSION = 4
+SCOPE_READ = "operator.read"
+SCOPE_WRITE = "operator.write"
+SCOPE_ADMIN = "operator.admin"
 
 
 class GatewayRpcError(Exception):
@@ -161,10 +164,12 @@ class GatewayRpcClient:
         timeout: float = DEFAULT_TIMEOUT,
         home: Path | None = None,
         env: Mapping[str, str] | None = None,
+        scopes: list[str] | tuple[str, ...] | None = None,
     ) -> None:
         self.url = resolve_gateway_url(url, home=home, env=env)
         self._token = resolve_gateway_token(token, home=home, env=env)
         self.default_timeout = float(timeout)
+        self.scopes = list(scopes) if scopes is not None else [SCOPE_READ]
         self._ws: ws_sync.ClientConnection | None = None
         self._hello_payload: dict[str, Any] | None = None
 
@@ -223,7 +228,7 @@ class GatewayRpcClient:
                 "mode": "backend",
             },
             "role": "operator",
-            "scopes": ["operator.admin", "operator.read", "operator.write"],
+            "scopes": list(self.scopes),
         }
         if self._token:
             connect_params["auth"] = {"token": self._token}
@@ -409,9 +414,11 @@ def health(
     url: str | None = None,
     token: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
+    scopes: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Inspect OpenClaw Gateway health snapshot via WebSocket RPC."""
-    with GatewayRpcClient(url=url, token=token, timeout=timeout) as client:
+    req_scopes = list(scopes) if scopes is not None else [SCOPE_READ]
+    with GatewayRpcClient(url=url, token=token, timeout=timeout, scopes=req_scopes) as client:
         return client.health(timeout=timeout)
 
 
@@ -419,9 +426,11 @@ def config_get(
     url: str | None = None,
     token: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
+    scopes: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Read OpenClaw Gateway active configuration snapshot via WebSocket RPC."""
-    with GatewayRpcClient(url=url, token=token, timeout=timeout) as client:
+    req_scopes = list(scopes) if scopes is not None else [SCOPE_READ]
+    with GatewayRpcClient(url=url, token=token, timeout=timeout, scopes=req_scopes) as client:
         return client.config_get(timeout=timeout)
 
 
@@ -432,9 +441,11 @@ def config_patch(
     token: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
     replace_paths: list[str] | None = None,
+    scopes: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Apply an optimistic partial configuration update to OpenClaw Gateway."""
-    with GatewayRpcClient(url=url, token=token, timeout=timeout) as client:
+    req_scopes = list(scopes) if scopes is not None else [SCOPE_ADMIN]
+    with GatewayRpcClient(url=url, token=token, timeout=timeout, scopes=req_scopes) as client:
         return client.config_patch(
             patch=patch,
             base_hash=base_hash,
@@ -448,9 +459,11 @@ def plugins_install(
     url: str | None = None,
     token: str | None = None,
     timeout: float = 30.0,
+    scopes: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Install a plugin on OpenClaw Gateway via WebSocket RPC."""
-    with GatewayRpcClient(url=url, token=token, timeout=timeout) as client:
+    req_scopes = list(scopes) if scopes is not None else [SCOPE_ADMIN]
+    with GatewayRpcClient(url=url, token=token, timeout=timeout, scopes=req_scopes) as client:
         return client.plugins_install(source=source, timeout=timeout)
 
 
@@ -459,7 +472,9 @@ def plugins_reload(
     url: str | None = None,
     token: str | None = None,
     timeout: float = 15.0,
+    scopes: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Reload an active plugin on OpenClaw Gateway via WebSocket RPC."""
-    with GatewayRpcClient(url=url, token=token, timeout=timeout) as client:
+    req_scopes = list(scopes) if scopes is not None else [SCOPE_ADMIN]
+    with GatewayRpcClient(url=url, token=token, timeout=timeout, scopes=req_scopes) as client:
         return client.plugins_reload(plugin_id=plugin_id, timeout=timeout)
