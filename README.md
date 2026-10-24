@@ -88,7 +88,7 @@ The [sync contract](docs/sync-contract.md) describes what it manages, what it pr
 ## What it does
 
 * **Single Python core (`nexgen_core`):** runs natively on Linux and Windows, no shell twins. Automated suite in CI.
-* **Deterministic modules:** 10-module catalog (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `local-lane`, `openclaw`, `sync`) managed with `nexgen modules list` and `nexgen modules set`.
+* **Deterministic modules:** 9-module catalog (`memory`, `semantic-rag`, `ocr`, `n8n`, `browser`, `council`, `local-lane`, `openclaw`, `sync`) managed with `nexgen modules list` and `nexgen modules set`.
 * **Local models (optional):** `nexgen-local` builds read-only queries and records the sources used by each answer.
   Its evaluation gate fails on any injection or unsupported answer in the trap suite.
   Drive uploads are the only mutation it stages, and they need explicit approval through `nexgen-local drive-propose` / `drive-upload`.

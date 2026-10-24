@@ -2,7 +2,7 @@
 
 For anyone considering NeXgen Engine as infrastructure for more than one
 person — specifically the case where several people would share one
-Cloud-Server backend (one VPS running n8n, Firecrawl, OCR, semantic search).
+Cloud-Server backend (one VPS running n8n, OCR, semantic search).
 Read this before wiring more than one person's agent CLI into the same
 backend. For the mono-user limits of the vault itself (one profile, one
 secrets passphrase, no per-person boundary), see `docs/team.md`; this file
@@ -27,7 +27,7 @@ not a scoped slice of it.
 filesystem access to it can read and write everything inside. There is no
 per-file access control beyond your OS permissions." That statement applies
 with equal force to a shared VPS: nothing in this framework adds per-user
-scoping to the n8n workflows, the Firecrawl/OCR/semantic-search services, or
+scoping to the n8n workflows, the OCR/semantic-search services, or
 any vault mirrored through that backend. One employee's agent CLI can read
 another employee's notes and, if the secrets archive or registry is
 reachable from there, another employee's secrets too.

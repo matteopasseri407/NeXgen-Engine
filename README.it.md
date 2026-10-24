@@ -41,7 +41,7 @@ Il motore tiene separate tre fonti di configurazione:
 ## Cosa fa
 
 * **Core unico in Python (`nexgen_core`):** gira su Linux e Windows ed è verificato dalla suite CI.
-* **Moduli deterministici:** catalogo di 10 moduli (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `local-lane`, `openclaw`, `sync`) gestito con `nexgen modules list` e `nexgen modules set`.
+* **Moduli deterministici:** catalogo di 9 moduli (`memory`, `semantic-rag`, `ocr`, `n8n`, `browser`, `council`, `local-lane`, `openclaw`, `sync`) gestito con `nexgen modules list` e `nexgen modules set`.
 * **Modelli locali, opzionali:** `nexgen-local` costruisce query in sola lettura e registra le fonti di ogni risposta.
   Il gate di valutazione fallisce se la suite trappole rileva un'injection o una risposta senza riscontro.
   Il caricamento su Drive è l'unica modifica che mette in attesa di approvazione, con `nexgen-local drive-propose` / `drive-upload`.
