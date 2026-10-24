@@ -430,3 +430,38 @@ def test_a_bridge_entry_with_no_url_is_refused_instead_of_written_empty(renderer
     with pytest.raises(ValueError):
         renderer.render_openclaw(write=True, http_servers={"py-tool": {"token_env": "X"}})
 
+
+def test_renderer_removes_engine_written_lazy_mcp(renderer) -> None:
+    """The engine's lazy-mcp entry is removed from openclaw.json on render."""
+    cfg = _install_openclaw(renderer)
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    data["mcp"]["servers"]["lazy-mcp"] = {
+        "command": "python",
+        "args": ["/path/to/lazy-mcp.py"],
+        "env": {"LAZY_MCP_CLI": "openclaw"},
+    }
+    cfg.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    assert renderer.render_openclaw(write=True)[0]
+    servers = _servers(renderer)
+    assert "lazy-mcp" not in servers
+
+
+def test_renderer_preserves_user_written_lazy_mcp(renderer) -> None:
+    """A custom lazy-mcp server written by the user is preserved across render."""
+    cfg = _install_openclaw(renderer)
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    user_entry = {
+        "command": "node",
+        "args": ["my-custom-proxy.js"],
+        "env": {"CUSTOM_PORT": "9000"},
+    }
+    data["mcp"]["servers"]["lazy-mcp"] = user_entry
+    cfg.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    assert renderer.render_openclaw(write=True)[0]
+    servers = _servers(renderer)
+    assert "lazy-mcp" in servers
+    assert servers["lazy-mcp"] == user_entry
+
+

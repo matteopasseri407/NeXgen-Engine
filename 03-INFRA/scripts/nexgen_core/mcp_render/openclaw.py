@@ -176,6 +176,18 @@ def _bridged_entry(name: str, srv: dict[str, Any], bridge_spec: Any) -> dict[str
     return _build_entry(bridged)
 
 
+def is_engine_lazy_mcp(entry: Any) -> bool:
+    """Whether an mcp.servers entry for lazy-mcp was written by the engine."""
+    if not isinstance(entry, dict):
+        return False
+    args = [str(a) for a in entry.get("args") or []]
+    cmd = str(entry.get("command") or "")
+    env = entry.get("env") if isinstance(entry.get("env"), dict) else {}
+    if "LAZY_MCP_CLI" in env:
+        return True
+    return any("lazy-mcp.py" in a for a in args) or "lazy-mcp.py" in cmd
+
+
 def _apply_servers(
     renderer,
     servers_table: dict[str, Any],
@@ -187,9 +199,11 @@ def _apply_servers(
     for retired in renderer.retired_server_names():
         servers_table.pop(retired, None)
     servers_table.pop("openclaw", None)
+    if "lazy-mcp" in servers_table and is_engine_lazy_mcp(servers_table["lazy-mcp"]):
+        servers_table.pop("lazy-mcp", None)
     renderer._drop_unmounted(servers_table, servers, cli_target="openclaw")
     for name, srv in servers.items():
-        if name == "openclaw":
+        if name in ("openclaw", "lazy-mcp"):
             continue
         bridge_spec = (http_servers or {}).get(name) if http_servers else None
         if bridge_spec is not None:

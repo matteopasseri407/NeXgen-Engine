@@ -326,6 +326,11 @@ class McpRenderer:
 
     def _drop_unmounted(self, mcp_servers: dict, mounted: dict, cli_target: str = "") -> None:
         for name in self.unmounted_server_names(mounted, cli_target):
+            if name == "lazy-mcp" and cli_target == "openclaw":
+                from nexgen_core.mcp_render.openclaw import is_engine_lazy_mcp
+
+                if not is_engine_lazy_mcp(mcp_servers.get("lazy-mcp")):
+                    continue
             mcp_servers.pop(name, None)
 
     def list_lazy_servers(self, cli_target: str) -> list[str]:
