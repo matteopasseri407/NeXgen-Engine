@@ -177,6 +177,8 @@ def register_model_keys(
                 cmd,
                 input=f"{api_key}\n",
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=setup.env,
                 check=False,

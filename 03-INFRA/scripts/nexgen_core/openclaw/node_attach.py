@@ -15,6 +15,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
 from nexgen_core.openclaw_service import RunResult
 
@@ -25,7 +26,7 @@ DEFAULT_REPORT_INTERVAL_S = 3.0
 
 
 def _default_runner(cmd: list[str]) -> RunResult:
-    res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     return RunResult(res.returncode, res.stdout, res.stderr)
 
 
@@ -41,12 +42,7 @@ def connect_node_service(
     target_file = temp_dir / f"openclaw-connect-{os.getpid()}-{int(time.time())}.tmp"
 
     try:
-        target_file.write_text(target.strip(), encoding="utf-8")
-        if sys.platform != "win32":
-            try:
-                target_file.chmod(0o600)
-            except OSError:  # nexgen: allow reason="chmod failure on non-POSIX tempdir is ignored"
-                pass
+        atomic_write_text(target_file, target.strip(), preserve_mode=False)
 
         out(t("Connecting node to gateway via 'openclaw connect --service --session-host' (protected target file)..."))
         cmd = ["openclaw", "connect", "--service", "--session-host", "--target-file", str(target_file)]

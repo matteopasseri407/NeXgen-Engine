@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
 
 if TYPE_CHECKING:
@@ -111,7 +112,7 @@ def write_gateway_service_env(
             *[_format_env_line(k, v) for k, v in missing_vars.items()],
             "",
         ]
-        env_file.write_text("\n".join(lines), encoding="utf-8")
+        atomic_write_text(env_file, "\n".join(lines), preserve_mode=False)
         setup.out(t("OpenClaw environment written to {path} ({count} variables added).",
                     path=env_file, count=len(missing_vars)))
     elif missing_vars:
@@ -121,18 +122,11 @@ def write_gateway_service_env(
         for k, v in missing_vars.items():
             new_lines.append(_format_env_line(k, v))
         new_lines.append("")
-        env_file.write_text("\n".join(new_lines), encoding="utf-8")
+        atomic_write_text(env_file, "\n".join(new_lines), preserve_mode=False)
         setup.out(t("OpenClaw environment updated at {path} ({added} added, {count} preserved).",
                     path=env_file, added=", ".join(sorted(missing_vars.keys())), count=len(existing_keys)))
     else:
         setup.out(t("OpenClaw environment at {path} already up to date ({count} preserved).",
                     path=env_file, count=len(existing_keys)))
-
-    platform_name = getattr(setup, "platform", None) or sys.platform
-    if platform_name != "win32":
-        try:
-            env_file.chmod(0o600)
-        except OSError:  # nexgen: allow reason="chmod failures on non-POSIX filesystems are ignored"
-            pass
 
     return env_file
