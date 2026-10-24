@@ -38,11 +38,21 @@ def default_node_lister() -> list[dict[str, Any]] | None:
     return listing.get("nodes") or []
 
 
+def _is_connected(node: dict[str, Any]) -> bool:
+    """Whether a node is up, in either of the two shapes the payload arrives in.
+
+    The gateway's own list carries a boolean `connected`; a CLI payload may carry
+    `status: "connected"` instead, and reading only the boolean would call a live
+    node offline, which is a lie a person would act on.
+    """
+    return bool(node.get("connected")) or str(node.get("status") or "").strip().lower() == "connected"
+
+
 def _node_detail(node: dict[str, Any]) -> str:
     """One node as a person reads it: which machine, on what, and whether it is up."""
     label = node.get("displayName") or node.get("nodeId") or "?"
     platform = node.get("platform") if isinstance(node.get("platform"), str) else ""
-    state = t("connected") if node.get("connected") else t("not connected")
+    state = t("connected") if _is_connected(node) else t("not connected")
     return f"{label} ({platform}, {state})" if platform else f"{label} ({state})"
 
 

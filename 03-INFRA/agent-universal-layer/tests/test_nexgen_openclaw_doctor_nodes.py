@@ -90,6 +90,24 @@ def test_a_listening_gateway_names_the_nodes_it_knows():
     assert "Laptop" in nodes.message
 
 
+def test_a_node_that_says_it_is_connected_in_words_is_not_called_offline():
+    """The CLI payload may carry `status: "connected"` where the gateway carries a boolean."""
+    nodes = [{"nodeId": "a1", "displayName": "Laptop", "platform": "win32", "status": "connected"}]
+
+    message = by_id(check_nodes(gateway_config(), listening, lambda: nodes))["openclaw.nodes"].message
+
+    assert "Laptop (win32, connected)" in message
+    assert "not connected" not in message
+
+
+def test_a_status_that_says_anything_else_is_still_offline():
+    nodes = [{"nodeId": "a1", "displayName": "Laptop", "status": "offline"}]
+
+    message = by_id(check_nodes(gateway_config(), listening, lambda: nodes))["openclaw.nodes"].message
+
+    assert "not connected" in message
+
+
 def test_a_gateway_with_no_node_says_so_plainly():
     outcomes = check_nodes(gateway_config(), listening, lambda: [])
 
