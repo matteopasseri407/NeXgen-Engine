@@ -3,10 +3,10 @@
 One job: the checks that read machine state rather than configuration, so
 `doctor.py` stays the rules of the configuration and this module answers what is
 running, what else is running, and what an agent has learned. Read-only by
-construction: the only query it can run asks a gateway that already answers which
-nodes it knows, and only a caller that asked for it runs that one, so `nexgen
-doctor` on its own schedule never starts the harness. No file is written, and a
-URL read from the Companion's settings is never printed.
+construction: no file is written, the only command it can run asks for the Node
+version, and a URL read from the Companion's settings is never printed. Where the
+Windows app keeps its own gateway is `companion.py`'s question; here it is only a
+value that decides which sentence a person reads.
 """
 from __future__ import annotations
 
