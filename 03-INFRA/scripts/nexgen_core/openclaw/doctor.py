@@ -24,7 +24,7 @@ from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.pin import pinned_version, required_node_version
 from nexgen_core.openclaw.profile import PENDING_TOKEN
 from nexgen_core.openclaw.terms import google_subscriptions
-from nexgen_core.paths import openclaw_config, resolve_home, resolve_vault_data
+from nexgen_core.paths import is_machine_home, openclaw_config, resolve_home, resolve_vault_data
 from nexgen_core.report import CheckOutcome, Severity
 
 #: Which subscription a model provider depends on. Local providers are not here:
@@ -359,6 +359,22 @@ def _check_agent_models(config: dict[str, Any], snapshot: Detection) -> CheckOut
     )
 
 
+def _listening(config: dict[str, Any], connect: doctor_runtime.Connect | None,
+               home: Path) -> CheckOutcome:
+    """The gateway probe, asked only where it can be about something here.
+
+    An injected connector means the caller already decided (a test, or a caller
+    with its own probe). Otherwise the question is skipped on a copy: there is
+    one gateway per machine, and a copy beside the working installation would be
+    reporting on a process it does not own.
+    """
+    if connect is not None:
+        return doctor_runtime.check_listening(config, connect)
+    if not is_machine_home(home):
+        return doctor_runtime.check_listening_of_a_copy(config)
+    return doctor_runtime.check_listening(config, doctor_runtime.default_connect)
+
+
 def _host_outcomes(
     snapshot: Detection,
     engine_root: Path | None,
@@ -425,7 +441,7 @@ def collect(
             _check_google(config),
             _check_acp(config),
             _check_agent_models(config, snapshot),
-            doctor_runtime.check_listening(config, connect or doctor_runtime.default_connect),
+            _listening(config, connect, home_dir),
             *doctor_runtime.check_workshop_skills(config, path.parent, home_dir),
         ])
         bindings = doctor_runtime.check_bindings(config)

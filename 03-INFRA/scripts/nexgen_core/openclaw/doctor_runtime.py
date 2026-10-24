@@ -62,6 +62,28 @@ def check_listening(config: dict[str, Any], connect: Connect) -> CheckOutcome:
     )
 
 
+def check_listening_of_a_copy(config: dict[str, Any]) -> CheckOutcome:
+    """The same question, unanswered on purpose, when the home is a copy.
+
+    There is one gateway per machine, on a loopback port. A copy running beside
+    the working installation would otherwise report the health of a process it
+    does not own — and reading it means connecting to the owner's real gateway
+    from a sandbox, which is how a test ends up touching the machine it was
+    supposed to leave alone. The real home still gets the probe.
+    """
+    gateway = config.get("gateway") if isinstance(config.get("gateway"), dict) else {}
+    port = gateway.get("port") if isinstance(gateway.get("port"), int) else DEFAULT_GATEWAY_PORT
+    return CheckOutcome(
+        id="openclaw.gateway.listening",
+        severity=Severity.OK,
+        message=t(
+            "The gateway on 127.0.0.1:{port} is not probed from here: this is a copy of the machine, "
+            "and the gateway belongs to the installation that runs.",
+            port=port,
+        ),
+    )
+
+
 def current_node_version() -> str | None:
     """The Node on PATH, asked for its version, or None when it cannot answer."""
     import shutil

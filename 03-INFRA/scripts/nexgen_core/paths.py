@@ -1,3 +1,4 @@
+# nexgen: one-job reason="answer where the data, the engine and the state live, in one place, for every component that asks"
 """Path resolution for the layer, in one place.
 
 This environment-variable cascade used to exist as fifteen literal copies
@@ -478,6 +479,23 @@ def openclaw_config(home: Path | None = None, env: Mapping[str, str] | None = No
     ``env`` is the environment a caller was given: detection and its tests.
     """
     return _openclaw_config_impl(home, env)
+
+
+def is_machine_home(home: Path | None = None) -> bool:
+    """Whether this is the home the machine really uses, not a copy beside it.
+
+    `NEXGEN_HOME` exists to run a checkout beside a working installation, and
+    some facts are about the machine rather than about a folder: a gateway on a
+    loopback port is one per machine, and it belongs to the installation that is
+    running. Asked from a copy, such a check would answer about someone else's
+    process and take credit for it, or blame the copy for a port it does not own.
+    """
+    real = Path.home()
+    candidate = real if home is None else Path(home).expanduser()
+    try:
+        return candidate.resolve() == real.resolve()
+    except OSError:  # nexgen: allow reason="a path that cannot be resolved cannot be the machine's own home"
+        return False
 
 
 def _antigravity_settings_impl(home: Path | None = None) -> Path:
