@@ -184,6 +184,40 @@ def test_the_human_plan_says_that_nothing_was_written(tmp_path):
     assert "assistente" in text
 
 
+def test_the_plan_of_a_server_keeps_loopback_and_asks_for_tailscale_serve(tmp_path):
+    home = tmp_path / "home"
+    path = put_config(home, {})
+
+    payload = build_plan(detected=detected(path), home=home, env={}, choices=Choices(serve=True)).to_dict()
+
+    assert payload["config"]["gateway"]["bind"] == "loopback"
+    assert payload["config"]["gateway"]["tailscale"] == {"mode": "serve"}
+
+
+def test_the_plan_command_passes_the_server_flag_to_the_same_choice(monkeypatch):
+    """`plan --server` is the read-only preview of what `setup --server` writes."""
+    import argparse
+
+    from nexgen_core.cli import openclaw_cmds
+
+    captured: dict = {}
+
+    class FakePlan:
+        def to_dict(self) -> dict:
+            return {}
+
+    def fake_build(**kwargs):
+        captured.update(kwargs)
+        return FakePlan()
+
+    monkeypatch.setattr("nexgen_core.openclaw.plan.build_plan", fake_build)
+    args = argparse.Namespace(json=True, lan=False, server=True, acpx=False)
+
+    assert openclaw_cmds.cmd_plan(args) == 0
+    assert captured["choices"].serve is True
+    assert captured["choices"].lan is False
+
+
 # ------------------------------------------------------------- the Windows app
 
 

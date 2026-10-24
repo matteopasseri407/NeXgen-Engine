@@ -37,6 +37,8 @@ def _register_setup(psub) -> None:
     q.add_argument("--json", action="store_true", help=t("Output in JSON format"))
     q.add_argument("--lan", action="store_true",
                    help=t("Also reachable from the home network (the phone app)"))
+    q.add_argument("--server", action="store_true",
+                   help=t("A Linux machine with no screen: loopback plus Tailscale Serve for HTTPS on the tailnet"))
     q.add_argument("--acpx", action="store_true", help=t("Allow the acpx plugin too"))
     q.set_defaults(func=cmd_plan)
 
@@ -128,7 +130,7 @@ def cmd_plan(args) -> int:
     from nexgen_core.openclaw.plan import build_plan, render_plan
     from nexgen_core.openclaw.profile import Choices
 
-    plan = build_plan(choices=Choices(lan=bool(args.lan), acpx=bool(args.acpx)))
+    plan = build_plan(choices=Choices(lan=bool(args.lan), serve=bool(args.server), acpx=bool(args.acpx)))
     if getattr(args, "json", False):
         print(json.dumps(plan.to_dict(), indent=2, ensure_ascii=False))
     else:

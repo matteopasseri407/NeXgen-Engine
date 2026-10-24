@@ -616,9 +616,10 @@ lost when it is down, and nothing else is either: memory, channels and cron jobs
 
 ## Commands
 
-`nexgen openclaw plan [--json] [--lan] [--acpx]` reads the configuration in force, computes what the engine
-would write, and prints what it would add, what it would change, what it no longer proposes, and which keys
-are the person's and stay. It writes nothing.
+`nexgen openclaw plan [--json] [--lan | --server] [--acpx]` reads the configuration in force, computes what
+the engine would write, and prints what it would add, what it would change, what it no longer proposes, and
+which keys are the person's and stay. It writes nothing; `--server` is the read-only preview of the change
+`setup --server` applies.
 
 `nexgen openclaw doctor [--json] [--nodes]` checks installation, version against the pin, the configuration's
 validity, `:latest` ids, caged local models, whether the evidence check runs and for which local models, the
