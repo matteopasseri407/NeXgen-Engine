@@ -152,6 +152,18 @@ A server that dies on startup (a missing import, a bad path) used to be reported
 and shown in the error, with the values of the secrets the proxy gave it and the usual token shapes
 replaced by `[redacted]`.
 
+### `command: npx` on Windows
+
+Windows starts a batch file only by handing it to `cmd.exe`, and `npx` there is
+`C:\Program Files\nodejs\npx.cmd`: a path with a space in it, which the interpreter splits at the space
+(`"C:\Program" is not recognized`). npm's shim is a wrapper around a JavaScript entry that sits beside it,
+so the engine starts `node node_modules/npm/bin/npx-cli.js` instead, with the same arguments and no
+interpreter in the middle. One rule, `nexgen_core.processes`, and every launcher uses it: the gateway,
+`mcp-trim`, `nexgen mcp check`, and the alert path through OpenClaw. When the entry or node is missing the
+launch is refused with a sentence that names the shim and the entry it expected, and the gateway repeats
+that sentence instead of the exception's class name. On Linux and macOS the command is passed through
+exactly as it was written.
+
 ## Concurrency
 
 Tool calls are served concurrently: a slow call to one server no longer holds up a `ping` or a
