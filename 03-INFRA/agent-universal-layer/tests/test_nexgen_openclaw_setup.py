@@ -61,8 +61,9 @@ class FakeRunner:
             return RunResult(0, self.node_version + "\n", "")
         if argv[1:3] == ["config", "get"]:
             return RunResult(0, self.npm_prefix + "\n" if self.npm_prefix else "", "")
-        if argv[0] == "systemctl" and self.systemctl_error:
-            return RunResult(1, "", self.systemctl_error)
+        if argv[0] == "systemctl":
+            # The host preflight's only question: a healthy session's user bus answers.
+            return RunResult(1, "", self.systemctl_error) if self.systemctl_error else RunResult(0, "", "")
         verbs = list(argv[1:3])
         if "onboard" in verbs:
             if self.onboard is not None:
@@ -182,6 +183,16 @@ def which_map(missing: tuple[str, ...] = ()) -> dict[str, str]:
     }
 
 
+def session_env(platform: str) -> dict[str, str]:
+    """What a healthy login session exports, so the host preflight meets this machine.
+
+    The preflight stops a Linux setup that has no systemd user bus. The fake machine
+    is a healthy desktop, so it brings the variable a real desktop brings; the tests
+    that want the broken session pass their own `env` and keep the stop.
+    """
+    return {"XDG_RUNTIME_DIR": "/run/user/1000"} if platform.startswith("linux") else {}
+
+
 def onboard_writer(config_path: Path, workspace: Path, agents: dict[str, Path] | None = None):
     """What OpenClaw does on a fresh non-interactive onboarding, near enough."""
 
@@ -219,11 +230,12 @@ class Machine:
         self.runner.service = self.service
         self.lines: list[str] = []
 
-    def run(self, *, detected=None, which=None, yes=True, env=None, **kwargs) -> int:
+    def run(self, *, detected=None, which=None, yes=True, env=None, platform=None, **kwargs) -> int:
+        system = platform or sys.platform
         lookup = which if callable(which) else (which or which_map()).get
         return run_setup(
             home=self.home,
-            env=env if env is not None else {},
+            env=session_env(system) if env is None else env,
             vault_data=self.vault,
             detected=detected if detected is not None else detection(self.config),
             which=lookup,
@@ -232,6 +244,7 @@ class Machine:
             out=self.lines.append,
             stamp="20261023-120000",
             engine_root=ENGINE_ROOT,
+            platform=system,
             yes=yes,
             **kwargs,
         )
@@ -309,6 +322,7 @@ def test_an_old_node_stops_the_setup_before_installing(tmp_path):
 
 
 def test_a_linux_session_without_the_user_bus_stops_with_an_action(tmp_path):
+    """Simulated Linux on every host: no session bus, so the gateway cannot be managed."""
     machine = Machine(tmp_path)
 
     code = machine.run(platform="linux", env={})
@@ -316,6 +330,11 @@ def test_a_linux_session_without_the_user_bus_stops_with_an_action(tmp_path):
     assert code == 1
     assert "systemd user bus" in machine.output()
     assert not any(" install -g " in command for command in machine.runner.commands())
+    assert not any(command.startswith("systemctl") for command in machine.runner.commands()), (
+        "the setup asked systemctl about a session that has no bus"
+    )
+    assert machine.service.events == [], "the service was touched"
+    assert not machine.config.exists(), "the setup wrote a configuration"
 
 
 def test_a_linux_bus_that_cannot_be_reached_is_the_same_stop(tmp_path):
@@ -326,6 +345,9 @@ def test_a_linux_bus_that_cannot_be_reached_is_the_same_stop(tmp_path):
 
     assert code == 1
     assert "systemd user bus" in machine.output()
+    assert not any(" install -g " in command for command in machine.runner.commands())
+    assert machine.service.events == [], "the service was touched"
+    assert not machine.config.exists(), "the setup wrote a configuration"
 
 
 def test_a_non_writable_npm_prefix_stops_with_the_command(tmp_path, monkeypatch):
