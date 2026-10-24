@@ -213,6 +213,11 @@ Grouped by what the user is actually asking for.
 - **Publish my work.**
 - **Tell me if anything is wrong**, with a default report that shows only that,
   and a verbose form that lists everything checked.
+  `--summary` is the form a git hook and a collection run: it asks the
+  independent checks at the same time, stops waiting after seven seconds, and
+  reports any check that did not answer as undetermined with the action that
+  leads to it, rather than dropping it. The full doctor waits for every check,
+  and `--timings` says which one spent the time.
 - **Update the engine**, interactively with a confirmation gate.
 - **Show me what upstream has moved.**
 - **Memory commands**: save a fact, close a session into notes, consolidate
