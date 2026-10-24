@@ -210,3 +210,35 @@ def test_the_unscheduled_doctor_asks_nobody_anything(tmp_path):
 
     assert "openclaw.nodes" not in outcomes
     assert "openclaw.gateway.lan" in outcomes
+
+
+def test_a_copy_of_a_home_never_asks_the_gateway_for_its_nodes(tmp_path):
+    """On a sandbox, `--nodes` must not probe the machine's own gateway.
+
+    There is one gateway per machine, on a loopback port. A copy of a home that
+    probed would report on a process it does not own, and the lister would start
+    OpenClaw's CLI against it: the same rule the listening line already follows.
+    """
+    asked: list[bool] = []
+    config_path = tmp_path / "home" / ".openclaw" / "openclaw.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(gateway_config(bind="lan")), encoding="utf-8")
+    vault = tmp_path / "vault" / "03-INFRA" / "agent-universal-layer"
+    vault.mkdir(parents=True, exist_ok=True)
+    (vault / "modules.state.yaml").write_text("schema_version: 2\nmodules:\n  openclaw: local\n", encoding="utf-8")
+
+    outcomes = by_id(collect(
+        detected=machine(config_path),
+        home=tmp_path / "home",
+        vault_data=tmp_path / "vault",
+        engine_root=tmp_path / "engine",
+        env={"LOCALAPPDATA": str(tmp_path / "localappdata"), "APPDATA": str(tmp_path / "appdata")},
+        platform="linux",
+        node_lister=lambda: asked.append(True) or NODES,
+        node_version=lambda: "v24.22.1",
+        linger_dir=tmp_path / "linger",
+    ))
+
+    assert asked == []
+    assert "openclaw.nodes" not in outcomes
+    assert "not probed from here" in outcomes["openclaw.gateway.listening"].message
