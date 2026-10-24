@@ -64,6 +64,10 @@ class Report:
 
     outcomes: list[CheckOutcome] = field(default_factory=list)
     log_entries: list[str] = field(default_factory=list)
+    #: Seconds each check spent, in the order they were asked: `(check id, seconds)`.
+    #: The doctor's duration is a promise to the hooks that run it, so it is measured
+    #: rather than guessed.
+    timings: list[tuple[str, float]] = field(default_factory=list)
 
     def add(self, outcome: CheckOutcome, apply_remedy: bool = False) -> CheckOutcome:
         """Adds an outcome and, if applicable, applies its automatic remedy.

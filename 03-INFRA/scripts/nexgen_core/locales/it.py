@@ -104,6 +104,8 @@ MESSAGES: dict[str, str] = {
     'Strict mode: treat undetermined states as non-compliant too': 'Modalità rigorosa: tratta come guasto anche ciò che non si può verificare',
     'Print the output in JSON format': "Stampa l'output in formato JSON",
     'Print the summary with FAIL=N OK=N counts': 'Stampa il riepilogo con i conteggi FAIL=N OK=N',
+    'Print how long each check took, slowest first': 'Stampa quanto ha impiegato ogni controllo, dal più lento',
+    'Check timings (slowest first): {count} checks': 'Tempi dei controlli (dal più lento): {count} controlli',
     'Apply automatic remedies for fixable problems': 'Applica i rimedi automatici per i problemi riparabili',
     'Align this machine now': 'Allinea questa macchina adesso',
     'Proceed even without reaching the remote': 'Procedi anche senza raggiungere il remoto',

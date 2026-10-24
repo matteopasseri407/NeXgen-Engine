@@ -16,6 +16,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from nexgen_core.checks import schedule  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.env_checks import check_state_dir, check_vault_path  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.git_checks import (  # noqa: E402 - sys.path shim for cloned checkout
     check_engine_lane,
@@ -109,12 +110,17 @@ class Doctor:
         state_dir: Path | None = None,
         home: Path | None = None,
         engine_root: Path | None = None,
+        deadline_seconds: float | None = None,
     ) -> None:
         self.home = resolve_home(home)
         _v = resolve_vault_data(self.home, vault_data)
         self.vault_data = _v
         self.state_dir = resolve_state_dir(self.home, state_dir)
         self.engine_root = resolve_engine_root(self.home, engine_root)
+        #: How long a read-only run may take before it reports what is still
+        #: missing. `None` means "wait for everything", which is what the full
+        #: doctor does: someone reading it wants the whole answer.
+        self.deadline_seconds = deadline_seconds
 
     def run_diagnostics(self, apply_remedies: bool = False) -> Report:
         """Runs every registered check (read-only by default).
@@ -147,31 +153,19 @@ class Doctor:
     def _diagnose(self, apply_remedies: bool) -> Report:
         """The checks themselves (read-only unless ``apply_remedies``).
 
-        Each check runs isolated: a check that raises becomes a finding of its
+        The registration below says *what* to check; `checks.schedule` decides
+        *how*: in order when remedies are applied, together inside a deadline
+        when this is the summary. A check that raises becomes a finding of its
         own and the report goes on. The doctor exists to describe a damaged
         machine, so a damaged file must never be able to end it before it
         has said anything (a corrupt manifest used to stop it with no report,
         and the alert that depends on it with it).
         """
-        report = Report()
+        checks: list[schedule.Check] = []
 
-        def run(check_id: str, produce) -> None:
-            try:
-                produced = produce()
-            except Exception as exc:  # noqa: BLE001 - the doctor must survive the damage it diagnoses
-                report.add(CheckOutcome(
-                    id=f"{check_id}.crashed",
-                    severity=Severity.BROKEN,
-                    message=t(
-                        "The check '{check}' could not run: {error}",
-                        check=check_id, error=f"{type(exc).__name__}: {exc}",
-                    ),
-                    action=t("Run 'nexgen doctor --json' and look at this check; the rest of the report is still valid."),
-                ))
-                return
-            for outcome in (produced if isinstance(produced, list) else [produced]):
-                if outcome is not None:
-                    report.add(outcome, apply_remedy=apply_remedies)
+        def run(check_id: str, produce, resource: str | None = None) -> None:
+            """Register one check. Nothing runs here: the schedule runs it."""
+            checks.append(schedule.Check(check_id, produce, resource))
 
         vault, home, state = self.vault_data, self.home, self.state_dir
         manifest_mcp = vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
@@ -193,12 +187,14 @@ class Doctor:
 
         if vault.is_dir():
             # 2. Git checks
-            run("git.alignment", lambda: check_git_alignment(vault))
+            # The two that fetch share one repository lock: run together they
+            # contend for `.git/FETCH_HEAD.lock`, and one fails for no reason.
+            run("git.alignment", lambda: check_git_alignment(vault), "vault-git-remote")
             run("git.remotes_config", lambda: check_remotes_config(vault))
             run("git.vault_remote_privacy", lambda: check_vault_remote_privacy(vault))
             run("git.engine_lane", lambda: check_engine_lane(self.engine_root))
             run("git.quarantine", lambda: check_quarantine_branches(vault))
-            run("git.mirror_alignment", lambda: check_mirror_alignment(vault))
+            run("git.mirror_alignment", lambda: check_mirror_alignment(vault), "vault-git-remote")
 
             # 3. MCP checks
             run("mcp.manifest", lambda: check_mcp_manifest(manifest_mcp))
@@ -251,7 +247,12 @@ class Doctor:
             # 7. Canonical instructions and bootstrap hygiene
             _run_instruction_checks(run, vault, home)
 
-        return report
+        # A repair must never race the checks that judge the same machine, so
+        # `--fix` keeps its one-at-a-time run. Everything else is read-only and
+        # independent, and the summary runs it all at once inside its deadline.
+        if apply_remedies:
+            return schedule.run_in_order(checks, apply_remedies=True)
+        return schedule.run(checks, deadline_seconds=self.deadline_seconds)
 
 
 def _run_instruction_checks(run, vault: Path, home: Path) -> None:
@@ -270,16 +271,58 @@ def _run_instruction_checks(run, vault: Path, home: Path) -> None:
     run("instructions.bootstrap_pointer_integrity", lambda: check_bootstrap_pointer_integrity(vault))
 
 
-def _run_diagnostics(doc: Doctor, apply_remedies: bool = False) -> Report:
-    """Run phase (no rendering): executes every check and returns the report."""
-    return doc.run_diagnostics(apply_remedies=apply_remedies)
+def summary_budget(*, summary: bool, fix: bool) -> float | None:
+    """The deadline a run gets: the summary's, or none at all.
+
+    A repair keeps the old, unhurried behaviour: it changes files, and cutting
+    it off half way is worse than waiting. A reading that someone is waiting on
+    from a git hook is the case the deadline exists for.
+    """
+    return schedule.SUMMARY_DEADLINE_SECONDS if summary and not fix else None
 
 
-def _render_report(report: Report, args: argparse.Namespace) -> int:
-    """Render phase (no checks): prints the report and computes the exit code."""
-    if args.json:
+def diagnose(*, summary: bool = False, fix: bool = False) -> Report:
+    """Run every check the way the caller asked: no deadline, or the summary's."""
+    return Doctor(deadline_seconds=summary_budget(summary=summary, fix=fix)).run_diagnostics(
+        apply_remedies=fix
+    )
+
+
+def _print_timings(report: Report) -> None:
+    """How long each check took, slowest first.
+
+    The pre-push hook and the verification of a collection run `--summary`
+    under a budget, so the one number that has to stay inside it is the run's
+    own duration. This is the table that says which check spent it.
+    """
+    if not report.timings:
+        return
+    slowest = sorted(report.timings, key=lambda item: item[1], reverse=True)
+    print("\n" + t("Check timings (slowest first): {count} checks", count=len(slowest)))
+    for check_id, seconds in slowest:
+        print(f"{seconds:8.3f}s  {check_id}")
+
+
+def render_report(
+    report: Report,
+    *,
+    as_json: bool = False,
+    summary: bool = False,
+    verbose: bool = False,
+    timings: bool = False,
+    strict: bool = False,
+) -> int:
+    """Print one report and return the exit code. The only renderer there is.
+
+    `nexgen doctor` and this module's own entry both come here: the command the
+    hooks run is the `nexgen` one, and while it kept its own copy of this
+    function a flag added here (a timing table, a new count) silently existed on
+    one path and not on the other. The signature is keyword-only on purpose, so
+    a caller reads as what it asks for rather than as six booleans in a row.
+    """
+    if as_json:
         print(report.format_json())
-    elif args.summary:
+    elif summary:
         fail_count = len(report.broken)
         ok_count = report.ok_count
         undet_count = len(report.undetermined)
@@ -288,9 +331,24 @@ def _render_report(report: Report, args: argparse.Namespace) -> int:
             for b in report.broken:
                 print(f"  {safe_mark('✗')} {safe_text(b.message)}")
     else:
-        print(safe_text(report.format_human(verbose=args.verbose)))
+        print(safe_text(report.format_human(verbose=verbose)))
 
-    return report.exit_code(strict=args.strict)
+    if timings:
+        _print_timings(report)
+
+    return report.exit_code(strict=strict)
+
+
+def _render_report(report: Report, args: argparse.Namespace) -> int:
+    """Render phase (no checks): prints the report and computes the exit code."""
+    return render_report(
+        report,
+        as_json=args.json,
+        summary=args.summary,
+        verbose=args.verbose,
+        timings=getattr(args, "timings", False),
+        strict=args.strict,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -301,11 +359,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help=t("Print the output in JSON format"))
     parser.add_argument("--summary", action="store_true", help=t("Print the summary with FAIL=N OK=N counts"))
     parser.add_argument("--fix", "--remedy", action="store_true", help=t("Apply automatic remedies for fixable problems"))
+    parser.add_argument("--timings", action="store_true", help=t("Print how long each check took, slowest first"))
 
     args = parser.parse_args(argv)
 
-    doc = Doctor()
-    report = _run_diagnostics(doc, apply_remedies=args.fix)
+    report = diagnose(summary=args.summary, fix=args.fix)
 
     return _render_report(report, args)
 
