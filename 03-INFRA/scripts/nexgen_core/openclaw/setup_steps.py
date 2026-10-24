@@ -1,3 +1,4 @@
+# nexgen: one-job reason="individual execution steps for OpenClaw gateway setup"
 """The nine steps of `nexgen openclaw setup`, one function each.
 
 One job: do the work of one step and say what it did. The order, the plan and
@@ -266,9 +267,13 @@ def write_step(setup: Setup, plan) -> str:
 
 def workspaces_step(setup: Setup, plan, before: set[str]) -> None:
     """Step 5: the folders, the manuals, and the first-run file to remove."""
+    from nexgen_core.openclaw.squad import find_squad_file, get_squad_souls, load_squad
+
     dirs = agent_dirs(plan.config.get("agents", {}).get("entries") or {})
     created = {agent for agent, path in dirs.items() if created_by_openclaw(path, setup.state_dir, before)}
-    prepare(dirs, created, plan.choices.lang or None, setup.out)
+    squad_file = find_squad_file(setup.vault_data, home=setup.home)
+    souls = get_squad_souls(load_squad(squad_file))
+    prepare(dirs, created, plan.choices.lang or None, setup.out, souls=souls)
 
 
 def wait_for_port(

@@ -30,6 +30,7 @@ from nexgen_core.openclaw.profile import (
     agent_models,
     build_config,
 )
+from nexgen_core.openclaw.squad import apply_squad, find_squad_file, load_squad
 from nexgen_core.paths import openclaw_config, resolve_home
 from nexgen_core.runtimes.openclaw import PLUGIN_ID
 
@@ -271,6 +272,16 @@ def _binding_note(config: dict[str, Any]) -> str | None:
     return t("The setup adds a binding for these channels: {pairs}.", pairs=", ".join(pairs))
 
 
+def _with_squad(
+    config: dict[str, Any],
+    vault_data: Path | None,
+    home: Path | None,
+    current: dict[str, Any] | None,
+) -> dict[str, Any]:
+    squad_data = load_squad(find_squad_file(vault_data, home=home))
+    return apply_squad(config, squad_data, current) if squad_data else config
+
+
 def build_plan(
     detected: Detection | None = None,
     choices: Choices | None = None,
@@ -291,7 +302,10 @@ def build_plan(
     home_dir = resolve_home(home)
     current, error = read_config(path)
     failover, failover_notes = quota_policy.load(home, vault=vault_data)
-    proposed = build_config(snapshot, chosen, current, home=home_dir, platform=platform)
+    proposed = _with_squad(
+        build_config(snapshot, chosen, current, home=home_dir, platform=platform),
+        vault_data, home_dir, current,
+    )
     config = with_chains(proposed, failover)
     deposited = plugin_deposited if plugin_deposited is not None else (path.parent / "extensions" / PLUGIN_ID).is_dir()
     config = _with_engine_plugin(config, deposited)

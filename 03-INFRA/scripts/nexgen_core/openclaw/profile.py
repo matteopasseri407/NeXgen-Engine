@@ -225,6 +225,17 @@ def _workspace(agent_id: str, current: dict[str, Any] | None, state_dir: Path | 
     return str(state_dir / "workspace" if agent_id == "main" else state_dir / f"workspace-{agent_id}")
 
 
+def _existing_agent_name(current: dict[str, Any] | None, agent_id: str) -> str | None:
+    if not isinstance(current, dict):
+        return None
+    entries = current.get("agents", {}).get("entries", {}) if isinstance(current.get("agents"), dict) else {}
+    agent_entry = entries.get(agent_id) if isinstance(entries, dict) else None
+    if not isinstance(agent_entry, dict):
+        return None
+    identity = agent_entry.get("identity") if isinstance(agent_entry.get("identity"), dict) else {}
+    return identity.get("name") or agent_entry.get("name")
+
+
 def _sviluppo_entry(model: str, current: dict[str, Any] | None, state_dir: Path | None, language: str) -> dict[str, Any]:
     """The OpenCode agent: a native agent on the Go key that drives real OpenCode.
 
@@ -234,7 +245,8 @@ def _sviluppo_entry(model: str, current: dict[str, Any] | None, state_dir: Path 
     one: the agent opens it with `sessions_spawn` (runtime `acp`, agent
     `opencode`), as its manual says, and the session shows up in the panel.
     """
-    name = SVILUPPO_NAMES[language]
+    existing_name = _existing_agent_name(current, SVILUPPO_ID)
+    name = existing_name or SVILUPPO_NAMES[language]
     entry: dict[str, Any] = {"name": name, "identity": {"name": name}}
     workspace = _workspace(SVILUPPO_ID, current, state_dir)
     if workspace:
@@ -251,9 +263,12 @@ def _agent_entries(models: dict[str, str], detected: Detection, current: dict[st
         if agent_id == SVILUPPO_ID:
             entries[agent_id] = _sviluppo_entry(model, current, state_dir, language)
             continue
+        existing_name = _existing_agent_name(current, agent_id)
+        default_name = IDENTITY_NAMES[language].get(agent_id, agent_id)
+        chosen_name = existing_name or default_name
         entry: dict[str, Any] = {
             "name": agent_id,
-            "identity": {"name": IDENTITY_NAMES[language][agent_id]},
+            "identity": {"name": chosen_name},
             "model": model,
         }
         workspace = _workspace(agent_id, current, state_dir)

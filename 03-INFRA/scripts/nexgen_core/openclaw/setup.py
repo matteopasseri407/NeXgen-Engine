@@ -191,6 +191,9 @@ def _apply(setup: Setup, installed: Detection, plan, before: set[str], ask: Call
     if outcome == "failed":
         return 1
     write_gateway_service_env(setup, plan.config)
+    from nexgen_core.openclaw.squad import register_model_keys
+
+    register_model_keys(setup, plan.config)
     # Only after OpenClaw accepted the file: chains the plugin would offer for agents
     # the file no longer carries would move a turn to a model the gateway cannot run.
     governor_step(setup, plan)

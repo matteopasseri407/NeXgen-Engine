@@ -81,6 +81,7 @@ def prepare(
     lang: str | None,
     emit: Callable[[str], None],
     dry_run: bool = False,
+    souls: Mapping[str, str] | None = None,
 ) -> list[Path]:
     """Create each workspace, write the missing manuals, drop the first-run file.
 
@@ -98,6 +99,11 @@ def prepare(
         if missing:
             made.append(directory)
         written = _write_manuals(directory, agent_id, lang, replace=fresh, emit=emit)
+        if souls and agent_id in souls:
+            soul_path = directory / "SOUL.md"
+            if fresh or not soul_path.exists():
+                atomic_write_text(soul_path, souls[agent_id])
+                written += 1
         bootstrap = directory / BOOTSTRAP_FILE
         removed = False
         if fresh and bootstrap.is_file():

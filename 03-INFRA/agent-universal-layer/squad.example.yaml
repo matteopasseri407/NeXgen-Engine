@@ -1,0 +1,47 @@
+# squad.example.yaml — Squad as data for NeXgen Engine & OpenClaw
+#
+# Copy this file to your Vault as `squad.yaml` (e.g. at the root or under
+# 03-INFRA/agent-universal-layer/squad.yaml) to declare your squad structure.
+# When present, squad.yaml takes precedence over defaults during setup.
+
+agents:
+  main:
+    name: "assistente"
+    model: "anthropic/claude-opus-5-5"
+    role: "Frontline assistant and entrypoint for conversations"
+    tools:
+      agentToAgent:
+        send: ["capo", "sviluppo"]
+
+  capo:
+    name: "capo"
+    model: "anthropic/claude-opus-5-5"
+    role: "Strategic lead, deep planning, and review"
+    thinkingDefault: "high"
+    soul: |
+      # Capo — Guida strategica e supervisione
+      Valuta architettura, rischi e correttezza prima dell'azione.
+      Non saltare passaggi di verifica. Risposte ponderate ed essenziali.
+
+  sviluppo:
+    name: "sviluppo"
+    model: "opencode-go/deepseek-v4.1-flash"
+    role: "Code execution and development tasks"
+    tools:
+      exec:
+        host: "node"
+        node: "node-pc"
+      agentToAgent:
+        send: ["capo"]
+
+models:
+  # Optional model overrides or provider configurations
+  anthropic/claude-opus-5-5:
+    agentRuntime:
+      id: "claude-cli"
+
+bindings:
+  # Channel bindings: which agent answers on which communication channel
+  - match:
+      channel: "telegram"
+    agentId: "main"
