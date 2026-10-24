@@ -376,6 +376,30 @@ Without a sidecar beside it the plugin has no policy to run, so it refuses the c
 instead of allowing them: the package carries the mechanism, and the policy arrives by the route that
 gateway allows.
 
+## The MCP bridge, when the gateway runs in WSL
+
+The Windows companion app keeps OpenClaw in an app-owned WSL distro where interop is off
+and `C:` is not mounted, so a connector the engine declares as a Windows command
+(`python ...\lazy-mcp.py`, `node ...\playwright-human-safe.mjs`) never starts there.
+
+`nexgen mcp bridge start` runs those connectors on the Windows side and serves them as MCP
+Streamable HTTP: one endpoint per connector at `http://127.0.0.1:8765/mcp/<name>`, plus
+`/mcp` for the gateway itself (`lazy-mcp`). The list of connectors is not written twice: the
+bridge asks the renderer what this machine mounts directly in OpenClaw and starts exactly
+that, so a connector added to the manifest appears at the bridge on its own. `--server NAME`
+narrows it, `--wsl` binds the virtual WSL interface, which is the address a distro on the
+default NAT network reaches (with mirrored networking, loopback is enough).
+
+Every request carries `Authorization: Bearer $NEXGEN_MCP_BRIDGE_TOKEN`. The token is
+generated into the engine's secrets deposit (`~/.config/nexgen/secrets.env`, 0600) and is
+never printed; OpenClaw substitutes the variable itself, so no value enters `openclaw.json`.
+Nothing starts the bridge automatically: `nexgen mcp bridge start`, `stop` and `status` are
+the whole surface, and `status` exits non-zero when nothing is listening.
+
+`0.0.0.0` is accepted only as an explicit `--host` and only with the token. `stop` asks the
+listener to finish and waits for the port; it never kills a process by pid, because the pid
+in a stale state file can belong to somebody else by the time it is used.
+
 ## Installazione con un comando
 
 `nexgen openclaw setup [--yes] [--lan] [--dry-run] [--no-sviluppo] [--node-gateway]` runs nine steps, in this

@@ -49,6 +49,23 @@ engine-owned paths or ports (`AGENT_VAULT_DATA`, `AGENT_ENGINE_ROOT`,
 gateway's environment is not the engine's. A value that mixes the two stays a
 reference: a missing port is a better outcome than a leaked secret.
 
+### When the gateway is in WSL
+
+The app-owned WSL distro cannot launch the Windows commands the manifest declares for
+stdio connectors. `nexgen mcp bridge start` serves those same connectors on the Windows
+side as MCP Streamable HTTP, and the renderer writes, for a connector the engine asks it
+to bridge, `url`, `transport: "streamable-http"` and
+`Authorization: Bearer ${NEXGEN_MCP_BRIDGE_TOKEN}` instead of `command` and `args`. Nothing
+else about that connector changes: its timeouts and its tool filter travel with it.
+
+`nexgen_core.mcp_bridge.bridged_http_servers()` builds that map from the running bridge and
+`McpRenderer.openclaw_http_servers` is where the engine hands it over; with no bridge
+running the map is empty and every connector renders as before, because a connector
+pointed at a dead port fails at the first call. The token stays a reference in the file:
+it is generated into the engine's deposit on this machine, and the gateway must find
+`NEXGEN_MCP_BRIDGE_TOKEN` in its own environment inside the distro for the substitution to
+resolve.
+
 ## Instructions
 
 OpenClaw has no pointer file. At every session it loads the `AGENTS.md` of the
