@@ -224,19 +224,20 @@ def _workshop_dir(state_dir: Path, home: Path, agent_id: str, entry: Any) -> Pat
     return base / "workshop-skills"
 
 
-def _newest_mtime(path: Path) -> float | None:
-    """The newest change inside one skill, or None when it cannot be read."""
-    try:
-        newest = path.stat().st_mtime
-    except OSError:  # nexgen: allow reason="a skill folder that vanished is not counted"
-        return None
-    if path.is_dir():
-        for child in path.rglob("*"):
-            try:
-                newest = max(newest, child.stat().st_mtime)
-            except OSError:  # nexgen: allow reason="one unreadable file does not hide the skill"
-                continue
-    return newest
+def _changed_since(path: Path, cutoff: float) -> bool:
+    """Whether one skill changed since `cutoff`, from the folder and its SKILL.md.
+
+    Walking every reference and `.archive` copy made the doctor slow on a real
+    machine; the skill's own folder and its `SKILL.md` are the two timestamps
+    that change when the skill itself is created, rewritten, or archived.
+    """
+    for candidate in (path, path / "SKILL.md"):
+        try:
+            if candidate.stat().st_mtime >= cutoff:
+                return True
+        except OSError:  # nexgen: allow reason="a skill folder that vanished is not counted"
+            continue
+    return False
 
 
 def _recent_skills(directory: Path, cutoff: float) -> int:
@@ -245,10 +246,7 @@ def _recent_skills(directory: Path, cutoff: float) -> int:
         children = list(directory.iterdir())
     except OSError:  # nexgen: allow reason="no folder means no learned skills yet"
         return 0
-    return sum(
-        1 for child in children
-        if (newest := _newest_mtime(child)) is not None and newest >= cutoff
-    )
+    return sum(1 for child in children if _changed_since(child, cutoff))
 
 
 def check_workshop_skills(
