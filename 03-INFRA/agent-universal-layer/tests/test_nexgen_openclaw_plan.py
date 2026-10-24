@@ -308,3 +308,22 @@ def test_the_plan_names_isolated_native_gateway_when_both_present(tmp_path):
 
     assert "points to its own isolated native gateway" in text
     assert "setup below writes the native one" in text
+
+
+def test_plugin_not_enabled_when_folder_exists_without_index_mjs(tmp_path):
+    """The plugin is enabled only if its executable entrypoint index.mjs is present."""
+    home = tmp_path / "home"
+    path = put_config(home, {})
+    plugin_dir = path.parent / "extensions" / "nexgen"
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+
+    plan = build_plan(detected=detected(path), home=home, env={})
+    assert "nexgen" not in plan.config.get("plugins", {}).get("allow", [])
+    assert "nexgen" not in plan.config.get("plugins", {}).get("entries", {})
+    assert "plugins.entries.nexgen.enabled" not in plan.added
+
+    (plugin_dir / "index.mjs").write_text("// entrypoint", encoding="utf-8")
+    plan_with_entrypoint = build_plan(detected=detected(path), home=home, env={})
+    assert "nexgen" in plan_with_entrypoint.config.get("plugins", {}).get("allow", [])
+    assert "plugins.entries.nexgen.enabled" in plan_with_entrypoint.added
+

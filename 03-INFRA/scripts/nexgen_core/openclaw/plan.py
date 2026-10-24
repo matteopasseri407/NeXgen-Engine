@@ -307,7 +307,11 @@ def build_plan(
         vault_data, home_dir, current,
     )
     config = with_chains(proposed, failover)
-    deposited = plugin_deposited if plugin_deposited is not None else (path.parent / "extensions" / PLUGIN_ID).is_dir()
+    deposited = (
+        plugin_deposited
+        if plugin_deposited is not None
+        else (path.parent / "extensions" / PLUGIN_ID / "index.mjs").is_file()
+    )
     config = _with_engine_plugin(config, deposited)
 
     proposed_flat = _flatten(config)

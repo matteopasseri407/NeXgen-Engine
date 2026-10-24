@@ -327,10 +327,10 @@ def _install_left_a_gateway(setup: Setup, result: dict) -> bool:
 
 def fix_state_permissions(setup: Setup) -> bool:
     """Ensure OpenClaw state directory and files are not group/world-writable."""
-    if (setup.platform or sys.platform) == "win32":
+    if (getattr(setup, "platform", None) or sys.platform) == "win32":
         return True
-    state_dir = setup.state_dir
-    if not state_dir.exists():
+    state_dir = getattr(setup, "state_dir", None)
+    if not state_dir or not state_dir.exists():
         return True
     fixed = False
     try:
@@ -347,10 +347,13 @@ def fix_state_permissions(setup: Setup) -> bool:
             except OSError:  # nexgen: allow reason="unreadable individual files in state dir must not abort permission hardening"
                 pass
     except OSError as exc:
-        setup.out(t("Warning: could not inspect state directory permissions: {error}", error=exc))
+        out = getattr(setup, "out", None)
+        if callable(out):
+            out(t("Warning: could not inspect state directory permissions: {error}", error=exc))
         return False
-    if fixed:
-        setup.out(t("OpenClaw state permissions corrected (removed group/world-writable)."))
+    out = getattr(setup, "out", None)
+    if fixed and callable(out):
+        out(t("OpenClaw state permissions corrected (removed group/world-writable)."))
     return True
 
 
@@ -448,58 +451,17 @@ def phone_step(setup: Setup) -> None:
                 "'nexgen openclaw pair --approve <id>' approves it."))
 
 
-def _find_engine_hooks_dir(engine_root: Path | None) -> Path | None:
-    if engine_root:
-        for candidate in (
-            engine_root / "03-INFRA" / "agent-universal-layer" / "hooks",
-            engine_root / "agent-universal-layer" / "hooks",
-        ):
-            if candidate.is_dir():
-                return candidate
-    candidate = Path(__file__).resolve().parents[3] / "agent-universal-layer" / "hooks"
-    if candidate.is_dir():
-        return candidate
-    return None
-
-
 def is_plugin_verified(setup: Setup) -> bool:
+    """True when the plugin folder exists and contains its executable entrypoint."""
     plugin_dir = engine_plugin_path(setup)
-    manifest = plugin_dir / "openclaw.plugin.json"
-    index = plugin_dir / "index.mjs"
-    return plugin_dir.is_dir() and manifest.is_file() and index.is_file()
-
-
-def _deposit_plugin_attempt(setup: Setup) -> bool:
-    from nexgen_core.runtimes.openclaw import plugin_files
-
-    engine_hooks = _find_engine_hooks_dir(setup.engine_root)
-    if not engine_hooks:
-        return False
-    try:
-        files = plugin_files(engine_hooks)
-        plugin_dir = engine_plugin_path(setup)
-        OpenClawRuntime()._deploy_plugin(plugin_dir, files)
-    except Exception as exc:  # noqa: BLE001
-        setup.out(t("Plugin deposit exception: {error}", error=exc))
-        return False
-    return is_plugin_verified(setup)
+    return plugin_dir.is_dir() and (plugin_dir / "index.mjs").is_file()
 
 
 def plugin_step(setup: Setup) -> bool:
-    """The engine's plugin is verified and deposited in the same setup turn."""
+    """The engine's plugin is verified before enabling in configuration."""
     if is_plugin_verified(setup):
         setup.out(t("The engine plugin {plugin} is deposited and enabled.", plugin=PLUGIN_ID))
         return True
 
-    setup.out(t("Engine plugin not deposited: depositing now..."))
-    success = _deposit_plugin_attempt(setup)
-    if not success:
-        setup.out(t("First deposit attempt unverified; retrying once..."))
-        success = _deposit_plugin_attempt(setup)
-
-    if not success:
-        setup.out(t("Error: engine plugin {plugin} could not be deposited or verified.", plugin=PLUGIN_ID))
-        return False
-
-    setup.out(t("The engine plugin {plugin} is deposited and enabled.", plugin=PLUGIN_ID))
+    setup.out(t("The engine plugin {plugin} is not deposited on this machine: not enabled.", plugin=PLUGIN_ID))
     return True
