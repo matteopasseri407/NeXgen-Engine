@@ -34,19 +34,23 @@ DISPLAY_NAMES = {"main": "assistente", "capo": "capo", "automazioni": "automazio
 
 
 def _with_engine_plugin(config: dict[str, Any], deposited: bool) -> dict[str, Any]:
-    """The engine's guardrail plugin, enabled only when its folder is on disk.
+    """The engine's guardrail plugin, enabled, and allowed to read the conversation.
 
     Enabling a plugin that is not there makes OpenClaw fail to start; the
     plugin is deposited by the runtime adapter, which is the only thing that
     knows how. The plan and the setup therefore share this one decision, so
     what the plan prints is what the setup writes.
 
-    `hooks.allowConversationAccess` is granted here because a plugin that is not
-    bundled with OpenClaw is refused every conversation hook without it, and
-    `before_model_resolve` — where the governor moves a turn off a spent plan —
-    is one of them. Without the grant the registration is dropped and the
-    handover silently never happens. The plugin is the engine's own and already
-    runs inside the gateway process; this is what makes its registration legal.
+    `hooks.allowConversationAccess` is the permission OpenClaw withholds from
+    every plugin that is not bundled with it: without it a plugin is given no
+    conversation hook at all. Two of the engine's are conversation hooks, and
+    both go quiet without the grant: `before_model_resolve`, where the governor
+    moves a turn off a spent plan, and the turn's messages and finished answer,
+    which the evidence check judges. It is merged into whatever `hooks` block is
+    already there: a key the person wrote is never removed, and a plugin older
+    than these checks does not care that it is present. The plugin is the
+    engine's own and already runs inside the gateway process; this is what makes
+    its registration legal.
     """
     if not deposited:
         return config
@@ -56,7 +60,7 @@ def _with_engine_plugin(config: dict[str, Any], deposited: bool) -> dict[str, An
         allow.append(PLUGIN_ID)
     entries = dict(plugins.get("entries") or {})
     entry = dict(entries.get(PLUGIN_ID) or {})
-    hooks = dict(entry.get("hooks") or {})
+    hooks = dict(entry.get("hooks") or {}) if isinstance(entry.get("hooks"), dict) else {}
     hooks["allowConversationAccess"] = True
     entry.update({"enabled": True, "hooks": hooks})
     entries[PLUGIN_ID] = entry

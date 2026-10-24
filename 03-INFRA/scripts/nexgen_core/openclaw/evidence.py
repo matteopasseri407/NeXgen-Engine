@@ -108,6 +108,17 @@ def _plugin_entry(config: dict[str, Any], plugin_id: str) -> dict[str, Any]:
     return entry if isinstance(entry, dict) else {}
 
 
+def conversation_access(entry: dict[str, Any]) -> bool:
+    """Whether the plugin entry grants the conversation access the check needs.
+
+    OpenClaw blocks the conversation hooks of every non-bundled plugin unless
+    `plugins.entries.<id>.hooks.allowConversationAccess` is exactly `true`: without it a handler is
+    not given the turn's messages or the finished answer, and the check has nothing to judge.
+    """
+    hooks = entry.get("hooks") if isinstance(entry.get("hooks"), dict) else {}
+    return hooks.get("allowConversationAccess") is True
+
+
 def check_evidence(config: dict[str, Any], config_path: Path) -> CheckOutcome:
     """One line: is the check on, and for which local models.
 
@@ -137,6 +148,15 @@ def check_evidence(config: dict[str, Any], config_path: Path) -> CheckOutcome:
             id="openclaw.evidence",
             severity=Severity.OK,
             message=t("The evidence check is off: this machine names no local model whose answers it could check."),
+        )
+    if not conversation_access(_plugin_entry(config, PLUGIN_ID)):
+        return CheckOutcome(
+            id="openclaw.evidence",
+            severity=Severity.WARN,
+            message=t("The evidence check covers {providers}, but OpenClaw does not let the plugin read the "
+                      "conversation, so no answer is checked.", providers=", ".join(providers)),
+            action=t("Run 'nexgen openclaw setup' with the gateway stopped: it grants "
+                     "plugins.entries.nexgen.hooks.allowConversationAccess."),
         )
     return CheckOutcome(
         id="openclaw.evidence",

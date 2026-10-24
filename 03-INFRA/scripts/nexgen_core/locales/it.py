@@ -1439,6 +1439,10 @@ MESSAGES: dict[str, str] = {
         "Il controllo delle evidenze è spento: questa macchina non nomina nessun modello locale di cui controllare le risposte.",
     "The evidence check holds each answer of these local models to its own tool receipts: {providers}.":
         "Il controllo delle evidenze tiene ogni risposta di questi modelli locali alle ricevute dei suoi tool: {providers}.",
+    "The evidence check covers {providers}, but OpenClaw does not let the plugin read the conversation, so no answer is checked.":
+        "Il controllo delle evidenze copre {providers}, ma OpenClaw non lascia che il plugin legga la conversazione: nessuna risposta viene controllata.",
+    "Run 'nexgen openclaw setup' with the gateway stopped: it grants plugins.entries.nexgen.hooks.allowConversationAccess.":
+        "Lancia 'nexgen openclaw setup' con il gateway fermo: concede plugins.entries.nexgen.hooks.allowConversationAccess.",
     "The heartbeat is off, as the engine configures it.":
         "Il battito è spento, come lo configura il motore.",
     "The heartbeat runs every '{every}': it starts system jobs that write to the channels.":

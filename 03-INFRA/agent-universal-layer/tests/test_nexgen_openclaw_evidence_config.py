@@ -21,6 +21,9 @@ from nexgen_core.openclaw.detect import (  # noqa: E402 - sys.path shim for clon
 )
 from nexgen_core.openclaw.doctor import collect  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.evidence import evidence_section, local_refs  # noqa: E402
+from nexgen_core.openclaw.plan import build_plan  # noqa: E402
+from nexgen_core.openclaw.profile import Choices  # noqa: E402
+from nexgen_core.openclaw.setup_write import merged_document  # noqa: E402
 from nexgen_core.report import Severity  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.runtimes.openclaw import PLUGIN_ID, OpenClawRuntime  # noqa: E402
 
@@ -157,7 +160,10 @@ def outcomes(tmp_path: Path, config: dict) -> dict:
 
 def enabled_config() -> dict:
     config = local_config()
-    config["plugins"]["entries"][PLUGIN_ID] = {"enabled": True}
+    config["plugins"]["entries"][PLUGIN_ID] = {
+        "enabled": True,
+        "hooks": {"allowConversationAccess": True},
+    }
     return config
 
 
@@ -196,3 +202,64 @@ def test_the_doctor_keeps_the_off_cases_apart(tmp_path):
     assert off.message != absent.message
     for outcome in (off, absent):
         assert "ollama" not in outcome.message and "llama-cpp" not in outcome.message
+
+
+# ------------------------------------------------------- the permission the check needs
+
+
+def test_the_doctor_names_a_conversation_the_plugin_may_not_read(tmp_path):
+    """A check that covers a provider and is never handed an answer is a check that does nothing."""
+    config = enabled_config()
+    config["plugins"]["entries"][PLUGIN_ID].pop("hooks")
+    home = a_home(tmp_path, config)
+    deposit(home, tmp_path)
+
+    evidence = outcomes(tmp_path, config)["openclaw.evidence"]
+
+    assert evidence.severity == Severity.WARN
+    assert "allowConversationAccess" in evidence.action
+
+
+def test_the_plan_grants_the_conversation_access_the_check_needs(tmp_path):
+    """`setup` writes what the plan prints, and the plugin is useless without this grant."""
+    home = a_home(tmp_path, local_config())
+
+    plan = build_plan(
+        detected=machine(home / ".openclaw" / "openclaw.json"),
+        choices=Choices(),
+        home=home,
+        vault_data=tmp_path / "vault",
+        engine_root=tmp_path / "engine",
+        plugin_deposited=True,
+    )
+
+    entry = plan.config["plugins"]["entries"][PLUGIN_ID]
+    assert entry["enabled"] is True
+    assert entry["hooks"]["allowConversationAccess"] is True
+
+
+def test_the_grant_is_merged_into_the_hooks_block_already_there(tmp_path):
+    """Nothing the person wrote in that block is removed to make room for the grant."""
+    config = local_config()
+    config["plugins"]["entries"][PLUGIN_ID] = {
+        "enabled": False,
+        "hooks": {"allowPromptInjection": False, "timeoutMs": 30000},
+    }
+    home = a_home(tmp_path, config)
+
+    plan = build_plan(
+        detected=machine(home / ".openclaw" / "openclaw.json"),
+        choices=Choices(),
+        home=home,
+        vault_data=tmp_path / "vault",
+        engine_root=tmp_path / "engine",
+        plugin_deposited=True,
+    )
+
+    written = merged_document(plan.current, plan.config)
+
+    assert written["plugins"]["entries"][PLUGIN_ID]["hooks"] == {
+        "allowPromptInjection": False,
+        "timeoutMs": 30000,
+        "allowConversationAccess": True,
+    }
