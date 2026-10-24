@@ -249,7 +249,7 @@ def run_setup(
     )
     if decision.plan is None:
         return decision.code
-    return _apply(setup, installed, decision.plan, before, confirm or _ask)
+    return _apply(setup, installed, decision.plan, before, confirm or ask_yes_no)
 
 
 def run_restart(
