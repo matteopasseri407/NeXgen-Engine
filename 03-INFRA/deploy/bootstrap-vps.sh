@@ -6,16 +6,18 @@
 #   cp .env.example .env   # fill in secrets
 #   bash bootstrap-vps.sh
 #
-# Brings up: n8n, Firecrawl, Vault OCR, vault-mcp (the Git-backed write door
-# for vault notes). Each stack is independent; you can comment out the ones
-# you do not need (vault-mcp also honors VAULT_MCP_ENABLED=0).
+# Brings up: n8n, Vault OCR, vault-mcp (the Git-backed write door for vault
+# notes). Each stack is independent; you can comment out the ones you do not
+# need (vault-mcp also honors VAULT_MCP_ENABLED=0). Firecrawl is not deployed
+# here: the connector is the vendor's cloud API, mounted by the CLIs on the
+# workstation wherever FIRECRAWL_API_KEY exists.
 #
 # Images are pinned to explicit version tags in each docker-compose.yml (no
 # :latest — see the comment at the top of each compose file for how to also
 # pin a sha256 digest). To roll a stack back to a previous image after a bad
 # deploy, or to back up / restore the n8n volume, use backup-restore.sh next
 # to this script:
-#   ./backup-restore.sh backup [n8n|firecrawl|ocr|all]
+#   ./backup-restore.sh backup [n8n|ocr|all]
 #   ./backup-restore.sh restore <backup-file> <volume-name>
 #   ./backup-restore.sh rollback <stack> <image-env-var> <previous-image-ref>
 
@@ -181,25 +183,11 @@ ensure_env_secret() {
 # rather than inside the backed-up volume.
 ensure_env_secret N8N_ENCRYPTION_KEY
 
-# FIRECRAWL_REDIS_PASSWORD (finding C: firecrawl-redis had no requirepass/
-# ACL at all before). VAULT_OCR_TOKEN is deliberately NOT auto-generated
-# here -- the OCR API treats it as opt-in (see ocr/api/app.py) and defaults
-# to logging a warning rather than requiring it, to stay backward-compatible
-# with existing local/tunnel-only deploys; generate it yourself in .env if
-# you want to turn enforcement on.
-ensure_env_secret FIRECRAWL_REDIS_PASSWORD
-
-# FIRECRAWL_POSTGRES_PASSWORD: the NUQ queue Postgres (2.11 architecture,
-# firecrawl/docker-compose.yml) gets the same auto-generated treatment as
-# Redis -- never an unauthenticated datastore, never a hand-invented value.
-ensure_env_secret FIRECRAWL_POSTGRES_PASSWORD
-
-# SearXNG is enabled only when the operator configured the Brave key. Its
-# own secret is generated here, never hand-written and never printed.
-brave_search_api_key="$(grep -E '^BRAVE_SEARCH_API_KEY=' .env | tail -1 | cut -d '=' -f2-)"
-if [ -n "$brave_search_api_key" ]; then
-  ensure_env_secret FIRECRAWL_SEARXNG_SECRET
-fi
+# VAULT_OCR_TOKEN is deliberately NOT auto-generated here -- the OCR API
+# treats it as opt-in (see ocr/api/app.py) and defaults to logging a warning
+# rather than requiring it, to stay backward-compatible with existing
+# local/tunnel-only deploys; generate it yourself in .env if you want to turn
+# enforcement on.
 
 # VAULT_LIBRARY_TOKEN: bearer auth for the vault-mcp container AND the
 # workstation CLIs (manifest.yaml reads the same variable name). Generated
@@ -237,23 +225,10 @@ ensure_env_value() {
 # compose.yml` silently ignores the .env created at DEPLOY_DIR above and
 # every ${VAR} falls back to its compose-file default (often empty),
 # dropping secrets without any error. Confirmed live with `docker compose
-# ... config`, 2026-07-12: OPENAI_API_KEY resolved to the empty fallback
-# without --env-file, and correctly from .env with it.
+# ... config`, 2026-07-12: a secret such as N8N_MCP_TOKEN resolved to the
+# empty fallback without --env-file, and correctly from .env with it.
 echo "==> n8n"
 docker compose -f n8n/docker-compose.yml --env-file .env up -d --build
-
-echo "==> Firecrawl"
-if [ -n "$brave_search_api_key" ]; then
-  echo "  deep search: enabled (pinned SearXNG + Brave API)"
-  docker compose \
-    -f firecrawl/docker-compose.yml \
-    -f firecrawl/docker-compose.search.yml \
-    --env-file .env up -d --build
-else
-  echo "  WARNING: BRAVE_SEARCH_API_KEY is empty; deploying scrape/crawl/map only."
-  echo "  Add the key and re-run bootstrap-vps.sh to enable deep Web search."
-  docker compose -f firecrawl/docker-compose.yml --env-file .env up -d --build
-fi
 
 echo "==> Vault OCR"
 docker compose -f ocr/docker-compose.yml --env-file .env up -d --build
@@ -276,7 +251,6 @@ fi
 echo
 echo "Stacks up. Health checks:"
 echo "  n8n:        http://127.0.0.1:5678/healthz"
-echo "  firecrawl:  curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3002/"
 echo "  ocr:        curl -s http://127.0.0.1:3033/health"
 echo "  vault-mcp:  curl -s http://127.0.0.1:8081/healthz"
 echo "  (or: docker compose -f <stack>/docker-compose.yml ps, once the"

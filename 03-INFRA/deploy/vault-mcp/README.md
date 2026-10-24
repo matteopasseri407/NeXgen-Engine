@@ -28,7 +28,7 @@ as author "Vault MCP" — so vault history stays clean and attributable.
 ## Deploy (part of the standard VPS stack)
 
 `bootstrap-vps.sh` in the parent directory does all of this for you (it is
-the fourth stack, after n8n / Firecrawl / OCR):
+the third stack, after n8n and OCR):
 
 1. generates `VAULT_LIBRARY_TOKEN` into `.env` on first run,
 2. runs `provision-vault-repo.sh` (idempotent: bare repo + worktree +

@@ -196,3 +196,38 @@ def test_the_doctor_registers_the_cloud_key_check(machine, monkeypatch) -> None:
     assert produced["mcp.cloud_key"]().severity == Severity.OK
     monkeypatch.delenv("FIRECRAWL_API_KEY")
     assert produced["mcp.cloud_key"]().severity == Severity.WARN
+
+
+# ---- the deploy tree: no stack, no tunnel, no secrets to fill -----------------
+
+def test_the_deploy_tree_ships_no_firecrawl_stack() -> None:
+    deploy = UL.parent / "deploy"
+    assert not (deploy / "firecrawl").exists()
+    assert sorted(path.name for path in deploy.iterdir() if path.is_dir() and not path.name.startswith(".")) == [
+        "n8n", "ocr", "vault-mcp",
+    ]
+
+
+def _active_lines(path: Path) -> list[str]:
+    """The lines that do something: comments explain history and may name it."""
+    return [line for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")]
+
+
+def test_the_server_bootstrap_starts_no_firecrawl() -> None:
+    active = " ".join(_active_lines(UL.parent / "deploy" / "bootstrap-vps.sh")).lower()
+    assert "firecrawl" not in active
+    assert "3002" not in active
+    assert "brave_search_api_key" not in active
+
+
+def test_backup_restore_offers_no_firecrawl_stack() -> None:
+    active = " ".join(_active_lines(UL.parent / "deploy" / "backup-restore.sh")).lower()
+    assert "firecrawl" not in active
+
+
+def test_the_server_env_example_asks_for_no_firecrawl_secrets() -> None:
+    active = " ".join(_active_lines(UL.parent / "deploy" / ".env.example"))
+    assert "FIRECRAWL_" not in active
+    assert "BRAVE_SEARCH_API_KEY" not in active
+    assert "OPENAI_API_KEY" not in active
