@@ -75,6 +75,30 @@ nexgen-local sup window-check                               # opens a visible wi
 `sup status` and `sup costi` never compute a price of their own: they read what
 the harness reported.
 
+### Da OpenClaw
+
+The plugin command `/sup` answers with the same lines a terminal prints: no
+argument gives every task with its units and the spend of the sessions, an id
+gives that one task. It is read-only, and it runs
+`nexgen-local sup status --json` and `sup costi --json`, so the phone and the
+desk cannot disagree.
+
+The verbs that change something are tools, one per verb: `nexgen_sup_start`,
+`nexgen_sup_unit`, `nexgen_sup_run`, `nexgen_sup_collect`, `nexgen_sup_review`
+and `nexgen_sup_publish`. Each one is a thin wrapper of the verb above and
+returns the lines the engine printed. They are registered `optional` in the
+plugin, which in OpenClaw means "not offered to any model until an operator
+allowlists the exact name": `nexgen openclaw setup` writes that allowlist on the
+supervisor agent (`capo`) and on no other, as
+`agents.entries.capo.tools.alsoAllow`. If that agent already has its own
+`tools.allow`, the engine leaves it alone -- OpenClaw refuses `allow` and
+`alsoAllow` in the same scope -- and `nexgen openclaw plan` names the tools to
+add there.
+
+Two read-only tools are available to any agent: `nexgen_sup_status` and
+`nexgen_sup_costs`. The engine's guardrail sees every one of these calls on
+`before_tool_call`, like any other tool call.
+
 ## Chi fa cosa
 
 **The supervisor** is whoever can run the `sup` verbs: a person, a Claude Code

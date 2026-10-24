@@ -88,6 +88,40 @@ It is read at gateway start, so a change there needs the restart the setup alrea
 `nexgen doctor` prints one line, `openclaw.fallbacks`: whether a policy is declared, how many agents carry
 a chain, and which agents carry none.
 
+## What the chat can do
+
+The plugin turns the engine's own verbs into commands and tools, and every answer is the text the
+engine already rendered. The phone and the terminal therefore cannot disagree.
+
+| From the chat | What it answers | Who may use it |
+| --- | --- | --- |
+| `/quota` | what is left of each plan, and how old the reading is | anyone |
+| `/council <question>` | starts a council and answers with an identifier; the outcome arrives when the run ends | anyone |
+| `/sup` | every supervised task with its units, then the spend of the sessions | anyone |
+| `/sup <id>` | that one task | anyone |
+
+Agents reach the same things through tools:
+
+| Tool | What it does | Who may call it |
+| --- | --- | --- |
+| `nexgen_council`, `nexgen_council_result` | start a council, then read what it produced | any agent |
+| `nexgen_sup_status`, `nexgen_sup_costs` | read the supervision and its cost | any agent |
+| `nexgen_sup_start`, `nexgen_sup_unit`, `nexgen_sup_run`, `nexgen_sup_collect`, `nexgen_sup_review`, `nexgen_sup_publish` | drive a supervised unit through its steps | the supervisor agent, `capo` |
+
+The six tools that change something are registered `optional`: OpenClaw does not offer them to
+any model until an operator allowlists the exact name, and `nexgen openclaw setup` writes that
+allowlist on `capo` alone. An agent whose tools the person listed by hand keeps its own
+`tools.allow` -- OpenClaw refuses `allow` and `alsoAllow` in the same scope -- and
+`nexgen openclaw plan` names the tools to add there instead.
+
+None of this is a second door into the engine: the plugin starts the same CLI a terminal starts,
+without a shell, and the guardrail sees every tool call on `before_tool_call` like any other.
+
+A council is the one job that does not answer in the same turn. It runs for minutes, so `/council`
+starts it detached and says so at once; the end arrives through the engine's megaphone, which is
+the one surface allowed to speak to the person, and the run's own session directory keeps the
+whole transcript.
+
 ## The OpenCode agent, one to one
 
 `sviluppo` is not another OpenClaw agent answering in its own place: it is OpenCode itself, launched over
