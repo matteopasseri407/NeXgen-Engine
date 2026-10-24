@@ -372,7 +372,7 @@ def _blank_unit(unit: str) -> dict:
         "approved": False, "approved_head": "", "published": [], "model": "",
         "stalled_minutes": 0.0, "stall_threshold": 0.0, "repo": "", "base_ref": "",
         "cost": {}, "folder": "", "retired": False, "publish_conflicts": [],
-        "mcp": [],
+        "mcp": [], "identity": {},
     }
 
 
@@ -393,6 +393,7 @@ def _fold_creation(record: dict, row: dict) -> None:
         "remote_pushurls": dict(row.get("remote_pushurls") or {}),
         "config_hashes": dict(row.get("config_hashes") or {}),
         "url_override_keys": [str(key) for key in row.get("url_override_keys") or []],
+        "identity": dict(row.get("identity") or {}) if isinstance(row.get("identity"), dict) else {},
     })
 
 

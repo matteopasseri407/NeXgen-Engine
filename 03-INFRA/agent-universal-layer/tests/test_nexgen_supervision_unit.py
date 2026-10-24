@@ -6,6 +6,7 @@ finto, perché quello che si prova sono proprio i fatti di git.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -183,3 +184,32 @@ def test_unit_creation_records_assigned_mcp(task, repo, tmp_path):
 
     units = state.status(task)["units"]
     assert units[0]["mcp"] == ["server1", "server2"]
+
+
+def test_create_writes_owner_identity_to_worktree_config_and_journal(task, repo, tmp_path, lane):
+    record = _create(task, repo, tmp_path)
+    folder = Path(record["worktree"])
+    assert record.get("identity") == {"name": "t", "email": "t@example.com"}
+
+    assert git_in(folder, "config", "--get", "user.name").stdout.strip() == "t"
+    assert git_in(folder, "config", "--get", "user.email").stdout.strip() == "t@example.com"
+
+    events = state.read_events(task)
+    created = [row for row in events if row.get("event") == "unit_created"]
+    assert len(created) == 1
+    assert created[0].get("identity") == {"name": "t", "email": "t@example.com"}
+
+    ambiente = (lane / task / "22-ambiente-prova.md").read_text(encoding="utf-8")
+    assert "- identità: t <t@example.com>" in ambiente
+
+
+def test_create_refuses_when_repository_has_no_identity(task, repo, tmp_path):
+    repo.git("config", "--unset", "user.name")
+    with pytest.raises(worktree.WorktreeError, match="user.name"):
+        _create(task, repo, tmp_path)
+
+    repo.git("config", "user.name", "t")
+    repo.git("config", "--unset", "user.email")
+    with pytest.raises(worktree.WorktreeError, match="user.email"):
+        _create(task, repo, tmp_path)
+
