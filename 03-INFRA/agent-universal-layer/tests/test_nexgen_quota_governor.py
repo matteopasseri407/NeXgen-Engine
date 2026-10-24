@@ -240,6 +240,211 @@ def test_the_beat_leaves_the_readings_it_just_judged_beside_the_plugin(tmp_path)
     assert written["providers"]["openai"]["percent"] == 96.0
 
 
+# ------------------------------------------------------------- the configuration
+
+
+def a_policy(**overrides) -> quota_policy.Failover:
+    base = {"chain": ("anthropic/claude-opus-5-5",), "agents": {"capo": ("openai/gpt-6-luna",)}}
+    return quota_policy.Failover(**{**base, **overrides})
+
+
+def test_an_empty_policy_changes_nothing_in_the_proposal():
+    config = agent_config("main", "capo")
+
+    assert governor.with_chains(config, quota_policy.Failover()) == config
+
+
+def test_the_proposal_carries_the_chain_in_the_shape_openclaw_documents():
+    config = governor.with_chains(agent_config("main", "capo"), a_policy())
+
+    assert config["agents"]["entries"]["main"]["model"] == {
+        "primary": "opencode-go/main-model", "fallbacks": ["anthropic/claude-opus-5-5"],
+    }
+    assert config["agents"]["entries"]["capo"]["model"]["fallbacks"] == ["openai/gpt-6-luna"]
+
+
+def test_the_sidecar_section_names_only_the_agents_the_setup_creates():
+    config = governor.with_chains(agent_config("main"), a_policy())
+
+    section = governor.governor_section(a_policy(), config)
+
+    assert section == {
+        "block_at": 95.0,
+        "state_max_age_seconds": 10800,
+        "agents": {"main": ["anthropic/claude-opus-5-5"]},
+    }
+
+
+def test_no_section_is_written_when_the_policy_names_no_created_agent():
+    config = agent_config("main")
+
+    assert governor.governor_section(quota_policy.Failover(agents={"triage": ("openai/gpt-6-luna",)}), config) is None
+
+
+def test_a_chain_written_by_hand_survives_and_comes_first():
+    current = {"agents": {"entries": {"main": {"model": {"primary": "opencode-go/main-model",
+                                                          "fallbacks": ["ollama/qwen3:8b"]}}}}}
+    proposed = {"agents": {"entries": {"main": {"model": {"primary": "opencode-go/main-model",
+                                                           "fallbacks": ["anthropic/claude-opus-5-5"]}}}}}
+
+    merged = setup_write.merged_document(current, proposed)
+
+    assert merged["agents"]["entries"]["main"]["model"]["fallbacks"] == [
+        "ollama/qwen3:8b", "anthropic/claude-opus-5-5",
+    ]
+
+
+def test_a_chain_written_by_hand_survives_a_proposal_that_names_none():
+    """Without a policy the engine proposes a plain string; the person's chain must not vanish."""
+    current = {"agents": {"entries": {"main": {"model": {"primary": "opencode-go/main-model",
+                                                          "fallbacks": ["ollama/qwen3:8b"]}}}}}
+    proposed = {"agents": {"entries": {"main": {"model": "opencode-go/main-model"}}}}
+
+    merged = setup_write.merged_document(current, proposed)
+
+    assert merged["agents"]["entries"]["main"]["model"] == {
+        "primary": "opencode-go/main-model", "fallbacks": ["ollama/qwen3:8b"],
+    }
+
+
+def test_the_sidecar_section_is_replaced_whole_and_removed_with_the_policy(tmp_path):
+    from nexgen_core.runtimes.openclaw import OpenClawRuntime
+
+    folder = plugin_folder(tmp_path)
+    runtime = OpenClawRuntime()
+
+    assert runtime.replace_governor(tmp_path, {"agents": {"main": ["a/b"], "capo": ["c/d"]}}) is True
+    first = json.loads((folder / "nexgen.config.json").read_text(encoding="utf-8"))
+    assert first["governor"]["agents"] == {"main": ["a/b"], "capo": ["c/d"]}
+
+    # A chain the owner deleted from the policy must stop being offered, not linger.
+    assert runtime.replace_governor(tmp_path, {"agents": {"main": ["a/b"]}}) is True
+    second = json.loads((folder / "nexgen.config.json").read_text(encoding="utf-8"))
+    assert second["governor"]["agents"] == {"main": ["a/b"]}
+
+    assert runtime.replace_governor(tmp_path, None) is True
+    assert "governor" not in json.loads((folder / "nexgen.config.json").read_text(encoding="utf-8"))
+
+
+def test_the_sidecar_is_not_written_where_no_plugin_was_deposited(tmp_path):
+    from nexgen_core.runtimes.openclaw import OpenClawRuntime
+
+    assert OpenClawRuntime().replace_governor(tmp_path, {"agents": {"main": ["a/b"]}}) is False
+    assert not (tmp_path / ".openclaw").exists()
+
+
+def a_setup(tmp_path: Path, out: list[str]) -> Setup:
+    """The pieces of a setup run that the governor step touches, and nothing else."""
+    return Setup(
+        home=tmp_path, env={}, config_path=tmp_path / ".openclaw" / "openclaw.json",
+        engine_root=None, vault_data=tmp_path / "KnowledgeVault", pinned=None, dry_run=False,
+        out=out.append, which=lambda _name: None, run=None, service=None, stamp="2026-01-01",
+    )
+
+
+def test_the_setup_step_writes_the_chains_beside_the_plugin_and_says_how_many(tmp_path):
+    plugin_folder(tmp_path)
+    printed: list[str] = []
+    config = governor.with_chains(agent_config("main", "capo"), a_policy())
+
+    governor_step(a_setup(tmp_path, printed), type("P", (), {"failover": a_policy(), "config": config})())
+
+    written = json.loads((tmp_path / ".openclaw" / "extensions" / "nexgen" / "nexgen.config.json")
+                         .read_text(encoding="utf-8"))
+    assert set(written["governor"]["agents"]) == {"main", "capo"}
+    assert "reach 2 agents" in "\n".join(printed)
+
+
+def test_the_setup_step_writes_nothing_on_an_empty_policy(tmp_path):
+    plugin_folder(tmp_path)
+    printed: list[str] = []
+    config = governor.with_chains(agent_config("main"), quota_policy.Failover())
+
+    governor_step(a_setup(tmp_path, printed),
+                  type("P", (), {"failover": quota_policy.Failover(), "config": config})())
+
+    assert "no chain was written" in "\n".join(printed)
+    assert not (tmp_path / ".openclaw" / "extensions" / "nexgen" / "nexgen.config.json").exists()
+
+
+# ------------------------------------------------------------------------ doctor
+
+
+def test_the_doctor_line_counts_the_agents_that_have_a_chain():
+    config = governor.with_chains(agent_config("main", "capo"), a_policy())
+
+    outcome = governor.check_fallbacks(config, a_policy())
+
+    assert outcome.id == "openclaw.fallbacks"
+    assert outcome.severity == Severity.OK
+    assert outcome.message == "The fallback policy is declared: every one of the 2 agents has a chain."
+
+
+def test_the_doctor_line_names_an_agent_the_configuration_forgot():
+    config = agent_config("main", "triage")
+    policy = quota_policy.Failover(agents={"triage": ("openai/gpt-6-luna",)})
+
+    outcome = governor.check_fallbacks(config, policy)
+
+    assert outcome.severity == Severity.WARN
+    assert "triage" in outcome.message
+    assert outcome.action and "nexgen openclaw setup" in outcome.action
+
+
+def test_a_machine_that_declared_nothing_says_so_instead_of_failing():
+    outcome = governor.check_fallbacks(agent_config("main", "capo"), quota_policy.Failover())
+
+    assert outcome.severity == Severity.OK
+    assert outcome.message == "No fallback policy is declared, and no OpenClaw agent has a fallback chain."
+
+
+def test_a_chain_written_by_hand_is_counted_even_with_no_policy():
+    config = {"agents": {"entries": {
+        "main": {"model": {"primary": "opencode-go/x", "fallbacks": ["ollama/qwen3:8b"]}},
+        "capo": {"model": "opencode-go/y"},
+    }}}
+
+    outcome = governor.check_fallbacks(config, quota_policy.Failover())
+
+    assert outcome.message == ("No fallback policy is declared: 1 agents have a chain of their own, "
+                               "1 have none (capo).")
+
+
+def test_an_agent_that_inherits_the_shared_chain_counts_as_covered():
+    """An agent with no model at all inherits `agents.defaults.model.fallbacks`."""
+    config = {
+        "agents": {
+            "defaults": {"model": {"fallbacks": ["openai/gpt-6-luna"]}},
+            "entries": {"main": {"name": "main"}},
+        },
+    }
+
+    outcome = governor.check_fallbacks(config, quota_policy.Failover())
+
+    assert outcome.message == "No fallback policy is declared; the 1 agents have a chain of their own."
+
+
+def test_the_doctor_runs_the_line_on_a_machine_with_a_configuration(tmp_path):
+    from nexgen_core.openclaw.detect import Detection, Installation, LocalModels, Login
+    from nexgen_core.openclaw.doctor import collect
+
+    quota_file(tmp_path)
+    config_path = tmp_path / ".openclaw" / "openclaw.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(json.dumps(governor.with_chains(agent_config("main"), a_policy())), encoding="utf-8")
+    snapshot = Detection(
+        openclaw=Installation(installed=True, version="2026.10.6", config_path=str(config_path),
+                              config_present=True),
+        claude=Login(binary=False), codex=Login(binary=False), opencode_go=True, local=LocalModels(), n8n=False,
+    )
+
+    outcomes = collect(detected=snapshot, home=tmp_path, env={}, vault_data=tmp_path / "KnowledgeVault",
+                       platform="linux", connect=lambda *_a, **_k: True)
+
+    line = next(outcome for outcome in outcomes if outcome.id == "openclaw.fallbacks")
+    assert line.severity == Severity.OK
+    assert "every one of the 1 agents has a chain" in line.message
+
 
 # ------------------------------------------------------------------------ report
 

@@ -94,7 +94,9 @@ def _merge_plugin_entries(current: Any, proposed: Any) -> Any:
 #: List-valued leaves that are sets, not sequences. `alsoAllow` and `deny` are
 #: one model's tool permissions; `send` is the ids one agent may message.
 #: Replacing any of them whole would silently remove what the person added.
-SET_LISTS = frozenset({"alsoAllow", "deny", "send"})
+#: `fallbacks` is the ordered chain a plan hands over to: the person's own entries
+#: stay first and the policy only adds what is missing.
+SET_LISTS = frozenset({"alsoAllow", "deny", "send", "fallbacks"})
 
 #: One list that is a set only on a specific path. `tools.agentToAgent.allow`
 #: names every agent allowed to talk, and replacing it would cut the person's
@@ -187,8 +189,36 @@ def merged_document(current: dict[str, Any] | None, proposed: dict[str, Any]) ->
             providers[provider] = merged_block
         merged_models["providers"] = providers
         merged["models"] = merged_models
+    _keep_model_fallbacks(base, merged)
     _retire(merged)
     return merged
+
+
+def _keep_model_fallbacks(base: dict[str, Any], merged: dict[str, Any]) -> None:
+    """A fallback chain the person wrote by hand survives a proposal that names none.
+
+    OpenClaw stores an agent's model as `{primary, fallbacks}` once someone edits
+    the fallback chips in its panel, while the engine proposes a plain string. A
+    replacement would delete those chains silently, on the next setup, and the
+    person would only notice when a spent plan stopped a turn again. The proposal
+    wins on everything else about the model; the chains are the person's.
+    """
+    current_agents = base.get("agents", {}).get("entries") if isinstance(base.get("agents"), dict) else None
+    merged_agents = merged.get("agents", {}).get("entries") if isinstance(merged.get("agents"), dict) else None
+    if not isinstance(current_agents, dict) or not isinstance(merged_agents, dict):
+        return
+    for agent_id, entry in current_agents.items():
+        before = entry.get("model") if isinstance(entry, dict) else None
+        chain = before.get("fallbacks") if isinstance(before, dict) else None
+        if not isinstance(chain, list) or not chain:
+            continue
+        target = merged_agents.get(agent_id)
+        model = target.get("model") if isinstance(target, dict) else None
+        if isinstance(model, dict):
+            if not model.get("fallbacks"):
+                target["model"] = {**model, "fallbacks": list(chain)}
+        elif isinstance(model, str) and model.strip():
+            target["model"] = {"primary": model, "fallbacks": list(chain)}
 
 
 def _retire(document: dict[str, Any]) -> None:

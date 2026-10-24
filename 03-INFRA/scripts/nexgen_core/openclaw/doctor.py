@@ -17,10 +17,12 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from nexgen_core import quota_policy
 from nexgen_core.i18n import t
-from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw import doctor_runtime
+from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
+from nexgen_core.openclaw.governor import check_fallbacks
 from nexgen_core.openclaw.pin import pinned_version, required_node_version
 from nexgen_core.openclaw.profile import PENDING_TOKEN
 from nexgen_core.openclaw.terms import google_subscriptions
@@ -395,6 +397,40 @@ def _host_outcomes(
     return outcomes
 
 
+def _config_outcomes(
+    config: dict[str, Any],
+    snapshot: Detection,
+    path: Path,
+    home_dir: Path,
+    vault_data: Path | None,
+    failover: quota_policy.Failover | None,
+    connect: doctor_runtime.Connect | None,
+) -> list[CheckOutcome]:
+    """Every check that reads the configuration in force, once it is readable.
+
+    `failover` is the policy the caller already read, when it has one; without it the
+    policy is read here, from the same Vault the other checks read.
+    """
+    policy = failover if failover is not None else quota_policy.load(
+        home_dir, vault=resolve_vault_data(home_dir, vault_data),
+    )[0]
+    outcomes = filter(None, [
+        _check_ollama_latest(config),
+        _check_cage(config),
+        _check_heartbeat(config),
+        *_check_gateway(config),
+        _check_google(config),
+        _check_acp(config),
+        _check_agent_models(config, snapshot),
+        check_fallbacks(config, policy),
+        _listening(config, connect, home_dir),
+        *doctor_runtime.check_workshop_skills(config, path.parent, home_dir),
+        doctor_runtime.check_unadopted(config, path, home_dir, resolve_vault_data(home_dir, vault_data)),
+        doctor_runtime.check_bindings(config),
+    ])
+    return list(outcomes)
+
+
 def collect(
     detected: Detection | None = None,
     *,
@@ -407,6 +443,7 @@ def collect(
     wsl_distributions: Callable[[], list[str]] | None = None,
     node_version: Callable[[], str | None] | None = None,
     linger_dir: Path | None = None,
+    failover: quota_policy.Failover | None = None,
 ) -> list[CheckOutcome]:
     """Every OpenClaw check that applies to this machine, or nothing at all."""
     values = dict(os.environ) if env is None else {str(k): str(v) for k, v in env.items()}
@@ -433,19 +470,9 @@ def collect(
         outcomes.append(declaration)
     outcomes.append(_check_config(path, config, error))
     if config is not None:
-        outcomes.extend(filter(None, [
-            _check_ollama_latest(config),
-            _check_cage(config),
-            _check_heartbeat(config),
-            *_check_gateway(config),
-            _check_google(config),
-            _check_acp(config),
-            _check_agent_models(config, snapshot),
-            _listening(config, connect, home_dir),
-            *doctor_runtime.check_workshop_skills(config, path.parent, home_dir),
-            doctor_runtime.check_unadopted(config, path, home_dir, resolve_vault_data(home_dir, vault_data)),
-            doctor_runtime.check_bindings(config),
-        ]))
+        outcomes.extend(_config_outcomes(
+            config, snapshot, path, home_dir, vault_data, failover, connect,
+        ))
     store = doctor_runtime.check_store_gateway(home_dir, values, system)
     if store is not None:
         outcomes.append(store)

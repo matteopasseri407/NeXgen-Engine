@@ -21,6 +21,7 @@ from nexgen_core.i18n import t
 from nexgen_core.modules import current_host, write_state_file
 from nexgen_core.openclaw import host_preflight, setup_commands, setup_write
 from nexgen_core.openclaw.detect import Detection
+from nexgen_core.openclaw.governor import governor_section
 from nexgen_core.openclaw.pin import node_satisfies, required_node_version
 from nexgen_core.openclaw.setup_agents import agent_dirs, created_by_openclaw, prepare
 from nexgen_core.openclaw_pairing import qr as pairing_qr
@@ -28,7 +29,7 @@ from nexgen_core.openclaw_processes import is_gateway_process
 from nexgen_core.openclaw_service import OpenClawService, RunResult
 from nexgen_core.paths import resolve_vault_data
 from nexgen_core.processes import command_line_text, no_window_kwargs
-from nexgen_core.runtimes.openclaw import PLUGIN_ID
+from nexgen_core.runtimes.openclaw import PLUGIN_ID, OpenClawRuntime
 
 #: How long the gateway gets to answer. A cold start takes about five minutes;
 #: ten is the margin for a slow disk, not a different promise.
@@ -351,6 +352,26 @@ def service_step(setup: Setup, restarted: bool) -> bool:
     setup.out(t("The gateway did not answer on 127.0.0.1:{port} within {seconds} seconds.",
                 port=setup.service.port, seconds=int(elapsed)))
     return False
+
+
+def governor_step(setup: Setup, plan) -> None:
+    """Step 4, before the write: the fallback chains the plugin reads on every turn.
+
+    Beside the plugin, never inside `openclaw.json`: that file is read at gateway
+    start, while this sidecar is read on every call, so a policy the person edited
+    lands on the next turn instead of on the next restart. An empty policy writes
+    nothing at all, and the plugin is told nothing it should not act on.
+    """
+    section = governor_section(plan.failover, plan.config)
+    if section is None:
+        setup.out(t("No fallback policy names an agent of this setup: no chain was written."))
+        return
+    if not engine_plugin_path(setup).is_dir():
+        setup.out(t("The engine plugin is not deposited: its fallback chains were not written."))
+        return
+    OpenClawRuntime().replace_governor(setup.home, section)
+    setup.out(t("The fallback chains reach {count} agents; the plugin reads them on every turn.",
+                count=len(section["agents"])))
 
 
 def module_step(setup: Setup) -> None:

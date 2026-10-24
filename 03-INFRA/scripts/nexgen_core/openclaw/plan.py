@@ -12,9 +12,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from nexgen_core import quota_policy
 from nexgen_core.i18n import detect_language, t
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
+from nexgen_core.openclaw.governor import with_chains
 from nexgen_core.openclaw.profile import (
     CLAUDE_MODEL,
     CODEX_MODEL,
@@ -37,6 +39,13 @@ def _with_engine_plugin(config: dict[str, Any], deposited: bool) -> dict[str, An
     plugin is deposited by the runtime adapter, which is the only thing that
     knows how. The plan and the setup therefore share this one decision, so
     what the plan prints is what the setup writes.
+
+    `hooks.allowConversationAccess` is granted here because a plugin that is not
+    bundled with OpenClaw is refused every conversation hook without it, and
+    `before_model_resolve` — where the governor moves a turn off a spent plan —
+    is one of them. Without the grant the registration is dropped and the
+    handover silently never happens. The plugin is the engine's own and already
+    runs inside the gateway process; this is what makes its registration legal.
     """
     if not deposited:
         return config
@@ -45,7 +54,11 @@ def _with_engine_plugin(config: dict[str, Any], deposited: bool) -> dict[str, An
     if PLUGIN_ID not in allow:
         allow.append(PLUGIN_ID)
     entries = dict(plugins.get("entries") or {})
-    entries[PLUGIN_ID] = {**dict(entries.get(PLUGIN_ID) or {}), "enabled": True}
+    entry = dict(entries.get(PLUGIN_ID) or {})
+    hooks = dict(entry.get("hooks") or {})
+    hooks["allowConversationAccess"] = True
+    entry.update({"enabled": True, "hooks": hooks})
+    entries[PLUGIN_ID] = entry
     return {**config, "plugins": {**plugins, "allow": allow, "entries": entries}}
 
 
@@ -64,6 +77,9 @@ class Plan:
     kept: tuple[str, ...] = ()
     dropped: tuple[str, ...] = ()
     notes: tuple[str, ...] = field(default_factory=tuple)
+    #: The fallback policy this machine declares, or an empty one. The setup writes its
+    #: chains beside the plugin from this same value, so the two cannot disagree.
+    failover: quota_policy.Failover = field(default_factory=quota_policy.Failover)
 
     @property
     def changes(self) -> dict[str, list[str]]:
@@ -82,6 +98,7 @@ class Plan:
             "choices": asdict(self.choices),
             "config": self.config,
             "agents": agent_models(self.detected, self.choices),
+            "failover": self.failover.to_dict(),
             "current": {
                 "path": str(self.path),
                 "exists": self.path.is_file(),
@@ -201,7 +218,8 @@ def build_plan(
     chosen = choices or Choices(lang=detect_language())
     path = openclaw_config(home, env)
     current, error = read_config(path)
-    config = build_config(snapshot, chosen, current)
+    failover, _notes = quota_policy.load(home, vault=vault_data)
+    config = with_chains(build_config(snapshot, chosen, current), failover)
     deposited = plugin_deposited if plugin_deposited is not None else (path.parent / "extensions" / PLUGIN_ID).is_dir()
     config = _with_engine_plugin(config, deposited)
 
@@ -226,7 +244,7 @@ def build_plan(
         detected=snapshot, choices=chosen, config=config, path=path,
         current=current, current_error=error,
         added=added, changed=changed, kept=kept, dropped=dropped,
-        notes=tuple(notes),
+        notes=tuple(notes), failover=failover,
     )
 
 

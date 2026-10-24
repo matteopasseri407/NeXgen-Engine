@@ -43,8 +43,8 @@ If it finds none, the plan prints what to start and stops there.
 | `sviluppo` (developer) | works on the project, one to one, inside OpenCode | `opencode-go/deepseek-v4.1-flash`, only when the `opencode` command and the OpenCode Go key are both there |
 
 An agent with no model available is not created, and the plan says which one and why.
-The fallbacks are ordered so the flat subscription is used before a paid key, and so a local model is used
-before a cloud one only for the assistant, where latency matters more than depth.
+The models are tried in that order when the engine chooses one for the agent, so the flat subscription is used before a paid key, and so a local model is used before a cloud one only for the assistant, where latency matters more than depth.
+That is a decision taken once, at setup; what happens when the chosen plan runs out is the policy described below.
 
 Each agent gets an `AGENTS.md` in the engine's language: who it is, what it does and does not do, when to
 hand work to another agent with `sessions_send`, that the Council is called with `nexgen council`, and that
@@ -55,6 +55,38 @@ is reached directly.
 Agents may write to each other only along the pairs that exist: `main` with `capo`, `main` with
 `automazioni`, and `sviluppo` with both. Without a second agent the block is not written at all, because an
 empty allow list means something different from "nobody to talk to".
+
+## The fallback chain
+
+OpenClaw already knows how to move a turn to the next model when a provider answers "this plan is spent";
+what it cannot know is that the plan is about to be spent while it still answers.
+The engine therefore does two things with the `failover:` section of `03-INFRA/agent-universal-layer/quota.yaml`, and neither of them replaces OpenClaw's own mechanism:
+
+- `nexgen openclaw setup` writes each agent's chain into `agents.entries.<id>.model.fallbacks`, in the
+  shape OpenClaw documents (`{primary, fallbacks}`). That is OpenClaw's own failover, unchanged.
+- It also writes the same chains, the block line and the maximum age of a reading into the engine-owned
+  `nexgen.config.json` beside the plugin, where the governor job reads them on every turn.
+
+With a reading that has passed the line (`block_at`, 95% by default), the governor returns
+`providerOverride` and `modelOverride` on `before_model_resolve`, so the turn starts on the next model
+instead of running, failing and falling back. It writes one line in the gateway log naming the provider,
+the window and the model it chose. It never computes a percentage: the beat leaves them in
+`<state dir>/extensions/nexgen/nexgen-quota-state.json`, and a state older than `state_max_age_minutes`
+(180 by default) changes nothing. A missing, unreadable or empty policy changes nothing either.
+
+Two rules make this safe to keep in a file the engine does not own:
+
+- a chain you wrote by hand in OpenClaw is never removed. The engine's merge keeps your entries first and
+  only adds what is missing, and a proposal that names no chain at all leaves yours exactly as it is;
+- the engine writes chains only for the agents it creates. An agent you added in OpenClaw's panel keeps
+  its own settings, and `nexgen openclaw doctor` tells you it has no chain instead of editing it.
+
+The plugin needs `plugins.entries.nexgen.hooks.allowConversationAccess: true` for that hook to be
+registered at all, since it is not a bundled plugin; the setup writes it together with the enable flag.
+It is read at gateway start, so a change there needs the restart the setup already performs.
+
+`nexgen doctor` prints one line, `openclaw.fallbacks`: whether a policy is declared, how many agents carry
+a chain, and which agents carry none.
 
 ## The OpenCode agent, one to one
 
@@ -146,9 +178,12 @@ before that step.
      by `id` so a hand-written model is not dropped;
    - the gateway token generated with `secrets.token_urlsafe(32)` only when there is none, and never
      printed;
-   - the engine's guardrail plugin enabled only when its folder is actually deposited;
+   - the engine's guardrail plugin enabled only when its folder is actually deposited, with the
+     conversation-access grant its governor hook needs;
    - an atomic write, then `openclaw config validate` on the file just written. A failure puts the backup
-     back, prints OpenClaw's own error, and exits non-zero.
+     back, prints OpenClaw's own error, and exits non-zero;
+   - after OpenClaw has accepted the file, the fallback chains reach the plugin's own
+     `nexgen.config.json`, which is read on every turn and needs no restart.
 5. **Agent workspaces.** Each folder is created when missing and the manuals are written only when absent,
    so a manual the person edited is never overwritten. The one exception is a folder onboarding created a
    moment earlier: nothing in it can be the person's yet, so the engine's manual replaces OpenClaw's
@@ -189,10 +224,11 @@ are the person's and stay. It writes nothing.
 
 `nexgen openclaw doctor [--json]` checks installation, version against the pin, the configuration's validity,
 `:latest` ids, caged local models, the heartbeat, the gateway's bind and authentication, Google entries, ACP
-seats, agents on subscriptions this machine does not have, whether the gateway is listening, a second
-gateway from the Microsoft Store, and how many skills and servers OpenClaw created that the canonical
-library does not declare yet. `nexgen doctor` runs the same checks as part of its own report, and says
-nothing at all on a machine that never installed OpenClaw and never declared the module.
+seats, agents on subscriptions this machine does not have, whether the gateway is listening, whether every
+agent has a fallback chain, a second gateway from the Microsoft Store, and how many skills and servers
+OpenClaw created that the canonical library does not declare yet. `nexgen doctor` runs the same checks as
+part of its own report, and says nothing at all on a machine that never installed OpenClaw and never
+declared the module.
 
 `nexgen openclaw setup` applies that same plan: it installs the pinned release, onboards when there is no
 file, merges the owned sections with a backup beside them, writes the agent manuals, installs and starts the

@@ -88,13 +88,15 @@ extensions/nexgen/
   briefing.mjs                  the vault briefing after a compaction
   quota.mjs                     `/quota`: the lines the engine already rendered
   workshop.mjs                  a log line when the Skill Workshop learned a skill
+  governor.mjs                  the fallback handover on before_model_resolve
   engine-config.mjs             reads nexgen.config.json, once for every job that has a switch
   session.mjs                   which session a hook event belongs to
   package.json                  openclaw.extensions -> ./index.mjs
   openclaw.plugin.json          id: nexgen, onStartup
   nexgen-guardrail-core.mjs     the shared core every adapter imports
   nexgen-guardrail.config.json  which guardrail body, with what timeout, the audit file
-  nexgen.config.json            the engine's switches: briefing, posture, engine
+  nexgen.config.json            the engine's switches: briefing, posture, engine, governor
+  nexgen-quota-state.json       what the beat last read, for the governor
   vault-briefing.txt            the briefing text, shared with Claude Code
   hooks/<body>.mjs              the guardrail body (the private policy)
 ```

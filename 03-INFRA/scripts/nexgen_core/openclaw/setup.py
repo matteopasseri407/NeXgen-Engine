@@ -37,6 +37,7 @@ from nexgen_core.openclaw.setup_steps import (
     default_run,
     ensure_installed,
     ensure_onboarded,
+    governor_step,
     module_step,
     phone_step,
     planned_commands,
@@ -177,6 +178,9 @@ def _apply(setup: Setup, installed: Detection, plan, before: set[str]) -> int:
     outcome = write_step(setup, plan)
     if outcome == "failed":
         return 1
+    # Only after OpenClaw accepted the file: chains the plugin would offer for agents
+    # the file no longer carries would move a turn to a model the gateway cannot run.
+    governor_step(setup, plan)
     _step(setup.out, 5, t("Agent workspaces"))
     workspaces_step(setup, plan, before)
     _step(setup.out, 6, t("Gateway service"))
