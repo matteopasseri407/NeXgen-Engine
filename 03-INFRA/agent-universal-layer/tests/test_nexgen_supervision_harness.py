@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from nexgen_local import supervision_harness as harness
+from nexgen_local import supervision_costs as costs
 from nexgen_local import supervision_policy as policy
 from nexgen_local import supervision_state as state
 
@@ -624,3 +625,30 @@ def test_rework_to_busy_session_queues_and_never_opens_a_second_tab_in_the_same_
     assert queued[0]["session"] == "ses_occupata"
     assert queued[0]["reason"] == "sessione occupata"
     assert not any(r.get("event") == "harness_session_foreign" for r in events)
+
+
+def test_rework_on_an_unverifiable_session_queues_instead_of_opening_a_tab(task, unit, monkeypatch):
+    """Una sessione che il motore non riesce a leggere non è morta: niente seconda scheda sopra di lei."""
+    other_folder = unit.parent / "23-unita-altra"
+    other_folder.mkdir(parents=True, exist_ok=True)
+    state.append_event(
+        task, "attached", unit="prova", role="esecutore", harness="opencode",
+        session="ses_illeggibile", folder=str(other_folder),
+    )
+    review_file = unit.parent / "45-revisione-prova-1.md"
+    review_file.write_text("# Revisione\n\ncorrezioni\n", encoding="utf-8")
+
+    def unreadable(session):
+        raise costs.CostError("export non leggibile")
+
+    result = harness.send_corrections(
+        task, "prova", review_file, 1,
+        opener=lambda *a, **k: pytest.fail("nessuna scheda su una sessione non verificabile"),
+        runner=lambda *a, **k: pytest.fail("nessun turno su una sessione non verificabile"),
+        measure=unreadable, lister=lambda: [], wait_s=0,
+    )
+
+    assert result["mode"] == "queued"
+    assert "non verificabile" in result["reason"]
+    queued = [r for r in state.read_events(task) if r.get("event") == "unit_queued"]
+    assert len(queued) == 1 and queued[0]["round"] == 1

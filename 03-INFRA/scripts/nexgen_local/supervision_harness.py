@@ -123,22 +123,28 @@ def _handle_foreign_session(
     task_id: str, name: str, folder: Path, prompt: str, previous: dict, chosen: str,
     round_no: int, *, adapter, opener, lister, wait_s: float, measure, allowed,
 ) -> dict:
-    """Rework when the last task session belongs to another copy: queue if busy, else open a tab."""
-    facts = None
+    """Rework whose last task session belongs to another copy: queue while it is not known free.
+
+    Only a session the harness itself says is gone earns a new tab. A busy one, and
+    one the engine cannot verify, leave the round in `unit_queued` so `--resend`
+    delivers it later: a tab opened on work that may still be running is the second
+    worker in one copy this engine exists to prevent.
+    """
+    session = previous["session"]
     try:
-        facts = _measure_or_lost(measure or _measure_for(adapter), previous["session"])
-    except (SessionLost, HarnessError, SupervisionError):  # nexgen: allow reason="se la sessione straniera non risponde o è persa, si procede con l'apertura della nuova scheda"
-        pass
-    if facts and not facts.stopped:
-        reason = "sessione occupata"
-        state.append_event(
-            task_id, "unit_queued", unit=name, harness=chosen, session=previous["session"],
-            reason=reason, folder=str(folder), round=round_no,
+        facts = _measure_or_lost(measure or _measure_for(adapter), session)
+    except SessionLost:
+        facts = None
+    except SupervisionError as exc:
+        return _queue_round(
+            task_id, name, chosen, session, folder, round_no,
+            reason=f"sessione non verificabile: {exc}",
         )
-        return {"unit": name, "mode": "queued", "session": previous["session"], "reason": reason}
+    if facts is not None and not facts.stopped:
+        return _queue_round(task_id, name, chosen, session, folder, round_no, reason="sessione occupata")
     state.append_event(
         task_id, "harness_session_foreign", unit=name, harness=chosen,
-        session=previous["session"], session_folder=previous.get("folder") or "",
+        session=session, session_folder=previous.get("folder") or "",
         copy=str(folder), reason="la sessione è nata in un'altra copia",
     )
     return _open_first_tab(
@@ -147,6 +153,17 @@ def _handle_foreign_session(
         measure=measure, allowed=allowed,
         reason="sessione nata in un'altra copia: scheda nuova nella copia dell'unità",
     )
+
+
+def _queue_round(
+    task_id: str, name: str, chosen: str, session: str, folder: Path, round_no: int, *, reason: str,
+) -> dict:
+    """Leave the round waiting for a free session, without opening anything."""
+    state.append_event(
+        task_id, "unit_queued", unit=name, harness=chosen, session=session,
+        reason=reason, folder=str(folder), round=round_no,
+    )
+    return {"unit": name, "mode": "queued", "session": session, "reason": reason}
 
 
 def send_corrections(
@@ -198,11 +215,6 @@ def send_corrections(
             extra={"round": round_no}, opener=opener, runner=runner, lister=lister,
             measure=measure, wait_s=wait_s, allowed=allowed, model=model, adapter=adapter,
         )
-    opened["harness"] = chosen
-    if model and opened.get("mode") != "run":
-        opened["model_requested"] = model
-        opened["model_applied"] = False
-    return opened
     opened["harness"] = chosen
     if model and opened.get("mode") != "run":
         opened["model_requested"] = model
