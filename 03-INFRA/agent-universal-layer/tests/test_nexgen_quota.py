@@ -98,6 +98,29 @@ def write_limits(home: Path, text: str) -> Path:
     return path
 
 
+def antigravity_reading(home: Path, *, used: float = 85.0,
+                        name: str = "8-Antigravity Quota.log") -> Path:
+    """An Antigravity quota log matching the extension format."""
+    folder = home / "AppData" / "Roaming" / "Antigravity IDE" / "logs" / "session1"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / name
+    body = {
+        "models_count": 14,
+        "prompt_credits": {
+            "available": int(50000 * (1 - used / 100.0)),
+            "monthly": 50000,
+            "used_percentage": used,
+            "remaining_percentage": round(100.0 - used, 1),
+        },
+        "timestamp": WHEN,
+    }
+    path.write_text(
+        f"{WHEN} DEBUG [AGQ][Extension] Quota update received: {json.dumps(body)}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def rows_for(report: quota.QuotaReport, provider: str) -> list[quota.QuotaRow]:
     return [row for row in report.rows if row.provider == provider]
 
@@ -243,6 +266,30 @@ def test_claude_code_shows_tokens_and_says_its_limit_is_not_readable(tmp_path):
         "1,234 tokens in the last 5h" in line and "the limit is not readable on this machine" in line
         for line in report.lines
     )
+
+
+def test_antigravity_contributes_its_own_percentage_and_age(tmp_path):
+    antigravity_reading(tmp_path, used=85.0)
+
+    report = quota.build_report(home=tmp_path, now=NOW)
+
+    row = rows_for(report, "Antigravity")[0]
+    assert row.window == "30d"
+    assert row.percent == 85.0
+    assert row.state == "warn"
+    assert abs(row.read_at - READ_AT) < 1
+    assert any("Antigravity: 85% of the 30d window used" in line for line in report.lines)
+
+
+def test_antigravity_reading_older_than_window_becomes_stale(tmp_path):
+    antigravity_reading(tmp_path, used=85.0)
+
+    report = quota.build_report(home=tmp_path, now=READ_AT + 35 * 86400)
+
+    row = rows_for(report, "Antigravity")[0]
+    assert row.state == "stale"
+    assert row.percent is None
+    assert any("older than the window itself" in line for line in report.lines)
 
 
 # --------------------------------------------------------------------- the json
