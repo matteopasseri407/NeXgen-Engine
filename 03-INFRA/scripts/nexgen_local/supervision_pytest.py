@@ -30,6 +30,8 @@ from nexgen_core.discipline.config import ConfigError
 from nexgen_core.discipline.violations import TEST_PATH
 from nexgen_core.processes import no_window_kwargs
 
+from . import supervision_retirement as own_rules
+
 #: The declared budget for one collection: the base and the head have one each.
 COLLECT_TIMEOUT_S = 300.0
 #: Environment keys that would let the copy decide what the engine's Python imports and runs.
@@ -80,12 +82,21 @@ def cleaned_environment() -> dict[str, str]:
 
 def check(
     folder: Path, base: str, head: str, files: list, pytest_surface: list[str],
-    *, timeout: float = COLLECT_TIMEOUT_S,
+    *, timeout: float = COLLECT_TIMEOUT_S, by_commit: bool = False,
 ) -> tuple[bool, str]:
-    """Whether the head still collects what the base collected, and who authorised what it does not."""
+    """Whether the head still collects what the base collected, and who authorised what it does not.
+
+    `by_commit` is the unit the supervisor let carry its own
+    `.nexgen-discipline.toml`: a lost test is then accepted only when the commit
+    that lost it inherited the authorisation from its parent, and the base's own
+    `test_removal_ok` is not consulted. Any other unit is compared with the base,
+    exactly as before, because a unit does not authorise itself.
+    """
     whole, dirs = paths_to_collect(files, pytest_surface)
     if not whole and not dirs:
         return True, "nessun test né configurazione di pytest toccato: niente da confrontare"
+    if by_commit:
+        return _by_commit(folder, base, head, whole, dirs, timeout)
     allowed, problem = _authorised(folder, base)
     if problem:
         return False, problem
@@ -236,6 +247,119 @@ def _count(output: str) -> int | None:
     """The tests pytest listed, cross-checked with its own summary so a printed line cannot outvote it."""
     nodes = _node_ids(output)
     return None if nodes is None else len(nodes)
+
+
+def _by_commit(
+    folder: Path, base: str, head: str, whole: bool, dirs: list[str], timeout: float,
+) -> tuple[bool, str]:
+    """The same comparison, with every lost test traced to the commit whose parent authorised it.
+
+    The base's and the head's collections give the whole loss; the commits give
+    the moment it happened and the rules that moment inherited. A test the walk
+    cannot place is a FAIL, so a collection that hides a loss under somebody
+    else's change is never read as a retirement.
+    """
+    before, after = counts(folder, base, head, dirs=() if whole else dirs, timeout=timeout)
+    if not before.ok:
+        return False, f"la raccolta della base non ha risposto ({before.reason}): nessun numero con cui confrontare la head"
+    if not after.ok:
+        return False, f"la raccolta della head non ha risposto ({after.reason}); la base ne raccoglieva {before.tests}"
+    numbers = f"la head raccoglie {after.tests} test, la base {before.tests}"
+    lost = sorted(set(before.nodes) - set(after.nodes))
+    if not lost:
+        return True, numbers
+    retired, refused, problems = _retirements(folder, base, head, lost, timeout)
+    unplaced = [node for node in lost if node not in retired]
+    if problems or unplaced:
+        detail = " | ".join([*problems, *([_unplaced(unplaced, refused)] if unplaced else [])])
+        return False, f"{numbers}: {detail}"[:800]
+    files = sorted({retired[node] for node in lost})
+    return True, (
+        f"{numbers}: {_how_many(len(lost), 'test ritirato', 'test ritirati')} da {', '.join(files)}, "
+        "autorizzati da test_removal_ok del commit precedente"
+    )
+
+
+def _retirements(
+    folder: Path, base: str, head: str, lost: list[str], timeout: float,
+) -> tuple[dict[str, str], dict[str, str], list[str]]:
+    """Which commit lost each test, when that commit's inherited rules already allowed it.
+
+    Only a commit that touches a lost test's file, or a file that decides how
+    pytest collects, can make a test disappear: the others cost no collection.
+    The rules are always the parent's, so authorising a removal and making it in
+    the same commit is refused here rather than accepted.
+    """
+    pending = set(lost)
+    retired: dict[str, str] = {}
+    refused: dict[str, str] = {}
+    problems: list[str] = []
+    cache: dict[tuple[str, tuple[str, ...]], Count] = {}
+    for commit in own_rules.commits(folder, base, head):
+        changes = own_rules.changes_of(folder, commit)
+        if not changes:
+            continue
+        surface_files = surface(changes)
+        touched = {path for change in changes for path in _both_names(change)}
+        if not surface_files and not ({_file_of(node) for node in pending} & touched):
+            continue
+        whole, dirs = paths_to_collect(changes, surface_files)
+        gone, problem = _lost_in_commit(folder, commit, () if whole else tuple(dirs), cache, timeout)
+        if problem:
+            problems.append(problem)
+            continue
+        rules = own_rules.rules_before(folder, commit)
+        for node in sorted(gone & pending):
+            pending.discard(node)
+            if _authorised_node(node, rules.test_removal_ok):
+                retired[node] = _file_of(node)
+            else:
+                refused[node] = commit
+    return retired, refused, problems
+
+
+def _lost_in_commit(
+    folder: Path, commit: str, targets: tuple[str, ...],
+    cache: dict[tuple[str, tuple[str, ...]], Count], timeout: float,
+) -> tuple[set[str], str]:
+    """The node ids this commit stopped collecting, against its parent's tree.
+
+    A collection that cannot answer proves nothing, so the commit is named in
+    the failure instead of being read as "nothing lost".
+    """
+    parent = own_rules.parent_of(folder, commit)
+    if not parent:
+        return set(), ""
+    before = _count_once(folder, parent, targets, cache, timeout)
+    after = _count_once(folder, commit, targets, cache, timeout)
+    for moment, count in (("prima", before), ("dopo", after)):
+        if not count.ok:
+            return set(), f"commit {commit[:8]}: la raccolta {moment} non ha risposto ({count.reason})"
+    return set(before.nodes) - set(after.nodes), ""
+
+
+def _count_once(
+    folder: Path, sha: str, targets: tuple[str, ...],
+    cache: dict[tuple[str, tuple[str, ...]], Count], timeout: float,
+) -> Count:
+    """One revision's collection, computed once: the next commit asks for the same tree as its "before"."""
+    key = (sha, targets)
+    if key not in cache:
+        with tempfile.TemporaryDirectory(prefix="nexgen-collect-", ignore_cleanup_errors=True) as scratch:
+            cache[key] = _count_at(folder, sha, Path(scratch) / "tree", list(targets), timeout)
+    return cache[key]
+
+
+def _unplaced(unplaced: list[str], refused: dict[str, str]) -> str:
+    """The lost tests no authorised commit accounts for, each with the commit that refused it."""
+    named = [
+        f"{node} (commit {refused[node][:8]})" if node in refused else node
+        for node in unplaced
+    ]
+    return (
+        f"{_how_many(len(named), 'test perso', 'test persi')} fuori dalle autorizzazioni "
+        f"del commit precedente: {_listed(named)}"
+    )
 
 
 def _verdict(before: Count, after: Count, allowed: tuple[str, ...] = ()) -> tuple[bool, str]:

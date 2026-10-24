@@ -176,3 +176,90 @@ def test_the_nodes_are_what_pytest_listed():
 
     assert pytest_runs._node_ids(output) == ("tests/test_x.py::test_one", "tests/test_x.py::test_due[a]")
     assert pytest_runs._node_ids("") is None
+
+
+# --- il permesso è del supervisore, e vale commit per commit ----------------
+
+
+def _retirable(tmp_path):
+    """Una base con un test in più e nessuna autorizzazione scritta: il permesso lo porta l'unità."""
+    repo = build(tmp_path / "sandbox")
+    repo.write("tests/test_via.py", "def test_via():\n    assert True\n")
+    repo.commit("test: aggiunge un test da ritirare")
+    return repo, repo.head()
+
+
+def test_a_retirement_authorised_by_the_previous_commit_passes_commit_by_commit(tmp_path):
+    """Con il permesso, l'autorizzazione vale se il commit che ritira il test l'ha già ereditata."""
+    repo, base = _retirable(tmp_path)
+    _authorise(repo, ["tests/test_via.py"])
+    head = _retire(repo, "tests/test_via.py")
+
+    ok, reason = pytest_runs.check(
+        repo.path, base, head, [_change(".nexgen-discipline.toml"), _change("tests/test_via.py")], [],
+        by_commit=True,
+    )
+
+    assert ok, reason
+    assert "1 test ritirato" in reason
+    assert "tests/test_via.py" in reason
+    assert "del commit precedente" in reason
+
+
+def test_the_same_retirement_fails_when_the_unit_may_not_carry_the_rules(tmp_path):
+    """Senza il permesso resta la regola di sempre: solo la base autorizza, e questa base non lo fa."""
+    repo, base = _retirable(tmp_path)
+    _authorise(repo, ["tests/test_via.py"])
+    head = _retire(repo, "tests/test_via.py")
+
+    ok, reason = pytest_runs.check(repo.path, base, head, [_change("tests/test_via.py")], [])
+
+    assert not ok
+    assert "fuori dai file autorizzati" in reason
+    assert "tests/test_via.py::test_via" in reason
+
+
+def test_authorising_and_retiring_in_the_same_commit_is_refused(tmp_path):
+    """Un commit che scrive l'autorizzazione e toglie il test insieme non se la concede: FAIL, col commit nominato."""
+    repo, base = _retirable(tmp_path)
+    repo.write(".nexgen-discipline.toml", 'test_removal_ok = ["tests/test_via.py"]\n')
+    (repo.path / "tests" / "test_via.py").unlink()
+    head = repo.commit("test: autorizza e ritira nello stesso commit")
+
+    ok, reason = pytest_runs.check(
+        repo.path, base, head, [_change(".nexgen-discipline.toml"), _change("tests/test_via.py")], [],
+        by_commit=True,
+    )
+
+    assert not ok
+    assert "tests/test_via.py::test_via" in reason
+    assert f"commit {head[:8]}" in reason
+
+
+def test_an_authorisation_that_arrives_after_the_removal_does_not_save_it(tmp_path):
+    """Il genitore del commit che ritira non autorizzava: scriverlo dopo non cambia quel commit."""
+    repo, base = _retirable(tmp_path)
+    _retire(repo, "tests/test_via.py")
+    _authorise(repo, ["tests/test_via.py"])
+
+    ok, reason = pytest_runs.check(
+        repo.path, base, repo.head(),
+        [_change(".nexgen-discipline.toml"), _change("tests/test_via.py")], [],
+        by_commit=True,
+    )
+
+    assert not ok
+    assert "tests/test_via.py::test_via" in reason
+
+
+def test_a_loss_nobody_authorised_still_fails_commit_by_commit(tmp_path):
+    """Il permesso non indebolisce il cancello: un test perso senza autorizzazione resta un FAIL."""
+    repo, base = _retirable(tmp_path)
+    head = _retire(repo, "tests/test_sample.py")
+
+    ok, reason = pytest_runs.check(
+        repo.path, base, head, [_change("tests/test_sample.py")], [], by_commit=True,
+    )
+
+    assert not ok
+    assert "tests/test_sample.py::test_value" in reason
