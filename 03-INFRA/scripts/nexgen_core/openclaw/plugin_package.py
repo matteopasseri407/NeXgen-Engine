@@ -116,7 +116,10 @@ def _tarball(entries: dict[str, bytes]) -> bytes:
     # the wall clock in its header, and the hash would change on every build.
     with (
         gzip.GzipFile(filename="", mode="wb", fileobj=buffer, mtime=_FIXED_MTIME) as compressed,
-        tarfile.open(mode="w", fileobj=compressed, format=tarfile.PAX_FORMAT) as archive,
+        # `encoding` is how the archive names its members: UTF-8, named rather than left to
+        # the default, because a plugin file with an accented name must land the same on
+        # every machine that installs the tarball.
+        tarfile.open(mode="w", fileobj=compressed, format=tarfile.PAX_FORMAT, encoding="utf-8") as archive,
     ):
         for name in sorted(entries):
             body = entries[name]
