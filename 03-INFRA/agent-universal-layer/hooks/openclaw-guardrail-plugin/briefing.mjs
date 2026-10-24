@@ -1,6 +1,6 @@
 // NeXgen Engine -- OpenClaw vault-briefing job.
 //
-// One of the three jobs of the `nexgen` plugin, registered by `index.mjs`. It is the OpenClaw
+// One of the four jobs of the `nexgen` plugin, registered by `index.mjs`. It is the OpenClaw
 // half of the same idea as Claude Code's `claude-vault-checkpoint.mjs`: when a session lost its
 // context (a compaction here, a resume/compact there), the next prompt is re-grounded in the
 // vault instead of letting the model guess. The TEXT is not written in this file: it is

@@ -1,4 +1,4 @@
-"""The three jobs of the `nexgen` plugin, run the way OpenClaw runs them.
+"""The four jobs of the `nexgen` plugin, run the way OpenClaw runs them.
 
 These tests load the real plugin with node, register it against a fake `api.on` and fire the
 hooks OpenClaw documents: `after_compaction`, `session_start`, `before_prompt_build`,
@@ -44,10 +44,17 @@ import {{ writeFileSync }} from "node:fs";
 const DIR = dirname(fileURLToPath(import.meta.url));
 const handlers = new Map();
 const commands = new Map();
+const logs = [];
+const logger = {{
+  info: (line) => logs.push(String(line)),
+  warn: () => {{}},
+  error: () => {{}},
+  debug: () => {{}},
+}};
 plugin.register({{ on: (name, fn) => {{
   if (!handlers.has(name)) handlers.set(name, []);
   handlers.get(name).push(fn);
-}}, registerCommand: (spec) => commands.set(spec.name, spec) }});
+}}, registerCommand: (spec) => commands.set(spec.name, spec), logger }});
 async function call(name, event, ctx) {{
   const list = handlers.get(name) || [];
   if (!list.length) return "MISSING";
@@ -99,16 +106,18 @@ def drive(target: Path, script: str, env: dict | None = None):
     return json.loads(done.stdout)
 
 
-# ------------------------------------------------------------ one plugin, three jobs
+# ------------------------------------------------------------- one plugin, four jobs
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_the_plugin_registers_the_three_jobs_with_the_guardrail_first(tmp_path):
+def test_the_plugin_registers_the_four_jobs_with_the_guardrail_first(tmp_path):
     fired = drive(deployed(tmp_path), "console.log(JSON.stringify({id: plugin.id, order: [...handlers.keys()]}));\n")
 
     assert fired["id"] == "nexgen"
     assert fired["order"][0] == "before_tool_call"
-    assert {"after_compaction", "session_start", "before_prompt_build"} <= set(fired["order"])
+    assert {"after_compaction", "session_start", "before_prompt_build", "skill_changed"} <= set(
+        fired["order"],
+    )
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
@@ -266,6 +275,71 @@ def test_a_checkpoint_hook_without_its_text_file_breaks_nothing(tmp_path):
     )
 
     assert done.returncode == 0 and done.stdout.strip() == ""
+
+
+# --------------------------------------------------------------------- the Workshop
+
+
+def workshop_event(action: str = "created", source: str = "workshop", named: bool = True) -> dict:
+    """The event OpenClaw fires after a committed live-skill change, in the SDK's own shape."""
+    artifact = {
+        "skillFile": "/state/agents/main/agent/workshop-skills/release-notes/SKILL.md",
+        "skillDir": "/state/agents/main/agent/workshop-skills/release-notes",
+        "source": "workshop",
+        "revision": {"contentSha256": "0" * 64, "treeSha256": "0" * 64},
+    }
+    if named:
+        artifact["name"] = "release-notes"
+        artifact["skillKey"] = "workshop:release-notes"
+    event = {"action": action, "source": source, "occurredAt": "2026-10-24T00:00:00Z"}
+    event["before" if action == "removed" else "after"] = artifact
+    return event
+
+
+def fire_workshop(tmp_path: Path, event: dict) -> dict:
+    """Fires one `skill_changed`; returns the handler's answer and what reached the gateway log."""
+    return drive(deployed(tmp_path), f"""
+const answer = await call("skill_changed", {json.dumps(event)}, {{agentId: "main", workspaceDir: "/w"}});
+console.log(JSON.stringify({{answer, logs}}));
+""")
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_new_workshop_skill_is_announced_with_the_command_that_adopts_it(tmp_path):
+    fired = fire_workshop(tmp_path, workshop_event())
+
+    assert fired["answer"] is None  # an observer, never a decision
+    assert fired["logs"] == [
+        'new skill in the Workshop: "release-notes". run `nexgen openclaw adopt` to make it canonical',
+    ]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_workshop_skill_that_changed_is_announced_too(tmp_path):
+    fired = fire_workshop(tmp_path, workshop_event(action="updated"))
+
+    assert len(fired["logs"]) == 1 and "release-notes" in fired["logs"][0]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_skill_installed_by_another_source_is_not_announced(tmp_path):
+    fired = fire_workshop(tmp_path, workshop_event(source="clawhub"))
+
+    assert fired["logs"] == []
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_removal_leaves_nothing_to_adopt_and_is_silent(tmp_path):
+    fired = fire_workshop(tmp_path, workshop_event(action="removed"))
+
+    assert fired["logs"] == []
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_an_event_without_a_name_is_silent_instead_of_announcing_nothing(tmp_path):
+    fired = fire_workshop(tmp_path, workshop_event(named=False))
+
+    assert fired["logs"] == []
 
 
 # ------------------------------------------------------------------------ posture

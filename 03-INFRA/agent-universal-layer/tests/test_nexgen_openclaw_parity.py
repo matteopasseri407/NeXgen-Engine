@@ -1,4 +1,4 @@
-"""The `nexgen` plugin: one id, one deposit, three jobs, and a parity control that proves it.
+"""The `nexgen` plugin: one id, one deposit, four jobs, and a parity control that proves it.
 
 These tests run the real adapter against a temporary home: the plugin is deposited under
 `<state dir>/extensions/nexgen/`, the old `nexgen-guardrail` folder is taken back, the
@@ -79,13 +79,13 @@ def test_the_plugin_id_is_nexgen_and_the_shipped_files_agree():
     assert package["openclaw"]["extensions"] == ["./index.mjs"]
 
 
-def test_the_deposit_lands_in_the_new_folder_with_the_three_jobs(tmp_path):
+def test_the_deposit_lands_in_the_new_folder_with_the_four_jobs(tmp_path):
     home = a_home(tmp_path, OPENCLAW_JSON)
 
     action = deposit(home, tmp_path)
 
     assert action and str(plugin_dir(home)) in action
-    for name in ("index.mjs", "guardrail.mjs", "briefing.mjs", "quota.mjs"):
+    for name in ("index.mjs", "guardrail.mjs", "briefing.mjs", "quota.mjs", "workshop.mjs"):
         assert (plugin_dir(home) / name).read_bytes() == (PLUGIN_SOURCE / name).read_bytes(), name
 
 
