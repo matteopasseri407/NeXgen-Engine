@@ -51,7 +51,7 @@ class ClaudeAdapter(base.Adapter):
         deny_push="profilo di progetto .claude/settings.json e pushurl bloccata della copia",
     )
 
-    def new_session_id(self) -> str:
+    def new_session_id(self, task_id: str = "", unit: str = "") -> str:
         """The id the engine hands to `--session-id`, so finding the session is not a bet."""
         return str(uuid.uuid4())
 

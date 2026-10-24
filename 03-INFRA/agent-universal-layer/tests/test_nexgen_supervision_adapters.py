@@ -44,7 +44,7 @@ def _git_repo(path: Path) -> Path:
 
 
 def test_the_registry_names_every_adapter_and_resolves_its_aliases():
-    assert registry.names() == ("opencode", "claude", "codex", "agy", "local")
+    assert registry.names() == ("opencode", "claude", "codex", "agy", "local", "openclaw")
     assert registry.get("claude-code") is registry.get("claude")
     assert registry.get("antigravity") is registry.get("agy")
     assert registry.get("local-model") is registry.get("local")

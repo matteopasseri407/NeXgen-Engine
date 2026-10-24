@@ -44,10 +44,14 @@ class Capabilities:
     A `False` is not a bug to work around: it is the truth about that harness, and
     the engine answers "non lo so fare" instead of inventing a session id, a cost
     or a permission profile. `deny_push` says how a push is stopped, because an
-    adapter that cannot deny it must not claim it did.
+    adapter that cannot deny it must not claim it did. `window` says whether the
+    work shows up in a terminal window of the engine: a harness with its own
+    visible sessions answers no, and the engine starts the turn instead of a tab.
     """
 
     open_tab: bool = True
+    #: Whether opening work means a window of the engine, or a session inside the harness.
+    window: bool = True
     find_session: bool = False
     send_turn: bool = False
     live_state: bool = False
@@ -128,6 +132,35 @@ class Adapter:
     def write_profile(self, task_id: str, folder: Path, *, model: str = "") -> None:
         """Put the executor's permission profile in the copy before its tab opens."""
         raise Unsupported(self.name, "write_permissions")
+
+    def check_folder(self, folder: Path) -> None:
+        """Refuse a copy this harness cannot work in, before anything is started.
+
+        Most harnesses take the folder as an argument, so there is nothing to
+        check. A harness whose work always runs in a workspace the owner
+        configured overrides this and names the mismatch here, where no process
+        has started and nothing has been recorded.
+        """
+        return None
+
+    def turn_log(self, session: str) -> Path | None:
+        """Where this harness's own per-turn envelope is written, when it writes one.
+
+        The engine redirects the turn's standard output here so a turn that ends
+        on its own leaves its numbers behind. A harness whose cost is read from
+        its store returns None and nothing is redirected.
+        """
+        return None
+
+    def close_session(self, session: str) -> str:
+        """Close the work this harness opened for a session; empty when there is nothing to close.
+
+        A window is closed by the window layer. A harness that keeps its own
+        session open closes it here instead, and returns the one line the owner
+        reads; a refusal is that line, never an exception, because the work is
+        already done when this runs.
+        """
+        return ""
 
     def measure(self, session: str):
         """What the session cost and how it is doing, children included."""
