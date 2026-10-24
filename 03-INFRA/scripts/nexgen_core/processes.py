@@ -7,11 +7,31 @@ import shutil
 import signal
 import subprocess
 import time
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable
 
 
 #: PowerShell reads all of these as a single quote, not just the ASCII apostrophe.
 _POWERSHELL_QUOTES = "'\u2018\u2019\u201a\u201b"
+
+#: Suffixes Windows starts only by handing the file to a command interpreter. A
+#: batch file is the only one of the three that can wrap something node runs.
+SHIM_SUFFIXES = (".cmd", ".bat", ".ps1")
+
+#: The suffixes among those that are batch files, which is what npm's shims are.
+BATCH_SUFFIXES = (".cmd", ".bat")
+
+#: npm's own shims, and the JavaScript entry each wraps, relative to the shim.
+#: `npx` lives in the Node installation (`C:\Program Files\nodejs\npx.cmd`), and the
+#: npm tree beside it holds the script the shim would have run.
+NPM_SHIM_ENTRIES = {
+    "npm": "node_modules/npm/bin/npm-cli.js",
+    "npx": "node_modules/npm/bin/npx-cli.js",
+}
+
+
+class ShimEntryError(RuntimeError):
+    """An npm shim whose Node entry is not beside it: there is nothing left to start."""
 
 
 def powershell_literal(text: str) -> str:
@@ -78,14 +98,54 @@ def spawn_detached(argv: list[str]) -> int | None:
     return subprocess.Popen(command, **kwargs).pid
 
 
+def shim_node_argv(executable: str, relative_entry: str, argv: list[str],
+                   which: Callable[[str], "str | None"] | None = None) -> list[str] | None:
+    """`node <entry beside the shim>` plus `argv`, or None when that cannot start.
+
+    One job: turn a Windows batch shim into the program node runs. A `.cmd` is
+    started by `cmd.exe`, which splits an unquoted path at its spaces (`npx` under
+    `Program Files` died as `"C:\\Program" is not recognized`) and re-reads `&`,
+    `|`, `^` and `%` inside any argument. npm puts the JavaScript it wraps beside
+    the shim, and node runs that with an argument list. None means "not startable
+    here": the caller decides whether that is a lost alert or a refused launch.
+
+    `which` defaults to the module's own lookup at call time, so a caller that
+    replaces `shutil.which` is the one that is asked.
+    """
+    shim = Path(executable)
+    if shim.suffix.lower() not in BATCH_SUFFIXES:
+        return None
+    entry = shim.parent / relative_entry
+    node = (which or shutil.which)("node")
+    if not entry.is_file() or not node:
+        return None
+    return [node, str(entry), *argv]
+
+
 def windows_command_argv(argv: list[str]) -> list[str]:
-    """Resolve npm command shims and invoke .cmd/.bat through cmd.exe."""
+    """Resolve npm command shims to node and their entry, and start other batch files through cmd.exe.
+
+    `npx` and `npm` are the two the engine launches itself, and their shims sit in
+    the Node installation, under `Program Files`: a path with a space in it, which
+    `cmd.exe` cannot be handed. They therefore never take the interpreter road. A
+    batch file npm did not write has no entry to run, and keeps `cmd.exe`.
+    """
     if os.name != "nt" or not argv:
         return list(argv)
     executable = shutil.which(argv[0])
     if not executable:
         return list(argv)
-    if executable.casefold().endswith((".cmd", ".bat")):
+    if executable.casefold().endswith(BATCH_SUFFIXES):
+        entry = NPM_SHIM_ENTRIES.get(Path(executable).stem.casefold())
+        if entry is not None:
+            launched = shim_node_argv(executable, entry, list(argv[1:]))
+            if launched is None:
+                expected = Path(executable).parent / entry
+                raise ShimEntryError(
+                    f"{executable} is an npm shim that cannot be started: either {expected} is not "
+                    "beside it, or node is not on PATH. The engine runs npm shims through node, never "
+                    "through cmd.exe, because a path under Program Files breaks at its space there")
+            return launched
         return ["cmd.exe", "/d", "/s", "/c", executable, *argv[1:]]
     # Anything else starts by name as well as by path: keeping the caller's
     # own argv means what a caller sees is what it asked for.
