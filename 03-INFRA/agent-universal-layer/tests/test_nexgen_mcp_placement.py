@@ -51,6 +51,16 @@ def srv(**kw):
     (srv(lazy=True, enabled=True, lazy_targets=["claude"]), "codex", "direct", "legacy: enabled"),
     (srv(lazy=True, lazy_targets=["claude"]), "codex", "absent", "inert (not core, not enabled)"),
     (srv(lazy=True, targets=["claude", "opencode"], lazy_targets=["claude", "codex"]), "codex", "absent", "not in targets"),
+    # openclaw: every enabled server is direct; lazy-mcp is never mounted
+    (srv(exposure="lazy"), "openclaw", "direct", "openclaw: direct"),
+    (srv(exposure="eager"), "openclaw", "direct", "exposure: eager"),
+    (srv(lazy=True), "openclaw", "direct", "openclaw: direct"),
+    (srv(tier="core"), "openclaw", "direct", "legacy: core"),
+    (srv(enabled=True), "openclaw", "direct", "legacy: enabled"),
+    (srv(exposure="lazy", targets=["claude"]), "openclaw", "absent", "not in targets"),
+    (srv(exposure="lazy", enabled=False), "openclaw", "absent", "disabled"),
+    (srv(name="lazy-mcp", exposure="eager"), "openclaw", "absent", "openclaw: gateway not mounted"),
+    (srv(tier="core", args=["lazy-mcp.py"]), "openclaw", "absent", "openclaw: gateway not mounted"),
 ])
 def test_the_rule(entry, cli, kind, why):
     placement = mp.place(entry, cli)
@@ -152,16 +162,13 @@ def test_a_gateway_never_told_its_cli_keeps_the_old_behaviour_until_the_next_ren
     assert {"notes", "mail", "old-lazy", "direct-here", "off"} <= served
 
 
-@pytest.mark.parametrize("cli", mp.CLIS)
-def test_the_rendered_gateway_entry_carries_its_cli_in_every_dialect(manifest, tmp_path, cli):
-    from nexgen_core.paths import openclaw_config
+GATEWAY_CLIS = ("claude", "antigravity", "codex", "opencode")
 
+
+@pytest.mark.parametrize("cli", GATEWAY_CLIS)
+def test_the_rendered_gateway_entry_carries_its_cli_in_every_dialect(manifest, tmp_path, cli):
     renderer = McpRenderer(vault_data=manifest.parents[3], engine_root=tmp_path / "engine", home=tmp_path / "home")
     home = tmp_path / "home"
-    if cli == "openclaw":
-        # OpenClaw's file belongs to OpenClaw: the engine patches it in place and never creates it.
-        openclaw_config(home).parent.mkdir(parents=True, exist_ok=True)
-        openclaw_config(home).write_text("{}", encoding="utf-8")
     renderer.render_all(write=True)
     if cli == "claude":
         env = json.loads((home / ".claude.json").read_text())["mcpServers"]["lazy-mcp"]["env"]
@@ -169,8 +176,6 @@ def test_the_rendered_gateway_entry_carries_its_cli_in_every_dialect(manifest, t
         env = json.loads((home / ".gemini/antigravity/mcp_config.json").read_text())["mcpServers"]["lazy-mcp"]["env"]
     elif cli == "codex":
         env = tomllib.loads((home / ".codex/config.toml").read_text())["mcp_servers"]["lazy_mcp"]["env"]
-    elif cli == "openclaw":
-        env = json.loads(openclaw_config(home).read_text())["mcp"]["servers"]["lazy-mcp"]["env"]
     else:
         from nexgen_core.jsonc import parse_jsonc
         path = renderer.opencode_config_path()
@@ -178,13 +183,28 @@ def test_the_rendered_gateway_entry_carries_its_cli_in_every_dialect(manifest, t
     assert env["LAZY_MCP_CLI"] == cli
 
 
+def test_openclaw_never_renders_gateway_entry(manifest, tmp_path):
+    from nexgen_core.paths import openclaw_config
+
+    renderer = McpRenderer(vault_data=manifest.parents[3], engine_root=tmp_path / "engine", home=tmp_path / "home")
+    home = tmp_path / "home"
+    openclaw_config(home).parent.mkdir(parents=True, exist_ok=True)
+    openclaw_config(home).write_text("{}", encoding="utf-8")
+    renderer.render_all(write=True)
+    mcp_servers = json.loads(openclaw_config(home).read_text()).get("mcp", {}).get("servers", {})
+    assert "lazy-mcp" not in mcp_servers
+
+
 def test_everyone_the_same_when_the_manifest_says_so(tmp_path, monkeypatch):
-    """The goal: eager servers identical in every CLI, everything else behind the same gateway in every CLI."""
+    """The goal: eager servers identical in every CLI, everything else behind the same gateway in every CLI.
+    OpenClaw exception: lazy-mcp is not mounted and all enabled servers are mounted directly."""
     servers = {"lazy-mcp": srv(exposure="eager"), "a": srv(exposure="eager"), "b": srv(exposure="lazy"), "c": srv(exposure="lazy")}
     table = mp.plan(servers)
-    for cli in mp.CLIS:
+    for cli in GATEWAY_CLIS:
         assert {n for n, row in table.items() if row[cli].kind == mp.DIRECT} == {"lazy-mcp", "a"}
         assert mp.gateway_servers_for(servers, cli) == {"b", "c"}
+    assert {n for n, row in table.items() if row["openclaw"].kind == mp.DIRECT} == {"a", "b", "c"}
+    assert mp.gateway_servers_for(servers, "openclaw") == set()
     assert mp.problems(servers) == []
 
 
