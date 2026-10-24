@@ -281,6 +281,6 @@ export function registerSupTools(api, { configPath = CONFIG_PATH, spawnFn } = {}
   for (const tool of supTools({ configPath, spawnFn })) {
     // A read-only tool is always available; a tool that changes state waits for the
     // operator's allowlist, which setup writes for the supervisor agent alone.
-    api.registerTool(tool, READ_TOOLS.includes(tool.name) ? undefined : { name: tool.name, optional: true });
+    api.registerTool(tool, READ_TOOLS.includes(tool.name) ? undefined : { optional: true });
   }
 }

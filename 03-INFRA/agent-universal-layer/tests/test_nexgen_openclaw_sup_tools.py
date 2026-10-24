@@ -43,6 +43,7 @@ export function registered() {{
     commands: [...commands.keys()],
     tools: [...tools.keys()],
     optional: [...options].filter(([, opts]) => opts && opts.optional).map(([name]) => name),
+    optionKeys: [...options].map(([name, opts]) => [name, opts ? Object.keys(opts).sort() : null]),
   }};
 }}
 """
@@ -133,6 +134,18 @@ def test_the_plugin_registers_sup_and_eight_supervision_tools(tmp_path):
         "nexgen_sup_collect", "nexgen_sup_publish", "nexgen_sup_review",
         "nexgen_sup_run", "nexgen_sup_start", "nexgen_sup_unit",
     ]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_side_effecting_tools_say_only_that_they_are_optional(tmp_path):
+    """OpenClaw reads `options?.optional` and nothing else: the name is already on the tool."""
+    fired = drive_plugin(tmp_path, "console.log(JSON.stringify(registered()));\n")
+
+    shapes = dict(fired["optionKeys"])
+    for name in fired["optional"]:
+        assert shapes[name] == ["optional"], name
+    # A read-only tool is registered with no options at all.
+    assert shapes["nexgen_sup_status"] is None
 
 
 # --------------------------------------------------------------------- /sup
