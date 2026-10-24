@@ -61,6 +61,12 @@ def test_il_pacchetto_non_registra_l_entry_point() -> None:
     assert hasattr(entrypoints, "agent_sync") and hasattr(entrypoints, "council")
 
 
+def test_il_pacchetto_non_dichiara_lo_script() -> None:
+    """`[project.scripts]` is the last door: a console script no module provides."""
+    pyproject = (Path(__file__).resolve().parents[3] / "pyproject.toml").read_text(encoding="utf-8")
+    assert "firecrawl-local" not in pyproject
+
+
 def test_il_sync_non_installa_lo_shim() -> None:
     agent_sync = importlib.import_module("agent_sync")
     assert "firecrawl-local" not in agent_sync.LINKED_COMMANDS
