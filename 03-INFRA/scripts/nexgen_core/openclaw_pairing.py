@@ -164,13 +164,20 @@ def default_node_runner(argv: list[str]) -> RunResult:
     """Run one node query, with a deadline: argv only, never a shell string.
 
     A gateway that is up answers in a second; one that is wedged answers never, and
-    the deadline is what turns that into a silent "no nodes" instead of a hung doctor.
+    the deadline is what turns that into a silent "no nodes" instead of a hung
+    command. On Windows `openclaw` is npm's batch shim, and a killed batch file
+    leaves its node child holding the pipe open, so the deadline would never fire:
+    the shim becomes node and the package entry, the way the alert transport does it.
     """
-    executable = shutil.which(argv[0]) if argv else None
-    cmd = [executable, *argv[1:]] if executable else argv
+    from nexgen_core.megaphone import openclaw_launch
+
+    found = shutil.which(argv[0]) if argv else None
+    launch = openclaw_launch(found, shutil.which) if found else None
+    if launch is None:
+        return RunResult(returncode=1, stdout="", stderr="")
     try:
         done = subprocess.run(
-            cmd,
+            [*launch, *argv[1:]],
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,

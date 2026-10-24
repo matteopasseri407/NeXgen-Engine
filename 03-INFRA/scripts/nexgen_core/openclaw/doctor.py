@@ -6,8 +6,12 @@ installed, `collect` returns no outcomes at all, and `nexgen doctor` looks
 exactly as it did before this feature existed.
 
 The checks are read-only by construction. They read the configuration in force
-and they open one TCP connection; they never run `openclaw config validate`,
-because starting or validating OpenClaw is B2's job, and never write a file.
+and they open one TCP connection. When a caller asks for the node list — the
+`--nodes` flag of `nexgen openclaw doctor` — they also ask a gateway that already
+answers which nodes it knows, with the read-only query OpenClaw documents;
+without that flag nothing of OpenClaw is started, because `nexgen doctor` runs on
+a schedule of its own. They never validate the configuration and never write a
+file.
 """
 from __future__ import annotations
 

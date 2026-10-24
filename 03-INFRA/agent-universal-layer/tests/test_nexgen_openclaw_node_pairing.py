@@ -333,7 +333,20 @@ def test_the_two_stages_are_approved_in_order_when_both_are_asked_for():
     ]
 
 
-def test_a_failed_node_approval_is_a_non_zero_code():
+def test_pair_lists_the_nodes_already_paired_with_their_state():
+    recorder = Recorder(status={"nodes": [
+        {"nodeId": "a1b2c3d4e5f6", "displayName": "Build Node", "platform": "linux", "connected": True},
+    ]})
+    lines: list[str] = []
+
+    assert run_pair(runner=recorder, out=lines.append) == 0
+    output = "\n".join(lines)
+    assert "Nodes already paired" in output
+    assert "Build Node" in output
+    assert "connected" in output
+
+
+def test_pair_with_a_failed_node_approval_is_a_non_zero_code():
     recorder = Recorder(nodes=[node_request()], approve_code=1)
     lines: list[str] = []
 

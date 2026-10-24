@@ -52,6 +52,7 @@ from nexgen_core.openclaw_pairing import node_commands as pairing_node_commands
 from nexgen_core.openclaw_pairing import node_name as pairing_node_name
 from nexgen_core.openclaw_pairing import node_platform as pairing_node_platform
 from nexgen_core.openclaw_pairing import nodes_pending as pairing_nodes_pending
+from nexgen_core.openclaw_pairing import nodes_status as pairing_nodes_status
 from nexgen_core.openclaw_pairing import pending as pairing_pending
 from nexgen_core.openclaw_service import OpenClawService, RunResult
 from nexgen_core.paths import openclaw_config, resolve_home
@@ -318,6 +319,18 @@ def _node_lines(requests: list[dict], out: Emit) -> None:
         out(f"  {request.get('requestId')}  {_node_description(request)}")
 
 
+def _paired_lines(nodes: list[dict], out: Emit) -> None:
+    """The nodes already in, so a person sees that the approval took effect."""
+    if not nodes:
+        return
+    out(t("Nodes already paired:"))
+    for node in nodes:
+        state = t("connected") if node.get("connected") else t("not connected")
+        platform = pairing_node_platform(node)
+        where = f" ({platform})" if platform else ""
+        out(f"  {pairing_node_name(node)}{where}  {state}")
+
+
 def _pair_device(approve_id: str, yes: bool, ask: Callable[[str], bool],
                  runner: Callable[[list[str]], RunResult] | None, out: Emit) -> int:
     """The first stage's approval, asked first and never assumed."""
@@ -365,6 +378,7 @@ def run_pair(
     requests = pairing_nodes_pending(runner=runner).get("nodes") or []
     _device_lines(devices, out)
     _node_lines(requests, out)
+    _paired_lines(pairing_nodes_status(runner=runner).get("nodes") or [], out)
     if not approve_id and not approve_node_id:
         if devices:
             out(t("Approve one with 'nexgen openclaw pair --approve <id>'."))

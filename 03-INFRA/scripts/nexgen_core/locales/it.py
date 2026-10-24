@@ -1479,6 +1479,27 @@ MESSAGES: dict[str, str] = {
         "Il lingering è spento per {user}: il gateway si ferma quando chiudi l'ultima sessione.",
     "Run 'loginctl enable-linger {user}' once.":
         "Lancia una volta 'loginctl enable-linger {user}'.",
+    # --- Due PC: i nodi che il gateway conosce -----------------------------------
+    "connected":
+        "connesso",
+    "not connected":
+        "non connesso",
+    "No node is paired with this gateway.":
+        "Nessun nodo è accoppiato a questo gateway.",
+    "Nodes this gateway knows: {items}":
+        "Nodi che questo gateway conosce: {items}",
+    "The gateway listens on the home network: a node on another PC can reach it.":
+        "Il gateway ascolta sulla rete di casa: un nodo su un altro PC lo raggiunge.",
+    "The gateway listens on this machine only ({bind}): a node on another PC cannot reach it.":
+        "Il gateway ascolta solo su questa macchina ({bind}): un nodo su un altro PC non lo raggiunge.",
+    "Run 'nexgen openclaw setup --lan' here and restart the gateway.":
+        "Lancia qui 'nexgen openclaw setup --lan' e riavvia il gateway.",
+    "Run 'nexgen openclaw setup --lan' here and restart the gateway, when a second machine has to reach it.":
+        "Lancia qui 'nexgen openclaw setup --lan' e riavvia il gateway, quando una seconda macchina deve raggiungerlo.",
+    "Also list the nodes the running gateway knows (starts OpenClaw's CLI once)":
+        "Elenca anche i nodi che il gateway in esecuzione conosce (avvia una volta la CLI di OpenClaw)",
+    "Nodes already paired:":
+        "Nodi già accoppiati:",
     "Set gateway.bind to 'loopback', or 'lan' if you use the phone app on your home network.":
         "Imposta gateway.bind a 'loopback', oppure 'lan' se usi l'app sul telefono nella rete di casa.",
     "These configured channels have no agent binding: {names}. With explicit ownership their messages reach no agent.":
