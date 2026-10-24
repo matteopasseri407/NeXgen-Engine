@@ -14,6 +14,7 @@ def _all(args) -> list[str]:
 
 
 def _register_utilities(sub) -> None:
+    """The small tools, and the councils, which live on the top-level dispatcher."""
     p = sub.add_parser("tool", aliases=["tools"], help=t("Tools shipped with the engine"))
     tsub = p.add_subparsers(dest="tool_command", metavar="tool")
 
@@ -34,6 +35,19 @@ def _register_utilities(sub) -> None:
     q.add_argument("args", nargs="*", help=t("Additional Chrome arguments or URLs"))
     q.set_defaults(func=cmd_chrome)
 
+    _register_firecrawl(tsub)
+    _register_update_notifier(tsub)
+    p.set_defaults(func=lambda a: _usage(p))
+
+    # The council isn't a tool: it's its own top-level verb. The runner is
+    # the launcher in nexgen_core/tools/council.py, which subprocesses
+    # agent-universal-layer/council/council.py where the logic lives.
+    c = sub.add_parser("council", help=t("Convene a review across models from different vendors"))
+    c.set_defaults(func=cmd_council)
+
+
+def _register_firecrawl(tsub) -> None:
+    """One local service, its four verbs: search and scrape through the engine's own instance."""
     q = tsub.add_parser("firecrawl", help=t("Search and scraping via the local instance"))
     fsub = q.add_subparsers(dest="firecrawl_action", metavar="action")
 
@@ -59,6 +73,9 @@ def _register_utilities(sub) -> None:
 
     q.set_defaults(func=lambda a: _run("firecrawl", _all(a)))
 
+
+def _register_update_notifier(tsub) -> None:
+    """The update notice: the check, the prompt, and where it is installed."""
     q = tsub.add_parser("update-notifier", help=t("Check for engine updates and display native UI prompt"))
     q.add_argument("--force", action="store_true", help=t("Ignore time throttle and prompt if update available"))
     q.add_argument("--demo", action="store_true", help=t("Simulate prompt dialog for test"))
@@ -68,21 +85,21 @@ def _register_utilities(sub) -> None:
     q.add_argument("--shell", choices=["bash", "powershell"], default=None, help=t("With shell hook: only this shell"))
     q.set_defaults(func=cmd_update_notifier)
 
-    p.set_defaults(func=lambda a: _usage(p))
-
-    # The council isn't a tool: it's its own top-level verb. The runner is
-    # the launcher in nexgen_core/tools/council.py, which subprocesses
-    # agent-universal-layer/council/council.py where the logic lives.
-    c = sub.add_parser("council", help=t("Convene a review across models from different vendors"))
-    c.set_defaults(func=cmd_council)
-
 
 def _register_mcp_block(sub) -> None:
+    """`nexgen mcp`: the connectors, from adding one to judging what a CLI actually loads."""
     # `mcp` sta a livello top-level: è la superficie che rulesync ha reso
     # familiare e il piano chiede per nome (`nexgen mcp add`).
     m = sub.add_parser("mcp", help=t("Add and inspect MCP connectors"))
     msub = m.add_subparsers(dest="mcp_command", metavar="verb")
 
+    _register_mcp_add(msub)
+    _register_mcp_trials(msub)
+    _register_mcp_inspection(msub)
+
+
+def _register_mcp_add(msub) -> None:
+    """One server into the manifest: validated, atomic, with a backup beside it."""
     a = msub.add_parser("add", help=t("Add one server to the manifest: validated, atomic, with backup"))
     a.add_argument("name", help=t("Server name in the manifest"))
     a.add_argument("--targets", default="all",
@@ -99,6 +116,9 @@ def _register_mcp_block(sub) -> None:
     a.add_argument("--dry-run", dest="dry_run", action="store_true", help=t("Print the stub instead of writing"))
     a.set_defaults(func=cmd_mcp_add)
 
+
+def _register_mcp_trials(msub) -> None:
+    """The trials: try a server here, list them, keep one, end one."""
     def _server_args(p):
         p.add_argument("name", help=t("Server name"))
         p.add_argument("--command", dest="server_command", help=t("Stdio command (e.g. npx); mutually exclusive with --url"))
@@ -117,6 +137,9 @@ def _register_mcp_block(sub) -> None:
     a = msub.add_parser("trials", help=t("Read-only: the servers on trial here and how long they have left"))
     a.set_defaults(func=lambda args: __import__("nexgen_core.mcp_trials", fromlist=["cmd_trials"]).cmd_trials())
 
+
+def _register_mcp_inspection(msub) -> None:
+    """Read-only views, and the two that start a backend to compare what a CLI serves."""
     a = msub.add_parser("promote", help=t("Keep a trial: write it into the manifest, where it syncs to every machine"))
     a.add_argument("name")
     a.set_defaults(func=cmd_mcp_promote)
