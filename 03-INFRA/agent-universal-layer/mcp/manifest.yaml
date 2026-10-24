@@ -68,6 +68,11 @@ servers:
   # reference, and a machine without it mounts nothing (require_env).
 
   firecrawl:
+    # Tools never used in OpenCode/Codex history (2026-10-07); hidden to save ~6k tokens a session on CLIs that load tools up front.
+    # Put a name back by deleting it here; `nexgen mcp check --direct` shows the effect.
+    # Hiding a tool is also what puts the server behind `mcp-trim.py`: the launcher resolves the key at
+    # spawn time, so the credential stays a reference and no CLI's config file ever holds it.
+    tools_deny: ["firecrawl_crawl", "firecrawl_check_crawl_status", "firecrawl_feedback", "firecrawl_find_tools", "firecrawl_parse", "firecrawl_credit_usage", "firecrawl_developer_search", "firecrawl_monitor_create", "firecrawl_monitor_check", "firecrawl_monitor_checks", "firecrawl_monitor_update", "firecrawl_monitor_list", "firecrawl_monitor_run", "firecrawl_monitor_delete", "firecrawl_monitor_get"]
     transport: stdio
     tier: core
     command: npx

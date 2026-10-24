@@ -63,6 +63,17 @@ def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path
     return vault, home
 
 
+#: The tools the manifest hides: the same fifteen the owner's live manifest hides,
+#: for the same reason (never used, and they cost a session's tool budget up front).
+HIDDEN_TOOLS = [
+    "firecrawl_check_crawl_status", "firecrawl_crawl", "firecrawl_credit_usage",
+    "firecrawl_developer_search", "firecrawl_feedback", "firecrawl_find_tools",
+    "firecrawl_monitor_check", "firecrawl_monitor_checks", "firecrawl_monitor_create",
+    "firecrawl_monitor_delete", "firecrawl_monitor_get", "firecrawl_monitor_list",
+    "firecrawl_monitor_run", "firecrawl_monitor_update", "firecrawl_parse",
+]
+
+
 def test_the_manifest_declares_the_cloud_connector() -> None:
     server = _firecrawl()
     assert server["transport"] == "stdio"
@@ -71,6 +82,11 @@ def test_the_manifest_declares_the_cloud_connector() -> None:
     assert server["env"] == {"FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}"}
     assert server["require_env"] == "FIRECRAWL_API_KEY"
     assert set(server["targets"]) == set(CLIS)
+
+
+def test_the_manifest_hides_the_tools_nobody_uses() -> None:
+    """Hiding them is also what routes the server through the engine's launcher."""
+    assert sorted(_firecrawl()["tools_deny"]) == HIDDEN_TOOLS
 
 
 def test_no_declared_value_points_at_a_self_hosted_stack() -> None:
@@ -94,22 +110,25 @@ def test_the_declaration_keys_the_secret_store_and_nothing_else() -> None:
 
 @pytest.mark.parametrize("cli", CLIS)
 def test_a_machine_with_the_key_mounts_the_connector(machine, monkeypatch, cli: str) -> None:
-    """Mounted with a reference, never with the key.
+    """Mounted behind the engine's launcher, never with the key.
 
-    A credential is not written into a harness's config: the value stays
-    `${FIRECRAWL_API_KEY}` and the process that starts the server resolves it
-    from the environment, or the engine's own launcher does.
+    `tools_deny` routes the server through `mcp-trim.py` for every CLI: the
+    launcher resolves the reference at spawn time, so the harness's file holds
+    neither the credential nor a `${NAME}` in a dialect that CLI may not read.
     """
     vault, home = machine
     monkeypatch.setenv("FIRECRAWL_API_KEY", FAKE_KEY)
     servers = McpRenderer(vault_data=vault, home=home).load_resolved_servers(cli)
-    assert servers["firecrawl"]["command"]
-    assert servers["firecrawl"]["env"] == {"FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}"}
-    assert FAKE_KEY not in json.dumps(servers["firecrawl"])
+    entry = servers["firecrawl"]
+    assert entry["args"][0].endswith("mcp-trim.py"), entry["args"]
+    assert entry["args"][-1] == "firecrawl"
+    assert "npx" not in entry["command"], entry["command"]
+    assert "FIRECRAWL_API_KEY" not in entry["env"], entry["env"]
+    assert FAKE_KEY not in json.dumps(entry)
 
 
 def test_no_rendered_harness_file_holds_the_key(machine, monkeypatch) -> None:
-    """The same fact on disk: every CLI's own file carries the reference, none the value.
+    """The same fact on disk: every CLI's file starts the launcher, none holds the value.
 
     Rendered for real into a fake home, then read back as text. A file that is
     missing would make this test vacuous, so every one of them must exist.
@@ -133,7 +152,7 @@ def test_no_rendered_harness_file_holds_the_key(machine, monkeypatch) -> None:
     for path in files:
         text = path.read_text(encoding="utf-8")
         assert FAKE_KEY not in text, path
-        assert "${FIRECRAWL_API_KEY}" in text, path
+        assert "mcp-trim.py" in text, path
 
 
 @pytest.mark.parametrize("cli", CLIS)
@@ -143,22 +162,37 @@ def test_a_machine_without_the_key_mounts_nothing(machine, cli: str) -> None:
     assert "firecrawl" not in servers
 
 
-def test_openclaw_receives_the_reference_instead_of_the_key(machine, monkeypatch) -> None:
-    """OpenClaw substitutes `${VAR}` itself: the file must not hold the secret."""
+def test_the_engine_keeps_the_reference_openclaw_would_substitute(machine, monkeypatch) -> None:
+    """OpenClaw substitutes `${VAR}` itself, so the engine keeps the reference as written.
+
+    This is the map `_apply_servers` consults for a server it mounts directly; the
+    connector is behind the launcher now, and an adopted server is what still walks
+    this path.
+    """
     vault, home = machine
     monkeypatch.setenv("FIRECRAWL_API_KEY", FAKE_KEY)
-    renderer = McpRenderer(vault_data=vault, home=home)
-    kept = openclaw_mod._env_references(renderer)
+    kept = openclaw_mod._env_references(McpRenderer(vault_data=vault, home=home))
+
     assert kept["firecrawl"] == {"FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}"}
     assert FAKE_KEY not in str(kept)
 
+
+def test_openclaw_holds_no_key_for_the_connector(machine, monkeypatch) -> None:
+    """OpenClaw's own file starts the launcher too, and carries no credential."""
+    vault, home = machine
+    monkeypatch.setenv("FIRECRAWL_API_KEY", FAKE_KEY)
+    renderer = McpRenderer(vault_data=vault, home=home)
     config = home / ".openclaw" / "openclaw.json"
     config.parent.mkdir(parents=True)
     config.write_text('{"mcp": {"servers": {}}}', encoding="utf-8")
+
     openclaw_mod.render(renderer, write=True)
+
     written = config.read_text(encoding="utf-8")
-    assert "${FIRECRAWL_API_KEY}" in written
     assert FAKE_KEY not in written
+    entry = json.loads(written)["mcp"]["servers"]["firecrawl"]
+    assert entry["args"][0].endswith("mcp-trim.py"), entry["args"]
+    assert entry["args"][-1] == "firecrawl"
 
 
 def test_the_reachability_probe_has_no_address_to_probe(machine, monkeypatch) -> None:
