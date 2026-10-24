@@ -21,6 +21,7 @@ from nexgen_core.checks import reachability_checks  # noqa: E402
 from nexgen_core.config import load_mcp_manifest  # noqa: E402
 from nexgen_core.mcp_render import openclaw as openclaw_mod  # noqa: E402
 from nexgen_core.renderer import McpRenderer  # noqa: E402
+from nexgen_core.report import Severity  # noqa: E402
 
 MANIFEST = UL / "mcp" / "manifest.yaml"
 
@@ -123,3 +124,75 @@ def test_the_reachability_probe_has_no_address_to_probe(machine, monkeypatch) ->
     monkeypatch.setenv("FIRECRAWL_API_KEY", FAKE_KEY)
     entry = McpRenderer(vault_data=vault, home=home).load_resolved_servers("claude")["firecrawl"]
     assert reachability_checks._extract_probe_target(entry) is None
+
+
+# ---- the doctor: presence of the key, never its value -----------------------
+
+def test_the_doctor_reports_that_the_connector_can_mount() -> None:
+    outcome = reachability_checks.check_cloud_connector_key(MANIFEST, {"FIRECRAWL_API_KEY": FAKE_KEY})
+    assert outcome.id == "mcp.cloud_key"
+    assert outcome.severity == Severity.OK
+    assert "FIRECRAWL_API_KEY" in outcome.message
+
+
+def test_the_doctor_says_when_the_key_is_missing_and_how_to_store_it() -> None:
+    outcome = reachability_checks.check_cloud_connector_key(MANIFEST, {})
+    assert outcome.severity == Severity.WARN
+    assert "FIRECRAWL_API_KEY" in outcome.message
+    assert "nexgen-secrets set FIRECRAWL_API_KEY" in outcome.action
+
+
+@pytest.mark.parametrize("present", [True, False])
+def test_the_doctor_never_puts_the_key_in_its_report(present: bool) -> None:
+    env = {"FIRECRAWL_API_KEY": FAKE_KEY} if present else {}
+    outcome = reachability_checks.check_cloud_connector_key(MANIFEST, env)
+    reported = " ".join(str(part) for part in (outcome.message, outcome.action, outcome.detail))
+    assert FAKE_KEY not in reported
+
+
+def test_an_unreadable_manifest_does_not_end_the_check(tmp_path: Path) -> None:
+    broken = tmp_path / "manifest.yaml"
+    broken.write_text("servers: [unclosed", encoding="utf-8")
+    outcome = reachability_checks.check_cloud_connector_key(broken, {})
+    assert outcome.severity == Severity.UNDETERMINED
+    assert outcome.id == "mcp.cloud_key"
+
+
+def test_a_manifest_without_the_connector_has_nothing_to_check(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.yaml"
+    manifest.write_text("schema_version: 1\nservers:\n  other:\n    command: npx\n", encoding="utf-8")
+    outcome = reachability_checks.check_cloud_connector_key(manifest, {})
+    assert outcome.severity == Severity.OK
+
+
+def test_a_connector_that_declares_no_key_is_not_judged(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.yaml"
+    manifest.write_text(
+        "schema_version: 1\nservers:\n  firecrawl:\n    command: npx\n    args: ['-y', 'firecrawl-mcp@3.25.3']\n",
+        encoding="utf-8",
+    )
+    outcome = reachability_checks.check_cloud_connector_key(manifest, {})
+    assert outcome.severity == Severity.UNDETERMINED
+
+
+def test_the_doctor_registers_the_cloud_key_check(machine, monkeypatch) -> None:
+    """The check exists only if the doctor runs it: pin the wiring, not just the function."""
+    import types
+
+    from nexgen_core import doctor as doctor_mod
+
+    vault, home = machine
+    registered: list[tuple[str, object]] = []
+    doc = types.SimpleNamespace(
+        vault_data=vault, home=home, state_dir=home / "state", engine_root=home / "engine",
+    )
+    doctor_mod._mcp_and_module_checks(
+        lambda check_id, produce, resource=None: registered.append((check_id, produce)), doc,
+    )
+    produced = dict(registered)
+    assert "mcp.cloud_key" in produced
+
+    monkeypatch.setenv("FIRECRAWL_API_KEY", FAKE_KEY)
+    assert produced["mcp.cloud_key"]().severity == Severity.OK
+    monkeypatch.delenv("FIRECRAWL_API_KEY")
+    assert produced["mcp.cloud_key"]().severity == Severity.WARN

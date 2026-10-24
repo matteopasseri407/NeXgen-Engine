@@ -513,6 +513,12 @@ MESSAGES: dict[str, str] = {
     "MCP connector '{name}' is not responding ({detail}).": "Il connettore MCP '{name}' non risponde ({detail}).",
     "Check that the service behind '{name}' is running, then rerun the doctor.": "Controlla che il servizio dietro '{name}' sia avviato, poi riesegui il doctor.",
     "Could not check the reachability of '{name}' ({detail}).": "Non è stato possibile verificare la raggiungibilità di '{name}' ({detail}).",
+    "The MCP manifest could not be read, so the {name} key was not checked.": "Non riesco a leggere il manifest MCP, quindi la chiave di {name} non è stata verificata.",
+    "The manifest declares no {name} connector: nothing to check": "Il manifest non dichiara alcun connettore {name}: niente da verificare",
+    "The {name} connector declares no key to check.": "Il connettore {name} non dichiara alcuna chiave da verificare.",
+    "The {name} connector can mount: {gate} is set": "Il connettore {name} può essere montato: {gate} è impostata",
+    "The {name} connector is not mounted here: {gate} is not set.": "Il connettore {name} non è montato qui: {gate} non è impostata.",
+    "Store it with 'nexgen-secrets set {gate}': the value stays in the secret store, and the next sync mounts the connector.": "Salvala con 'nexgen-secrets set {gate}': il valore resta nel deposito dei segreti e il prossimo sync monta il connettore.",
 
     # --- checks/security_checks.py ---
     "The canonical AGENTS.md bootstrap is not present.": "Il bootstrap canonico AGENTS.md non è presente.",

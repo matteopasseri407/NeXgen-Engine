@@ -5,14 +5,20 @@ bash doctor, but made generic: instead of probing hardcoded ports by
 connector name, it derives the endpoint to probe directly from the resolved
 manifest. Uses only stdlib (socket/urllib) with a short, per-server timeout:
 one slow connector must never hold up the whole doctor.
+
+The cloud connector is the other half of the same question: it has no address
+on this machine, so what decides whether it is there at all is its key.
 """
 from __future__ import annotations
 
+import os
 import re
 import socket
+from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlparse
 
+from nexgen_core.config import load_mcp_manifest
 from nexgen_core.i18n import t
 from nexgen_core.renderer import McpRenderer
 from nexgen_core.report import CheckOutcome, Severity
@@ -178,3 +184,62 @@ def check_mcp_reachability(
                 ),
             ))
     return outcomes
+
+
+#: The connector whose gate is a credential the person brings rather than a
+#: port the engine configures.
+CLOUD_CONNECTOR = "firecrawl"
+
+
+def check_cloud_connector_key(
+    manifest_path: Path, env: Mapping[str, str] | None = None
+) -> CheckOutcome:
+    """Whether the cloud connector's key is here, never what it is.
+
+    The renderer mounts a server only when its `require_env` variable is set,
+    so a machine without the key looked exactly like a machine that never chose
+    the connector: nothing anywhere said which. This check says it, and reads
+    presence alone — the value is not compared, formatted or logged, so no
+    report, alert or CI log can carry it.
+    """
+    values = os.environ if env is None else env
+    try:
+        data = load_mcp_manifest(manifest_path)
+    except (OSError, ValueError):
+        return CheckOutcome(
+            id="mcp.cloud_key",
+            severity=Severity.UNDETERMINED,
+            message=t("The MCP manifest could not be read, so the {name} key was not checked.",
+                      name=CLOUD_CONNECTOR),
+        )
+
+    servers = data.get("servers")
+    server = servers.get(CLOUD_CONNECTOR) if isinstance(servers, dict) else None
+    if not isinstance(server, dict):
+        return CheckOutcome(
+            id="mcp.cloud_key",
+            severity=Severity.OK,
+            message=t("The manifest declares no {name} connector: nothing to check", name=CLOUD_CONNECTOR),
+        )
+
+    gate = str(server.get("require_env") or "").strip()
+    if not gate:
+        return CheckOutcome(
+            id="mcp.cloud_key",
+            severity=Severity.UNDETERMINED,
+            message=t("The {name} connector declares no key to check.", name=CLOUD_CONNECTOR),
+        )
+    if values.get(gate):
+        return CheckOutcome(
+            id="mcp.cloud_key",
+            severity=Severity.OK,
+            message=t("The {name} connector can mount: {gate} is set", name=CLOUD_CONNECTOR, gate=gate),
+        )
+    return CheckOutcome(
+        id="mcp.cloud_key",
+        severity=Severity.WARN,
+        message=t("The {name} connector is not mounted here: {gate} is not set.",
+                  name=CLOUD_CONNECTOR, gate=gate),
+        action=t("Store it with 'nexgen-secrets set {gate}': the value stays in the secret store, "
+                 "and the next sync mounts the connector.", gate=gate),
+    )
