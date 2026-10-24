@@ -1897,16 +1897,16 @@ MESSAGES: dict[str, str] = {
     # --- Due PC: un gateway e un nodo -------------------------------------------
     "Connect this machine as a node of a gateway on another PC":
         "Collega questa macchina come nodo di un gateway su un altro PC",
-    "The gateway machine's address on the home network":
-        "L'indirizzo della macchina del gateway sulla rete di casa",
+    "The gateway machine's address: its name on the home network, or its Tailscale MagicDNS name":
+        "L'indirizzo della macchina del gateway: il suo nome sulla rete di casa, oppure il suo nome MagicDNS di Tailscale",
     "The gateway's port (default: 18789)":
         "La porta del gateway (predefinita: 18789)",
     "The name the gateway shows for this machine":
         "Il nome che il gateway mostra per questa macchina",
     "Cannot propose the node connection: {error}":
         "Non riesco a proporre il collegamento del nodo: {error}",
-    "OpenClaw node for the gateway at {host}:{port}":
-        "Nodo OpenClaw per il gateway su {host}:{port}",
+    "OpenClaw node for the gateway at {address}":
+        "Nodo OpenClaw per il gateway su {address}",
     "Nothing has been changed: these are OpenClaw's own commands, in the order they work.":
         "Non ho cambiato niente: questi sono i comandi di OpenClaw, nell'ordine in cui funzionano.",
     "on the gateway machine":
@@ -1925,8 +1925,8 @@ MESSAGES: dict[str, str] = {
         "Monouso, dieci minuti, accesso da amministratore: tratta l'URL stampato come una password.",
     "the command it prints, to be pasted as it is on this machine":
         "il comando che stampa, da incollare così com'è su questa macchina",
-    "This is the one paste that enrols the device and its first commands together.":
-        "È l'unico incollaggio che registra insieme il dispositivo e i suoi primi comandi.",
+    "This is the one paste that enrols the device and its first commands together; --session-host also lets it run agent sessions, so keep it to a machine you trust as shared infrastructure.":
+        "È l'unico incollaggio che registra insieme il dispositivo e i suoi primi comandi; --session-host gli lascia anche eseguire sessioni di agente, quindi usalo solo su una macchina di cui ti fidi come infrastruttura condivisa.",
     "One approval at a time, without a join code":
         "Un'approvazione alla volta, senza codice di ingresso",
     "Two requests with different ids: the device admits the connection, the node request allows commands.":
@@ -1955,6 +1955,15 @@ MESSAGES: dict[str, str] = {
         "Ogni approvazione è tua: niente viene approvato da solo, e ogni richiesta dice quale macchina e quali comandi eseguirebbe.",
     "Port {port} is the one the gateway listens on; a different one there means passing it here too.":
         "La porta {port} è quella su cui ascolta il gateway; se lì è diversa, va passata anche qui.",
+    # Un gateway su una macchina accesa, raggiunta per nome MagicDNS
+    "A MagicDNS address means the gateway publishes itself with 'nexgen openclaw setup --server': it stays on loopback and Tailscale Serve gives it the HTTPS address {host} on port 443.":
+        "Un indirizzo MagicDNS significa che il gateway si pubblica con 'nexgen openclaw setup --server': resta su loopback e Tailscale Serve gli dà l'indirizzo HTTPS {host} sulla porta 443.",
+    "Both machines have to be on the same tailnet and logged in to Tailscale: the address is reachable there and nowhere else.":
+        "Tutte e due le macchine devono stare sulla stessa tailnet e aver fatto il login a Tailscale: l'indirizzo è raggiungibile lì e da nessun'altra parte.",
+    "The join code carries the HTTPS address the gateway mints, so the node needs no port and no token of its own; the explicit route needs '--port 443 --tls' because Serve owns that port.":
+        "Il codice di ingresso porta con sé l'indirizzo HTTPS che crea il gateway, quindi il nodo non ha bisogno di porta né di token propri; la strada esplicita richiede '--port 443 --tls' perché quella porta è di Serve.",
+    "Port 443 is the one Tailscale Serve owns on the gateway machine; the gateway's own port {port} stays on its loopback.":
+        "La porta 443 è quella che Tailscale Serve occupa sulla macchina del gateway; la porta {port} del gateway resta sul suo loopback.",
     "The approval failed: {error}":
         "L'approvazione è fallita: {error}",
     "In OpenClaw Companion open Connections and choose 'a local Gateway on this PC': the gateway this setup configured answers on 127.0.0.1:{port}.":

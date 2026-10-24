@@ -74,7 +74,8 @@ def _register_pairing(psub) -> None:
 
     q = psub.add_parser("node", help=t("Connect this machine as a node of a gateway on another PC"))
     q.add_argument("--host", required=True, metavar="ADDRESS",
-                   help=t("The gateway machine's address on the home network"))
+                   help=t("The gateway machine's address: its name on the home network, or its Tailscale "
+                          "MagicDNS name"))
     q.add_argument("--port", type=int, default=None, metavar="PORT",
                    help=t("The gateway's port (default: 18789)"))
     q.add_argument("--name", default=None, metavar="LABEL",

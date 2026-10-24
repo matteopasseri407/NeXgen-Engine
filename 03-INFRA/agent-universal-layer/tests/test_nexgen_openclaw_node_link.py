@@ -48,8 +48,64 @@ def test_the_one_paste_route_is_offered_first_because_openclaw_owns_it():
     first_commands = [step.command for step in first.steps]
 
     assert "openclaw devices join-code" in first_commands
-    assert "openclaw connect <url> --service" in first_commands
-    assert first_commands.index("openclaw devices join-code") < first_commands.index("openclaw connect <url> --service")
+    assert "openclaw connect <url> --service --session-host" in first_commands
+    assert first_commands.index("openclaw devices join-code") < \
+        first_commands.index("openclaw connect <url> --service --session-host")
+
+
+def test_the_join_code_route_says_that_hosting_sessions_needs_a_trusted_machine():
+    link = build_node_link("gateway.local", platform="linux", user="someone", linger_directory=Path("/nonexistent"))
+
+    connect = next(step for step in link.routes[0].steps
+                   if step.command == "openclaw connect <url> --service --session-host")
+
+    assert "shared infrastructure" in (connect.caution or "")
+
+
+def test_a_magicdns_address_is_accepted_and_named_as_a_tailnet():
+    link = build_node_link("server.tailnet-abc.ts.net", platform="linux", user="someone",
+                           linger_directory=Path("/nonexistent"))
+
+    assert link.tailnet is True
+    assert link.host == "server.tailnet-abc.ts.net"
+
+
+def test_a_magicdns_node_is_told_the_gateway_publishes_itself_with_server():
+    link = build_node_link("server.tailnet-abc.ts.net", platform="linux", user="someone",
+                           linger_directory=Path("/nonexistent"))
+
+    assert any("setup --server" in note for note in link.notes)
+    assert any("port 443" in note for note in link.notes)
+    assert not any("--lan" in note for note in link.notes)
+
+
+def test_a_magicdns_header_shows_the_https_address_and_no_gateway_port():
+    link = build_node_link("server.tailnet-abc.ts.net", platform="linux", user="someone",
+                           linger_directory=Path("/nonexistent"))
+
+    text = render_node_link(link)
+
+    assert "gateway at https://server.tailnet-abc.ts.net" in text
+    assert "server.tailnet-abc.ts.net:18789" not in text
+
+
+def test_a_magicdns_node_still_gets_the_explicit_route_with_its_two_approvals():
+    link = build_node_link("server.tailnet-abc.ts.net", platform="linux", user="someone",
+                           linger_directory=Path("/nonexistent"))
+
+    explicit = [step.command for step in link.routes[1].steps]
+
+    assert "openclaw node install --host server.tailnet-abc.ts.net --port 443 --tls" in explicit
+    assert any("belongs to Serve" in note for note in link.notes)
+
+
+def test_a_node_on_the_home_network_asks_for_no_tls_and_keeps_the_gateway_port():
+    link = build_node_link("gateway.local", platform="linux", user="someone", linger_directory=Path("/nonexistent"))
+
+    explicit = [step.command for step in link.routes[1].steps]
+
+    assert "openclaw node install --host gateway.local --port 18789" in explicit
+    assert not any("--tls" in command for command in explicit)
 
 
 def test_the_join_code_is_named_as_a_single_use_secret():

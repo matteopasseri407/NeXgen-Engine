@@ -51,6 +51,9 @@ class NodeLink:
     port: int
     routes: tuple[Route, ...]
     notes: tuple[str, ...]
+    #: The address is a Tailscale MagicDNS name, so the gateway is published
+    #: through Serve over HTTPS and no port of its own is reachable.
+    tailnet: bool = False
 
 
 def _linger_step(platform: str, user: str | None, directory: Path | None) -> Step | None:
@@ -69,17 +72,23 @@ def _linger_step(platform: str, user: str | None, directory: Path | None) -> Ste
     )
 
 
-def _install_command(host: str, port: int, name: str | None) -> str:
+#: The port Tailscale Serve owns on the gateway machine. A node reaching a
+#: gateway through Serve speaks TLS there, not on the gateway's own port.
+SERVE_PORT = 443
+
+
+def _install_command(host: str, port: int, name: str | None, tls: bool = False) -> str:
     """The documented install line, with the display name only when one was given."""
     named = f' --display-name "{name}"' if name else ""
-    return f"openclaw node install --host {host} --port {port}{named}"
+    secure = " --tls" if tls else ""
+    return f"openclaw node install --host {host} --port {port}{secure}{named}"
 
 
-def _explicit_route(host: str, port: int, name: str | None, linger: Step | None) -> Route:
+def _explicit_route(host: str, port: int, name: str | None, linger: Step | None, tls: bool = False) -> Route:
     """Two approvals, one at a time: the device first, then the commands it may run."""
     steps = [
         Step(
-            command=_install_command(host, port, name),
+            command=_install_command(host, port, name, tls),
             check="openclaw node status --json",
             caution=t("This writes a user service on this machine; nothing else on the machine changes."),
         ),
@@ -128,9 +137,11 @@ def _join_code_route(linger: Step | None) -> Route:
             check=t("the command it prints, to be pasted as it is on this machine"),
         ),
         Step(
-            command="openclaw connect <url> --service",
+            command="openclaw connect <url> --service --session-host",
             check="openclaw node status --json",
-            caution=t("This is the one paste that enrols the device and its first commands together."),
+            caution=t("This is the one paste that enrols the device and its first commands together; "
+                      "--session-host also lets it run agent sessions, so keep it to a machine you trust as "
+                      "shared infrastructure."),
         ),
     ]
     if linger is not None:
@@ -143,8 +154,15 @@ def _join_code_route(linger: Step | None) -> Route:
     )
 
 
-def _notes(host: str, port: int) -> tuple[str, ...]:
+def _tailnet(host: str) -> bool:
+    """Whether the address is a Tailscale MagicDNS name (`<host>.<tailnet>.ts.net`)."""
+    return host.strip().lower().rstrip(".").endswith(".ts.net")
+
+
+def _notes(host: str, port: int, tailnet: bool = False) -> tuple[str, ...]:
     """What no command can decide for the person, said once and plainly."""
+    if tailnet:
+        return _tailnet_notes(host, port)
     return (
         t("The gateway on the other PC has to answer on the home network: 'nexgen openclaw setup --lan' writes "
           "gateway.bind 'lan', and 'nexgen openclaw doctor' there says whether it is reachable."),
@@ -156,6 +174,25 @@ def _notes(host: str, port: int) -> tuple[str, ...]:
         t("Every approval is yours: nothing is approved automatically, and each request names the machine and the "
           "commands it would run."),
         t("Port {port} is the one the gateway listens on; a different one there means passing it here too.", port=port),
+    )
+
+
+def _tailnet_notes(host: str, port: int) -> tuple[str, ...]:
+    """The same advice for a gateway that lives on a tailnet instead of the home network."""
+    return (
+        t("A MagicDNS address means the gateway publishes itself with 'nexgen openclaw setup --server': it stays "
+          "on loopback and Tailscale Serve gives it the HTTPS address {host} on port 443.", host=host),
+        t("Both machines have to be on the same tailnet and logged in to Tailscale: the address is reachable "
+          "there and nowhere else."),
+        t("The address {host} is yours to supply: the engine does not guess another machine's address.", host=host),
+        t("The join code carries the HTTPS address the gateway mints, so the node needs no port and no token of "
+          "its own; the explicit route below uses 443 with '--tls', because that port belongs to Serve."),
+        t("Your own gateway is left as it is: the node host is a separate process, so a machine that already "
+          "serves OpenClaw in loopback keeps serving it."),
+        t("Every approval is yours: nothing is approved automatically, and each request names the machine and the "
+          "commands it would run."),
+        t("Port 443 is the one Tailscale Serve owns on the gateway machine; the gateway's own port {port} stays "
+          "on its loopback.", port=port),
     )
 
 
@@ -182,21 +219,24 @@ def build_node_link(
     system = platform or sys.platform
     account = user or os.environ.get("USER") or os.environ.get("LOGNAME")
     linger = _linger_step(system, account, linger_directory)
+    tailnet = _tailnet(address)
     return NodeLink(
         host=address,
         port=number,
         routes=(
             _join_code_route(linger),
-            _explicit_route(address, number, label, linger),
+            _explicit_route(address, SERVE_PORT if tailnet else number, label, linger, tls=tailnet),
         ),
-        notes=_notes(address, number),
+        notes=_notes(address, number, tailnet),
+        tailnet=tailnet,
     )
 
 
 def render_node_link(link: NodeLink) -> str:
     """The proposal as a person reads it: every route numbered, each step with its check."""
+    address = f"https://{link.host}" if link.tailnet else f"{link.host}:{link.port}"
     lines = [
-        t("OpenClaw node for the gateway at {host}:{port}", host=link.host, port=link.port),
+        t("OpenClaw node for the gateway at {address}", address=address),
         t("Nothing has been changed: these are OpenClaw's own commands, in the order they work."),
         "",
     ]
