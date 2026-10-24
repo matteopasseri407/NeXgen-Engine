@@ -7,7 +7,8 @@ This document covers **phases 1, 2, 3a, 3b and 3c**: the task folder, the visibl
 windows, the cost register, the unit's working copy, the permissions the
 executor runs under, the gates the engine runs before anybody reviews a diff,
 the review round, publication, the resume graph, the scout, the rebase, the
-harness adapters, the local executor and the retirement of a finished unit.
+harness adapters, the local executor, OpenClaw as a harness with its Workboard
+mirror, and the retirement of a finished unit.
 
 **Status: preview.** The verbs work and are covered by tests, but the
 supervisor still drives every step. See "What the gates guarantee, and what they
@@ -37,9 +38,9 @@ The journal is the machine truth: `started`, `unit_created`, `unit_started`,
 `unit_queued`, `attached`, `harness_session_lost`, `harness_session_foreign`,
 `unit_reworked`, `unit_model_refused`, `unit_stalled`, `unit_resumed`,
 `unit_rebased`, `unit_collected`, `report_relocated`, `unit_reviewed`,
-`unit_published`, `unit_retired`, `unit_retire_failed`,
-`local_server_started`, `local_server_stopped`, and for the scout
-`scout_opened` and `scout_finished`. The Markdown files are what a person reads
+`unit_published`, `unit_retired`, `unit_retire_failed`, `session_closed`,
+`workboard_card`, `workboard_moved`, `local_server_started`, `local_server_stopped`,
+and for the scout `scout_opened` and `scout_finished`. The Markdown files are what a person reads
 and writes; the engine never rewrites them, so an edit is not lost.
 
 
@@ -134,15 +135,88 @@ review delivery goes back to the same session.
 | `local` (OpenCode + local provider) | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | project profile + blocked pushurl |
 | `claude` | yes | yes | yes | yes | yes | yes | yes (`.claude/settings.json`) | yes | yes | no | project profile + blocked pushurl |
 | `codex` | yes | yes | yes | yes | no (said unreadable) | yes | no (launch sandbox) | yes | yes | no | `workspace-write` without network + blocked pushurl |
+| `openclaw` | yes (a session, not a window) | yes | yes | yes | yes (the turn's own envelope) | yes | no | yes | no | no | blocked pushurl only |
 | `agy` | yes | no | no | no | no | no | no | yes | yes | no | blocked pushurl only |
 
 The table is the answer to "can this harness do it", not a promise that every
 operation is useful. `agy` opens a tab and writes its report, but it cannot be
 asked for its session later, so it is a scout and not an executor; Codex can
 execute and resume, but its cost is not exposed in a form the engine reads, and
-the package says so instead of writing zero. The last column is the real stop
-behind the others: a harness with no project profile is still running in a copy
-whose `pushurl` points at a blocked URL.
+the package says so instead of writing zero. `openclaw` opens no window of its
+own: its session is the work surface, and the section below says how it is driven.
+The last column is the real stop behind the others: a harness with no project
+profile is still running in a copy whose `pushurl` points at a blocked URL.
+
+
+## OpenClaw come harness e il Workboard
+
+OpenClaw is the owner's own harness: agents, sessions shown in its Control UI and
+on his phone, and a Workboard of cards. Supervision can drive it instead of
+opening a terminal tab, and `--harness openclaw` (or `supervision.roles`) is all
+it takes to put a unit there.
+
+**One turn, one session key the engine chose.** The adapter runs the documented
+CLI turn:
+
+```bash
+openclaw agent --agent <id> --session-key sup-<task>-<unit> --message "<pointer>" --json
+```
+
+The key is built from the task and the unit, so the attach is a lookup and not a
+race, and the Control UI shows exactly the name the journal records. The engine
+opens no window: the session is the surface, the owner watches it where he
+already watches his agents, and a correction is the same command again on the
+same key. The agent is `sviluppo` unless the lane names another one:
+
+```json
+{
+  "supervision": {
+    "roles": {"esecutore": "openclaw"},
+    "openclaw": {"agent": "sviluppo", "workboard": true}
+  }
+}
+```
+
+**The folder is the honest limit.** A gateway-backed turn runs in the workspace
+the owner configured for that agent, and the documented CLI has no flag for
+another folder; a host path outside the configured workspaces needs
+`operator.admin`. So the engine checks, before anything starts, that the unit's
+copy is inside that workspace, and refuses with the clean way when it is not:
+point `agents.entries.<agent>.workspace` at the task folder, or let the Workboard
+card start the turn (`openclaw workboard dispatch`, `--admin` for a folder
+outside the configured workspaces). A turn that looks like work in the unit and
+is not is the failure this refusal exists to prevent.
+
+**Where the numbers come from.** `openclaw sessions --json` carries the tokens,
+the model and the clock. The money of a run is not in that list: it is in the
+`--json` envelope the turn prints, so each turn's envelope is appended as one
+line of `<lane>/openclaw/<key>.jsonl` and the lines are added up. A turn that
+printed no cost leaves the cost absent and the tokens stand in, with the note
+saying so; nothing is ever written as zero. A process still carrying the key
+means the turn is working; when it exits, the session is idle. Publishing a unit,
+or retiring it, archives its OpenClaw session (`openclaw sessions archive`), and
+a refusal there is one line, not a failed verb.
+
+**The Workboard is a mirror, never the truth.** With `openclaw` on the machine
+and the mirror on, `sup unit` creates one card for the unit (title `unità <unit> ·
+<task>`, notes with the copy, the branch and the brief in short, labels with the
+task and the unit, assigned to the harness agent), and the verbs move it:
+
+| engine step | card status |
+|---|---|
+| `sup unit` | `todo` |
+| `sup run` | `running` |
+| `sup collect` | `review` |
+| `sup review --rework` | `running` |
+| `sup publish` | `done` |
+| `sup review --approve --close` (retired) | `blocked`, with the reason in the line |
+
+The journal stays the state: the card is a view, the moves are best effort, and a
+board that is absent, switched off (`supervision.openclaw.workboard: false`) or
+refusing costs one printed line and nothing else. The CLI has no archive verb, so
+a retired unit is `blocked` with its reason rather than archived. Every call is
+`... --json`, and the engine's test switch (`NEXGEN_DISABLE_HOST_MUTATIONS=1`)
+stops the mirror before anything is looked up: no test writes into a real board.
 
 
 ## The unit's working copy
@@ -214,7 +288,14 @@ says so and the attach stays a manual `sup attach`: the engine never guesses
 which session belongs to which unit. The cost of the attached session lands in
 `05-costi.jsonl` like any other attach. The adapter owns the lookup: OpenCode
 lists its session store, Claude Code reads its transcript directory, Codex reads
-its thread store, and `agy` declares that it cannot be asked.
+its thread store, `openclaw` looks for the key the engine chose in
+`openclaw sessions --json`, and `agy` declares that it cannot be asked.
+
+A harness that shows its own sessions opens none of the engine's windows
+(`window=False` in its capability table): `sup run` starts the turn itself,
+detached, and attaches the session under the key it chose, so the attach is not a
+guess made from a clock. OpenClaw is that harness today; the section "OpenClaw
+come harness e il Workboard" above says what it does and where it stops.
 
 The journal records the folder with the session (`attached`, `unit_started`,
 `unit_queued`, `unit_reworked`). `sup run` reuses a session only when that folder
