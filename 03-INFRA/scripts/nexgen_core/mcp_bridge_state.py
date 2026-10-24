@@ -18,6 +18,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.mcp_bridge_server import HEALTH_PATH, SHUTDOWN_PATH
 from nexgen_core.paths import resolve_state_dir
 
@@ -35,9 +36,12 @@ def state_file_path(home: Path | None = None) -> Path:
 
 
 def write_state(path: Path, state: dict[str, Any]) -> None:
-    """Records one run, or the reason a run could not start."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    """Records one run, or the reason a run could not start.
+
+    Through the engine's writer: a half-written record is a run `stop` cannot find,
+    and the reader would report a bridge that is not there.
+    """
+    atomic_write_text(path, json.dumps(state, indent=2))
 
 
 def read_state(path: Path) -> dict[str, Any] | None:

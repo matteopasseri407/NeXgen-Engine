@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+from nexgen_core.files import atomic_write_bytes
 from nexgen_core.i18n import t
 
 #: The desktop the person at the keyboard actually sees on Windows.
@@ -168,7 +169,9 @@ def run_task(cmd: list[str], desktop: str) -> bool:
     handle, xml_path = tempfile.mkstemp(suffix=".xml", prefix="agent-chrome-task-")
     os.close(handle)
     try:
-        Path(xml_path).write_text(task_xml(cmd), encoding="utf-16")
+        # UTF-16 with its BOM, which is what Task Scheduler reads, published atomically:
+        # a truncated task file makes `schtasks /Create` fail with an XML error nobody can read.
+        atomic_write_bytes(Path(xml_path), task_xml(cmd).encode("utf-16"))
         steps = (
             ["schtasks.exe", "/Create", "/TN", WINDOWS_TASK_NAME, "/XML", xml_path, "/F"],
             ["schtasks.exe", "/Run", "/TN", WINDOWS_TASK_NAME],

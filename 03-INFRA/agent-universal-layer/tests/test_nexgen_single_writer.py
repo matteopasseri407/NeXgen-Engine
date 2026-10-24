@@ -50,3 +50,15 @@ def test_the_allowlist_has_no_stale_entries():
 def test_the_scan_sees_what_it_is_for():
     assert _direct_writes(ast.parse("from pathlib import Path\nPath('x').write_text('y')\nPath('x').write_bytes(b'')\n")) == [2, 3]
     assert _direct_writes(ast.parse("atomic_write_text(p, 'y')")) == []
+
+
+def test_the_scan_is_about_the_writer_not_the_encoding():
+    """Naming the encoding satisfies the text-IO rule and still truncates the file.
+
+    Both writes this rule caught looked clean: the bridge's state file named
+    `encoding="utf-8"`, and Chrome's task XML named `encoding="utf-16"`. Neither
+    went through the writer, so a crash mid-write left a half file behind.
+    """
+    tree = ast.parse("from pathlib import Path\nPath('x').write_text('y', encoding='utf-16')\n")
+
+    assert _direct_writes(tree) == [2]
