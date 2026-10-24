@@ -54,9 +54,6 @@ Il motore tiene separate tre fonti di configurazione:
   Vedi [openclaw.md](docs/openclaw.md) per cosa rileva il motore, i tre agenti, la gabbia del modello locale e le trappole note di Windows.
 * **Diagnostica (`nexgen doctor`):** controlli automatici su allineamento Git, manifest, link, token e permessi.
   Un controllo che non riesce a verificare dichiara un esito indeterminato.
-* **Quote (`nexgen quota`, `/quota`):** una riga per piano e finestra, letta da quello che Codex, OpenCode e Claude Code scrivono già in locale.
-  Una percentuale solo dove il tetto è dichiarato, un avviso all'80% e al 95%, e `/quota` dentro OpenClaw.
-  Vedi [quota.md](docs/quota.md).
 
 ---
 

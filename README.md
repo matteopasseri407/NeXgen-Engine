@@ -99,9 +99,6 @@ The [sync contract](docs/sync-contract.md) describes what it manages, what it pr
 * **Five runtimes plus the Desktop app:** Claude Code, Codex, OpenCode (native V2: scope-file instructions, `plugins`/`permissions`, skill views), Antigravity and OpenClaw, each rendered in its own dialect, Council seats included. OpenClaw is technically the fifth CLI the sync writes, but it is the official NeXgen Engine harness: the interface (web panel, phone app) from which the other harnesses and your subscriptions are used. The Claude Desktop app receives only explicitly allowlisted read-only servers (`desktop_allow`), since it has no guardrail hooks.
   See [openclaw.md](docs/openclaw.md) for what the engine detects, the three agents, the local model cage and the known Windows traps.
 * **Fail-closed diagnostics (`nexgen doctor`):** automated checks over git alignment, manifest reachability, link hygiene, token presence and permission boundaries. A check that cannot verify reports undetermined instead of passing.
-* **Quota (`nexgen quota`, `/quota`):** one row per plan and window, read from what Codex, OpenCode and Claude Code already write locally.
-  A percentage only where a ceiling is declared, an alert at 80% and 95%, and `/quota` inside OpenClaw.
-  See [quota.md](docs/quota.md).
 
 ---
 
