@@ -23,6 +23,7 @@ import { registerCouncil } from "./council.mjs";
 import { registerGovernor } from "./governor.mjs";
 import { registerGuardrail } from "./guardrail.mjs";
 import { registerQuota } from "./quota.mjs";
+import { registerEvidence } from "./evidence.mjs";
 import { registerSupTools } from "./sup-tools.mjs";
 import { registerSup } from "./sup.mjs";
 import { registerWorkshop } from "./workshop.mjs";
@@ -54,5 +55,6 @@ export default {
     registerCouncil(api);
     registerSup(api);
     registerSupTools(api);
+    registerEvidence(api);
   },
 };

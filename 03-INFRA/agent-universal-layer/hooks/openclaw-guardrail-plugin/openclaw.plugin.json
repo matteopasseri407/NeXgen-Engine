@@ -1,7 +1,7 @@
 {
   "id": "nexgen",
   "name": "NeXgen",
-  "description": "The NeXgen engine for OpenClaw: the guardrail before a tool call, the vault briefing after a compaction, the /quota, /council and /sup commands, the supervision tools the supervisor agent drives, and a notice when the Skill Workshop learns a skill. The policy lives in nexgen-guardrail.config.json and nexgen.config.json, read on every call.",
+  "description": "The NeXgen engine for OpenClaw: the guardrail before a tool call, the vault briefing after a compaction, the /quota, /council and /sup commands, the supervision tools the supervisor agent drives, the evidence check on local models, and a notice when the Skill Workshop learns a skill. The policy lives in nexgen-guardrail.config.json and nexgen.config.json, read on every call.",
   "activation": {
     "onStartup": true
   },
