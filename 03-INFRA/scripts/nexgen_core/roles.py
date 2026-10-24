@@ -137,6 +137,38 @@ def run_server_role(
     return 0
 
 
+def _register_node_rpc(
+    gateway_url: str,
+    gateway_token: str | None,
+    name: str,
+    rpc_client_factory: Any | None,
+    out: Callable[[str], None],
+) -> None:
+    out(t("Registering node agent '{name}' on gateway via protocol...", name=name))
+    try:
+        if rpc_client_factory:
+            client = rpc_client_factory(url=gateway_url, token=gateway_token)
+        else:
+            from nexgen_core.openclaw.gateway_rpc import GatewayRpcClient
+
+            client = GatewayRpcClient(url=gateway_url, token=gateway_token)
+        patch = {
+            "agents": {
+                "entries": {
+                    name: {
+                        "name": name,
+                        "identity": {"name": name},
+                        "tools": {"exec": {"host": "node", "node": name}},
+                    },
+                },
+            },
+        }
+        client.config_patch(patch=patch)
+        out(t("Agent '{name}' registered on gateway via RPC.", name=name))
+    except Exception as exc:  # noqa: BLE001
+        out(t("Could not register agent on gateway via RPC ({error}); proceed with manual join.", error=exc))
+
+
 def run_node_role(
     root: Path,
     home: Path | None = None,
@@ -145,6 +177,7 @@ def run_node_role(
     node_name: str | None = None,
     align_fn: Callable[[], tuple[bool, str]] | None = None,
     rpc_client_factory: Any | None = None,
+    wait_probe_fn: Callable[[], bool] | None = None,
     out: Callable[[str], None] = print,
 ) -> int:
     """Node role: connect to an existing gateway and register agent via RPC."""
@@ -167,31 +200,14 @@ def run_node_role(
 
     name = node_name or "node"
     if gateway_url:
-        out(t("Registering node agent '{name}' on gateway via protocol...", name=name))
-        try:
-            if rpc_client_factory:
-                client = rpc_client_factory(url=gateway_url, token=gateway_token)
-            else:
-                from nexgen_core.openclaw.gateway_rpc import GatewayRpcClient
-
-                client = GatewayRpcClient(url=gateway_url, token=gateway_token)
-            patch = {
-                "agents": {
-                    "entries": {
-                        name: {
-                            "name": name,
-                            "identity": {"name": name},
-                            "tools": {"exec": {"host": "node", "node": name}},
-                        },
-                    },
-                },
-            }
-            client.config_patch(patch=patch)
-            out(t("Agent '{name}' registered on gateway via RPC.", name=name))
-        except Exception as exc:  # noqa: BLE001
-            out(t("Could not register agent on gateway via RPC ({error}); proceed with manual join.", error=exc))
+        _register_node_rpc(gateway_url, gateway_token, name, rpc_client_factory, out)
     else:
         out(t("No gateway URL passed; use 'openclaw connect <url> --service --session-host' to attach."))
+
+    if wait_probe_fn is not None:
+        from nexgen_core.openclaw.node_attach import wait_for_node_connection
+
+        wait_for_node_connection(wait_probe_fn, node_name=name, emit=out)
 
     out(t("Node machine ready."))
     return 0
