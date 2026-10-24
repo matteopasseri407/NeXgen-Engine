@@ -108,7 +108,8 @@ def _register_info(sub) -> None:
     p.add_argument("--all", action="store_true", help=t("List every skill, not only the third-party and the changed ones"))
     p.set_defaults(func=cmd_info)
 
-    p = sub.add_parser("shell", aliases=["interactive", "repl"], help=t("Notice: shell is retired in favor of OpenClaw TUI"))
+    notice = t("Notice: shell is retired in favor of OpenClaw TUI")
+    p = sub.add_parser("shell", aliases=["interactive", "repl"], help=notice, description=notice)
     p.set_defaults(func=cmd_shell)
 
     p = sub.add_parser("update", help=t("Update the engine, with confirmation"))
