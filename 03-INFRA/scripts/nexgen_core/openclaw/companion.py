@@ -110,19 +110,23 @@ def _address(text: str) -> tuple[bool, int | None] | None:
     return host in LOCAL_HOSTS, port
 
 
-def _scan(document: Any, *, only_gateway_keys: bool) -> tuple[bool, bool, int | None]:
+def _scan(document: Any, *, only_gateway_keys: bool, engine_port: int) -> tuple[bool, bool, int | None]:
     """What one app file says about a gateway: local, remote, and which port.
 
     `sshTunnel` wins over everything else: a tunnel forwards to a gateway on
     another machine, so whatever address it exposes on this PC says nothing
-    about where that gateway is. `isLocal` is the app's own word for the
-    connection. `only_gateway_keys` is for `settings.json`, which holds other
-    URLs too: there, only a key with "gateway" in its name is read.
+    about where that gateway is. `isLocal` and `setupManagedDistroName` are the
+    app's own words for a gateway it manages here. A loopback URL on the
+    engine's own port is the app talking to this engine's gateway, not a second
+    one; on any other port it is a gateway this engine does not write.
+    `only_gateway_keys` is for `settings.json`, which holds other URLs too:
+    there, only a key with "gateway" in its name is read.
     """
     if any(key.casefold() == "sshtunnel" and bool(value) for key, value in _pairs(document)):
         return False, True, None
     local = remote = False
-    port: int | None = None
+    own_port: int | None = None
+    engine_seen: int | None = None
     for key, value in _pairs(document):
         lowered = key.casefold()
         if lowered == "setupmanageddistroname" and isinstance(value, str) and value.strip():
@@ -136,11 +140,14 @@ def _scan(document: Any, *, only_gateway_keys: bool) -> tuple[bool, bool, int | 
             if address is None:
                 continue
             on_this_pc, named_port = address
-            local = local or on_this_pc
-            remote = remote or not on_this_pc
-            if port is None and on_this_pc:
-                port = named_port
-    return local, remote, port
+            if not on_this_pc:
+                remote = True
+            elif named_port == engine_port:
+                engine_seen = named_port
+            else:
+                local = True
+                own_port = own_port if own_port is not None else named_port
+    return local, remote, own_port if own_port is not None else engine_seen
 
 
 def _json(path: Path) -> Any:
@@ -149,6 +156,17 @@ def _json(path: Path) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):  # nexgen: allow reason="a missing or malformed app file is not evidence of a gateway"
         return None
+
+
+def engine_port() -> int:
+    """The port this engine's gateway uses, imported late and read in one place.
+
+    `profile` imports `detect`, which imports this module, so the constant
+    cannot be imported at module level without a cycle.
+    """
+    from nexgen_core.openclaw.profile import GATEWAY_PORT
+
+    return GATEWAY_PORT
 
 
 def read_settings(settings_dir: Path) -> Companion:
@@ -161,7 +179,9 @@ def read_settings(settings_dir: Path) -> Companion:
         if document is None:
             continue
         present = True
-        found_local, found_remote, found_port = _scan(document, only_gateway_keys=name == "settings.json")
+        found_local, found_remote, found_port = _scan(
+            document, only_gateway_keys=name == "settings.json", engine_port=engine_port(),
+        )
         local, remote = local or found_local, remote or found_remote
         if port is None:
             port = found_port

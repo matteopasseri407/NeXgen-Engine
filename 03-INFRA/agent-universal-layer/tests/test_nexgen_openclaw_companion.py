@@ -101,14 +101,25 @@ def test_the_apps_own_wsl_storage_is_a_gateway_on_this_pc(tmp_path):
     assert found.owns_local_gateway and found.situation(False) == APP
 
 
-def test_a_gateway_url_on_loopback_is_a_gateway_on_this_pc(tmp_path):
+def test_a_gateway_url_on_the_engine_port_is_the_apps_own_connection(tmp_path):
+    """The app can be pointed at this engine's gateway: that is not a second gateway."""
     home, env = machine(tmp_path)
     write(app_dir(env), "settings.json", {"GatewayUrl": "ws://127.0.0.1:18789"})
 
     found = probe(home, env, "win32", wsl_distributions=lambda: [])
 
-    assert found.owns_local_gateway
+    assert found.present and not found.owns_local_gateway
     assert found.port == 18789
+
+
+def test_a_loopback_url_on_another_port_is_a_gateway_of_its_own(tmp_path):
+    home, env = machine(tmp_path)
+    write(app_dir(env), "gateways.json", {"draft": {"url": "ws://127.0.0.1:52190"}})
+
+    found = probe(home, env, "win32", wsl_distributions=lambda: [])
+
+    assert found.owns_local_gateway
+    assert found.port == 52190
 
 
 def test_a_connection_the_app_manages_names_its_distro(tmp_path):
@@ -186,7 +197,7 @@ def test_fields_in_an_unexpected_shape_are_ignored(tmp_path):
 
 def test_a_missing_file_leaves_the_other_one_in_charge(tmp_path):
     home, env = machine(tmp_path)
-    write(app_dir(env), "gateways.json", {"main": {"url": "ws://localhost:18789"}})
+    write(app_dir(env), "gateways.json", {"main": {"url": "ws://localhost:52190"}})
 
     assert read_settings(app_dir(env)).owns_local_gateway
     assert read_settings(tmp_path / "nowhere") == Companion()
