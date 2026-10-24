@@ -27,8 +27,10 @@ import tarfile
 import tempfile
 from dataclasses import dataclass
 from fnmatch import fnmatch
+from functools import lru_cache
 from pathlib import Path
 
+from nexgen_core import scratch
 from nexgen_core.discipline import config
 from nexgen_core.discipline.config import ConfigError
 from nexgen_core.discipline.violations import TEST_PATH
@@ -77,11 +79,29 @@ def cleaned_environment() -> dict[str, str]:
     unit cannot fill it, and the interpreters a test suite starts may rely on it.
     Forcing `PYTHONNOUSERSITE=1` made a project's own tests fail under the engine
     when a child Python took a package from there.
+
+    pytest's temporary root is the exception that is set rather than cleared: the
+    copy's own `tmp_path` folders belong outside the owner's home, where the
+    gateway cannot see them. A root already chosen by the caller is carried over
+    unchanged, so a CI job that puts them on a fast disk keeps them there.
     """
     environment = dict(os.environ)
     for key in UNTRUSTED_ENV:
         environment.pop(key, None)
+    root = scratch_directory()
+    if root is not None:
+        environment[scratch.PYTEST_TEMPROOT_VAR] = root
     return environment
+
+
+@lru_cache(maxsize=1)
+def scratch_directory() -> str | None:
+    """Where pytest may put its temporary trees: the one already chosen, or one outside the home."""
+    chosen = (os.environ.get(scratch.PYTEST_TEMPROOT_VAR) or "").strip()
+    if chosen:
+        return chosen
+    root = scratch.scratch_root()
+    return str(root) if root is not None else None
 
 
 def check(
@@ -162,8 +182,9 @@ def counts(
     timeout: float = COLLECT_TIMEOUT_S,
 ) -> tuple[Count, Count]:
     """The base's count and the head's, each from its own exported tree; no path means the whole suite."""
-    with tempfile.TemporaryDirectory(prefix="nexgen-collect-", ignore_cleanup_errors=True) as scratch:
-        root = Path(scratch)
+    with tempfile.TemporaryDirectory(prefix="nexgen-collect-", ignore_cleanup_errors=True,
+                                     dir=scratch_directory()) as trees:
+        root = Path(trees)
         targets = [str(name) for name in dirs]
         return (
             _count_at(repo, base, root / "base", targets, timeout),
@@ -357,8 +378,9 @@ def _count_once(
     """One revision's collection, computed once: the next commit asks for the same tree as its "before"."""
     key = (sha, targets)
     if key not in cache:
-        with tempfile.TemporaryDirectory(prefix="nexgen-collect-", ignore_cleanup_errors=True) as scratch:
-            cache[key] = _count_at(folder, sha, Path(scratch) / "tree", list(targets), timeout)
+        with tempfile.TemporaryDirectory(prefix="nexgen-collect-", ignore_cleanup_errors=True,
+                                         dir=scratch_directory()) as trees:
+            cache[key] = _count_at(folder, sha, Path(trees) / "tree", list(targets), timeout)
     return cache[key]
 
 

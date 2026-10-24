@@ -1,4 +1,4 @@
-# nexgen: one-job reason="answer where the data, the engine and the state live, in one place, for every component that asks"
+# nexgen: one-job reason="answer where the data, the engine, the state and the scratch space live, in one place, for every component that asks"
 """Path resolution for the layer, in one place.
 
 This environment-variable cascade used to exist as fifteen literal copies
@@ -62,6 +62,24 @@ def _resolve_home_impl(home: Path | None = None) -> Path:
             )
         return expanded
     return Path.home()
+
+
+def _parts(path: Path) -> tuple[str, ...]:
+    """A path split into the components this filesystem compares."""
+    return tuple(os.path.normcase(str(part)) for part in Path(path).parts)
+
+
+def is_inside(child: Path | None, parent: Path | None) -> bool:
+    """Whether `child` sits at or below `parent`, from their own parts: no filesystem read.
+
+    `os.path.normcase` is the case rule of the platform, so `C:\\work\\Me` and
+    `c:/work/me` are the same place on Windows and two different ones on Linux,
+    without either answer depending on what exists on disk.
+    """
+    if child is None or parent is None:
+        return False
+    kid, root = _parts(child), _parts(parent)
+    return len(kid) >= len(root) and kid[: len(root)] == root
 
 
 def resolve_home(home: Path | None = None) -> Path:

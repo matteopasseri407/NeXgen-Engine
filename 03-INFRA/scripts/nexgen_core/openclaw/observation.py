@@ -37,12 +37,12 @@ new.
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import t
+from nexgen_core.paths import is_inside
 from nexgen_core.report import CheckOutcome, Severity
 
 #: The variable OpenClaw reads. Any value but `false`, `0` or an empty string
@@ -54,19 +54,6 @@ POLLING_VALUE = "1"
 def is_windows(platform: str | None) -> bool:
     """Whether this is Windows, which is the only place the root handle is recursive."""
     return str(platform or sys.platform).startswith("win")
-
-
-def _parts(path: Path) -> tuple[str, ...]:
-    """A path split into components that compare the way this filesystem compares them."""
-    return tuple(os.path.normcase(str(part)) for part in Path(path).parts)
-
-
-def is_inside(child: Path | None, parent: Path | None) -> bool:
-    """Whether `child` sits at or below `parent`, from their own parts: no filesystem read."""
-    if child is None or parent is None:
-        return False
-    kid, root = _parts(child), _parts(parent)
-    return len(kid) >= len(root) and kid[: len(root)] == root
 
 
 def observation_root(state_dir: Path) -> Path:

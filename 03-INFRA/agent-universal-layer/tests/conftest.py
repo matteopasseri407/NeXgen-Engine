@@ -25,6 +25,15 @@ FIXTURES = TESTS_DIR / "fixtures"
 REAL_UL = TESTS_DIR.parent                      # .../agent-universal-layer (real source)
 REAL_VAULT = REAL_UL.parent.parent               # KnowledgeVault (real root)
 REAL_SCRIPTS = REAL_VAULT / "03-INFRA" / "scripts"
+if str(REAL_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(REAL_SCRIPTS))
+
+from nexgen_core import scratch  # noqa: E402 - the engine has to be importable before its tests run
+
+#: pytest's temporary trees move outside the home on Windows, before the first
+#: `tmp_path` exists. The gateway watches the home with one recursive handle, and
+#: the thousands of files a suite creates there are the storm it cannot fold.
+scratch.apply_to_pytest()
 
 SENTINEL_NAME = ".b1-sandbox-sentinel"
 
