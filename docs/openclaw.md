@@ -183,6 +183,10 @@ An answer that does not stand on its receipts gets one more model pass, told exa
 no evidence. If it comes back the same way, or the run cannot be rewound, the answer is delivered with a
 visible note under it. Never dropped in silence, and never a note on somebody else's message: the note
 goes on the delivery that carries the judged text.
+The claim tables carry English and Italian at once, with no configured language deciding which half is
+read: an unsupported English answer is found exactly like an Italian one, and an answer that mixes the two
+is judged claim by claim. The note itself is in English, like every other sentence the plugin renders on
+its own, because a file with no locale cannot know the language of the person reading.
 
 The switch is not in the plugin: it is the `evidence` section of `nexgen.config.json` beside it, written
 by the deposit from the configuration in force. It lists exactly the local providers this machine serves,

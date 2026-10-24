@@ -5,6 +5,9 @@ and calls it with literal text and receipts, so every verdict below is what the 
 The hooked half loads the real plugin, registers it against a fake `api.on`, and fires
 `after_tool_call`, `before_agent_finalize` and `message_sending` with the event fields OpenClaw
 2026.10.6 documents. No gateway, no model, no network.
+
+The claim tables carry English and Italian at the same time, so every family below is checked in
+both languages: an English answer is found for the same reason an Italian one is.
 """
 from __future__ import annotations
 
@@ -104,7 +107,7 @@ def test_an_invented_read_is_flagged_without_any_receipt(tmp_path):
 show(evidence.verifyAnswer("Ho letto la nota e l'ho riassunta.", []));
 """)
 
-    assert verdict == ["afferma lavoro svolto senza una ricevuta riuscita"]
+    assert verdict == ["claims work done without a successful receipt"]
 
 
 def test_a_cited_source_that_was_never_read_is_named(tmp_path):
@@ -114,7 +117,7 @@ show(evidence.verifyAnswer(
   "Riassunto da [01-NOTE/buona.md] con dettagli da [99-ALTRE/inventata.md].", receipts));
 """)
 
-    assert verdict == ["cita una fonte non letta: 99-ALTRE/inventata.md"]
+    assert verdict == ["cites a source that was never read: 99-ALTRE/inventata.md"]
 
 
 def test_a_negated_claim_is_not_a_claim(tmp_path):
@@ -139,7 +142,7 @@ show([
 ]);
 """)
 
-    assert verdict == [["afferma una scrittura senza una ricevuta di scrittura"], []]
+    assert verdict == [["claims a write without a successful write receipt"], []]
 
 
 def test_a_test_claim_needs_an_execution_receipt(tmp_path):
@@ -151,7 +154,7 @@ show([
 ]);
 """)
 
-    assert verdict == [["afferma test o verifiche senza una ricevuta di esecuzione"], []]
+    assert verdict == [["claims tests or verification without an execution receipt"], []]
 
 
 def test_a_result_pattern_is_grounded_only_by_what_was_read(tmp_path):
@@ -166,7 +169,7 @@ show([
 """)
 
     assert verdict == [
-        ["afferma una scrittura senza una ricevuta di scrittura"],
+        ["claims a write without a successful write receipt"],
         [],
         [],
     ]
@@ -182,7 +185,7 @@ show([
 """)
 
     assert verdict == [
-        ["afferma fatti senza contenuto recuperato dal motore"],
+        ["claims facts with nothing retrieved by the turn"],
         [],
     ]
 
@@ -225,6 +228,87 @@ show([
     assert verdict == ["search", "write", "read", "read", "exec", "other"]
 
 
+def test_an_english_answer_without_receipts_is_flagged(tmp_path):
+    """The engine is public: an unsupported English answer is found like an Italian one."""
+    verdict = pure(deployed(tmp_path), """
+const failed = [{tool: "memory_search", ok: false, args: {query: "falco"}, text: ""}];
+show([
+  evidence.verifyAnswer("I opened the note and summarized it.", []),
+  evidence.verifyAnswer("I searched the vault for Falco.", []),
+  evidence.verifyAnswer("I saved the note.", []),
+  evidence.verifyAnswer("I ran the tests.", []),
+  evidence.verifyAnswer("I verified the numbers.", []),
+  evidence.verifyAnswer("I found the note.", []),
+  evidence.verifyAnswer("I couldn't find the note.", failed),
+  evidence.verifyAnswer("I found nothing about Falco.", failed),
+  evidence.verifyAnswer("I couldn't find the note. The budget is 900 euros.", failed),
+]);
+""")
+
+    assert verdict == [
+        ["claims work done without a successful receipt"],
+        ["claims a search without a successful search receipt"],
+        ["claims a write without a successful write receipt"],
+        ["claims tests or verification without an execution receipt"],
+        ["claims tests or verification without an execution receipt"],
+        ["claims work done without a successful receipt"],
+        [],
+        [],
+        ["claims facts with nothing retrieved by the turn"],
+    ]
+
+
+def test_an_english_answer_on_its_receipts_passes(tmp_path):
+    verdict = pure(deployed(tmp_path), """
+const receipts = [
+  {tool: "read", ok: true, args: {path: "01-NOTE/progetto.md"}, text: "the project is described"},
+  {tool: "exec", ok: true, args: {command: "pytest -q"}, text: "12 passed"},
+  {tool: "write", ok: true, args: {path: "01-NOTE/x.md"}, text: ""},
+];
+show(evidence.verifyAnswer(
+  "I read [01-NOTE/progetto.md], I ran the tests, and I saved the note.", receipts));
+""")
+
+    assert verdict == []
+
+
+def test_a_mixed_answer_is_read_in_both_languages(tmp_path):
+    """One answer, two languages: each claim is checked against its own family, and the word
+    edges keep an English phrase from being found inside an ordinary word."""
+    verdict = pure(deployed(tmp_path), """
+const read = [{tool: "read", ok: true, args: {path: "01-NOTE/x.md"}, text: "il progetto"}];
+show([
+  evidence.verifyAnswer("Ho letto la nota. I searched the vault.", []),
+  evidence.verifyAnswer("Ho letto la nota e I read the appendix.", read),
+  evidence.verifyAnswer("The context window is a multi range setting.", []),
+]);
+""")
+
+    assert verdict == [
+        ["claims work done without a successful receipt",
+         "claims a search without a successful search receipt"],
+        [],
+        [],
+    ]
+
+
+def test_an_english_passive_result_is_grounded_only_by_what_was_read(tmp_path):
+    verdict = pure(deployed(tmp_path), """
+const read = (text) => [{tool: "read", ok: true, args: {path: "01-NOTE/x.md"}, text}];
+show([
+  evidence.verifyAnswer("The file was updated.", read("")),
+  evidence.verifyAnswer("The file was updated.", read("the file was updated yesterday")),
+  evidence.verifyAnswer("The file was not updated.", read("the file was not updated")),
+]);
+""")
+
+    assert verdict == [
+        ["claims a write without a successful write receipt"],
+        [],
+        [],
+    ]
+
+
 # --------------------------------------------------------------- the hooks, as OpenClaw fires
 
 LOCAL = {"evidence": {"enabled": True, "providers": ["ollama", "llama-cpp"]}}
@@ -257,7 +341,7 @@ console.log(JSON.stringify(await call("before_agent_finalize", {
     assert verdict["retry"]["maxAttempts"] == 1
     assert verdict["retry"]["idempotencyKey"]
     assert verdict["retry"]["instruction"]
-    assert "afferma lavoro svolto senza una ricevuta riuscita" in verdict["reason"]
+    assert "claims work done without a successful receipt" in verdict["reason"]
 
 
 def test_a_stop_hook_already_running_is_not_asked_again(tmp_path):
@@ -291,8 +375,8 @@ console.log(JSON.stringify({judged, other, again}));
     assert verdict["other"] is None
     assert verdict["again"] is None
     assert verdict["judged"]["content"].startswith("Ho letto la nota")
-    assert "Affermazioni non verificate:" in verdict["judged"]["content"]
-    assert "afferma lavoro svolto senza una ricevuta riuscita" in verdict["judged"]["content"]
+    assert "Unverified claims:" in verdict["judged"]["content"]
+    assert "claims work done without a successful receipt" in verdict["judged"]["content"]
 
 
 def test_an_answer_that_stands_on_its_receipts_clears_the_note(tmp_path):
@@ -354,3 +438,63 @@ console.log(JSON.stringify(await call("before_agent_finalize", {
 """)
 
         assert verdict is None, config
+
+
+# --------------------------------------------------- the same hooks, in English and in both
+
+def test_an_english_answer_without_receipts_asks_for_one_more_pass(tmp_path):
+    target = deployed(tmp_path, LOCAL)
+
+    verdict = drive(target, """
+console.log(JSON.stringify(await call("before_agent_finalize", {
+  provider: "ollama", sessionKey: "s1", runId: "r1", stopHookActive: false,
+  lastAssistantMessage: "I opened the note and summarized it.", messages: [],
+}, {sessionKey: "s1"})));
+""")
+
+    assert verdict["action"] == "revise"
+    assert verdict["retry"]["maxAttempts"] == 1
+    assert "claims work done without a successful receipt" in verdict["reason"]
+
+
+def test_an_english_answer_on_its_receipts_is_delivered_clean(tmp_path):
+    target = deployed(tmp_path, LOCAL)
+
+    verdict = drive(target, """
+const answer = "I read the note: the project is described.";
+const judged = await call("before_agent_finalize", {
+  provider: "ollama", sessionKey: "s1", runId: "r1", stopHookActive: false,
+  lastAssistantMessage: answer,
+  messages: [
+    {role: "user", content: "read the note"},
+    {role: "assistant", content: [
+      {type: "toolCall", id: "c1", name: "read", arguments: {path: "01-NOTE/x.md"}},
+    ]},
+    {role: "toolResult", toolCallId: "c1", toolName: "read", isError: false,
+     content: [{type: "text", text: "the project is described"}]},
+  ],
+}, {sessionKey: "s1"});
+console.log(JSON.stringify({judged, delivered: await call("message_sending",
+  {to: "me", content: answer}, {sessionKey: "s1"})}));
+""")
+
+    assert verdict["judged"] is None
+    assert verdict["delivered"] is None
+
+
+def test_a_mixed_answer_earns_one_note_naming_both_languages(tmp_path):
+    target = deployed(tmp_path, LOCAL)
+
+    verdict = drive(target, """
+const answer = "Ho letto la nota. I searched the vault too.";
+await call("before_agent_finalize", {
+  provider: "ollama", sessionKey: "s1", runId: "r1", stopHookActive: true,
+  lastAssistantMessage: answer, messages: [],
+}, {sessionKey: "s1"});
+console.log(JSON.stringify(await call("message_sending", {to: "me", content: answer}, {sessionKey: "s1"})));
+""")
+
+    note = verdict["content"]
+    assert "Unverified claims:" in note
+    assert "claims work done without a successful receipt" in note
+    assert "claims a search without a successful search receipt" in note

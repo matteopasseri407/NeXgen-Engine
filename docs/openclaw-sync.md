@@ -142,7 +142,6 @@ engine deploys no copy of that hook, so its registration is the observable
 condition. A briefing that fails is swallowed: a session that loses its briefing is
 a worse session, not a broken one.
 
-<<<<<<< HEAD
 ### The `/quota` command
 
 `quota.mjs` registers a chat command and answers with the lines the engine has
@@ -171,7 +170,7 @@ cannot block the change, writes no file and runs no command, because adoption
 rewrites the library and is the person's decision. A removal leaves nothing to
 adopt, and an event from ClawHub or a source install is that installer's business,
 so both are silent.
-=======
+
 ### Evidence
 
 The check the old local lane had, moved into the harness that now runs the loop, so
@@ -185,19 +184,26 @@ What the verdict can say, and what it can never do:
 
 | Claim in the answer | Receipt it needs |
 |---|---|
-| a read (`ho letto`, `ho aperto`) | a successful read-tool receipt from this turn |
-| a search (`ho cercato`) | a successful search-tool receipt from this turn |
-| a command or a run (`ho eseguito`) | a successful shell/exec receipt from this turn |
-| tests or verification (`ho verificato`, `test superati`) | a successful shell/exec receipt from this turn |
-| a write (`ho salvato`, `file aggiornato`) | a successful write-tool receipt from this turn |
+| a read (`ho letto`, `I read`) | a successful read-tool receipt from this turn |
+| a search (`ho cercato`, `I searched`) | a successful search-tool receipt from this turn |
+| a command or a run (`ho eseguito`, `I ran`) | a successful shell/exec receipt from this turn |
+| tests or verification (`ho verificato`, `tests passed`) | a successful shell/exec receipt from this turn |
+| a write (`ho salvato`, `file aggiornato`, `I saved`) | a successful write-tool receipt from this turn |
 | a cited source (`[01-NOTE/x.md]`) | that path among the files this turn read |
+
+The tables carry English and Italian together, and no configured language decides which
+half is read: the engine is public and answers in English by default, so an unsupported
+English answer is found exactly like an Italian one, and an answer that mixes the two is
+judged claim by claim. The note is English, like every other sentence the plugin renders
+itself: the engine translates its own words, and the plugin has no way to know the
+language of the person reading.
 
 An unsupported answer is not dropped and not passed in silence:
 
 1. the model gets one more pass (`revise`, with `retry.maxAttempts: 1` and a key of
    the engine's own) and is told which claims have no receipt;
 2. if it comes back unsupported anyway, or a stop hook is already asking for a pass,
-   the answer is delivered with a visible note, `Affermazioni non verificate: ...`,
+   the answer is delivered with a visible note, `Unverified claims: ...`,
    under it.
 
 The switch and the providers are not in the plugin. They are the `evidence` section
@@ -212,10 +218,9 @@ already had a deterministic side effect is not rewound, which is why the note is
 path that does not depend on the harness. The note is added to the delivery that
 carries the judged text, recognized by its first line: a channel that rewrites the
 answer beyond recognition gets no note, and no other message of that session is ever
-annotated in its place. The phrase tables are Italian, like the owners' agents: an
-answer in another language is still checked where the rule does not depend on a phrase
-(a cited source, an invented result, facts with nothing retrieved).
->>>>>>> ff847637 (docs(openclaw): the evidence check, its hooks and its two limits)
+annotated in its place. The phrase tables are long and bilingual, not exhaustive: a
+claim worded in a way neither list carries is still checked where the rule does not
+depend on a phrase (a cited source, an invented result, facts with nothing retrieved).
 
 ### Posture
 

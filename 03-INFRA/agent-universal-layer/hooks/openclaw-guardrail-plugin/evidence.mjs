@@ -61,14 +61,16 @@ const RECEIPT_TEXT_CHARS = 20_000;
 //: delivers an answer in pieces, and only the piece that carries the head is annotated.
 const HEAD_CHARS = 40;
 
-//: What the reader sees above the answer. Italian, like the phrases below: see the note in
-//: `docs/openclaw-sync.md` about what this check does not cover.
-const NOTE = "Affermazioni non verificate:";
+//: What the reader sees above the answer. English, like every sentence this plugin renders itself
+//: (`quota.mjs` says why): the engine translates its own words, and a file with no locale cannot
+//: know the language of the person reading. The claim tables below are a different question, and
+//: they carry both languages at once.
+const NOTE = "Unverified claims:";
 
 //: Appended to the revision reason OpenClaw sends the model.
 const REVISE_INSTRUCTION =
-  "Riscrivi la risposta togliendo le affermazioni elencate: non aggiungere dettagli per compensare, " +
-  "e dichiara che non le hai fatte in questo turno.";
+  "Rewrite the answer without the claims listed above: do not add details to compensate for them, " +
+  "and say plainly that you did not do them in this turn.";
 
 //: Where a turn's receipts come from. OpenClaw names an MCP tool `server__tool`, so a name is
 //: reduced to its own part before the family is decided, and the families below are the ids
@@ -93,37 +95,64 @@ const WRITE_SUFFIXES = ["_write", "_create", "_update", "_append", "_delete", "_
 
 //: Claim families, ported from `nexgen_local/evidence.py`. Each family needs its own receipt: a
 //: read claim is not evidence for a search, and a search that found nothing is not evidence that
-//: something was read. The phrases are Italian because the owners' agents answer in Italian.
+//: something was read.
+//:
+//: Both languages sit in the same table, and nothing here reads a configured language. The engine
+//: is public and answers in English by default; the owners' agents often answer in Italian. A
+//: switch would decide which half of the answers is checked, and an English claim without evidence
+//: would pass for the precise reason the check exists to prevent. Every phrase stays a plain
+//: string: `hasClaim` decides the word edges.
 export const READ_CLAIM_PHRASES = [
   "ho letto", "ho consultato", "ho aperto", "ho trovato il file", "ho trovato", "ho recuperato",
+  "i read", "i've read", "i have read", "i opened", "i've opened", "i consulted", "i looked at",
+  "i retrieved", "i found the file", "i found", "i've found",
 ];
-export const SEARCH_CLAIM_PHRASES = ["ho cercato", "ho ricercato"];
-export const EXEC_CLAIM_PHRASES = ["ho eseguito", "ho effettuato", "ho lanciato", "ho avviato", "ho usato"];
+export const SEARCH_CLAIM_PHRASES = [
+  "ho cercato", "ho ricercato",
+  "i searched", "i've searched", "i looked up", "i ran a search", "i did a search", "i googled",
+];
+export const EXEC_CLAIM_PHRASES = [
+  "ho eseguito", "ho effettuato", "ho lanciato", "ho avviato", "ho usato",
+  "i ran", "i've run", "i have run", "i executed", "i launched", "i started", "i used",
+];
 export const VERIFY_CLAIM_PHRASES = [
   "ho verificato", "ho testato", "ho controllato i test", "ho superato i test",
+  "i verified", "i tested", "i checked the tests", "i ran the tests", "i made sure",
+  "the tests pass", "tests pass", "tests passed",
 ];
 export const WRITE_CLAIM_PHRASES = [
   "ho salvato", "ho scritto", "ho creato", "ho aggiunto", "ho modificato", "ho eliminato",
   "ho cancellato", "ho applicato", "ho inviato", "ho mandato", "ho spedito",
+  "i saved", "i wrote", "i've written", "i have written", "i created", "i added", "i modified",
+  "i updated", "i edited", "i patched", "i deleted", "i removed", "i applied", "i sent", "i emailed",
 ];
 
-//: Words that turn a generic "ho eseguito" into a test or verification claim.
-const TEST_WORDS = ["test", "verific", "collaud", "pytest", "coverage"];
+//: Words that turn a generic "ho eseguito" or "I ran" into a test or verification claim.
+const TEST_WORDS = ["test", "verific", "collaud", "pytest", "coverage", "check", "suite"];
 
-//: A negation right before a claim makes it a true statement of absence ("non ho letto la nota").
-const NEGATION_RE = /\b(non|nessun|nessuna|nessuno|senza|niente|mai)\b/i;
+//: A negation right before a claim makes it a true statement of absence ("non ho letto la nota",
+//: "I did not read the note").
+const NEGATION_RE =
+  /\b(non|nessun|nessuna|nessuno|senza|niente|mai|not|never|without|none|nothing|nobody|no|nor|neither|cannot|can't|couldn't|didn't|doesn't|don't|isn't|wasn't|aren't|weren't|haven't|hasn't)\b/i;
 
-//: Passive result claims without "ho": "file aggiornato", "test superati". Grounded only when the
-//: matched word itself plus a neighbouring content word appear in what the turn actually read.
+//: English also negates the object after the verb: "I found no results" denies the object, not the
+//: action, and is the honest outcome of a search that returned nothing. Italian puts its negation
+//: before the verb, where `NEGATION_RE` already catches it.
+const OBJECT_NEGATION_RE = /^\s*(?:no|not|nothing|none|nobody|never)\b/i;
+
+//: Passive result claims without "ho" or "I": "file aggiornato", "the file was updated". Grounded
+//: only when the matched word itself plus a neighbouring content word appear in what the turn
+//: actually read.
 const WRITE_RESULT_RE =
-  /\b(aggiornat[oaie]|modificat[oaie]|salvat[oaie]|scritt[oaie]|creat[oaie]|aggiunt[oaie]|eliminat[oaie]|cancellat[oaie]|applicat[oaie])\b/gi;
+  /\b(aggiornat[oaie]|modificat[oaie]|salvat[oaie]|scritt[oaie]|creat[oaie]|aggiunt[oaie]|eliminat[oaie]|cancellat[oaie]|applicat[oaie]|updated|modified|saved|written|created|added|deleted|removed|applied|edited|patched)\b/gi;
 const TEST_RESULT_RE =
-  /\btest\s+(superat\w*|passat\w*|eseguit\w*|ok|verdi)\b|\bverific\w*\s+(superat\w*|completat\w*|ok)\b|\bsuperat\w*\s+(i\s+)?test\b|\bverificat[oaie]\b/gi;
+  /\btest\s+(superat\w*|passat\w*|eseguit\w*|ok|verdi)\b|\bverific\w*\s+(superat\w*|completat\w*|ok)\b|\bsuperat\w*\s+(i\s+)?test\b|\bverificat[oaie]\b|\btests?\s+(pass|passed|passing|ok|green|succeeded)\b|\bverified\b|\bchecks?\s+pass(ed)?\b/gi;
 
-//: The honest outcome when retrieval produced nothing. A bare "non" ("non supera 900 euro") is a
-//: negated fact about the world, not a declaration that the engine found nothing.
+//: The honest outcome when retrieval produced nothing. A bare "non" ("non supera 900 euro") or a
+//: bare "no" ("no more than 900 euro") is a negated fact about the world, not a declaration that
+//: the engine found nothing.
 const ABSENCE_RE =
-  /\b(non ho trovato|non trovo|non ho recuperato|non ho accesso|non ho informazioni|non esiste|non esistono|non risulta|non risultano|non disponibile|non disponibili|non presente|non accessibile|non recuperabile|non so|nessun\w* (risultato|risultati|nota|note|file|documento|documenti|contenuto|contenuti|informazione|informazioni)|non ha prodotto risultati)\b/i;
+  /\b(non ho trovato|non trovo|non ho recuperato|non ho accesso|non ho informazioni|non esiste|non esistono|non risulta|non risultano|non disponibile|non disponibili|non presente|non accessibile|non recuperabile|non so|nessun\w* (risultato|risultati|nota|note|file|documento|documenti|contenuto|contenuti|informazione|informazioni)|non ha prodotto risultati|i did not find|i didn't find|i could not find|i couldn't find|i cannot find|i can't find|i have not found|i haven't found|not found|found nothing|no results?|no matches?|no matching|nothing found|does not exist|do not exist|doesn't exist|don't exist|not available|not accessible|not present|not retrievable|i do not know|i don't know|no information|no data|unable to (find|read|access|retrieve)|could not retrieve|couldn't retrieve|returned nothing|returned no results)\b/i;
 
 //: `\w` covers the paths a citation uses, `\\:` the Windows absolute ones.
 const PATH_RE = /`?([\w./\\:-]+\.(?:md|pdf|txt|ya?ml|json|py|toml|sh|ps1|cfg|ini))`?/gi;
@@ -142,6 +171,21 @@ function negated(low, index) {
   return NEGATION_RE.test(low.slice(Math.max(0, index - 40), index));
 }
 
+const WORD_CHAR_RE = /[a-zà-ÿ0-9]/i;
+
+//: True when the phrase begins and ends on a word edge. English claim phrases are short ("i ran"),
+//: and a substring match would find them inside ordinary words ("multi range").
+function onWordEdge(low, start, length) {
+  const before = start > 0 ? low[start - 1] : " ";
+  const after = start + length < low.length ? low[start + length] : " ";
+  return !WORD_CHAR_RE.test(before) && !WORD_CHAR_RE.test(after);
+}
+
+//: True when the words straight after a phrase deny its object ("i found no results").
+function negatedObject(low, end) {
+  return OBJECT_NEGATION_RE.test(low.slice(end, end + 16));
+}
+
 //: True when a phrase occurs without a negation in the preceding context. `low` is the answer
 //: lowercased: the indices never leave that string.
 export function hasClaim(low, phrases) {
@@ -150,7 +194,9 @@ export function hasClaim(low, phrases) {
     for (;;) {
       const index = low.indexOf(phrase, start);
       if (index < 0) break;
-      if (!negated(low, index)) return true;
+      if (onWordEdge(low, index, phrase.length)
+          && !negated(low, index)
+          && !negatedObject(low, index + phrase.length)) return true;
       start = index + phrase.length;
     }
   }
@@ -377,39 +423,40 @@ export function verifyAnswer(answer, receipts = []) {
 
   if (hasClaim(low, READ_CLAIM_PHRASES) && !families.has("read")) {
     problems.push(successful.length
-      ? "afferma una lettura senza una ricevuta di lettura riuscita"
-      : "afferma lavoro svolto senza una ricevuta riuscita");
+      ? "claims a read without a successful read receipt"
+      : "claims work done without a successful receipt");
   }
   if (hasClaim(low, SEARCH_CLAIM_PHRASES) && !searched) {
-    problems.push("afferma una ricerca senza una ricevuta di ricerca riuscita");
+    problems.push("claims a search without a successful search receipt");
   }
   if (hasClaim(low, EXEC_CLAIM_PHRASES) && !families.has("exec")) {
     problems.push(TEST_WORDS.some((word) => low.includes(word))
-      ? "afferma test o verifiche senza una ricevuta di esecuzione"
-      : "afferma lavoro svolto senza una ricevuta riuscita");
+      ? "claims tests or verification without an execution receipt"
+      : "claims work done without a successful receipt");
   }
   if (hasClaim(low, VERIFY_CLAIM_PHRASES) && !families.has("exec")) {
-    problems.push("afferma test o verifiche senza una ricevuta di esecuzione");
+    problems.push("claims tests or verification without an execution receipt");
   }
   // A family is proven by a receipt of that family: the action claims and the passive result
-  // patterns ("file aggiornato") are two ways of saying the same thing, so either one is enough to
-  // hold the family open, and a pattern that restates what the turn read is grounded, not claimed.
+  // patterns ("file aggiornato", "the file was updated") are two ways of saying the same thing, so
+  // either one is enough to hold the family open, and a pattern that restates what the turn read
+  // is grounded, not claimed.
   if (!families.has("write")
       && (hasClaim(low, WRITE_CLAIM_PHRASES) || hasResultPattern(text, WRITE_RESULT_RE, collected))) {
-    problems.push("afferma una scrittura senza una ricevuta di scrittura");
+    problems.push("claims a write without a successful write receipt");
   }
   if (!families.has("exec")
       && (hasClaim(low, VERIFY_CLAIM_PHRASES) || hasResultPattern(text, TEST_RESULT_RE, collected))) {
-    problems.push("afferma test o verifiche senza una ricevuta di esecuzione");
+    problems.push("claims tests or verification without an execution receipt");
   }
   for (const cited of citedPaths(text)) {
     if (paths.some((read) => pathMatches(cited, read))) continue;
     if (collected && collected.toLowerCase().includes(cited.toLowerCase())) continue;
     if (citedByName(cited, successful)) continue;
-    problems.push(`cita una fonte non letta: ${cited}`);
+    problems.push(`cites a source that was never read: ${cited}`);
   }
   if (retrievalRanEmpty(list, paths, searched, collected) && low.trim() && !honestEmptyOutcome(text)) {
-    problems.push("afferma fatti senza contenuto recuperato dal motore");
+    problems.push("claims facts with nothing retrieved by the turn");
   }
   return unique(problems);
 }
