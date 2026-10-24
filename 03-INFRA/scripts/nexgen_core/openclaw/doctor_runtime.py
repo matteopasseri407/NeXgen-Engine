@@ -3,10 +3,12 @@
 One job: the checks that read machine state rather than configuration, so
 `doctor.py` stays the rules of the configuration and this module answers what is
 running, what else is running, and what an agent has learned. Read-only by
-construction: no file is written, the only command it can run asks for the Node
-version, and a URL read from the Companion's settings is never printed. Where the
-Windows app keeps its own gateway is `companion.py`'s question; here it is only a
-value that decides which sentence a person reads.
+construction: no file is written and nothing is started by itself. Two calls can
+run a command, and only when the caller hands them in: asking Node for its version,
+and the gateway's own device list, which `nexgen openclaw doctor` passes and a pass
+with no business launching a CLI does not. A URL read from the Companion's settings
+is never printed. Where the Windows app keeps its own gateway is `companion.py`'s
+question; here it is only a value that decides which sentence a person reads.
 """
 from __future__ import annotations
 
@@ -21,6 +23,7 @@ from nexgen_core.openclaw import host_preflight
 from nexgen_core.openclaw.companion import Companion
 from nexgen_core.openclaw.pin import node_satisfies
 from nexgen_core.openclaw.profile import GATEWAY_PORT
+from nexgen_core.openclaw_pairing import names_the_windows_app
 from nexgen_core.report import CheckOutcome, Severity
 
 DEFAULT_GATEWAY_PORT = GATEWAY_PORT
@@ -342,13 +345,24 @@ def check_unadopted(
 # ------------------------------------------------------------- the Companion app
 
 
-def check_companion_gateway(companion: Companion, native_installed: bool, platform: str) -> CheckOutcome | None:
+def check_companion_gateway(
+    companion: Companion,
+    native_installed: bool,
+    platform: str,
+    pending: Callable[[], list[dict[str, Any]] | None] | None = None,
+) -> CheckOutcome | None:
     """Where the Windows app's gateway is, said in the terms of the case at hand.
 
     The app is never something to remove: it is a gateway the person chose, and
     what the engine owes them is which gateway it configures itself and the
     promise to stay out of the other one's way. Only two gateways claiming the
     same PC is a conflict.
+
+    When the app is installed and the native gateway is the one here, the line
+    answers the two questions a person has: is the app pointed at this gateway,
+    and does its device show up in the gateway's own list. `pending` is that
+    list, injected because asking means running the CLI: a caller that has no
+    business launching it passes nothing and the line says what it can.
     """
     if not platform.startswith("win"):
         return None
@@ -382,4 +396,58 @@ def check_companion_gateway(companion: Companion, native_installed: bool, platfo
                       "conflict: this version of the engine configures the native gateway on this PC only."),
             action=t("Nothing to do: the app keeps its own gateway."),
         )
+    if situation == app.NATIVE and companion.present:
+        return _app_and_this_gateway(companion, pending)
     return None
+
+
+def _app_and_this_gateway(
+    companion: Companion,
+    pending: Callable[[], list[dict[str, Any]] | None] | None,
+) -> CheckOutcome:
+    """The app is installed and this PC's gateway is the only one: is it pointed here?
+
+    An app aimed at this gateway is connected, and its device is worth a
+    sentence when the gateway can be asked. An app that names no gateway is one
+    step from working, and that step is the app's own Connections screen.
+    """
+    if not companion.names_this_gateway():
+        return CheckOutcome(
+            id="openclaw.companion_gateway",
+            severity=Severity.OK,
+            message=t("The OpenClaw Companion app is installed and names no gateway on this PC."),
+            action=t("In OpenClaw Companion open Connections and choose 'a local Gateway on this PC', then "
+                     "'nexgen openclaw pair' approves the request it leaves."),
+        )
+    port = companion.port if companion.port is not None else GATEWAY_PORT
+    message = t("The OpenClaw Companion app is set to this PC's gateway on port {port}.", port=port)
+    return CheckOutcome(
+        id="openclaw.companion_gateway",
+        severity=Severity.OK,
+        message=" ".join(part for part in (message, _devices_sentence(pending)) if part),
+    )
+
+
+def _devices_sentence(
+    pending: Callable[[], list[dict[str, Any]] | None] | None,
+) -> str:
+    """What the gateway's own list says about the app's device, when it can be read.
+
+    A gateway that is stopped cannot be asked, and that is a normal state: the
+    sentence is then empty rather than a fault about the app.
+    """
+    if pending is None:
+        return ""
+    try:
+        devices = pending()
+    except OSError:  # nexgen: allow reason="a lister that cannot be launched answers 'unknown', not a doctor failure"
+        return ""
+    if devices is None:
+        return ""
+    if not devices:
+        return t("The gateway lists no device for it yet: 'nexgen openclaw pair' shows the request the app leaves "
+                 "and approves it.")
+    if any(names_the_windows_app(device) for device in devices):
+        return t("The gateway lists its device.")
+    return t("The gateway lists {count} device(s), none of them naming the app: 'nexgen openclaw pair' shows the "
+             "request and approves it.", count=len(devices))

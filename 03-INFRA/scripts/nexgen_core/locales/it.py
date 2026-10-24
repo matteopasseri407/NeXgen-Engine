@@ -1596,6 +1596,18 @@ MESSAGES: dict[str, str] = {
         "L'app OpenClaw Companion è collegata a un gateway altrove. Qui non c'è nessun conflitto: questa versione del motore configura solo il gateway nativo di questo PC.",
     "Nothing to do: the app keeps its own gateway.":
         "Niente da fare: l'app tiene il suo gateway.",
+    "The OpenClaw Companion app is installed and names no gateway on this PC.":
+        "L'app OpenClaw Companion è installata e non nomina nessun gateway su questo PC.",
+    "In OpenClaw Companion open Connections and choose 'a local Gateway on this PC', then 'nexgen openclaw pair' approves the request it leaves.":
+        "In OpenClaw Companion apri Connections e scegli 'a local Gateway on this PC', poi 'nexgen openclaw pair' approva la richiesta che l'app lascia.",
+    "The OpenClaw Companion app is set to this PC's gateway on port {port}.":
+        "L'app OpenClaw Companion è puntata al gateway di questo PC sulla porta {port}.",
+    "The gateway lists no device for it yet: 'nexgen openclaw pair' shows the request the app leaves and approves it.":
+        "Il gateway non elenca ancora un dispositivo per l'app: 'nexgen openclaw pair' mostra la richiesta che l'app lascia e la approva.",
+    "The gateway lists its device.":
+        "Il gateway elenca il suo dispositivo.",
+    "The gateway lists {count} device(s), none of them naming the app: 'nexgen openclaw pair' shows the request and approves it.":
+        "Il gateway elenca {count} dispositivi, nessuno dei quali nomina l'app: 'nexgen openclaw pair' mostra la richiesta e la approva.",
     "The OpenClaw Companion app runs the gateway on this PC ({signals}) and there is no native one.":
         "L'app OpenClaw Companion esegue il gateway su questo PC ({signals}) e non ce n'è uno nativo.",
     "This version of the engine configures the native Node gateway, which is the road it supports, not the app's one: nothing was installed and nothing was written, because a native gateway beside it would fight over the same port.":

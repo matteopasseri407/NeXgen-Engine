@@ -7,12 +7,13 @@ outcomes at all, and `nexgen doctor` looks exactly as it did before this
 feature existed.
 
 The checks are read-only by construction. They read the configuration in force
-and they open one TCP connection. When a caller asks for the node list — the
-`--nodes` flag of `nexgen openclaw doctor` — they also ask a gateway that already
-answers which nodes it knows, with the read-only query OpenClaw documents;
-without that flag nothing of OpenClaw is started, because `nexgen doctor` runs on
-a schedule of its own. They never validate the configuration and never write a
-file.
+and they open one TCP connection. They never run `openclaw config validate`,
+because starting or validating OpenClaw is B2's job, and they never write a file.
+Two commands a check may run, and only when the caller hands them in: the node
+list, behind the `--nodes` flag, with the read-only query OpenClaw documents, and
+the gateway's own device list, because `nexgen openclaw doctor` is where a person
+asks whether the app is paired. Neither runs on `nexgen doctor`'s own schedule,
+which has no business launching a CLI.
 """
 from __future__ import annotations
 
@@ -364,8 +365,14 @@ def collect(
     node_version: Callable[[], str | None] | None = None,
     linger_dir: Path | None = None,
     failover: quota_policy.Failover | None = None,
+    pending: Callable[[], list[dict[str, Any]] | None] | None = None,
 ) -> list[CheckOutcome]:
-    """Every OpenClaw check that applies to this machine, or nothing at all."""
+    """Every OpenClaw check that applies to this machine, or nothing at all.
+
+    `pending` is the gateway's own device list, and it is asked only when the
+    app says it is on this gateway: a caller that must not launch a CLI passes
+    nothing, and the line about the app then says what its files alone say.
+    """
     values = dict(os.environ) if env is None else {str(k): str(v) for k, v in env.items()}
     home_dir = resolve_home(home)
     system = platform or sys.platform
@@ -404,7 +411,9 @@ def collect(
             config, snapshot, path, home_dir, vault_data, failover, connect, node_lister, system,
         ))
     outcomes.extend(_store_gateway_outcomes(home_dir, values, system))
-    app_outcome = doctor_runtime.check_companion_gateway(app_gateway, snapshot.openclaw.installed, system)
+    app_outcome = doctor_runtime.check_companion_gateway(
+        app_gateway, snapshot.openclaw.installed, system, pending,
+    )
     if app_outcome is not None:
         outcomes.append(app_outcome)
     outcomes.extend(_host_outcomes(snapshot, engine_root, values, system, node_version, linger_dir))

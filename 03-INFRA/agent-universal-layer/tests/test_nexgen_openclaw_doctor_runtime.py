@@ -229,12 +229,61 @@ def test_a_companion_gateway_url_on_another_port_is_a_warning(tmp_path):
     assert "super-secret-token" not in outcome.message, "a URL can carry a token: never print it"
 
 
-def test_a_companion_pointing_at_this_gateway_is_not_a_warning(tmp_path):
+def test_a_companion_pointing_at_this_gateway_is_a_line_that_says_so(tmp_path):
     settings = Path(companion_env(tmp_path)["APPDATA"]) / "OpenClawTray" / "settings.json"
     settings.parent.mkdir(parents=True)
     settings.write_text(json.dumps({"gatewayUrl": "ws://localhost:18789"}), encoding="utf-8")
 
-    assert check_companion_gateway(app_gateway(tmp_path), True, "win32") is None
+    outcome = check_companion_gateway(app_gateway(tmp_path), True, "win32")
+
+    assert outcome is not None and outcome.severity is Severity.OK
+    assert "set to this PC's gateway on port 18789" in outcome.message
+
+
+def test_the_app_on_this_gateway_says_whether_its_device_is_listed(tmp_path):
+    settings = Path(companion_env(tmp_path)["APPDATA"]) / "OpenClawTray" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({"gatewayUrl": "ws://localhost:18789"}), encoding="utf-8")
+
+    outcome = check_companion_gateway(
+        app_gateway(tmp_path), True, "win32",
+        pending=lambda: [{"id": "req-1", "summary": "OpenClaw Companion on Windows", "status": "pending"}],
+    )
+
+    assert "The gateway lists its device." in outcome.message
+
+
+def test_an_app_whose_device_the_gateway_does_not_list_is_told_the_step(tmp_path):
+    settings = Path(companion_env(tmp_path)["APPDATA"]) / "OpenClawTray" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({"gatewayUrl": "ws://localhost:18789"}), encoding="utf-8")
+
+    outcome = check_companion_gateway(app_gateway(tmp_path), True, "win32", pending=lambda: [])
+
+    assert "lists no device for it yet" in outcome.message
+    assert "nexgen openclaw pair" in outcome.message
+
+
+def test_a_gateway_that_cannot_be_asked_says_nothing_about_the_device(tmp_path):
+    settings = Path(companion_env(tmp_path)["APPDATA"]) / "OpenClawTray" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({"gatewayUrl": "ws://localhost:18789"}), encoding="utf-8")
+
+    outcome = check_companion_gateway(app_gateway(tmp_path), True, "win32", pending=lambda: None)
+
+    assert outcome.message.endswith("on port 18789."), "a stopped gateway is not a fault about the app"
+
+
+def test_an_installed_app_that_names_no_gateway_gets_the_step_it_needs(tmp_path):
+    settings = Path(companion_env(tmp_path)["APPDATA"]) / "OpenClawTray" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({"docsUrl": "https://openclaw.ai/docs"}), encoding="utf-8")
+
+    outcome = check_companion_gateway(app_gateway(tmp_path), True, "win32")
+
+    assert outcome is not None and outcome.severity is Severity.OK
+    assert "names no gateway on this PC" in outcome.message
+    assert "a local Gateway on this PC" in (outcome.action or "")
 
 
 def test_the_companion_check_is_windows_only(tmp_path):

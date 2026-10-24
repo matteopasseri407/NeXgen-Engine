@@ -10,10 +10,13 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.companion import Companion  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.detect import Detection, Installation, LocalModelInfo, LocalModels, Login, detect  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.doctor import collect, exit_code  # noqa: E402 - sys.path shim for cloned checkout
@@ -21,6 +24,14 @@ from nexgen_core.openclaw.profile import PENDING_TOKEN  # noqa: E402 - sys.path 
 from nexgen_core.report import Severity  # noqa: E402 - sys.path shim for cloned checkout
 
 PINNED = "2026.10.6"
+
+
+@pytest.fixture(autouse=True)
+def _english():
+    """The source language, whatever the machine reads: these lines are English by construction."""
+    i18n.set_language("en")
+    yield
+    i18n.set_language(None)
 
 
 def clean_config() -> dict:
@@ -86,7 +97,8 @@ def declare(vault: Path, state: str = "local") -> Path:
 
 def run_doctor(tmp_path: Path, config_path: Path | None = None, *, declared: bool = True,
                platform: str = "linux", connect=None, detected: Detection | None = None,
-               wsl_distributions=None, node_version=None, linger_dir=None, env=None, **machine_kwargs):
+               wsl_distributions=None, node_version=None, linger_dir=None, env=None, pending=None,
+               **machine_kwargs):
     vault = declare(tmp_path / "vault") if declared else tmp_path / "vault"
     path = config_path or (tmp_path / "home" / ".openclaw" / "openclaw.json")
     snapshot = detected if detected is not None else machine(path, **machine_kwargs)
@@ -103,6 +115,7 @@ def run_doctor(tmp_path: Path, config_path: Path | None = None, *, declared: boo
         wsl_distributions=wsl_distributions or (lambda: []),
         node_version=node_version or (lambda: "v24.22.1"),
         linger_dir=linger_dir,
+        pending=pending,
     )
 
 
@@ -447,6 +460,31 @@ def test_the_app_gateway_alone_is_informative_and_never_a_failure(tmp_path):
     assert [outcome.id for outcome in outcomes] == ["openclaw.companion_gateway"]
     assert outcomes[0].severity is Severity.OK
     assert exit_code(outcomes) == 0
+
+
+def test_an_installed_app_that_names_no_gateway_gets_the_connections_step(tmp_path):
+    """The common machine: the exe is there, and one line says the step that connects it."""
+    outcomes = run_doctor(
+        tmp_path, write_config(tmp_path, clean_config()), platform="win32",
+        companion=Companion(present=True),
+    )
+
+    line = by_id(outcomes)["openclaw.companion_gateway"]
+    assert line.severity is Severity.OK
+    assert "names no gateway on this PC" in line.message
+    assert "a local Gateway on this PC" in (line.action or "")
+
+
+def test_the_app_on_this_gateway_says_whether_its_device_is_listed(tmp_path):
+    outcomes = run_doctor(
+        tmp_path, write_config(tmp_path, clean_config()), platform="win32",
+        companion=Companion(present=True, points_here=True, port=18789),
+        pending=lambda: [{"id": "req-1", "summary": "OpenClaw Companion on Windows"}],
+    )
+
+    line = by_id(outcomes)["openclaw.companion_gateway"]
+    assert "set to this PC's gateway on port 18789" in line.message
+    assert "The gateway lists its device." in line.message
 
 
 def test_a_second_gateway_from_the_microsoft_store_is_a_warning(tmp_path):
