@@ -25,10 +25,16 @@ it.
 
 ## MCP connectors
 
-The manifest's servers are written into the `mcp.servers` table of `openclaw.json`
+The manifest's servers targeting OpenClaw are written directly into the `mcp.servers` table of `openclaw.json`
 and nothing else in that file is touched: models, channels, gateway settings and
 servers the manifest does not declare are OpenClaw's own. A machine where OpenClaw
 was never set up has no config file, and the renderer does not invent one.
+
+Inside OpenClaw, connectors are always mounted **directly**, never behind `lazy-mcp`. OpenClaw already provides
+native **Tool Search** (active by default when `tools.toolSearch` is unset) to compact tool schemas behind search
+and call controls while applying OpenClaw's own tool policies, inventory, and approval cards. The engine never
+writes `tools.toolSearch`, and the MCP renderer removes any engine-written `lazy-mcp` entry from `mcp.servers`
+while preserving any user-defined connector with that name.
 
 OpenClaw can also act as an MCP server for the other harnesses (`claude`, `codex`,
 `antigravity`, `opencode`) via `openclaw mcp serve`. The canonical manifest entry is

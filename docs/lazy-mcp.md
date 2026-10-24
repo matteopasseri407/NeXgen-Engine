@@ -32,6 +32,12 @@ nexgen mcp check    # starts each CLI's gateway as that CLI would, lists what it
 `nexgen doctor` reports an incoherent plan statically (`mcp.placement`); `check` is the live half and starts the
 backends, so it is a command you run, not part of `doctor`.
 
+## OpenClaw: direct connectors, no gateway
+
+Inside OpenClaw, `lazy-mcp` is never mounted. The proxy exists for CLIs that insert full tool schemas into the system prompt up front (Claude Code, Codex, Antigravity, OpenCode). OpenClaw already provides its own native mechanism, **Tool Search**, active by default when `tools.toolSearch` is unset: it defers tool schemas behind search, describe, and call controls, applying OpenClaw's policy, inventory, and execution approvals to each call.
+
+Mounting `lazy-mcp` inside OpenClaw would create a double-lazy layer (a search tool inside another search tool), obscure connectors from OpenClaw's policy and approval system, and funnel writes through `lazy_mutate` instead of OpenClaw's native approvals. Every server targeting OpenClaw is therefore placed directly, and `lazy-mcp` itself is never mounted.
+
 What stops the gateway's children: a CLI that goes away closes the gateway's input, and the gateway and its
 backends exit with it (tested). A gateway killed outright (the OOM killer, `kill -9`) cannot clean up after
 itself and leaves its backends running until they are stopped by hand.
