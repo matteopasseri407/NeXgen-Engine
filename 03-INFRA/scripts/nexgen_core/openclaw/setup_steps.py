@@ -375,6 +375,47 @@ def governor_step(setup: Setup, plan) -> None:
                 count=len(section["agents"])))
 
 
+def enable_openclaw_mcp(setup: Setup, vault: Path) -> bool:
+    """Enable the canonical OpenClaw MCP server in manifest.yaml for other CLIs."""
+    import re
+    from nexgen_core.paths import mcp_manifest
+
+    manifest_path = mcp_manifest(vault)
+    if not manifest_path.is_file():
+        return False
+    try:
+        raw_text = manifest_path.read_text(encoding="utf-8")
+        pattern = re.compile(r"(^\s{2}openclaw:(?:(?!\n\s{0,2}\S).)*?\n\s+enabled:\s*)false", re.DOTALL | re.MULTILINE)
+        if pattern.search(raw_text):
+            if not setup.dry_run:
+                manifest_path.write_text(pattern.sub(r"\g<1>true", raw_text, count=1), encoding="utf-8")
+            setup.out(t("OpenClaw MCP server enabled for other harnesses."))
+            return True
+        from nexgen_core.config import load_mcp_manifest
+
+        data = load_mcp_manifest(manifest_path)
+        servers = data.get("servers") if isinstance(data, dict) else {}
+        if "openclaw" not in (servers or {}):
+            stub = (
+                "  openclaw:\n"
+                "    exposure: eager\n"
+                "    transport: stdio\n"
+                "    command: openclaw\n"
+                "    args: [\"mcp\", \"serve\"]\n"
+                "    targets: [claude, codex, antigravity, opencode]\n"
+                "    enabled: true"
+            )
+            from nexgen_core.renderer_cli import insert_server_stubs
+
+            if not setup.dry_run:
+                insert_server_stubs(manifest_path, [stub])
+            setup.out(t("OpenClaw MCP server enabled for other harnesses."))
+            return True
+    except (OSError, ValueError) as exc:  # nexgen: allow reason="a read-only Vault reports a step that did not land, never crashes setup"
+        setup.out(t("Could not enable OpenClaw MCP server: {error}", error=exc))
+    return False
+
+
 def module_step(setup: Setup) -> None:
     """Step 7: this machine declares the module, so the doctor keeps it aligned."""
     vault = resolve_vault_data(setup.home, setup.vault_data)
@@ -384,6 +425,7 @@ def module_step(setup: Setup) -> None:
         setup.out(t("The module declaration did not land: {error}", error=exc))
         return
     setup.out(t("This machine declares 'openclaw: local' for host {host}.", host=current_host()))
+    enable_openclaw_mcp(setup, vault)
 
 
 def phone_step(setup: Setup) -> None:

@@ -165,6 +165,19 @@ servers:
     require_env: MCP_MEMORY_OPT_IN
     targets: [codex]
 
+  # ---- OpenClaw channel conversations (enabled on setup) -----------------
+  # `openclaw mcp serve` exposes routed channel conversations over stdio.
+  # Disabled by default (`enabled: false`); turned on by `nexgen openclaw setup`
+  # when OpenClaw is installed, so Claude Code, Codex, OpenCode, and agy can
+  # read and send messages across the owner's channels.
+  openclaw:
+    exposure: eager
+    transport: stdio
+    command: openclaw
+    args: ["mcp", "serve"]
+    targets: [claude, codex, antigravity, opencode]
+    enabled: false
+
   # ---- the gateway (always mounted) -------------------------------------
 
   # Every server declared `exposure: lazy` is served through this one proxy: a CLI loads its four small tools instead

@@ -1069,3 +1069,23 @@ def test_node_gateway_stops_when_the_apps_gateway_still_holds_the_port(tmp_path)
     assert "127.0.0.1:18789 already" in machine.output()
     assert "stop the app's gateway in OpenClaw Companion" in machine.output()
     assert "never starts, stops or writes the app's distribution" in machine.output()
+
+
+def test_setup_enables_the_openclaw_mcp_server_in_the_manifest(tmp_path):
+    machine = Machine(tmp_path)
+    machine.config.parent.mkdir(parents=True)
+    machine.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
+    mcp_folder = machine.vault / "03-INFRA" / "agent-universal-layer" / "mcp"
+    mcp_folder.mkdir(parents=True)
+    manifest = mcp_folder / "manifest.yaml"
+    manifest.write_text(
+        "schema_version: 1\nservers:\n  openclaw:\n    exposure: eager\n    transport: stdio\n    command: openclaw\n    args: ['mcp', 'serve']\n    targets: [claude, codex, antigravity, opencode]\n    enabled: false\n",
+        encoding="utf-8",
+    )
+
+    assert machine.run() == 0
+
+    from nexgen_core.config import load_mcp_manifest
+
+    data = load_mcp_manifest(manifest)
+    assert data["servers"]["openclaw"]["enabled"] is True

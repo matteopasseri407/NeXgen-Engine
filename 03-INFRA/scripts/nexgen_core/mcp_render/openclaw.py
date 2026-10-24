@@ -155,8 +155,11 @@ def _apply_servers(
     """Mounts every resolved server and drops the ones this engine retired."""
     for retired in renderer.retired_server_names():
         servers_table.pop(retired, None)
+    servers_table.pop("openclaw", None)
     renderer._drop_unmounted(servers_table, servers, cli_target="openclaw")
     for name, srv in servers.items():
+        if name == "openclaw":
+            continue
         is_http = srv.get("transport") == "http" or bool(srv.get("url"))
         if is_http and _resolved_url(srv) is None:
             logger.warning("OpenClaw connector %r has a URL this machine cannot resolve, skipped", name)

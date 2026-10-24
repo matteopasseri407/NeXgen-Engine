@@ -2130,4 +2130,8 @@ MESSAGES: dict[str, str] = {
         "Il plugin del motore non è depositato: le sue catene di ripiego non sono state scritte.",
     "The fallback chains reach {count} agents; the plugin reads them on every turn.":
         "Le catene di ripiego arrivano a {count} agenti; il plugin le legge a ogni turno.",
+    "OpenClaw MCP server enabled for other harnesses.":
+        "Server MCP di OpenClaw abilitato per gli altri harness.",
+    "Could not enable OpenClaw MCP server: {error}":
+        "Impossibile abilitare il server MCP di OpenClaw: {error}",
 }

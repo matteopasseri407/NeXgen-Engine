@@ -275,3 +275,23 @@ def test_a_config_without_an_mcp_block_still_gets_its_servers(renderer) -> None:
     data = json.loads(cfg.read_text(encoding="utf-8"))
     assert "py-tool" in data["mcp"]["servers"]
     assert data["gateway"] == {"port": 18789}
+
+
+def test_the_openclaw_server_is_never_rendered_into_openclaw_itself(renderer) -> None:
+    """OpenClaw acts as an MCP server for other CLIs; it must never be given to itself."""
+    manifest_file = renderer.vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+    manifest_text = manifest_file.read_text(encoding="utf-8")
+    manifest_file.write_text(
+        manifest_text + "\n  openclaw:\n    tier: core\n    transport: stdio\n    command: openclaw\n    args: ['mcp', 'serve']\n    targets: [claude, codex, antigravity, opencode, openclaw]\n",
+        encoding="utf-8",
+    )
+    cfg = openclaw_config(renderer.home)
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(json.dumps({
+        "mcp": {"servers": {"openclaw": {"command": "openclaw", "args": ["mcp", "serve"]}}},
+    }), encoding="utf-8")
+
+    assert renderer.render_openclaw(write=True)[0]
+
+    servers = _servers(renderer)
+    assert "openclaw" not in servers
