@@ -481,13 +481,14 @@ home recursively, whether the gateway is listening, whether every agent has a fa
 gateway from the Microsoft Store, the OpenClaw Companion's own gateway, which it reports without configuring
 it, and how many skills and servers OpenClaw created that the canonical library does not declare yet.
 When the app is installed, one line answers the two questions a person has: whether the app's settings point at
-this PC's gateway, and whether the gateway's own device list knows the app. The list is read through
-`openclaw devices list --json`, only on that line and only when the app says it is on this gateway; a stopped
-gateway is a normal state, so the line then says nothing about devices instead of reporting a fault.
+this PC's gateway, and whether the gateway's own device list knows the app. `nexgen openclaw doctor` reads that
+list with `openclaw devices list --json`, on that line only and only when the app says it is on this gateway;
+a stopped gateway is a normal state, so the line then says nothing about devices instead of reporting a fault.
 `--nodes` adds the nodes the running gateway knows, which costs one run of OpenClaw's CLI and is therefore
 never done unless asked; the line about the network needs no query, so it is always there. `nexgen doctor`
-runs the same checks as part of its own report, without `--nodes`, and says nothing at all on a machine that
-never installed OpenClaw, never declared the module and has no Companion gateway.
+runs the same checks as part of its own report, without `--nodes` and without launching that list, and says
+nothing at all on a machine that never installed OpenClaw, never declared the module and has no Companion
+gateway.
 
 `nexgen openclaw node --host <address> [--port 18789] [--name <label>]` prints the commands that make this
 machine a node of a gateway elsewhere: OpenClaw's one-paste route with a join code, and the explicit route with
@@ -497,7 +498,8 @@ service on each platform.
 `nexgen openclaw setup` applies that same plan: it installs the pinned release, onboards when there is no
 file, merges the owned sections with a backup beside them, writes the agent manuals, installs and starts the
 service, declares the module and runs the doctor. What the plan promises is what the setup writes, because
-both are computed by the same pure function.
+both are computed by the same pure function. On a Windows machine it also ends by pointing the app at this
+gateway and offering the request the app leaves, in the paragraph that follows the summary the doctor prints.
 
 `nexgen openclaw adopt [--skills] [--mcp] [--dry-run] [--yes]` takes what was created inside OpenClaw and
 makes it canonical: the skills the Skill Workshop learned, and the servers in `mcp.servers` that no manifest
