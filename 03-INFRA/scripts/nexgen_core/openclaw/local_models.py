@@ -20,6 +20,10 @@ PROVIDER_EXTRAS: dict[str, dict[str, Any]] = {
     "llama-cpp": {"request": {"allowPrivateNetwork": True}},
 }
 
+#: The providers a local model answers from: the backends this engine starts
+#: and cages, and the only ones the evidence check watches.
+LOCAL_PROVIDERS: tuple[str, ...] = ("ollama", "llama-cpp")
+
 
 @dataclass(frozen=True)
 class LocalModel:

@@ -1429,6 +1429,16 @@ MESSAGES: dict[str, str] = {
         "Lancia 'nexgen openclaw plan' e poi setup: un modello locale non deve scrivere, eseguire né navigare.",
     "Every local model is caged ({count}).":
         "Ogni modello locale è nella gabbia ({count}).",
+    "The engine plugin is not enabled here, so the evidence check is not installed.":
+        "Qui il plugin del motore non è abilitato, quindi il controllo delle evidenze non c'è.",
+    "The engine plugin is enabled but its evidence switch is missing: the check cannot run.":
+        "Il plugin del motore è abilitato ma manca il suo interruttore delle evidenze: il controllo non può partire.",
+    "Run 'nexgen sync': it deposits the switch beside the plugin.":
+        "Lancia 'nexgen sync': deposita l'interruttore accanto al plugin.",
+    "The evidence check is off: this machine names no local model whose answers it could check.":
+        "Il controllo delle evidenze è spento: questa macchina non nomina nessun modello locale di cui controllare le risposte.",
+    "The evidence check holds each answer of these local models to its own tool receipts: {providers}.":
+        "Il controllo delle evidenze tiene ogni risposta di questi modelli locali alle ricevute dei suoi tool: {providers}.",
     "The heartbeat is off, as the engine configures it.":
         "Il battito è spento, come lo configura il motore.",
     "The heartbeat runs every '{every}': it starts system jobs that write to the channels.":

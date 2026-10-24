@@ -3,12 +3,14 @@
 OpenClaw runs native plugins inside its gateway process, so everything the engine gives
 Claude Code reaches OpenClaw through a single plugin, split into jobs that know nothing
 about each other (`guardrail.mjs`, `briefing.mjs`, `quota.mjs`, `workshop.mjs`,
-`governor.mjs`, `council.mjs`, `sup.mjs`, `sup-tools.mjs`, registered by `index.mjs`):
+`governor.mjs`, `council.mjs`, `sup.mjs`, `sup-tools.mjs`, `evidence.mjs`, registered by
+`index.mjs`):
 
 - the **guardrail** on `before_tool_call`, the same private body the other CLIs run;
 - the **vault briefing** after a compaction, the same text Claude's checkpoint hook injects;
 - **`/quota`**, which runs the engine and forwards the lines it already rendered;
 - **`/council`** and **`/sup`**, the same, and the **supervision tools** an agent drives;
+- the **evidence check**, which holds a local model's answer to the receipts of its own turn;
 - the **governor** on `before_model_resolve`, which starts a turn on the fallback when the
   plan the turn would use is spent, from the readings the beat leaves beside it;
 - the shared **`engine-run.mjs`**, the one way any of them starts the engine.
@@ -30,6 +32,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from nexgen_core.openclaw.config_file import read_config
+from nexgen_core.openclaw.evidence import evidence_section
 from nexgen_core.paths import openclaw_config, resolve_home
 from nexgen_core.runtimes.base import EVENT_SINK_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
 
@@ -186,10 +190,14 @@ class OpenClawRuntime(Runtime):
         #    checkpoint hook registered on SessionStart. Without it, OpenClaw would brief a
         #    session Claude does not brief, which is exactly the divergence to avoid. The
         #    `engine` section is how `/quota` reaches this very interpreter without a shell.
+        #    The `evidence` section names the local models whose answers are checked: derived
+        #    from the configuration in force, so a cloud model is never in it.
+        config_in_force, _ = read_config(openclaw_config(home))
         changed |= self._write_plugin_config(
             home,
             briefing={"enabled": self._briefing_installed(home)},
             engine=engine_deposit(),
+            evidence=evidence_section(config_in_force),
         )
 
         if not changed and not migrated:

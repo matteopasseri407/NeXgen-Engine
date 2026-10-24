@@ -22,6 +22,7 @@ from nexgen_core.i18n import t
 from nexgen_core.openclaw import doctor_runtime
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
+from nexgen_core.openclaw.evidence import check_evidence, local_refs
 from nexgen_core.openclaw.governor import check_fallbacks
 from nexgen_core.openclaw.pin import pinned_version, required_node_version
 from nexgen_core.openclaw.profile import PENDING_TOKEN
@@ -165,18 +166,6 @@ def _provider_model_ids(config: dict[str, Any], provider: str) -> list[str]:
     return ids
 
 
-def _local_refs(config: dict[str, Any]) -> list[str]:
-    """Every local model the configuration can actually name, provider-qualified."""
-    refs: list[str] = []
-    for provider in ("ollama", "llama-cpp"):
-        refs.extend(f"{provider}/{model_id}" for model_id in _provider_model_ids(config, provider))
-    refs.extend(
-        ref for ref in _agent_model_refs(config).values()
-        if ref.split("/", 1)[0] in ("ollama", "llama-cpp")
-    )
-    return sorted(set(refs))
-
-
 def _check_ollama_latest(config: dict[str, Any]) -> CheckOutcome:
     """OpenClaw does not recognise `:latest`, and then guesses the context window."""
     suffixed = [model_id for model_id in _provider_model_ids(config, "ollama") if model_id.endswith(":latest")]
@@ -201,10 +190,10 @@ def _check_cage(config: dict[str, Any]) -> CheckOutcome:
     tools = config.get("tools") if isinstance(config.get("tools"), dict) else {}
     by_provider = tools.get("byProvider") if isinstance(tools.get("byProvider"), dict) else {}
     caged = [
-        ref for ref in _local_refs(config)
+        ref for ref in local_refs(config)
         if isinstance(by_provider.get(ref), dict) and by_provider[ref].get("deny")
     ]
-    missing = [ref for ref in _local_refs(config) if ref not in caged]
+    missing = [ref for ref in local_refs(config) if ref not in caged]
     if missing:
         return CheckOutcome(
             id="openclaw.cage",
@@ -406,7 +395,7 @@ def _config_outcomes(
     failover: quota_policy.Failover | None,
     connect: doctor_runtime.Connect | None,
 ) -> list[CheckOutcome]:
-    """Every check that reads the configuration in force, once it is readable.
+    """Every check that reads the configuration in force: what it says, and what it lets a model do.
 
     `failover` is the policy the caller already read, when it has one; without it the
     policy is read here, from the same Vault the other checks read.
@@ -417,6 +406,7 @@ def _config_outcomes(
     outcomes = filter(None, [
         _check_ollama_latest(config),
         _check_cage(config),
+        check_evidence(config, path),
         _check_heartbeat(config),
         *_check_gateway(config),
         _check_google(config),
