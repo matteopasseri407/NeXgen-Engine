@@ -31,7 +31,7 @@ from typing import Any
 from nexgen_core.paths import openclaw_config, resolve_home
 from nexgen_core.runtimes.base import EVENT_SINK_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
 
-#: The engine's plugin directory (package.json + manifest + index.mjs + the job files),
+#: The engine's plugin directory (package.json + manifest + index.mjs + the jobs),
 #: deployed as a whole into `<state dir>/extensions/<PLUGIN_ID>/`. The folder keeps the name it
 #: had when it held only the guardrail: it is the source of a byte-for-byte copy, never a path
 #: anyone configures.

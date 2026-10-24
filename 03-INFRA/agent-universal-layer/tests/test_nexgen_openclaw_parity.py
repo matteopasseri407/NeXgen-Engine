@@ -1,4 +1,4 @@
-"""The `nexgen` plugin: one id, one deposit, every job, and a parity control that proves it.
+"""The `nexgen` plugin: one id, one deposit, one job per file, and a parity control that proves it.
 
 These tests run the real adapter against a temporary home: the plugin is deposited under
 `<state dir>/extensions/nexgen/`, the old `nexgen-guardrail` folder is taken back, the
