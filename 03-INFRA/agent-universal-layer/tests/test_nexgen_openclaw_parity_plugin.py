@@ -540,8 +540,9 @@ def test_the_plugin_registers_the_quota_command(tmp_path):
 console.log(JSON.stringify([...commands.values()].map((spec) => ({name: spec.name, description: spec.description}))));
 """)
 
-    assert [spec["name"] for spec in fired] == ["quota"]
-    assert fired[0]["description"]  # a command with no description is a command nobody finds
+    quota = [spec for spec in fired if spec["name"] == "quota"]
+    assert len(quota) == 1
+    assert quota[0]["description"]  # a command with no description is a command nobody finds
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")

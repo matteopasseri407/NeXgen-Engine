@@ -3,13 +3,15 @@
 OpenClaw runs native plugins inside its gateway process, so everything the engine gives
 Claude Code reaches OpenClaw through a single plugin, split into jobs that know nothing
 about each other (`guardrail.mjs`, `briefing.mjs`, `quota.mjs`, `workshop.mjs`,
-`governor.mjs`, registered by `index.mjs`):
+`governor.mjs`, `council.mjs`, `sup.mjs`, `sup-tools.mjs`, registered by `index.mjs`):
 
 - the **guardrail** on `before_tool_call`, the same private body the other CLIs run;
 - the **vault briefing** after a compaction, the same text Claude's checkpoint hook injects;
 - **`/quota`**, which runs the engine and forwards the lines it already rendered;
+- **`/council`** and **`/sup`**, the same, and the **supervision tools** an agent drives;
 - the **governor** on `before_model_resolve`, which starts a turn on the fallback when the
-  plan the turn would use is spent, from the readings the beat leaves beside it.
+  plan the turn would use is spent, from the readings the beat leaves beside it;
+- the shared **`engine-run.mjs`**, the one way any of them starts the engine.
 
 What this adapter deliberately does NOT do: write `openclaw.json`. Changing the `plugins.*`
 block while the gateway runs breaks it, so enabling the plugin is a separate step

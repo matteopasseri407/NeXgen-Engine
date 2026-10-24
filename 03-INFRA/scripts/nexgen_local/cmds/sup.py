@@ -8,6 +8,7 @@ stays in `supervision_state`, `supervision_windows` and `supervision_costs`.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -44,6 +45,7 @@ def register_sup(sub) -> None:
 
     status = sup_sub.add_parser("status", help="stato di un compito (senza id: elenco dei compiti)")
     status.add_argument("id", nargs="?", default="")
+    status.add_argument("--json", action="store_true", help="le stesse righe, in JSON, per chi le deve inoltrare")
     status.set_defaults(func=cmd_sup_status)
 
     attach = sup_sub.add_parser("attach", help="aggancia una sessione harness a un'unità e scrive la riga di costo")
@@ -53,6 +55,7 @@ def register_sup(sub) -> None:
         "costi", help="spesa delle sessioni nelle ultime 5 ore, 7 e 30 giorni; con un id, anche i costi del compito",
     )
     costi.add_argument("id", nargs="?", default="", help="id del compito (senza: solo la spesa delle sessioni)")
+    costi.add_argument("--json", action="store_true", help="le stesse righe, in JSON, per chi le deve inoltrare")
     costi.set_defaults(func=cmd_sup_costi)
 
     check = sup_sub.add_parser("window-check", help="apre una finestra visibile che resta aperta")
@@ -155,42 +158,41 @@ def cmd_sup_start(args: argparse.Namespace) -> int:
 def cmd_sup_status(args: argparse.Namespace) -> int:
     """Print one task's state, or the list of tasks when no id is given."""
     if not args.id:
-        return _list_tasks()
+        return _emit(state.tasks_lines(), args)
     try:
         data = state.status(args.id)
     except SupervisionError as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 1
     stalls, stall_problem = _stalls(args.id)
-    data = state.status(args.id)
-    print(f"compito {data['id']}")
-    print(f"obiettivo: {data['objective'] or '(non leggibile)'}")
-    print(f"cartella: {data['path']}")
+    lines = [f"compito {data['id']}"]
+    lines.append(f"obiettivo: {data['objective'] or '(non leggibile)'}")
+    lines.append(f"cartella: {data['path']}")
     roles_line = _roles_line()
     if roles_line:
-        print(roles_line)
+        lines.append(roles_line)
     local_line = _local_line()
     if local_line:
-        print(local_line)
+        lines.append(local_line)
     if data["units"]:
         for unit in data["units"]:
-            print(unit_line(unit))
+            lines.append(unit_line(unit))
             note = review.status_note(args.id, unit.get("unit") or "")
             if note:
-                print(note)
+                lines.append(note)
     else:
-        print("unità: nessuna agganciata")
+        lines.append("unità: nessuna agganciata")
     for item in stalls:
-        print(stall.line(item))
+        lines.append(stall.line(item))
     if stalls:
-        print(f"per rispondere a una richiesta di permesso: `sup permessi {args.id}`")
+        lines.append(f"per rispondere a una richiesta di permesso: `sup permessi {args.id}`")
     if stall_problem:
-        print(f"stallo: non verificabile ({stall_problem})")
-    print("sessioni harness: " + (", ".join(data["sessions"]) or "nessuna"))
+        lines.append(f"stallo: non verificabile ({stall_problem})")
+    lines.append("sessioni harness: " + (", ".join(data["sessions"]) or "nessuna"))
     last = data["last_event"] or {}
-    print("ultimo evento: " + (f"{last.get('event', '')} {last.get('at', '')}".strip() or "nessuno"))
-    print(task_line(data))
-    return 0
+    lines.append("ultimo evento: " + (f"{last.get('event', '')} {last.get('at', '')}".strip() or "nessuno"))
+    lines.append(task_line(data))
+    return _emit(lines, args)
 
 
 def _stalls(task_id: str) -> tuple[list[dict], str]:
@@ -252,15 +254,16 @@ def cmd_sup_attach(args: argparse.Namespace) -> int:
 
 def cmd_sup_costi(args: argparse.Namespace) -> int:
     """Print the spend windows, then the task's cost rows by role and by unit when an id is given."""
+    lines: list[str] = []
     if args.id:
         try:
             data = costs.aggregate(args.id)
         except SupervisionError as exc:
             print(f"nexgen-local: {exc}", file=sys.stderr)
             return 1
-        print(_format_aggregate(data))
-    print("\n".join(_spend_lines(spend.spend_windows())))
-    return 0
+        lines.append(_format_aggregate(data))
+    lines.extend(_spend_lines(spend.spend_windows()))
+    return _emit(lines, args)
 
 
 def cmd_sup_window_check(args: argparse.Namespace) -> int:
@@ -534,9 +537,16 @@ def _tail(text: str, limit: int = 1200) -> str:
     return (text or "").strip()[-limit:]
 
 
-def _list_tasks() -> int:
-    """Every task folder, one line each: the id is what every other verb wants."""
-    print("\n".join(state.tasks_lines()))
+def _emit(lines: list[str], args: argparse.Namespace) -> int:
+    """Print the lines the verb built, or the same lines inside the JSON a caller forwards.
+
+    The words are built once: a chat, a tool and a terminal read the same sentence, and
+    `--json` only decides how it travels.
+    """
+    if getattr(args, "json", False):
+        print(json.dumps({"lines": lines}, ensure_ascii=False))
+        return 0
+    print("\n".join(lines))
     return 0
 
 

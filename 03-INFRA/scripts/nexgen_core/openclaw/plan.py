@@ -22,6 +22,7 @@ from nexgen_core.openclaw.profile import (
     CODEX_MODEL,
     OWNED_SECTIONS,
     PENDING_TOKEN,
+    SUPERVISOR_TOOLS,
     Choices,
     agent_models,
     build_config,
@@ -188,6 +189,23 @@ def _build_notes(config: dict[str, Any], detected: Detection, choices: Choices |
     return notes
 
 
+def _supervisor_tool_note(current: dict[str, Any] | None) -> str | None:
+    """Say when the supervisor's tools cannot be allowlisted without touching the person's list.
+
+    OpenClaw refuses `allow` and `alsoAllow` in the same scope, so an agent whose tools the
+    person listed already gets nothing written: the plan names the tools to add there.
+    """
+    entries = current.get("agents", {}).get("entries") if isinstance(current, dict) else None
+    entry = entries.get("capo") if isinstance(entries, dict) else None
+    tools = entry.get("tools") if isinstance(entry, dict) else None
+    if isinstance(tools, dict) and isinstance(tools.get("allow"), list):
+        return t(
+            "The supervisor agent has its own tools.allow: add {tools} there to let it drive the supervision.",
+            tools=", ".join(SUPERVISOR_TOOLS),
+        )
+    return None
+
+
 def _binding_note(config: dict[str, Any]) -> str | None:
     """Say which channels the setup binds, so the plan is not a silent config change."""
     bindings = config.get("bindings") if isinstance(config.get("bindings"), list) else []
@@ -243,6 +261,9 @@ def build_plan(
     binding_note = _binding_note(config)
     if binding_note:
         notes.append(binding_note)
+    supervisor_note = _supervisor_tool_note(current)
+    if supervisor_note:
+        notes.append(supervisor_note)
     return Plan(
         detected=snapshot, choices=chosen, config=config, path=path,
         current=current, current_error=error,

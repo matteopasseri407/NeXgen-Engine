@@ -23,6 +23,8 @@ import { registerCouncil } from "./council.mjs";
 import { registerGovernor } from "./governor.mjs";
 import { registerGuardrail } from "./guardrail.mjs";
 import { registerQuota } from "./quota.mjs";
+import { registerSupTools } from "./sup-tools.mjs";
+import { registerSup } from "./sup.mjs";
 import { registerWorkshop } from "./workshop.mjs";
 
 const DIR = dirname(fileURLToPath(import.meta.url));
@@ -50,5 +52,7 @@ export default {
     registerWorkshop(api);
     registerGovernor(api);
     registerCouncil(api);
+    registerSup(api);
+    registerSupTools(api);
   },
 };

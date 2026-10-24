@@ -63,6 +63,21 @@ LOCAL_DENY = (
     "playwright__*", "lazy-mcp__lazy_mutate",
 )
 
+#: The agent that supervises work, and the plugin tools that change the engine's state.
+#: The plugin registers those as `optional`, which in OpenClaw means "not exposed until an
+#: operator allowlists this exact name": this list, written on one agent, is that operator.
+#: The names are also in the plugin manifest and in `sup-tools.mjs`, and a test fails when
+#: the three drift apart.
+SUPERVISOR_AGENT = "capo"
+SUPERVISOR_TOOLS = (
+    "nexgen_sup_start",
+    "nexgen_sup_unit",
+    "nexgen_sup_run",
+    "nexgen_sup_collect",
+    "nexgen_sup_review",
+    "nexgen_sup_publish",
+)
+
 #: MCP servers whose tools write, and the names of those tools, expressed once as
 #: data. OpenClaw names them `server__tool`, so a pattern here reads as "no
 #: workflow creation, no note writing, no upload" without enumerating every tool.
@@ -293,6 +308,34 @@ def _cage(models: tuple[LocalModel, ...]) -> dict[str, Any]:
     }
 
 
+def _person_allow_list(current: dict[str, Any] | None) -> bool:
+    """Whether the supervisor agent carries its own `allow` list in the file in force.
+
+    OpenClaw rejects `allow` and `alsoAllow` in the same scope, so a person who wrote an
+    allowlist for that agent keeps it: the engine says what to add there instead of writing
+    a file OpenClaw would refuse to load.
+    """
+    entries = current.get("agents", {}).get("entries") if isinstance(current, dict) else None
+    entry = entries.get(SUPERVISOR_AGENT) if isinstance(entries, dict) else None
+    tools = entry.get("tools") if isinstance(entry, dict) else None
+    return isinstance(tools, dict) and isinstance(tools.get("allow"), list)
+
+
+def _allow_supervisor_tools(entries: dict[str, Any], current: dict[str, Any] | None) -> None:
+    """Let the supervisor agent, and only it, drive the supervision.
+
+    The plugin registers those tools `optional`: without a name in an allowlist they are not
+    offered to any model. This writes that allowlist on the one agent that supervises.
+    """
+    if _person_allow_list(current):
+        return
+    entry = entries.get(SUPERVISOR_AGENT)
+    if not isinstance(entry, dict):
+        return
+    tools = entry.get("tools") if isinstance(entry.get("tools"), dict) else {}
+    entry["tools"] = {**tools, "alsoAllow": sorted(SUPERVISOR_TOOLS)}
+
+
 def _agent_pairs(models: dict[str, str]) -> dict[str, list[str]]:
     """Which agents may message which, for the agents created: id -> the ids it may send to.
 
@@ -413,9 +456,10 @@ def build_config(
         "tools": tools,
         "gateway": _gateway(chosen, current),
     }
+    _allow_supervisor_tools(config["agents"]["entries"], current)
     for agent_id, entry in config["agents"]["entries"].items():
         if agent_id in partners:
-            entry["tools"] = {"agentToAgent": {"send": partners[agent_id]}}
+            entry["tools"] = {**entry.get("tools", {}), "agentToAgent": {"send": partners[agent_id]}}
     acp = acp_block(detected, sviluppo=chosen.sviluppo, acpx=chosen.acpx)
     if acp is not None:
         config["acp"] = acp
