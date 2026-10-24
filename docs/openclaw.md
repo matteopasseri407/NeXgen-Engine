@@ -279,9 +279,11 @@ because it is allowed by the protocol and not by the terms.
 
 ## OpenClaw Companion (l'app Windows)
 
-On Windows, OpenClaw's own advice is the **Windows Hub / OpenClaw Companion** app. Its first run can provision a
-WSL distribution of its own, `OpenClawGateway`, with the gateway inside it and its state in that distribution's
-home directory, under `.openclaw`; the app talks to that gateway on `ws://127.0.0.1:18789`.
+On Windows, OpenClaw provides the **Windows Hub / OpenClaw Companion** app (`OpenClaw.Tray.WinUI`). The companion app supports three distinct gateway modes:
+
+1. **WSL distribution (`wsl`)**: The app provisions a dedicated WSL2 distribution (`OpenClawGateway`), hosting the gateway inside Linux with state under `.openclaw` inside the distribution, communicating on `ws://127.0.0.1:18789`.
+2. **Local engine gateway (`engine`)**: The companion connects to the host's native Node gateway managed by NeXgen ("a local Gateway on this PC" in companion settings), sharing loopback and host state.
+3. **Isolated native gateway (`isolated`)**: The companion provisions an isolated native MSIX gateway (`OpenClawFoundation.OpenClawGateway`) executing inside an isolated Windows session (`isolated-session-v1`) on a high loopback port (e.g. 52190). The isolated gateway runs under a separate hidden Windows user profile with its own sandboxed workspace and Node runtime; it does not touch WSL, but cannot directly read the main user's files or NeXgen state.
 
 ### What this engine does today
 
@@ -292,18 +294,30 @@ It tells these situations apart, from evidence that starts nothing:
 | the native gateway only | the npm package and `~/.openclaw/openclaw.json` | configures it, as always |
 | the app installed, naming no gateway | the app's files, with no gateway in them, plus the native package or nothing | configures the native one as above, and at the end says the one step that connects the app: Connections, "a local Gateway on this PC" |
 | the app on this PC's gateway | a loopback gateway URL on the engine's own port | one line that says the app is connected, and, when the gateway answers, whether its device is in the gateway's list |
-| the app's gateway only | the `OpenClawGateway` distribution, or the app's own WSL storage, or a gateway its settings name on this PC | says what it found and stops before installing or writing anything |
-| both | one of those, plus the native package | configures the native one, and names the app's gateway as a second gateway in conflict |
+| the app's gateway only (WSL or isolated) | the `OpenClawGateway` distribution, or the isolated native gateway session, or a gateway its settings name on this PC | says what it found (WSL or isolated native) and stops before installing or writing anything |
+| both | one of those, plus the native package | configures the native one, and notes the app's gateway as a second gateway in conflict |
 | the app connected elsewhere | an `sshTunnel`, or a gateway URL that is not loopback | says so; nothing is in conflict |
 
 - The distribution list comes from `HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss`, which answers without
-  starting WSL, and the app's files are read as JSON: `settings.json` for a gateway-named URL, `gateways.json` for
-  `url`, `isLocal`, `sshTunnel` and `setupManagedDistroName`. Every field is optional and a file that does not parse
-  says nothing, because the app's schema is not documented field by field.
+  starting WSL, and the app's files are read as JSON: `settings.json` for active configuration, `gateways.json` for
+  `url`, `isLocal`, `sshTunnel` and `setupManagedDistroName`, and the isolated session package `setup.json`/`gateway.json`
+  for native runtime contract evidence. Every field is optional and a file that does not parse says nothing.
 - A gateway URL can carry a token in its query string, so it is parsed for its host and its port and then dropped:
   no URL, no token and no device key is ever printed, and a `device-key*` file is never opened.
 - The engine never starts the app, WSL or the distribution, and never writes under `%APPDATA%\OpenClawTray`,
-  `%LOCALAPPDATA%\OpenClawTray` or `\\wsl.localhost`.
+  `%LOCALAPPDATA%\OpenClawTray`, the isolated session profile, or `\\wsl.localhost`.
+
+### How doctor, plan and setup interact with each mode
+
+- **Doctor (`nexgen openclaw doctor`)**:
+  - `openclaw.companion_gateway`: reports OK when connected to the engine gateway, or when either the isolated native gateway or WSL distribution runs alone as the designated gateway. Warns only when both an engine gateway and an app-managed gateway run simultaneously.
+  - `openclaw.store_gateway`: excludes the companion's isolated native gateway MSIX (`OpenClawGatewayMSIX`), preventing false-positive Store package conflict alarms.
+- **Plan (`nexgen openclaw plan`)**:
+  - Notes the detected companion gateway mode (`isolated`, `wsl`, `engine`, `remote`).
+  - Distinguishes isolated native gateway from WSL or remote gateways in proposal summaries.
+- **Setup (`nexgen openclaw setup`)**:
+  - When an app gateway (WSL or isolated) is active, setup stops and guides switching to the native gateway via `--node-gateway` once the app's gateway is stopped.
+  - Setup never modifies, removes, or overwrites isolated session files or companion settings.
 
 ### The app's gateway and the native one, when both are wanted
 
