@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -113,5 +114,40 @@ def check_codex_desktop_skew() -> CheckOutcome | None:
             "ChatGPT desktop bundles Codex {desktop} but the codex CLI is {cli}; both read the same ~/.codex, "
             "so each may run settings the other does not understand.",
             desktop=bundled_version, cli=cli_version,
+        ),
+    )
+
+
+def check_shared_browser_desktop() -> CheckOutcome | None:
+    """Checks whether the shared CDP Chrome is visible on the user's desktop.
+
+    On Windows, Chrome started from a sandbox desktop (Antigravity's exebox-...)
+    answers on port 9222 while having no windows on the user's desktop (WinSta0\\Default).
+    The doctor reports this so it can be healed with `agent-chrome --heal`.
+    """
+    if sys.platform != "win32":
+        return None
+    from nexgen_core.tools import chrome
+
+    if not chrome.is_cdp_up():
+        return None
+
+    windows = chrome.chrome_windows(chrome.USER_DESKTOP)
+    if not windows:
+        return CheckOutcome(
+            id="desktop.shared_browser",
+            severity=Severity.BROKEN,
+            message=t(
+                "Chrome is responding on CDP port 9222 but has no top-level windows on {desktop}.",
+                desktop=chrome.USER_DESKTOP,
+            ),
+            action=t("Run 'agent-chrome --heal' to restart Chrome on the user's desktop."),
+        )
+    return CheckOutcome(
+        id="desktop.shared_browser",
+        severity=Severity.OK,
+        message=t(
+            "Shared Chrome is up on {desktop} with CDP on 127.0.0.1:9222",
+            desktop=chrome.USER_DESKTOP,
         ),
     )

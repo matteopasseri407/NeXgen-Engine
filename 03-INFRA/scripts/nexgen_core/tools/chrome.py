@@ -4,26 +4,63 @@
 Contract:
 - agent-chrome [args...]: opens the Chrome window or passes the arguments to the existing browser.
 - agent-chrome --ensure: exits with 0 if CDP on 127.0.0.1:9222 already responds, otherwise starts Chrome.
-- agent-chrome --heal: restarts Chrome if the process is still open without the CDP port.
+- agent-chrome --heal: restarts Chrome if the process is still open without the CDP port,
+  or if it has no top-level windows on the user's desktop.
+- On Windows, a caller on a desktop the user cannot see starts Chrome through Task Scheduler,
+  so the shared browser always comes up on the user's own desktop.
 """
 from __future__ import annotations
 
+import base64
 import contextlib
+import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
-import tempfile
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
-from xml.sax.saxutils import escape
 
 from nexgen_core.i18n import t
 from nexgen_core.paths import resolve_home
+from nexgen_core.tools.chrome_windows import (
+    USER_DESKTOP,
+    WINDOWS_TASK_NAME,
+    chrome_windows,
+    run_task,
+    task_xml,
+    windows_desktop,
+)
+
+__all__ = [
+    "GRACEFUL_SHUTDOWN_SECONDS",
+    "TASK_START_SECONDS",
+    "USER_DESKTOP",
+    "WINDOWS_TASK_NAME",
+    "cdp_close_browser",
+    "chrome_windows",
+    "find_chrome_executable",
+    "get_profile_dir",
+    "heal_chrome",
+    "is_cdp_up",
+    "launch_chrome",
+    "main",
+    "singleton_owner_pid",
+    "task_xml",
+    "windows_desktop",
+]
 
 CDP_URL = "http://127.0.0.1:9222/json/version"
+
+#: How long to wait for Chrome to close on its own before insisting.
+GRACEFUL_SHUTDOWN_SECONDS = 10.0
+
+#: How long a Chrome started through the task gets to open the debug port.
+TASK_START_SECONDS = 20.0
 
 
 def is_cdp_up(timeout: float = 2.0) -> bool:
@@ -33,6 +70,52 @@ def is_cdp_up(timeout: float = 2.0) -> bool:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status == 200
     except Exception:  # noqa: BLE001 - browser launch is best-effort
+        return False
+
+
+def cdp_close_browser(timeout: float = 2.0) -> bool:
+    """Asks Chrome over CDP to close gracefully (Browser.close)."""
+    try:
+        req = urllib.request.Request(CDP_URL)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        ws_url = data.get("webSocketDebuggerUrl")
+        if not ws_url:
+            return False
+        parsed = urllib.parse.urlparse(ws_url)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 9222
+        path = parsed.path
+        if parsed.query:
+            path += f"?{parsed.query}"
+
+        key = base64.b64encode(os.urandom(16)).decode("ascii")
+        with socket.create_connection((host, port), timeout=timeout) as s:
+            handshake = (
+                f"GET {path} HTTP/1.1\r\n"
+                f"Host: {host}:{port}\r\n"
+                "Upgrade: websocket\r\n"
+                "Connection: Upgrade\r\n"
+                f"Sec-WebSocket-Key: {key}\r\n"
+                "Sec-WebSocket-Version: 13\r\n\r\n"
+            )
+            s.sendall(handshake.encode("ascii"))
+            buf = bytearray()
+            while b"\r\n\r\n" not in buf:
+                chunk = s.recv(4096)
+                if not chunk:
+                    return False
+                buf.extend(chunk)
+            if not buf.startswith(b"HTTP/1.1 101"):
+                return False
+
+            payload = b'{"id":1,"method":"Browser.close"}'
+            mask = os.urandom(4)
+            masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+            frame = bytes([0x81, 0x80 | len(payload)]) + mask + masked
+            s.sendall(frame)
+            return True
+    except Exception:  # noqa: BLE001 - nexgen: allow reason="graceful close via CDP is best-effort; Chrome may be unresponsive"
         return False
 
 
@@ -70,10 +153,6 @@ def get_profile_dir() -> Path:
     return resolve_home() / ".config" / "chrome-agent-debug"
 
 
-#: How long to wait for Chrome to close on its own before insisting.
-GRACEFUL_SHUTDOWN_SECONDS = 10.0
-
-
 def singleton_owner_pid(profile: Path) -> int | None:
     """Who's holding the debug profile, if anyone is.
 
@@ -94,126 +173,9 @@ def singleton_owner_pid(profile: Path) -> int | None:
         return None
 
 
-#: The desktop the person at the keyboard actually sees on Windows.
-USER_DESKTOP = "WinSta0\\Default"
-
-#: The on-demand Task Scheduler entry that starts Chrome on the user's desktop.
-WINDOWS_TASK_NAME = "NeXgen Agent Chrome"
-
-#: How long a Chrome started through the task gets to open the debug port.
-TASK_START_SECONDS = 20.0
-
-_UOI_NAME = 2
-
-# No time limit (the default 72 hours kills the browser), allowed on battery,
-# normal priority (a task otherwise runs below normal) and a single instance.
-# No trigger: the task only runs when the launcher asks for it.
-_TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo>
-    <Description>Starts the shared CDP Chrome on the user's own desktop (agent-chrome).</Description>
-  </RegistrationInfo>
-  <Principals>
-    <Principal id="Author">
-      <LogonType>InteractiveToken</LogonType>
-      <RunLevel>LeastPrivilege</RunLevel>
-    </Principal>
-  </Principals>
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <Priority>4</Priority>
-  </Settings>
-  <Actions Context="Author">
-    <Exec>
-      <Command>{command}</Command>
-      <Arguments>{arguments}</Arguments>
-    </Exec>
-  </Actions>
-</Task>
-"""
-
-
-def windows_desktop() -> str | None:
-    """The `station\\desktop` this process draws on, or None when Windows won't say.
-
-    A child process inherits the desktop of whoever starts it. An agent CLI
-    that sandboxes its shell on a private desktop (Antigravity's `exebox-...`)
-    therefore starts a Chrome nobody can see, while CDP answers as if all
-    were well.
-    """
-    if sys.platform != "win32":
-        return None
-    import ctypes
-    from ctypes import wintypes
-
-    user32 = ctypes.WinDLL("user32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32")
-    user32.GetProcessWindowStation.restype = wintypes.HANDLE
-    user32.GetThreadDesktop.restype = wintypes.HANDLE
-    user32.GetThreadDesktop.argtypes = [wintypes.DWORD]
-    user32.GetUserObjectInformationW.argtypes = [
-        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
-    ]
-
-    def object_name(handle: int | None) -> str | None:
-        buf = ctypes.create_unicode_buffer(256)
-        needed = wintypes.DWORD()
-        if not handle or not user32.GetUserObjectInformationW(
-            handle, _UOI_NAME, buf, ctypes.sizeof(buf), ctypes.byref(needed)
-        ):
-            return None
-        return buf.value
-
-    station = object_name(user32.GetProcessWindowStation())
-    desktop = object_name(user32.GetThreadDesktop(kernel32.GetCurrentThreadId()))
-    if station is None or desktop is None:
-        return None
-    return f"{station}\\{desktop}"
-
-
-def task_xml(cmd: list[str]) -> str:
-    """The Task Scheduler definition that runs `cmd` on the logged-in user's desktop."""
-    return _TASK_XML.format(command=escape(cmd[0]), arguments=escape(subprocess.list2cmdline(cmd[1:])))
-
-
 def _run_task(cmd: list[str], desktop: str) -> bool:
-    """Registers the on-demand task for `cmd` and runs it; False when Windows refuses.
-
-    Registering on every launch keeps the task's command line in step with the
-    current Chrome path and profile.
-    """
-    from nexgen_core.processes import no_window_kwargs
-
-    handle, xml_path = tempfile.mkstemp(suffix=".xml", prefix="agent-chrome-task-")
-    os.close(handle)
-    try:
-        Path(xml_path).write_text(task_xml(cmd), encoding="utf-16")
-        steps = (
-            ["schtasks.exe", "/Create", "/TN", WINDOWS_TASK_NAME, "/XML", xml_path, "/F"],
-            ["schtasks.exe", "/Run", "/TN", WINDOWS_TASK_NAME],
-        )
-        for step in steps:
-            result = subprocess.run(
-                step, capture_output=True, text=True, timeout=60, check=False, **no_window_kwargs()
-            )
-            if result.returncode != 0:
-                print(
-                    t(
-                        "agent-chrome: Task Scheduler could not start Chrome ({error}). "
-                        "Not starting it from here: on {desktop} it would be invisible.",
-                        error=(result.stderr or result.stdout).strip(),
-                        desktop=desktop,
-                    ),
-                    file=sys.stderr,
-                )
-                return False
-    finally:
-        with contextlib.suppress(OSError):
-            os.unlink(xml_path)
-    return True
+    """Registers the on-demand task for `cmd` and runs it; False when Windows refuses."""
+    return run_task(cmd, desktop)
 
 
 def _launch_through_task(cmd: list[str], extra_args: list[str], desktop: str) -> int:
@@ -308,44 +270,36 @@ def _profile_pattern(profile: str) -> str:
     return f"--user-data-dir={escaped}"
 
 
-def _heal_chrome_impl(extra_args: list[str] | None = None) -> int:
-    if is_cdp_up():
-        return 0
-
-    profile = get_profile_dir()
-    profile_str = str(profile)
-
-    owner = singleton_owner_pid(profile)
-    if owner is not None:
-        print(
-            t(
-                "agent-chrome: Chrome is holding the debug profile (process {pid}) "
-                "but isn't responding on port 9222. Restarting it.",
-                pid=owner,
-            ),
-            file=sys.stderr,
-        )
-
-    # Terminate any Chrome processes associated with the debug profile
+def _terminate_chrome_profile(profile_str: str, cdp_was_up: bool, profile: Path) -> None:
+    """Shuts down Chrome processes holding `profile_str`, asking gently before forcing."""
     if sys.platform == "win32":
-        try:
-            from nexgen_core.processes import powershell_literal
+        closed_gracefully = False
+        if cdp_was_up:
+            cdp_close_browser()
+            for _ in range(int(GRACEFUL_SHUTDOWN_SECONDS * 2)):
+                if not is_cdp_up():
+                    closed_gracefully = True
+                    break
+                time.sleep(0.5)
+        if not closed_gracefully:
+            try:
+                from nexgen_core.processes import powershell_literal
 
-            # `.Contains` is an exact substring test; `-like` would read `[` or `*` in the path as wildcards.
-            subprocess.run(
-                [
-                    "powershell",
-                    "-NoProfile",
-                    "-Command",
-                    "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "
-                    f"$_.CommandLine.Contains({powershell_literal(profile_str)}) }} | "
-                    "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
-                ],
-                capture_output=True,
-                check=False,
-            )
-        except Exception:  # noqa: BLE001 - browser launch is best-effort
-            pass
+                # `.Contains` is an exact substring test; `-like` would read `[` or `*` in the path as wildcards.
+                subprocess.run(
+                    [
+                        "powershell",
+                        "-NoProfile",
+                        "-Command",
+                        "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "
+                        f"$_.CommandLine.Contains({powershell_literal(profile_str)}) }} | "
+                        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
+                    ],
+                    capture_output=True,
+                    check=False,
+                )
+            except Exception:  # noqa: BLE001 - nexgen: allow reason="force killing Chrome via PowerShell is best-effort"
+                pass
     else:
         # Ask first, insist later: a Chrome killed outright loses the open
         # tabs, and closing them isn't what we were asked to do.
@@ -362,6 +316,39 @@ def _heal_chrome_impl(extra_args: list[str] | None = None) -> int:
                     capture_output=True, check=False,
                 )
 
+
+def _heal_chrome_impl(extra_args: list[str] | None = None) -> int:
+    cdp_was_up = is_cdp_up()
+    if cdp_was_up:
+        if sys.platform == "win32":
+            windows = chrome_windows(USER_DESKTOP)
+            if windows:
+                return 0
+            print(
+                t(
+                    "agent-chrome: Chrome is responding on port 9222 but has no top-level windows on {desktop}. Restarting it.",
+                    desktop=USER_DESKTOP,
+                ),
+                file=sys.stderr,
+            )
+        else:
+            return 0
+
+    profile = get_profile_dir()
+    profile_str = str(profile)
+
+    owner = singleton_owner_pid(profile)
+    if owner is not None:
+        print(
+            t(
+                "agent-chrome: Chrome is holding the debug profile (process {pid}) "
+                "but isn't responding on port 9222. Restarting it.",
+                pid=owner,
+            ),
+            file=sys.stderr,
+        )
+
+    _terminate_chrome_profile(profile_str, cdp_was_up, profile)
     time.sleep(1.0)
     return launch_chrome(extra_args)
 

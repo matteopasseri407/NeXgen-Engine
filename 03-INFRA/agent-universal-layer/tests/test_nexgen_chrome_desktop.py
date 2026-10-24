@@ -138,3 +138,103 @@ def test_windows_desktop_names_this_shell():
 
     assert desktop is not None
     assert desktop.count("\\") == 1
+
+
+def test_heal_restarts_when_cdp_up_but_no_windows_on_user_desktop(monkeypatch, tmp_path: Path, capsys):
+    state = {"cdp": [True, False, True], "launches": [], "closed_cdp": False, "killed": []}
+
+    monkeypatch.setattr(chrome.sys, "platform", "win32")
+    monkeypatch.setattr(chrome, "get_profile_dir", lambda: tmp_path / "profile")
+    monkeypatch.setattr(chrome, "singleton_owner_pid", lambda profile: None)
+    monkeypatch.setattr(chrome, "is_cdp_up", lambda: state["cdp"].pop(0) if len(state["cdp"]) > 1 else state["cdp"][0])
+    monkeypatch.setattr(chrome, "chrome_windows", lambda desktop=chrome.USER_DESKTOP: [])
+    monkeypatch.setattr(chrome, "cdp_close_browser", lambda: state.update({"closed_cdp": True}) or True)
+    monkeypatch.setattr(chrome, "launch_chrome", lambda args=None: state["launches"].append(args) or 0)
+    monkeypatch.setattr(chrome.time, "sleep", lambda s: None)
+
+    assert chrome.heal_chrome() == 0
+
+    assert state["closed_cdp"] is True
+    assert len(state["launches"]) == 1
+    err = capsys.readouterr().err
+    assert "no top-level windows" in err or "non ha finestre di primo livello" in err
+
+
+def test_heal_keeps_browser_when_windows_present_on_user_desktop(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(chrome.sys, "platform", "win32")
+    monkeypatch.setattr(chrome, "is_cdp_up", lambda: True)
+    monkeypatch.setattr(chrome, "chrome_windows", lambda desktop=chrome.USER_DESKTOP: [12345])
+    monkeypatch.setattr(chrome, "launch_chrome", lambda args=None: pytest.fail("launch_chrome called"))
+
+    assert chrome.heal_chrome() == 0
+
+
+def test_heal_graceful_shutdown_windows(monkeypatch, tmp_path: Path):
+    run_calls = []
+    state = {"cdp": [True, True, False]}
+
+    monkeypatch.setattr(chrome.sys, "platform", "win32")
+    monkeypatch.setattr(chrome, "get_profile_dir", lambda: tmp_path / "profile")
+    monkeypatch.setattr(chrome, "singleton_owner_pid", lambda profile: None)
+    monkeypatch.setattr(chrome, "is_cdp_up", lambda: state["cdp"].pop(0) if len(state["cdp"]) > 1 else state["cdp"][0])
+    monkeypatch.setattr(chrome, "chrome_windows", lambda desktop=chrome.USER_DESKTOP: [])
+    monkeypatch.setattr(chrome, "cdp_close_browser", lambda: True)
+    monkeypatch.setattr(chrome.subprocess, "run", lambda cmd, **kw: run_calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""))
+    monkeypatch.setattr(chrome, "launch_chrome", lambda args=None: 0)
+    monkeypatch.setattr(chrome.time, "sleep", lambda s: None)
+
+    assert chrome.heal_chrome() == 0
+
+    # Stop-Process -Force was NOT called because Chrome exited gracefully
+    assert not any("Stop-Process" in " ".join(c) for c in run_calls)
+
+
+def test_heal_force_shutdown_when_graceful_times_out(monkeypatch, tmp_path: Path):
+    run_calls = []
+
+    monkeypatch.setattr(chrome.sys, "platform", "win32")
+    monkeypatch.setattr(chrome, "get_profile_dir", lambda: tmp_path / "profile")
+    monkeypatch.setattr(chrome, "singleton_owner_pid", lambda profile: None)
+    # CDP remains up, simulating hung browser that doesn't close on Browser.close
+    monkeypatch.setattr(chrome, "is_cdp_up", lambda: True)
+    monkeypatch.setattr(chrome, "chrome_windows", lambda desktop=chrome.USER_DESKTOP: [])
+    monkeypatch.setattr(chrome, "cdp_close_browser", lambda: True)
+    monkeypatch.setattr(chrome.subprocess, "run", lambda cmd, **kw: run_calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""))
+    monkeypatch.setattr(chrome, "launch_chrome", lambda args=None: 0)
+    monkeypatch.setattr(chrome.time, "sleep", lambda s: None)
+
+    assert chrome.heal_chrome() == 0
+
+    # Stop-Process -Force WAS called after graceful shutdown timed out
+    assert any("Stop-Process" in " ".join(c) for c in run_calls)
+
+
+def test_doctor_check_shared_browser_desktop(monkeypatch):
+    from nexgen_core.checks.desktop_checks import check_shared_browser_desktop
+    from nexgen_core.report import Severity
+
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    # 1. CDP not up -> None
+    monkeypatch.setattr(chrome, "is_cdp_up", lambda: False)
+    assert check_shared_browser_desktop() is None
+
+    # 2. CDP up but no windows on WinSta0\Default -> BROKEN
+    monkeypatch.setattr(chrome, "is_cdp_up", lambda: True)
+    monkeypatch.setattr(chrome, "chrome_windows", lambda desktop=chrome.USER_DESKTOP: [])
+    outcome = check_shared_browser_desktop()
+    assert outcome is not None
+    assert outcome.severity == Severity.BROKEN
+    assert outcome.id == "desktop.shared_browser"
+    assert "agent-chrome --heal" in (outcome.action or "")
+
+    # 3. CDP up and windows on WinSta0\Default -> OK
+    monkeypatch.setattr(chrome, "chrome_windows", lambda desktop=chrome.USER_DESKTOP: [999])
+    outcome_ok = check_shared_browser_desktop()
+    assert outcome_ok is not None
+    assert outcome_ok.severity == Severity.OK
+
+    # 4. Non-win32 -> None
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert check_shared_browser_desktop() is None
+
