@@ -31,9 +31,11 @@ time:
 1. How many CLIs do you want to use — just one, or more than one (Claude
    Code / Codex / OpenCode / Antigravity)?
 2. How many machines need to stay aligned — just this one, or more?
-3. Where should the connectors (n8n/Firecrawl/OCR/vault-library) live:
-   nowhere (Local-Only), in Docker on this machine (Local-Full, needs
-   Docker), or on a VPS you have SSH access to (Cloud-Server)?
+3. Where should the connectors (n8n/OCR/vault-library) live: nowhere
+   (Local-Only), in Docker on this machine (Local-Full, needs Docker), or
+   on a VPS you have SSH access to (Cloud-Server)? Web search is not one of
+   them: it is Firecrawl's cloud connector, and it needs the user's key in
+   `FIRECRAWL_API_KEY` (`nexgen-secrets set FIRECRAWL_API_KEY`).
 4. Any key documents (CV, project brief, brand rules) you want ingested
    into the vault right away?
 

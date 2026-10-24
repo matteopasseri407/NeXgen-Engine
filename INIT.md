@@ -25,7 +25,7 @@ Chiedi all'utente, una domanda alla volta:
 3. **Hardware della macchina principale**: sistema operativo (Windows, Mac, Linux) e GPU dedicata (se presente, per modelli locali).
 4. **Dove vivono i servizi** (in parole povere: un VPS è un computer sempre acceso che si affitta online, e un tunnel SSH è il collegamento sicuro per raggiungerlo da qui — se questi termini non dicono nulla all'utente, probabilmente vuole Local-Only). Ci sono tre architetture, non due:
    - **Local-Only**: nessun servizio, tutto locale (0 VPS, nessun container). Se sceglie questa, digli che la web search userà il tool nativo della CLI, l'OCR userà la vision del modello, e non ci saranno automazioni remote.
-   - **Local-Full**: gli stessi cinque connettori (n8n, Firecrawl, OCR, vault-library, browser) girano in Docker su questa stessa macchina, tramite `nexgen stack up` — niente VPS, niente tunnel SSH. Serve solo Docker installato e funzionante. Meccanismo completo allo Step 6.
+   - **Local-Full**: gli stessi connettori (n8n, OCR, vault-library, browser) girano in Docker su questa stessa macchina, tramite `nexgen stack up` — niente VPS, niente tunnel SSH. Serve solo Docker installato e funzionante. La ricerca web non è un servizio da ospitare: è il connettore cloud di Firecrawl, e quello che serve è la chiave dell'utente in `FIRECRAWL_API_KEY`. Meccanismo completo allo Step 6.
    - **Cloud-Server**: i servizi girano su un server remoto / VPS a cui l'utente ha accesso SSH. Chiedi IP, utente SSH, e quali porte usare per i tunnel SSH. Se quel VPS sarà condiviso tra più persone della stessa organizzazione, rimanda l'utente a `docs/org-deployment.md` prima di procedere: oggi non c'è controllo accessi per-persona su un backend condiviso. **Importante da scrivere chiaro a questo punto:** in Cloud-Server il clone locale del Vault diventa un **mirror di sola lettura**, non la copia di lavoro. Le note si scrivono SOLO tramite MCP verso il remoto (mai `git commit` diretto sulle note in locale); se il remoto è irraggiungibile è un'interruzione da segnalare, non un via libera a scrivere o operare sul mirror locale. Meccanismo completo allo Step 7.
 
 Determina il profilo dalle risposte:
@@ -36,7 +36,7 @@ In MINIMAL non saranno installati `nexgen sync`/`nexgen doctor` (nomi storici `a
 
 ### Step 1.4b: I moduli, con scelte multiple deterministiche
 
-L'engine è un insieme di **moduli** (memory, semantic-rag, firecrawl, ocr, n8n, browser, council, sync), ognuno con tre stati possibili: `absent` (rimosso), `local` (self-hostato su questa macchina), `remote` (su una VPS di proprietà, raggiunto via tunnel). L'intervista la fai tu, ma le risposte non sono libere: sono scelte multiple sugli stati che il catalogo dichiara per quel modulo, e le scrivi con comandi deterministici.
+L'engine è un insieme di **moduli** (memory, semantic-rag, ocr, n8n, browser, council, local-lane, openclaw, sync), ognuno con i suoi stati possibili: `absent` (rimosso), `local` (self-hostato su questa macchina), `remote` (su una VPS di proprietà, raggiunto via tunnel). L'intervista la fai tu, ma le risposte non sono libere: sono scelte multiple sugli stati che il catalogo dichiara per quel modulo, e le scrivi con comandi deterministici.
 
 Procedura:
 1. Esegui `nexgen modules list` e mostra la tabella: cosa esiste e qual è lo stato dichiarato.
@@ -171,7 +171,7 @@ Menziona il Consiglio AI come espansione opzionale, a prescindere dal profilo: s
 
 ### Step 7: (Solo Cloud-Server) Deploy dello stack remoto
 
-Se l'utente ha scelto la modalità Cloud-Server, spiega che dovrà deployare lo stack self-hosted (n8n, Firecrawl, OCR, vault-mcp) sul suo VPS. I docker-compose e il bootstrap sono in `03-INFRA/deploy/`: clona il repo sul VPS, copia `.env.example` in `.env`, riempi i segreti, e lancia `bash 03-INFRA/deploy/bootstrap-vps.sh` (provisiona anche il repo bare del vault e genera `VAULT_LIBRARY_TOKEN`). Poi, sulla workstation, esporta `VAULT_LIBRARY_URL` (porta del tunnel, path `/mcp`) e `VAULT_LIBRARY_TOKEN` così le CLI montano il server `vault-library`.
+Se l'utente ha scelto la modalità Cloud-Server, spiega che dovrà deployare lo stack self-hosted (n8n, OCR, vault-mcp) sul suo VPS. I docker-compose e il bootstrap sono in `03-INFRA/deploy/`: clona il repo sul VPS, copia `.env.example` in `.env`, riempi i segreti, e lancia `bash 03-INFRA/deploy/bootstrap-vps.sh` (provisiona anche il repo bare del vault e genera `VAULT_LIBRARY_TOKEN`). Poi, sulla workstation, esporta `VAULT_LIBRARY_URL` (porta del tunnel, path `/mcp`) e `VAULT_LIBRARY_TOKEN` così le CLI montano il server `vault-library`.
 
 **Regola da far entrare bene nella testa dell'utente e di ogni sessione futura, non solo un dettaglio tecnico:** una volta che `vault-library` è montato, il clone locale del Vault smette di essere una copia operativa e diventa un **mirror di sola lettura**, un fallback di emergenza per quando il remoto è irraggiungibile — non un posto dove scrivere o operare normalmente. Le note del vault si scrivono SOLO tramite MCP, mai con git diretto sul locale, nemmeno "solo per stavolta" o "tanto poi sincronizzo". Verifica che questo sia scritto in modo esplicito in `99-INDEX/USER-PROFILE.md` (sezione "If CLOUD-SERVER") prima di chiudere questo step. Rimanda a `03-INFRA/deploy/README.md`, `03-INFRA/remote-automation.md`, `03-INFRA/vault-write-architecture.md` e `03-INFRA/offline-emergency-mode.md` per i dettagli.
 
@@ -211,7 +211,7 @@ Ask the user, one question at a time:
 3. **Hardware of the main machine**: operating system (Windows, Mac, Linux) and dedicated GPU (if any, for local models).
 4. **Where the services live** (in plain terms: a VPS is an always-on computer you rent online, and an SSH tunnel is the secure connection to reach it from here — if those words mean nothing to the user, they probably want Local-Only). There are three architectures, not two:
    - **Local-Only**: no services, everything local (no VPS, no containers). If they choose this, tell them web search will use the CLI's native tool, OCR will use the model's vision, and there will be no remote automations.
-   - **Local-Full**: the same five connectors (n8n, Firecrawl, OCR, vault-library, browser) run in Docker on this same machine, via `nexgen stack up` — no VPS, no SSH tunnel. Just needs Docker installed and working. Full mechanism in Step 6.
+   - **Local-Full**: the same connectors (n8n, OCR, vault-library, browser) run in Docker on this same machine, via `nexgen stack up` — no VPS, no SSH tunnel. Just needs Docker installed and working. Web search is not a service to host: it is Firecrawl's cloud connector, and what it needs is the user's key in `FIRECRAWL_API_KEY`. Full mechanism in Step 6.
    - **Cloud-Server**: the services run on a remote server / VPS the user has SSH access to. Ask for the IP, SSH user, and which ports to use for SSH tunnels. If that VPS will be shared across multiple people in the same organization, point the user to `docs/org-deployment.md` before proceeding: there is no per-person access control on a shared backend today. **Important to state clearly right here:** in Cloud-Server, the local Vault clone becomes a **read-only mirror**, not the working copy. Notes are written ONLY through MCP to the remote (never a direct `git commit` on notes locally); if the remote is unreachable that's an outage to report, not a green light to write or operate on the local mirror. Full mechanism in Step 7.
 
 Determine the profile from the answers:
@@ -222,7 +222,7 @@ In MINIMAL, `nexgen sync`/`nexgen doctor` (historical names `agent-sync`, `agent
 
 ### Step 1.4b: The modules, with deterministic multiple-choice
 
-The engine is a set of **modules** (memory, semantic-rag, firecrawl, ocr, n8n, browser, council, sync), each with three possible states: `absent` (off), `local` (self-hosted on this machine), `remote` (on a VPS you own, reached via tunnel). You conduct the interview, but the answers are not open-ended: they are multiple-choice selections among the states that the catalog declares for that module, and you write them with deterministic commands.
+The engine is a set of **modules** (memory, semantic-rag, ocr, n8n, browser, council, local-lane, openclaw, sync), each with its own possible states: `absent` (off), `local` (self-hosted on this machine), `remote` (on a VPS you own, reached via tunnel). You conduct the interview, but the answers are not open-ended: they are multiple-choice selections among the states that the catalog declares for that module, and you write them with deterministic commands.
 
 Procedure:
 1. Run `nexgen modules list` and show the table: what exists and what is currently declared.
@@ -357,7 +357,7 @@ Mention the AI Council as an optional expansion, regardless of profile: if the u
 
 ### Step 7: (Cloud-Server only) Remote stack deployment
 
-If the user chose Cloud-Server mode, explain that they will need to deploy the self-hosted stack (n8n, Firecrawl, OCR, vault-mcp) on their VPS. The docker-compose and bootstrap are in `03-INFRA/deploy/`: clone the repo on the VPS, copy `.env.example` to `.env`, fill in the secrets, and run `bash 03-INFRA/deploy/bootstrap-vps.sh` (it also provisions the vault's bare repo and generates `VAULT_LIBRARY_TOKEN`). Then, on the workstation, export `VAULT_LIBRARY_URL` (tunnel port, `/mcp` path) and `VAULT_LIBRARY_TOKEN` so the CLIs mount the `vault-library` server.
+If the user chose Cloud-Server mode, explain that they will need to deploy the self-hosted stack (n8n, OCR, vault-mcp) on their VPS. The docker-compose and bootstrap are in `03-INFRA/deploy/`: clone the repo on the VPS, copy `.env.example` to `.env`, fill in the secrets, and run `bash 03-INFRA/deploy/bootstrap-vps.sh` (it also provisions the vault's bare repo and generates `VAULT_LIBRARY_TOKEN`). Then, on the workstation, export `VAULT_LIBRARY_URL` (tunnel port, `/mcp` path) and `VAULT_LIBRARY_TOKEN` so the CLIs mount the `vault-library` server.
 
 **Rule that needs to land, for the user and for every future session, not just a technical footnote:** once `vault-library` is mounted, the local Vault clone stops being a working copy and becomes a **read-only mirror** — an emergency fallback for when the remote is unreachable, not somewhere to write or operate normally. Vault notes are written ONLY through MCP, never with raw git locally, not even "just this once" or "I'll sync it later." Verify this is stated explicitly in `99-INDEX/USER-PROFILE.md` (the "If CLOUD-SERVER" section) before closing this step. Refer to `03-INFRA/deploy/README.md`, `03-INFRA/remote-automation.md`, `03-INFRA/vault-write-architecture.md`, and `03-INFRA/offline-emergency-mode.md` for details.
 
