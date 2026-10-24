@@ -21,7 +21,7 @@ it.
 | Instructions | an `AGENTS.md` block in each agent workspace | the guard's instructions phase |
 | Skills | `~/.agents/skills/` (the shared catalog) | the skills phase |
 | The plugin | `<state dir>/extensions/nexgen/` | the guard's permissions phase |
-| Briefing, events, posture | `<state dir>/extensions/nexgen/nexgen.config.json` | the permissions phase and the module state |
+| Briefing, posture, engine | `<state dir>/extensions/nexgen/nexgen.config.json` | the permissions phase and the module state |
 
 ## MCP connectors
 
@@ -75,7 +75,7 @@ that names another runtime only is not. `~/.agents/skills/INDEX.md` lists each
 skill with its targets, so "does this skill reach OpenClaw?" is readable without
 opening the manifest.
 
-## The plugin: one plugin, three jobs
+## The plugin: one plugin, four jobs
 
 OpenClaw's hooks are JavaScript callbacks inside the gateway process, so the engine
 ships one native plugin and deposits it, byte for byte, in
@@ -83,16 +83,18 @@ ships one native plugin and deposits it, byte for byte, in
 
 ```
 extensions/nexgen/
-  index.mjs                     registers the two jobs; the guardrail comes first
+  index.mjs                     registers the four jobs; the guardrail comes first
   guardrail.mjs                 the gate on before_tool_call
   briefing.mjs                  the vault briefing after a compaction
-  engine-config.mjs             reads nexgen.config.json, once for both
+  quota.mjs                     `/quota`: the lines the engine already rendered
+  workshop.mjs                  a log line when the Skill Workshop learned a skill
+  engine-config.mjs             reads nexgen.config.json, once for every job that has a switch
   session.mjs                   which session a hook event belongs to
   package.json                  openclaw.extensions -> ./index.mjs
   openclaw.plugin.json          id: nexgen, onStartup
   nexgen-guardrail-core.mjs     the shared core every adapter imports
   nexgen-guardrail.config.json  which guardrail body, with what timeout, the audit file
-  nexgen.config.json            the engine's switches: briefing, posture
+  nexgen.config.json            the engine's switches: briefing, posture, engine
   vault-briefing.txt            the briefing text, shared with Claude Code
   hooks/<body>.mjs              the guardrail body (the private policy)
 ```
@@ -132,6 +134,35 @@ checkpoint hook is registered on `SessionStart` in `~/.claude/settings.json`. Th
 engine deploys no copy of that hook, so its registration is the observable
 condition. A briefing that fails is swallowed: a session that loses its briefing is
 a worse session, not a broken one.
+
+### The `/quota` command
+
+`quota.mjs` registers a chat command and answers with the lines the engine has
+already rendered: `nexgen quota --json` prints `lines`, and the plugin forwards
+that text without formatting a single number of its own, so the phone and the
+terminal cannot disagree about a percentage. What each provider gives, and what
+cannot be measured from here, is `docs/quota.md`.
+
+The engine's path is deposited, not looked up: `nexgen.config.json` carries
+`engine.command` and `engine.entry`, the interpreter and the CLI module, because
+the `nexgen` launcher on Windows is a `.cmd` and needs `cmd.exe` -- the plugin
+spawns with `shell: false` and never opens a shell. The call has a time limit,
+discards stderr, and turns every failure into one sentence in the chat: no
+engine path, no start, too slow, or an error exit. A chat that loses `/quota` is
+a worse chat, not a broken gateway. On an OpenClaw whose API has no
+`registerCommand` the job registers nothing and breaks nothing.
+
+### The Workshop notice
+
+OpenClaw is where the owner creates: the Skill Workshop learns a skill into one
+agent's own state folder, which no other CLI reads. `workshop.mjs` listens to the
+`skill_changed` hook and, for a create or an update whose `source` is `workshop`,
+writes one line in the gateway log: a new skill is in the Workshop, and
+`nexgen openclaw adopt` makes it canonical. Observation only -- it returns nothing,
+cannot block the change, writes no file and runs no command, because adoption
+rewrites the library and is the person's decision. A removal leaves nothing to
+adopt, and an event from ClawHub or a source install is that installer's business,
+so both are silent.
 
 ### Posture
 
@@ -190,3 +221,4 @@ matches shell patterns, where it would match by accident rather than by meaning.
 | `guardrail.openclaw_plugin` | the plugin is deposited, and whether OpenClaw will load it (`plugins.allow`, `plugins.deny`, an entry switched off) |
 | `instructions.openclaw` | every agent workspace's `AGENTS.md` carries the managed block, and which workspace folders do not exist yet |
 | `openclaw.parity.*` | one line per layer above: PASS when both hosts hold it, WARN with the action when one does not |
+| `openclaw.unadopted` | how many skills and servers OpenClaw created and the canonical library does not declare yet, with `nexgen openclaw adopt` as the action; silent when either manifest cannot be read |

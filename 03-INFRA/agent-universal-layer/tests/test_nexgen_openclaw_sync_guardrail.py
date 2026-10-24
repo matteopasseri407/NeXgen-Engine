@@ -220,7 +220,7 @@ def deploy(tmp_path: Path, body: str, **sidecar) -> Path:
     target = tmp_path / "deployed"
     target.mkdir()
     # Every file of the plugin, not a list of names: the guard copies the folder, and the
-    # plugin now holds three jobs (guardrail, briefing, events) beside its index.
+    # plugin now holds four jobs (guardrail, briefing, quota, workshop) beside its index.
     for source in sorted(PLUGIN_SOURCE.iterdir()):
         if source.is_file():
             shutil.copy2(source, target / source.name)

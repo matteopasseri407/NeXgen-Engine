@@ -1,9 +1,10 @@
 // NeXgen Engine -- the engine's switches, read fresh on every call.
 //
-// One file read, two jobs: `nexgen.config.json` beside the plugin carries the posture and the
-// briefing switch, and every job reads it through here so no job invents its own
-// tolerance. A missing, unparsable or non-object file is an empty object: the caller decides
-// what "not set" means (the guardrail falls back to `bypass`, the briefing to "off").
+// One file read, one reader: `nexgen.config.json` beside the plugin carries the posture and the
+// briefing switch, and every job that has a switch reads it through here so no job invents its
+// own tolerance. A missing, unparsable or non-object file is an empty object: the caller decides
+// what "not set" means -- the guardrail falls back to `bypass`, the briefing to "off", and the
+// Workshop notice has no switch at all because it only writes a log line.
 import { readFileSync } from "node:fs";
 
 export function readPluginConfig(configPath) {
