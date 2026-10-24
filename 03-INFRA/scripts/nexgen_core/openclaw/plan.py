@@ -14,6 +14,7 @@ from typing import Any
 
 from nexgen_core import quota_policy
 from nexgen_core.i18n import detect_language, t
+from nexgen_core.openclaw import companion as app_gateway
 from nexgen_core.openclaw import observation
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
@@ -21,6 +22,7 @@ from nexgen_core.openclaw.governor import with_chains
 from nexgen_core.openclaw.profile import (
     CLAUDE_MODEL,
     CODEX_MODEL,
+    GATEWAY_PORT,
     OWNED_SECTIONS,
     PENDING_TOKEN,
     SUPERVISOR_TOOLS,
@@ -182,6 +184,9 @@ def _build_notes(config: dict[str, Any], detected: Detection, choices: Choices |
     models = agent_models(detected, choices)
     notes.extend(_agent_notes(models, detected, choices))
     notes.extend(_context_notes(config))
+    companion_note = _companion_note(detected)
+    if companion_note:
+        notes.append(companion_note)
     if models.get("capo") == CLAUDE_MODEL:
         notes.append(t("The code agent runs Claude with high reasoning and the embedded runtime."))
     if models.get("main") == CODEX_MODEL:
@@ -208,6 +213,33 @@ def _supervisor_tool_note(current: dict[str, Any] | None) -> str | None:
             "The supervisor agent has its own tools.allow: add {tools} there to let it drive the supervision.",
             tools=", ".join(SUPERVISOR_TOOLS),
         )
+
+
+def _app_connection(port: int | None) -> str:
+    """Which gateway the app's own settings name, when they name one."""
+    if port is None:
+        return ""
+    if port == GATEWAY_PORT:
+        return t(", and it is connected to this PC's gateway on port {port}", port=port)
+    return t(", and it is connected to a gateway of its own on port {port}", port=port)
+
+
+def _companion_note(detected: Detection) -> str | None:
+    """The app's own gateway, named when it is here beside or instead of the native one."""
+    gateway = detected.companion
+    situation = gateway.situation(detected.openclaw.installed)
+    if situation == app_gateway.APP:
+        return t("The OpenClaw Companion app runs the gateway on this PC ({signals}): this engine configures the "
+                 "native gateway, so 'nexgen openclaw setup' stops here instead of installing a second one.",
+                 signals=", ".join(gateway.signals))
+    if situation == app_gateway.BOTH:
+        return t("The OpenClaw Companion app has a gateway of its own on this PC ({signals}){uses}: the setup "
+                 "below writes the native one.", signals=", ".join(gateway.signals),
+                 uses=_app_connection(gateway.port))
+    if situation == app_gateway.APP_REMOTE:
+        return t("The OpenClaw Companion app is connected to a gateway elsewhere ({signals}): nothing here is in "
+                 "conflict, and the setup below writes the native gateway on this PC only.",
+                 signals=", ".join(gateway.signals))
     return None
 
 

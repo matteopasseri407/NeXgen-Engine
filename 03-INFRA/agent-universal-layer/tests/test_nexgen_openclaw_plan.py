@@ -17,6 +17,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.companion import Companion  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.detect import Detection, Installation, LocalModelInfo, LocalModels, Login  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.plan import build_plan, render_plan  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.profile import Choices  # noqa: E402 - sys.path shim for cloned checkout
@@ -29,14 +30,16 @@ def _english():
     i18n.set_language(None)
 
 
-def detected(config_path: Path) -> Detection:
+def detected(config_path: Path, *, installed: bool = True, companion: Companion | None = None) -> Detection:
     return Detection(
-        openclaw=Installation(installed=True, version="2026.10.6", config_path=str(config_path), config_present=True),
+        openclaw=Installation(installed=installed, version="2026.10.6" if installed else None,
+                              config_path=str(config_path), config_present=True),
         claude=Login(binary=True, login=True),
         codex=Login(binary=False),
         opencode_go=True,
         local=LocalModels(ollama=(LocalModelInfo(name="qwen3:8b:latest", context_window=8192),)),
         n8n=True,
+        companion=companion or Companion(),
     )
 
 
@@ -179,3 +182,37 @@ def test_the_human_plan_says_that_nothing_was_written(tmp_path):
     assert "Nothing was written" in text
     assert "opencode-go/deepseek-v4.1-flash" in text
     assert "assistente" in text
+
+
+# ------------------------------------------------------------- the Windows app
+
+
+def app_gateway(port: int | None = None) -> Companion:
+    """The app's own gateway, as detection finds it on a Windows machine."""
+    return Companion(
+        present=True, owns_local_gateway=True, port=port,
+        signals=("the app-owned WSL distribution OpenClawGateway",),
+    )
+
+
+def test_the_plan_names_the_app_gateway_and_which_one_the_app_uses(tmp_path):
+    """Case (c): the native setup still applies, and the plan says the app is here too."""
+    home = tmp_path / "home"
+    path = put_config(home, {})
+
+    text = render_plan(build_plan(detected=detected(path, companion=app_gateway(port=18789)), home=home, env={}))
+
+    assert "has a gateway of its own on this PC" in text
+    assert "connected to this PC's gateway on port 18789" in text
+
+
+def test_the_plan_says_when_the_app_owns_the_only_gateway(tmp_path):
+    """Case (b): the plan says the setup stops, so it never promises a write it will not do."""
+    home = tmp_path / "home"
+    path = put_config(home, {})
+
+    text = render_plan(build_plan(
+        detected=detected(path, installed=False, companion=app_gateway()), home=home, env={},
+    ))
+
+    assert "stops here instead of installing a second one" in text
