@@ -352,6 +352,30 @@ reach into an isolated filesystem, and it never has to restart a process.
 One read-only command inspects the RPC connection by hand:
 `nexgen openclaw rpc health [--json] [--url URL]`
 
+## The plugin as a package, for the gateways the engine cannot reach
+
+The engine deposits the `nexgen` plugin by copying its files into `<state dir>/extensions/nexgen/`, which
+needs a gateway whose filesystem it can write.
+The gateway the Companion app runs inside its own WSL distro is not one: `C:` is not mounted there and the
+distro belongs to the app, so the engine must not reach into it.
+OpenClaw installs a plugin there from an npm tarball, and `nexgen openclaw package` builds that tarball
+from the list the deposit itself reads.
+
+It contains the plugin's own files, the shared `nexgen-guardrail-core.mjs` and `vault-briefing.txt`, plus a
+`package.json` that carries the engine's version, declares `type: module` and points `openclaw.extensions`
+at `./index.mjs`.
+The guardrail body, `nexgen-guardrail.config.json` and `nexgen.config.json` stay out: the policy belongs to
+the Vault, and this artifact is the part that travels.
+The same files produce the same bytes and the same sha256, so a build that changed unnoticed cannot pass for
+the one that was reviewed.
+
+The tarball lands in `<state dir>/openclaw/plugin/nexgen-<version>.tgz`.
+The engine installs nothing itself: moving it to the gateway host and running
+`openclaw plugins install npm-pack:<path.tgz> --force` there is a separate step someone can see.
+Without a sidecar beside it the plugin has no policy to run, so it refuses the commands it would judge
+instead of allowing them: the package carries the mechanism, and the policy arrives by the route that
+gateway allows.
+
 ## Installazione con un comando
 
 `nexgen openclaw setup [--yes] [--lan] [--dry-run] [--no-sviluppo] [--node-gateway]` runs nine steps, in this
@@ -556,6 +580,10 @@ built into every view and archived in the Workshop through `openclaw skills work
 loads the canonical copy like every other CLI; an adopted server enters the MCP manifest lazily, through the
 same writer `nexgen mcp add` uses. The doctor says how much is still waiting and adopts nothing by itself:
 adoption is a person's act.
+
+`nexgen openclaw package [--json]` builds the plugin's npm tarball in the engine's state folder and prints
+the file and its sha256, which is the pair an install on another gateway is checked against. It installs
+nothing and writes nothing else; `--json` reports the same path and hash with the files inside.
 
 `nexgen openclaw restart` and `nexgen openclaw pair` bring the gateway back and let a phone, or another
 machine, in; they are described above, with the rest of the installation. `nexgen openclaw stop` takes it down
