@@ -194,14 +194,20 @@ class McpRenderer:
 
         return entry
 
+    def _manifest_servers(self) -> dict[str, dict[str, Any]]:
+        if not self.manifest_path.is_file():
+            return {}
+        from nexgen_core.mcp_state import apply_state_overrides
+
+        servers = load_mcp_manifest(self.manifest_path).get("servers", {})
+        return apply_state_overrides(servers, home=self.home)
+
     def manifest_server_names(self) -> list[str]:
         """Every server the manifest declares, in manifest order, resolvable here or not."""
         return self._manifest_server_names_impl()
 
     def _manifest_server_names_impl(self) -> list[str]:
-        if not self.manifest_path.is_file():
-            return []
-        return list(load_mcp_manifest(self.manifest_path).get("servers", {}))
+        return list(self._manifest_servers())
 
     def load_resolved_servers(self, cli_target: str) -> dict[str, dict[str, Any]]:
         """Loads the MCP servers resolved and filtered for a specific CLI.
@@ -217,11 +223,7 @@ class McpRenderer:
             from nexgen_core.mcp_render.claude_desktop import allowed_desktop_servers
 
             return allowed_desktop_servers(self)
-        if not self.manifest_path.is_file():
-            return {}
-
-        data = load_mcp_manifest(self.manifest_path)
-        raw_servers = data.get("servers", {})
+        raw_servers = self._manifest_servers()
         resolved: dict[str, dict[str, Any]] = {}
 
         for name, srv in raw_servers.items():
@@ -271,11 +273,9 @@ class McpRenderer:
           core/enabled and not lazy-routed away) stay on disk: the recurring
           guard runs without the shell environment, and deleting them there
           would make the doctor report them missing twice an hour, forever."""
-        if not self.manifest_path.is_file():
-            return set()
-        data = load_mcp_manifest(self.manifest_path)
+        servers = self._manifest_servers()
         unmounted = set()
-        for name, srv in data.get("servers", {}).items():
+        for name, srv in servers.items():
             if name in mounted:
                 continue
             would_mount = place(srv, cli_target).kind == DIRECT
@@ -295,10 +295,8 @@ class McpRenderer:
         if cli_target == "claude-desktop":
             from nexgen_core.mcp_render.claude_desktop import gated_desktop_names
             return gated_desktop_names(self)
-        if not self.manifest_path.is_file():
-            return set()
         return {
-            name for name, srv in load_mcp_manifest(self.manifest_path).get("servers", {}).items()
+            name for name, srv in self._manifest_servers().items()
             if srv.get("require_env") and not os.environ.get(srv["require_env"])
             and place(srv, cli_target).kind == DIRECT
         }
@@ -314,11 +312,8 @@ class McpRenderer:
         `enabled: true` is a choice, so it is listed, never reported as a
         problem.
         """
-        if not self.manifest_path.is_file():
-            return []
-        data = load_mcp_manifest(self.manifest_path)
         out: list[str] = []
-        for name, srv in data.get("servers", {}).items():
+        for name, srv in self._manifest_servers().items():
             # "Known to exist, not mounted": neither core nor enabled, or switched off while optional.
             why = place(srv, cli_target).why
             if why.startswith("inert") or (why == "disabled" and str(srv.get("tier", "")).strip().lower() != "core"):

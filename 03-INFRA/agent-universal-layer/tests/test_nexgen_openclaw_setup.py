@@ -1071,21 +1071,30 @@ def test_node_gateway_stops_when_the_apps_gateway_still_holds_the_port(tmp_path)
     assert "never starts, stops or writes the app's distribution" in machine.output()
 
 
-def test_setup_enables_the_openclaw_mcp_server_in_the_manifest(tmp_path):
+def test_setup_enables_the_openclaw_mcp_server_in_local_state(tmp_path):
     machine = Machine(tmp_path)
     machine.config.parent.mkdir(parents=True)
     machine.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
     mcp_folder = machine.vault / "03-INFRA" / "agent-universal-layer" / "mcp"
     mcp_folder.mkdir(parents=True)
     manifest = mcp_folder / "manifest.yaml"
-    manifest.write_text(
-        "schema_version: 1\nservers:\n  openclaw:\n    exposure: eager\n    transport: stdio\n    command: openclaw\n    args: ['mcp', 'serve']\n    targets: [claude, codex, antigravity, opencode]\n    enabled: false\n",
-        encoding="utf-8",
+    initial_manifest_content = (
+        "schema_version: 1\nservers:\n  openclaw:\n    exposure: eager\n    transport: stdio\n    command: openclaw\n    args: ['mcp', 'serve']\n    targets: [claude, codex, antigravity, opencode]\n    enabled: false\n"
     )
+    manifest.write_text(initial_manifest_content, encoding="utf-8")
 
     assert machine.run() == 0
 
-    from nexgen_core.config import load_mcp_manifest
+    # 1. Manifest file itself was NOT modified
+    assert manifest.read_text(encoding="utf-8") == initial_manifest_content
 
-    data = load_mcp_manifest(manifest)
-    assert data["servers"]["openclaw"]["enabled"] is True
+    # 2. Local state file records openclaw as enabled
+    from nexgen_core.mcp_state import load_mcp_state
+    local_state = load_mcp_state(home=machine.home)
+    assert local_state.get("servers", {}).get("openclaw", {}).get("enabled") is True
+
+    # 3. Renderer loads openclaw as resolved server
+    from nexgen_core.renderer import McpRenderer
+    renderer = McpRenderer(vault_data=machine.vault, home=machine.home)
+    resolved = renderer.load_resolved_servers("claude")
+    assert "openclaw" in resolved
