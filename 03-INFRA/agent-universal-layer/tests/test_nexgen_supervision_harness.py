@@ -576,3 +576,51 @@ def test_a_delivery_with_the_tab_still_open_stays_off_the_screen(task, unit, mon
     )
 
     assert result["mode"] == "run" and sent == ["ses_libera"]
+
+
+def test_rework_to_busy_session_queues_and_never_opens_a_second_tab_in_the_same_copy(task, unit, monkeypatch):
+    """Una sessione occupata al lavoro riceve le correzioni in coda; mai una seconda scheda nella stessa copia."""
+    state.append_event(
+        task, "attached", unit="prova", role="esecutore", harness="opencode",
+        session="ses_occupata", folder=str(unit),
+    )
+    other_folder = unit.parent / "23-unita-seconda"
+    other_folder.mkdir(parents=True, exist_ok=True)
+    state.append_event(
+        task, "unit_created", unit="seconda", worktree=str(other_folder),
+        branch=f"sup/{task}/seconda", base="0" * 40, allow=["docs/*.md"],
+    )
+    state.append_event(
+        task, "attached", unit="seconda", role="esecutore", harness="opencode",
+        session="ses_seconda", folder=str(other_folder),
+    )
+
+    review_file = unit.parent / "45-revisione-prova-1.md"
+    review_file.write_text("# Revisione\n\ncorrezioni da applicare\n", encoding="utf-8")
+
+    opened: list = []
+    sent: list = []
+
+    def fake_measure(session):
+        if session == "ses_occupata":
+            return SimpleNamespace(stopped=False, model="opencode-go/m")
+        return SimpleNamespace(stopped=True, model="opencode-go/m")
+
+    result = harness.send_corrections(
+        task, "prova", review_file, 1,
+        opener=lambda *a, **k: opened.append(a) or {"title": "finto", "pid": 99},
+        runner=lambda *a, **k: sent.append(a) or SimpleNamespace(pid=100),
+        measure=fake_measure, lister=lambda: [], wait_s=0,
+    )
+
+    assert result["mode"] == "queued"
+    assert result["session"] == "ses_occupata"
+    assert opened == [], "non deve mai aprire una scheda nuova nella copia con sessione viva"
+    assert sent == [], "nessun turno inviato con la sessione occupata"
+
+    events = [r for r in state.read_events(task) if r.get("unit") == "prova"]
+    queued = [r for r in events if r.get("event") == "unit_queued"]
+    assert len(queued) == 1
+    assert queued[0]["session"] == "ses_occupata"
+    assert queued[0]["reason"] == "sessione occupata"
+    assert not any(r.get("event") == "harness_session_foreign" for r in events)

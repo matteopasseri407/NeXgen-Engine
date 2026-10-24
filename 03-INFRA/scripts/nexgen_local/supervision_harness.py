@@ -107,6 +107,48 @@ def run_unit(
     return result
 
 
+def _resolve_unit_session(task_id: str, unit: str, chosen: str, record: dict, folder: Path) -> dict | None:
+    """The session this unit owns, or a task session that was born in the same folder."""
+    previous = state.harness_session_record(task_id, chosen, unit=unit)
+    if not previous and record.get("session"):
+        return {"session": str(record["session"]), "folder": str(record.get("worktree") or folder)}
+    if not previous:
+        cand = state.harness_session_record(task_id, chosen)
+        if cand and not _foreign_copy(cand.get("folder") or "", folder):
+            return cand
+    return previous
+
+
+def _handle_foreign_session(
+    task_id: str, name: str, folder: Path, prompt: str, previous: dict, chosen: str,
+    round_no: int, *, adapter, opener, lister, wait_s: float, measure, allowed,
+) -> dict:
+    """Rework when the last task session belongs to another copy: queue if busy, else open a tab."""
+    facts = None
+    try:
+        facts = _measure_or_lost(measure or _measure_for(adapter), previous["session"])
+    except (SessionLost, HarnessError, SupervisionError):  # nexgen: allow reason="se la sessione straniera non risponde o è persa, si procede con l'apertura della nuova scheda"
+        pass
+    if facts and not facts.stopped:
+        reason = "sessione occupata"
+        state.append_event(
+            task_id, "unit_queued", unit=name, harness=chosen, session=previous["session"],
+            reason=reason, folder=str(folder), round=round_no,
+        )
+        return {"unit": name, "mode": "queued", "session": previous["session"], "reason": reason}
+    state.append_event(
+        task_id, "harness_session_foreign", unit=name, harness=chosen,
+        session=previous["session"], session_folder=previous.get("folder") or "",
+        copy=str(folder), reason="la sessione è nata in un'altra copia",
+    )
+    return _open_first_tab(
+        task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
+        event="unit_reworked", extra={"round": round_no}, adapter=adapter,
+        measure=measure, allowed=allowed,
+        reason="sessione nata in un'altra copia: scheda nuova nella copia dell'unità",
+    )
+
+
 def send_corrections(
     task_id: str, unit: str, review: str | Path, round_no: int, *,
     runner=None, measure=None, opener=None, lister=None, wait_s: float = SESSION_WAIT_S,
@@ -132,7 +174,7 @@ def send_corrections(
         adapter.write_profile(task_id, folder)
     prompt = corrections_text(task_id, name, path, round_no)
     allowed = policy.allowed_models()
-    previous = state.harness_session_record(task_id, chosen)
+    previous = _resolve_unit_session(task_id, name, chosen, record, folder)
     if not previous:
         if not open_without_session:
             raise HarnessError(
@@ -145,16 +187,10 @@ def send_corrections(
             measure=measure, allowed=allowed, runner=runner,
         )
     elif _foreign_copy(previous.get("folder") or "", folder):
-        state.append_event(
-            task_id, "harness_session_foreign", unit=name, harness=chosen,
-            session=previous["session"], session_folder=previous.get("folder") or "",
-            copy=str(folder), reason="la sessione è nata in un'altra copia",
-        )
-        opened = _open_first_tab(
-            task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
-            event="unit_reworked", extra={"round": round_no}, adapter=adapter,
-            measure=measure, allowed=allowed, runner=runner,
-            reason="sessione nata in un'altra copia: scheda nuova nella copia dell'unità",
+        opened = _handle_foreign_session(
+            task_id, name, folder, prompt, previous, chosen, round_no,
+            adapter=adapter, opener=opener, lister=lister, wait_s=wait_s,
+            measure=measure, allowed=allowed,
         )
     else:
         opened = _deliver(
@@ -162,6 +198,11 @@ def send_corrections(
             extra={"round": round_no}, opener=opener, runner=runner, lister=lister,
             measure=measure, wait_s=wait_s, allowed=allowed, model=model, adapter=adapter,
         )
+    opened["harness"] = chosen
+    if model and opened.get("mode") != "run":
+        opened["model_requested"] = model
+        opened["model_applied"] = False
+    return opened
     opened["harness"] = chosen
     if model and opened.get("mode") != "run":
         opened["model_requested"] = model

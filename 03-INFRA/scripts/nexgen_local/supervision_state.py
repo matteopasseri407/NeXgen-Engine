@@ -231,7 +231,7 @@ def harness_session(task_id: str, harness: str = "opencode") -> str:
     return record["session"] if record else ""
 
 
-def harness_session_record(task_id: str, harness: str = "opencode") -> dict | None:
+def harness_session_record(task_id: str, harness: str = "opencode", unit: str = "") -> dict | None:
     """The session this harness owns and the folder it was born in, or None.
 
     A session the harness no longer has is written as `harness_session_lost`,
@@ -243,6 +243,8 @@ def harness_session_record(task_id: str, harness: str = "opencode") -> dict | No
         if row.get("event") not in (*SESSION_EVENTS, LOST_EVENT):
             continue
         if str(row.get("harness") or "opencode") != harness:
+            continue
+        if unit and str(row.get("unit") or "") != unit:
             continue
         if row.get("event") == LOST_EVENT:
             found = None
