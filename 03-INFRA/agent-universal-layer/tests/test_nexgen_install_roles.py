@@ -124,6 +124,32 @@ def test_node_role_without_target_shows_join_instructions(tmp_path: Path) -> Non
     assert "host: node" in output
 
 
+def test_node_role_default_timeout_is_300s(tmp_path: Path, monkeypatch) -> None:
+    from nexgen_core.openclaw.node_attach import DEFAULT_NODE_ATTACH_TIMEOUT_S
+
+    assert DEFAULT_NODE_ATTACH_TIMEOUT_S == 300.0
+
+    captured_timeout = None
+
+    def fake_wait(probe_fn, node_name="node", timeout_s=300.0, **kwargs):
+        nonlocal captured_timeout
+        captured_timeout = timeout_s
+        return True, 0.0
+
+    monkeypatch.setattr("nexgen_core.openclaw.node_attach.wait_for_node_connection", fake_wait)
+    monkeypatch.setattr("nexgen_core.openclaw.node_attach.connect_node_service", lambda *args, **kwargs: True)
+
+    code = roles.run_node_role(
+        root=tmp_path,
+        home=tmp_path / "home",
+        target="https://gateway.tailnet:18789/j/sample-join-code-123",
+        align_fn=lambda: (True, "ok"),
+        out=lambda _: None,
+    )
+    assert code == 0
+    assert captured_timeout == 300.0
+
+
 def test_roles_idempotency(tmp_path: Path) -> None:
     fake_setup = MagicMock(return_value=0)
     fake_align = MagicMock(return_value=(True, "aligned"))

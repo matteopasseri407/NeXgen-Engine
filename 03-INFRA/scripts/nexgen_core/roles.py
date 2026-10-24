@@ -23,6 +23,7 @@ from nexgen_core.first_run import (
     write_user_profile,
 )
 from nexgen_core.i18n import t
+from nexgen_core.openclaw.node_attach import DEFAULT_NODE_ATTACH_TIMEOUT_S
 from nexgen_core.paths import resolve_home
 
 
@@ -146,7 +147,7 @@ def run_node_role(
     align_fn: Callable[[], tuple[bool, str]] | None = None,
     runner: Callable[[list[str]], Any] | None = None,
     wait_probe_fn: Callable[[], bool] | None = None,
-    timeout_s: float = 60.0,
+    timeout_s: float = DEFAULT_NODE_ATTACH_TIMEOUT_S,
     out: Callable[[str], None] = print,
 ) -> int:
     """Node role: connect to an existing gateway as a headless node host."""

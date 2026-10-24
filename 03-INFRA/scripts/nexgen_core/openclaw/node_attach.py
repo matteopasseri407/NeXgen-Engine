@@ -18,8 +18,8 @@ from pathlib import Path
 from nexgen_core.i18n import t
 from nexgen_core.openclaw_service import RunResult
 
-#: Default node attach wait timeout (60 seconds)
-DEFAULT_NODE_ATTACH_TIMEOUT_S = 60.0
+#: Default node attach wait timeout (300 seconds / 5 minutes)
+DEFAULT_NODE_ATTACH_TIMEOUT_S = 300.0
 #: Report interval in seconds
 DEFAULT_REPORT_INTERVAL_S = 3.0
 
