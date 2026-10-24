@@ -28,16 +28,14 @@ from nexgen_core.openclaw.pin import pinned_version
 from nexgen_core.openclaw.plan import Plan, build_plan, render_plan
 from nexgen_core.openclaw.profile import GATEWAY_PORT, Choices
 from nexgen_core.openclaw.setup_agents import snapshot_dirs
+from nexgen_core.openclaw.setup_app import app_gateway_stop, app_step, device_line
 from nexgen_core.openclaw.setup_steps import (
     START_TIMEOUT_SECONDS,
     Emit,
     Run,
     Setup,
     Which,
-    app_gateway_stop,
-    app_step,
     default_run,
-    device_line,
     ensure_installed,
     ensure_onboarded,
     governor_step,

@@ -280,8 +280,6 @@ def _store_gateway_outcomes(
     store = doctor_runtime.check_store_gateway(home_dir, values, system)
     return [store] if store is not None else []
 
-    return outcomes
-
 
 def _speaking_snapshot(
     detected: Detection | None,
