@@ -19,7 +19,7 @@ from typing import Any
 
 from nexgen_core import quota_policy
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import background, doctor_runtime
+from nexgen_core.openclaw import background, doctor_runtime, observation, observation
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.evidence import check_evidence, local_refs
@@ -378,6 +378,7 @@ def _config_outcomes(
     vault_data: Path | None,
     failover: quota_policy.Failover | None,
     connect: doctor_runtime.Connect | None,
+    platform: str | None = None,
 ) -> list[CheckOutcome]:
     """Every check that reads the configuration in force: what it says, and what it lets a model do.
 
@@ -397,6 +398,7 @@ def _config_outcomes(
         _check_acp(config),
         _check_agent_models(config, snapshot),
         background.report(config),
+        observation.report(config, path, home_dir, platform),
         check_fallbacks(config, policy),
         _listening(config, connect, home_dir),
         *doctor_runtime.check_workshop_skills(config, path.parent, home_dir),
@@ -446,7 +448,7 @@ def collect(
     outcomes.append(_check_config(path, config, error))
     if config is not None:
         outcomes.extend(_config_outcomes(
-            config, snapshot, path, home_dir, vault_data, failover, connect,
+            config, snapshot, path, home_dir, vault_data, failover, connect, system,
         ))
     store = doctor_runtime.check_store_gateway(home_dir, values, system)
     if store is not None:

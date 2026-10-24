@@ -88,13 +88,17 @@ def _merge_plugin_entries(current: Any, proposed: Any) -> Any:
 
     The set-aware pass runs here too: `subagent.allowedModels` and the other
     list-valued leaves live inside this section, so a plain merge would replace
-    a list the person wrote.
+    a list the person wrote. `plugins.allow` is always written as a sorted set,
+    even when there is no plugin section in force yet: an unsorted list would
+    differ from the one on disk at every run and the file would be rewritten
+    over and over.
     """
-    if not (isinstance(current, dict) and isinstance(proposed, dict)):
+    if not isinstance(proposed, dict):
         return proposed
-    merged = _merge_sets(current, proposed, _merge_dict(current, proposed))
+    base = current if isinstance(current, dict) else {}
+    merged = _merge_sets(base, proposed, _merge_dict(base, proposed))
     if "allow" in proposed:
-        merged["allow"] = _union_allow(current.get("allow"), proposed["allow"])
+        merged["allow"] = _union_allow(base.get("allow"), proposed["allow"])
     return merged
 
 

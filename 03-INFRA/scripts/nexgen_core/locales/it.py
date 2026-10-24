@@ -1513,6 +1513,36 @@ MESSAGES: dict[str, str] = {
         "Fai il login dell'abbonamento, oppure lancia 'nexgen openclaw plan' per vedere il modello che sceglierebbe il motore.",
     "Every agent uses a model this machine can reach.":
         "Ogni agente usa un modello che questa macchina raggiunge.",
+    "No background job runs on a local model.":
+        "Nessun lavoro di fondo gira su un modello locale.",
+    "These background jobs would run on the local model {models}: {jobs}.":
+        "Questi lavori di fondo girerebbero sul modello locale {models}: {jobs}.",
+    "Run 'nexgen openclaw setup': it points them at the cloud model an agent already uses.":
+        "Lancia 'nexgen openclaw setup': li sposta sul modello cloud che un agente già usa.",
+    "dreaming":
+        "dreaming",
+    "compaction":
+        "compattazione",
+    "the memory flush":
+        "memory flush",
+    "active memory":
+        "active memory",
+    "The gateway watches the whole of {root} with one recursive handle: every file created under it wakes the configuration reload.":
+        "Il gateway guarda {root} per intero con un solo handle ricorsivo: ogni file creato lì dentro sveglia il ricaricamento della configurazione.",
+    "Run 'nexgen openclaw setup': it adds env.vars.{name} to the configuration. Restart the gateway once afterwards.":
+        "Lancia 'nexgen openclaw setup': aggiunge env.vars.{name} alla configurazione. Poi riavvia il gateway una volta.",
+    "The configuration tells the gateway to poll instead of watching {root} recursively; that applies from the next gateway start.":
+        "La configurazione dice al gateway di interrogare il file invece di guardare {root} in modo ricorsivo; vale dal prossimo avvio del gateway.",
+    "The gateway watches {root}, which does not contain your home.":
+        "Il gateway guarda {root}, che non contiene la tua home.",
+    "The gateway's root is {root}, and on Linux it watches one directory rather than the whole tree.":
+        "La radice del gateway è {root}, e su Linux guarda una cartella invece di tutto l'albero.",
+    "Polling is forced, but the gateway watches {root} and not your home: nothing needs it any more.":
+        "Il polling è forzato, ma il gateway guarda {root} e non la tua home: non serve più a niente.",
+    "Remove env.vars.{name} from {path} and restart the gateway.":
+        "Togli env.vars.{name} da {path} e riavvia il gateway.",
+    "OpenClaw changes how it watches its configuration only when it starts: restart the gateway once for this key to take effect.":
+        "OpenClaw cambia il modo in cui guarda la sua configurazione solo quando parte: riavvia il gateway una volta perché questa chiave abbia effetto.",
     "The gateway answers on 127.0.0.1:{port}.":
         "Il gateway risponde su 127.0.0.1:{port}.",
     "The gateway is not listening on 127.0.0.1:{port} (normal when it is stopped).":

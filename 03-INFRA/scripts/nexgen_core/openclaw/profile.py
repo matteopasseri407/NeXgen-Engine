@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import detect_language
-from nexgen_core.openclaw import background
+from nexgen_core.openclaw import background, observation
 from nexgen_core.openclaw.acp import SVILUPPO_ID, SVILUPPO_NAMES, acp_block, acpx_entry, sviluppo_enabled
 from nexgen_core.openclaw.detect import Detection
 from nexgen_core.openclaw.local_models import LocalModel, local_models, provider_blocks
@@ -418,10 +418,28 @@ def _missing_channel_bindings(
     return missing
 
 
+def _tools_block(models: tuple[LocalModel, ...], partners: dict[str, list[str]]) -> dict[str, Any]:
+    """The tools block: a fixed small list, the exec policy, the cage, and who may message whom."""
+    tools: dict[str, Any] = {
+        # With small models, tool search fails; a fixed small list works.
+        "toolSearch": False,
+        "exec": {"security": "allowlist", "ask": "on-miss"},
+        "byProvider": _cage(models),
+    }
+    if partners:
+        tools["agentToAgent"] = {"enabled": True, "allow": sorted(partners)}
+    return tools
+
+
 def _add_machine_rules(
-    config: dict[str, Any], agents: dict[str, str], current: dict[str, Any] | None,
+    config: dict[str, Any],
+    detected: Detection,
+    agents: dict[str, str],
+    current: dict[str, Any] | None,
+    home: Path | None,
+    platform: str | None,
 ) -> None:
-    """What this machine needs rather than what an agent wants: the unattended jobs' models."""
+    """What this machine needs rather than what an agent wants: the jobs' models, the watcher."""
     block = background.blocks(agents, current)
     entries = block.get("plugins", {}).get("entries", {})
     if entries:
@@ -429,34 +447,34 @@ def _add_machine_rules(
     defaults = block.get("agents", {}).get("defaults", {})
     if defaults:
         config["agents"]["defaults"].update(defaults)
+    env = observation.env_block(_state_dir(detected), home, platform)
+    if env is not None:
+        config["env"] = env
 
 
 def build_config(
     detected: Detection,
     choices: Choices | None = None,
     current: dict[str, Any] | None = None,
+    *,
+    home: Path | None = None,
+    platform: str | None = None,
 ) -> dict[str, Any]:
     """The sections the engine owns, and nothing else.
 
     `current` is the configuration in force, as a value. It never changes what
     the engine wants, only what it must not overwrite: an existing gateway
     token, an existing agent workspace, the fields of a model block that is
-    already there.
+    already there. `home` and `platform` are the two facts the watcher decision
+    needs; with no `home` nothing is proposed, which is the safe direction.
     """
     chosen = choices or Choices()
     models = local_models(detected)
     agents = agent_models(detected, chosen)
     language = _language(chosen)
 
-    tools: dict[str, Any] = {
-        # With small models, tool search fails; a fixed small list works.
-        "toolSearch": False,
-        "exec": {"security": "allowlist", "ask": "on-miss"},
-        "byProvider": _cage(models),
-    }
     partners = _agent_pairs(agents)
-    if partners:
-        tools["agentToAgent"] = {"enabled": True, "allow": sorted(partners)}
+    tools = _tools_block(models, partners)
 
     config: dict[str, Any] = {
         "plugins": {
@@ -485,7 +503,7 @@ def build_config(
     providers = provider_blocks(models, current)
     if providers:
         config["models"] = {"providers": providers}
-    _add_machine_rules(config, agents, current)
+    _add_machine_rules(config, detected, agents, current, home, platform)
     bindings = _missing_channel_bindings(current, config["agents"]["entries"])
     if bindings:
         config["bindings"] = bindings

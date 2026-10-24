@@ -156,6 +156,7 @@ def _plan_phase(
     plan = build_plan(
         detected=installed, choices=Choices(lan=lan, sviluppo=sviluppo),
         home=setup.home, env=setup.env, engine_root=setup.engine_root, vault_data=setup.vault_data,
+        platform=setup.platform,
     )
     setup.out(render_plan(plan))
     if setup.dry_run:

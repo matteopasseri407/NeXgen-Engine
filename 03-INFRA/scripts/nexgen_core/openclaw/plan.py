@@ -14,6 +14,7 @@ from typing import Any
 
 from nexgen_core import quota_policy
 from nexgen_core.i18n import detect_language, t
+from nexgen_core.openclaw import observation
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.governor import with_chains
@@ -27,7 +28,7 @@ from nexgen_core.openclaw.profile import (
     agent_models,
     build_config,
 )
-from nexgen_core.paths import openclaw_config
+from nexgen_core.paths import openclaw_config, resolve_home
 from nexgen_core.runtimes.openclaw import PLUGIN_ID
 
 DISPLAY_NAMES = {"main": "assistente", "capo": "capo", "automazioni": "automazioni", "sviluppo": "sviluppo"}
@@ -232,6 +233,7 @@ def build_plan(
     engine_root: Path | None = None,
     vault_data: Path | None = None,
     plugin_deposited: bool | None = None,
+    platform: str | None = None,
 ) -> Plan:
     """The proposal for this machine, diffed against the file in force."""
     snapshot = detected if detected is not None else detect(
@@ -239,9 +241,11 @@ def build_plan(
     )
     chosen = choices or Choices(lang=detect_language())
     path = openclaw_config(home, env)
+    home_dir = resolve_home(home)
     current, error = read_config(path)
     failover, failover_notes = quota_policy.load(home, vault=vault_data)
-    config = with_chains(build_config(snapshot, chosen, current), failover)
+    proposed = build_config(snapshot, chosen, current, home=home_dir, platform=platform)
+    config = with_chains(proposed, failover)
     deposited = plugin_deposited if plugin_deposited is not None else (path.parent / "extensions" / PLUGIN_ID).is_dir()
     config = _with_engine_plugin(config, deposited)
 
@@ -253,7 +257,8 @@ def build_plan(
         key for key, value in proposed_flat.items()
         if key in current_flat and current_flat[key] != value
     ))
-    kept = tuple(sorted(key for key in (current or {}) if key not in owned))
+    touched = {key.split(".", 1)[0] for key in proposed_flat}
+    kept = tuple(sorted(key for key in (current or {}) if key not in owned and key not in touched))
     dropped = tuple(sorted(
         key for key in current_flat
         if key.split(".", 1)[0] in owned and key not in proposed_flat
@@ -262,6 +267,10 @@ def build_plan(
     # A fallback line the engine cannot use is named here too: the plan is what a person
     # reads before the setup writes anything, so a typo in the policy must not be silent.
     notes.extend(failover_notes)
+    polling_key = f"env.vars.{observation.POLLING_VAR}"
+    if polling_key in added or polling_key in changed:
+        notes.append(t("OpenClaw changes how it watches its configuration only when it starts: "
+                       "restart the gateway once for this key to take effect."))
     binding_note = _binding_note(config)
     if binding_note:
         notes.append(binding_note)

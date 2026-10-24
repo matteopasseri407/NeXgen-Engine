@@ -241,7 +241,7 @@ def report(config: dict[str, Any] | None) -> CheckOutcome:
             severity=Severity.OK,
             message=t("No background job runs on a local model."),
         )
-    names = sorted({JOBS[job] for job in local})
+    names = sorted({t(JOBS[job]) for job in local})
     refs = sorted(set(local.values()))
     return CheckOutcome(
         id="openclaw.background_model",
