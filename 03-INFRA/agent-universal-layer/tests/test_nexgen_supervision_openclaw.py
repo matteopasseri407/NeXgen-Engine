@@ -37,8 +37,24 @@ def fake_cli(tmp_path, monkeypatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     for name, text in (("openclaw", "#!/bin/sh\nexit 0\n"), ("openclaw.cmd", "@echo off\r\n")):
-        (bin_dir / name).write_text(text, encoding="utf-8")
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+        target = bin_dir / name
+        target.write_text(text, encoding="utf-8")
+        target.chmod(0o755)
+
+    def _has_real_openclaw(entry: str) -> bool:
+        if not entry:
+            return False
+        try:
+            p = Path(entry)
+            return (p / "openclaw").exists() or (p / "openclaw.cmd").exists() or (p / "openclaw.exe").exists()
+        except OSError:
+            return False
+
+    clean_path = os.pathsep.join(
+        p for p in os.environ.get("PATH", "").split(os.pathsep)
+        if not _has_real_openclaw(p)
+    )
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{clean_path}")
     return bin_dir
 
 
