@@ -285,11 +285,13 @@ home directory, under `.openclaw`; the app talks to that gateway on `ws://127.0.
 
 ### What this engine does today
 
-It tells four situations apart, from evidence that starts nothing:
+It tells these situations apart, from evidence that starts nothing:
 
 | Situation | The evidence it reads | What the engine does |
 | --- | --- | --- |
 | the native gateway only | the npm package and `~/.openclaw/openclaw.json` | configures it, as always |
+| the app installed, naming no gateway | the app's files, with no gateway in them, plus the native package or nothing | configures the native one as above, and at the end says the one step that connects the app: Connections, "a local Gateway on this PC" |
+| the app on this PC's gateway | a loopback gateway URL on the engine's own port | one line that says the app is connected, and, when the gateway answers, whether its device is in the gateway's list |
 | the app's gateway only | the `OpenClawGateway` distribution, or the app's own WSL storage, or a gateway its settings name on this PC | says what it found and stops before installing or writing anything |
 | both | one of those, plus the native package | configures the native one, and names the app's gateway as a second gateway in conflict |
 | the app connected elsewhere | an `sshTunnel`, or a gateway URL that is not loopback | says so; nothing is in conflict |
@@ -303,14 +305,29 @@ It tells four situations apart, from evidence that starts nothing:
 - The engine never starts the app, WSL or the distribution, and never writes under `%APPDATA%\OpenClawTray`,
   `%LOCALAPPDATA%\OpenClawTray` or `\\wsl.localhost`.
 
+### The app's gateway and the native one, when both are wanted
+
+The engine configures the native Node gateway, and that is the road it supports: the app is the interface, the
+gateway is this engine's. When the app runs the only gateway here, the setup stops and says so in the plan and
+in the run, with the step that fixes it, because a second gateway on the same port helps nobody.
+
+`nexgen openclaw setup --node-gateway` is the way to take that road anyway. Before anything is installed or
+written it asks whether the gateway port answers, because two gateways cannot share it:
+
+- nothing answers, so the native gateway is installed, configured and started, and the app is told where to look;
+- the app's gateway still answers, so the run stops and says to stop it in OpenClaw Companion and try again.
+
+The app's distribution is never started, stopped or written, with or without the option. The app is not
+something to remove, either: the doctor's lines say which gateway is which, never that the app has to go.
+
 ### What it does not do yet
 
 - It does not configure the app's gateway: no configuration written through `\\wsl.localhost`, no service, no
-  plugin deposited inside the distribution, no pairing.
+  plugin deposited inside the distribution, no pairing inside it.
 - It does not install its guardrail plugin there as a package.
 - `nexgen openclaw setup` on a machine where the app owns the only gateway stops and names the two ways forward:
-  use the app as it is, or install the native gateway and run the setup again. It never installs a second gateway
-  beside the app's one of its own accord.
+  use the app as it is, or install the native gateway and run the setup again. `--node-gateway` goes on with the
+  native one once the port is free, which means the app's gateway has been stopped in the app.
 
 Full support, which means talking to the gateway through its own protocol and installing the plugin as a package,
 comes in a later release. Until then the two gateways stay two separate things, and the engine only ever writes the
@@ -318,9 +335,9 @@ native one.
 
 ## Installazione con un comando
 
-`nexgen openclaw setup [--yes] [--lan] [--dry-run] [--no-sviluppo]` runs nine steps, in this order, printing
-what each one did. It stops at the first step that cannot succeed, and the machine keeps the state it had
-before that step.
+`nexgen openclaw setup [--yes] [--lan] [--dry-run] [--no-sviluppo] [--node-gateway]` runs nine steps, in this
+order, printing what each one did. It stops at the first step that cannot succeed, and the machine keeps the
+state it had before that step.
 
 1. **Installation.** If OpenClaw is missing, or is not on the release `openclaw/pin.json` names:
    `npm install -g openclaw@<pin> --allow-scripts=@google/genai,esbuild,koffi,protobufjs,openclaw`, with npm
@@ -359,6 +376,13 @@ before that step.
 8. **Phone.** It prints `openclaw qr`, to be run in a terminal of one's own, and `nexgen openclaw pair` for
    the approval.
 9. **Doctor.** `doctor.collect()` runs and its summary is printed.
+
+After the doctor, on Windows, the run tells the Windows app where the gateway is, and offers the request the
+app leaves. An app installed before the engine names no gateway at all: the run says to open Connections in
+OpenClaw Companion and choose "a local Gateway on this PC". A request already waiting is printed with its id
+and what it says it is, then approved only when the person answers yes at that prompt. `--yes` answers the
+plan, never a device approval, and a run with no terminal approves nothing and prints the command instead.
+Several requests are listed and none is chosen for the person.
 
 Everything is idempotent: a second `setup` with nothing to change writes no file and restarts no gateway.
 
@@ -456,6 +480,10 @@ machine does not have, which background job would wake a local model, whether th
 home recursively, whether the gateway is listening, whether every agent has a fallback chain, a second
 gateway from the Microsoft Store, the OpenClaw Companion's own gateway, which it reports without configuring
 it, and how many skills and servers OpenClaw created that the canonical library does not declare yet.
+When the app is installed, one line answers the two questions a person has: whether the app's settings point at
+this PC's gateway, and whether the gateway's own device list knows the app. The list is read through
+`openclaw devices list --json`, only on that line and only when the app says it is on this gateway; a stopped
+gateway is a normal state, so the line then says nothing about devices instead of reporting a fault.
 `--nodes` adds the nodes the running gateway knows, which costs one run of OpenClaw's CLI and is therefore
 never done unless asked; the line about the network needs no query, so it is always there. `nexgen doctor`
 runs the same checks as part of its own report, without `--nodes`, and says nothing at all on a machine that
