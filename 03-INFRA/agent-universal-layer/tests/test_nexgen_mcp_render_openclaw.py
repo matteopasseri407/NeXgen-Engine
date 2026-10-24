@@ -295,3 +295,40 @@ def test_the_openclaw_server_is_never_rendered_into_openclaw_itself(renderer) ->
 
     servers = _servers(renderer)
     assert "openclaw" not in servers
+
+
+def test_openclaw_server_rendered_for_windows_uses_node_launcher(tmp_path: Path) -> None:
+    """On Windows, openclaw mcp serve is launched via node script instead of openclaw.cmd."""
+    npm_dir = tmp_path / "npm"
+    npm_dir.mkdir(parents=True)
+    shim = npm_dir / "openclaw.cmd"
+    shim.write_text("@echo off\n", encoding="utf-8")
+    entry = npm_dir / "node_modules" / "openclaw" / "openclaw.mjs"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("// entry\n", encoding="utf-8")
+    node_exe = npm_dir / "node.exe"
+    node_exe.write_text("", encoding="utf-8")
+
+    def fake_which(cmd: str) -> str | None:
+        if cmd == "openclaw":
+            return str(shim)
+        if cmd == "node":
+            return str(node_exe)
+        return None
+
+    vault = tmp_path / "vault"
+    manifest_file = vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+    manifest_file.parent.mkdir(parents=True)
+    manifest_file.write_text(
+        "schema_version: 1\nservers:\n  openclaw:\n    exposure: eager\n    transport: stdio\n    command: openclaw\n    args: ['mcp', 'serve']\n    targets: [claude, codex, antigravity, opencode]\n    enabled: true\n",
+        encoding="utf-8",
+    )
+    renderer = McpRenderer(vault_data=vault, engine_root=tmp_path / "engine", home=tmp_path / "home", which=fake_which, is_windows=True)
+    resolved = renderer.load_resolved_servers("claude")
+    assert "openclaw" in resolved
+    srv = resolved["openclaw"]
+    assert srv["command"] == str(node_exe)
+    assert srv["args"][0] == str(entry)
+    assert srv["args"][1:] == ["mcp", "serve"]
+    assert "openclaw.cmd" not in srv["command"]
+

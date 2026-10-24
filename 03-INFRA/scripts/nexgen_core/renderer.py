@@ -17,9 +17,10 @@ from __future__ import annotations
 import contextlib
 import os
 import platform
+import shutil
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
@@ -45,11 +46,15 @@ class McpRenderer:
         vault_data: Path | None = None,
         engine_root: Path | None = None,
         home: Path | None = None,
+        which: Callable[[str], str | None] | None = None,
+        is_windows: bool | None = None,
     ) -> None:
         self.home = resolve_home(home)
         _v = resolve_vault_data(self.home, vault_data)
         self.vault_data = _v
         self.engine_root = resolve_engine_root(self.home, engine_root)
+        self.which = which if which is not None else shutil.which
+        self.is_windows = IS_WINDOWS if is_windows is None else bool(is_windows)
 
         self.manifest_path = self.vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
         #: While not None, writes are collected here instead of performed
@@ -122,6 +127,32 @@ class McpRenderer:
         data = load_mcp_manifest(self.manifest_path)
         return set(data.get("retired_servers", set()))
 
+    def _resolve_command_and_args(self, entry: dict[str, Any]) -> None:
+        cmd = entry.get("command") or entry.get("cmd")
+        args = entry.get("args", [])
+        if isinstance(cmd, list):
+            resolved_cmd = [self._expand_value(str(c)) for c in cmd]
+            if self.is_windows and resolved_cmd:
+                resolved_cmd[0] = self._normalize_windows_shim(resolved_cmd[0])
+            entry["command"] = resolved_cmd[0] if resolved_cmd else ""
+            entry["args"] = resolved_cmd[1:]
+        elif isinstance(cmd, str):
+            expanded_cmd = self._expand_value(cmd)
+            if self.is_windows:
+                expanded_cmd = self._normalize_windows_shim(expanded_cmd)
+            entry["command"] = expanded_cmd
+            entry["args"] = [self._expand_value(str(a)) for a in args] if isinstance(args, list) else []
+
+        if self.is_windows and entry.get("command") == "openclaw":
+            from nexgen_core.megaphone import openclaw_launch
+
+            found = self.which("openclaw")
+            if found:
+                launch = openclaw_launch(found, self.which)
+                if launch:
+                    entry["command"] = launch[0]
+                    entry["args"] = launch[1:] + (entry.get("args") or [])
+
     def _resolve_entry(
         self,
         name: str,
@@ -147,29 +178,12 @@ class McpRenderer:
         # `deps` is the provisioning contract, resolved at spawn by the
         # waiter; it must never reach the CLIs' native configs.
         entry.pop("deps", None)
-        if IS_WINDOWS and "windows" in entry:
+        if self.is_windows and "windows" in entry:
             win_override = entry.pop("windows")
             if isinstance(win_override, dict):
                 entry.update(win_override)
 
-        # command and args resolution
-        cmd = entry.get("command") or entry.get("cmd")
-        args = entry.get("args", [])
-        if isinstance(cmd, list):
-            resolved_cmd = [self._expand_value(str(c)) for c in cmd]
-            if IS_WINDOWS and resolved_cmd:
-                resolved_cmd[0] = self._normalize_windows_shim(resolved_cmd[0])
-            entry["command"] = resolved_cmd[0] if resolved_cmd else ""
-            entry["args"] = resolved_cmd[1:]
-        elif isinstance(cmd, str):
-            expanded_cmd = self._expand_value(cmd)
-            if IS_WINDOWS:
-                expanded_cmd = self._normalize_windows_shim(expanded_cmd)
-            entry["command"] = expanded_cmd
-            if isinstance(args, list):
-                entry["args"] = [self._expand_value(str(a)) for a in args]
-            else:
-                entry["args"] = []
+        self._resolve_command_and_args(entry)
 
         if not str(entry.get("command") or "").strip() and not entry.get("url"):
             logging.getLogger(__name__).warning("MCP server %r has an empty command after expansion, skipped", name)
