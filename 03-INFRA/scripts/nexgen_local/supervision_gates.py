@@ -29,12 +29,13 @@ from . import supervision_gitconfig as gitconfig
 from . import supervision_lint as lint
 from . import supervision_policy as policy
 from . import supervision_pytest as pytest_runs
+from . import supervision_remote as remotes
 from . import supervision_requests as requests_module
+from . import supervision_retirement as own_rules
 from . import supervision_state as state
 from . import supervision_verify as verify
 from .supervision_state import SupervisionError
 from .supervision_package import DIFF_MAX_LINES, package_text, raw_text  # noqa: F401  DIFF_MAX_LINES: re-exported, the gate tests read it here
-from .supervision_worktree import BLOCKED_PUSH_URL, push_urls, refs_at, remote_urls
 
 #: The budget for re-running the touched test files to see what this platform skips.
 SKIP_TIMEOUT_S = 300.0
@@ -78,27 +79,13 @@ def collect(task_id: str, unit: str) -> dict:
         rules = config.load(folder, base)
     except (GitError, ConfigError) as exc:
         raise SupervisionError(f"cancelli non eseguibili su {folder}: {exc}") from exc
-    clean = _clean_tree_gate(folder)
-    remote = _remote_gate(folder, record, base, head)
     text = diff_text(folder, base, head)
     surface = pytest_runs.surface(files)
-    results = [
-        _scope_gate(files, scope),
-        _forbidden_gate(files, scope),
-        _integrity_gate(files, rules),
-        _per_commit_gate(folder, rules, base, head),
-        _verify_gate(folder, str(record.get("verify") or "")),
-        _collected_tests_gate(folder, base, head, files, surface),
-        _lint_gate(folder),
-        _model_gate(record),
-        _git_config_gate(record, folder),
-        remote,
-        clean,
-    ]
-    results += _leak_gate(folder, base, head)
+    results = _gate_results(folder, record, base, head, files, rules, scope, surface)
     verdict = "PASS" if all(result.ok for result in results) else "FAIL"
     skipped = skipped_tests(folder, files)
     request_scan = requests_module.scan_report(task_id, name)
+    added, unreadable = own_rules.added_entries(folder, head, rules)
     harness = str(record.get("harness") or "opencode")
     price = costs.collect_cost(task_id, name, facts_of=facts_for(harness), harness=harness)
     package = package_text(
@@ -106,6 +93,7 @@ def collect(task_id: str, unit: str) -> dict:
         results=results, cost_line=costs.cost_text(price),
         diffstat=git(folder, "diff", "--stat", base, head).strip(), diff=text,
         skipped=skipped, request_scan=request_scan, pytest_surface=surface,
+        test_removals=added, test_removals_error=unreadable,
     )
     package_path = state.open_task(task_id) / f"40-pacchetto-{name}.md"
     raw_path = state.open_task(task_id) / f"50-gate-{name}.txt"
@@ -121,6 +109,33 @@ def collect(task_id: str, unit: str) -> dict:
         "request_section": requests_module.section_status(request_scan),
         "cost": price, "report_note": moved, "local_notes": local_notes,
     }
+
+
+def _gate_results(
+    folder: Path, record: dict, base: str, head: str, files: list,
+    rules: config.Config, scope: list[str], surface: list[str],
+) -> list[GateResult]:
+    """Every gate on the unit's interval, in the order the package prints them.
+
+    The clean tree and the remotes are read before anything runs in the copy:
+    the verification is a command of the unit's own and may leave files behind.
+    """
+    clean = _clean_tree_gate(folder)
+    remote = GateResult("remoto intatto", *remotes.check(folder, record, base, head))
+    results = [
+        _scope_gate(files, scope),
+        _forbidden_gate(files, scope),
+        _integrity_gate(folder, base, head, files, rules, scope),
+        _per_commit_gate(folder, rules, base, head),
+        _verify_gate(folder, str(record.get("verify") or "")),
+        _collected_tests_gate(folder, base, head, files, surface, scope),
+        _lint_gate(folder),
+        _model_gate(record),
+        _git_config_gate(record, folder),
+        remote,
+        clean,
+    ]
+    return results + _leak_gate(folder, base, head)
 
 
 def _release_local(task_id: str, unit: str, record: dict) -> list[str]:
@@ -281,8 +296,22 @@ def _is_forbidden(path: str) -> bool:
     return path in FORBIDDEN_FILES or any(path.startswith(prefix) for prefix in FORBIDDEN_PREFIXES)
 
 
-def _integrity_gate(files: list, rules: config.Config) -> GateResult:
-    """The engine's own test-integrity check: no existing test deleted, shrunk or skipped."""
+def _integrity_gate(
+    folder: Path, base: str, head: str, files: list, rules: config.Config, scope: list[str],
+) -> GateResult:
+    """The engine's own test-integrity check: no existing test deleted, shrunk or skipped.
+
+    A unit whose boundary holds `.nexgen-discipline.toml` is judged the way the
+    project's hook judges it, commit by commit against the rules each commit
+    inherited: it may carry the authorisations, and may not grant itself one in
+    the same commit that uses it. Every other unit is judged over the whole
+    interval against the base's rules, exactly as before.
+    """
+    if own_rules.may_carry(scope):
+        problems, retired = own_rules.integrity_by_commit(folder, base, head)
+        if problems:
+            return GateResult("integrità dei test", False, " | ".join(problems)[:800])
+        return GateResult("integrità dei test", True, own_rules.retirement_reason(retired))
     problems = check_test_integrity(files, rules)
     if problems:
         return GateResult("integrità dei test", False, " | ".join(str(problem) for problem in problems))
@@ -336,79 +365,6 @@ def _git_config_gate(record: dict, folder: Path) -> GateResult:
     return GateResult("configurazione git", ok, reason)
 
 
-def _remote_gate(folder: Path, record: dict, base: str, head: str) -> GateResult:
-    """The remotes of the creation, and whether any of their refs carries a commit of this unit.
-
-    A remote that disappeared, changed its fetch URL, changed its push URL or
-    was added after creation is a FAIL, because that is how a push is hidden:
-    `remote.<name>.pushurl` wins over the fetch URL for every push, and a new
-    remote is a new way out of the copy. A remote branch that advanced for
-    another reason (another unit was published) is not a failure: the question
-    is whether *this unit's* commits reached a remote, and it is asked of the
-    URLs written at creation, which a unit cannot edit without being seen.
-    """
-    problem, saved = _remote_config_gate(record, folder)
-    if problem is not None:
-        return problem
-    if not saved:
-        return GateResult("remoto intatto", True, "nessun remoto configurato alla creazione")
-    mine = set(git(folder, "rev-list", f"{base}..{head}").split())
-    pushed: list[str] = []
-    unreadable: list[str] = []
-    for name in sorted(saved):
-        refs = refs_at(saved[name])
-        if "error" in refs:
-            unreadable.append(f"{name}: {refs['error']}")
-            continue
-        pushed += [
-            f"{name}/{ref.removeprefix('refs/heads/')} → {sha[:12]}"
-            for ref, sha in refs.items() if sha in mine
-        ]
-    if unreadable:
-        return GateResult("remoto intatto", False, "non verificabile, remoto non leggibile: " + "; ".join(unreadable))
-    if pushed:
-        return GateResult(
-            "remoto intatto", False,
-            "l'unità ha spinto: " + ", ".join(sorted(pushed)),
-        )
-    return GateResult(
-        "remoto intatto", True,
-        f"{len(saved)} remoti, nessun ref remoto porta un commit dell'unità",
-    )
-
-
-def _remote_config_gate(record: dict, folder: Path) -> tuple[GateResult | None, dict]:
-    """The remote configuration is the creation's own, and returns the URLs to ask.
-
-    A remote gone, added, re-pointed for fetch or for push is a FAIL. The
-    returned dict is the creation's fetch URLs, or today's when the journal
-    predates the field: the refs are then asked of the only URLs there are.
-    """
-    saved = {str(name): str(url) for name, url in (record.get("remote_urls") or {}).items()}
-    saved_push = {str(name): str(url) for name, url in (record.get("remote_pushurls") or {}).items()}
-    now = remote_urls(folder)
-    now_push = push_urls(folder)
-    if not saved:
-        return None, now
-    missing = sorted(name for name in saved if not now.get(name))
-    if missing:
-        return GateResult("remoto intatto", False, "remoti spariti dalla copia: " + ", ".join(missing)), saved
-    added = sorted(name for name in now if name not in saved)
-    if added:
-        return GateResult("remoto intatto", False, "remoti aggiunti alla copia: " + ", ".join(added)), saved
-    changed = sorted(name for name in saved if now.get(name) and now[name] != saved[name])
-    if changed:
-        detail = ", ".join(f"{name} ({saved[name]} → {now[name]})" for name in changed)
-        return GateResult("remoto intatto", False, "URL di fetch cambiato: " + detail), saved
-    moved = sorted(name for name in saved if now_push.get(name, "") != saved_push.get(name, BLOCKED_PUSH_URL))
-    if moved:
-        detail = ", ".join(
-            f"{name} ({saved_push.get(name, BLOCKED_PUSH_URL)} → {now_push.get(name, '')})" for name in moved
-        )
-        return GateResult("remoto intatto", False, "pushurl cambiata: " + detail), saved
-    return None, saved
-
-
 def _verify_gate(folder: Path, command: str) -> GateResult:
     """The executor's declared command, run by the engine with its own launch rules.
 
@@ -418,13 +374,18 @@ def _verify_gate(folder: Path, command: str) -> GateResult:
     return GateResult("verifica indipendente", *verify.run(folder, command))
 
 
-def _collected_tests_gate(folder: Path, base: str, head: str, files: list, surface: list[str]) -> GateResult:
-    """How many tests pytest collects now against the base: an AST count cannot see `__test__ = False`.
+def _collected_tests_gate(
+    folder: Path, base: str, head: str, files: list, surface: list[str], scope: list[str],
+) -> GateResult:
+    """What pytest collects now against the base: an AST count cannot see `__test__ = False`.
 
-    The count is taken in two exported copies of the interval, never in the unit's
-    own one, and both numbers are in the reason, so a FAIL says what was lost.
+    Both trees are exported and collected, never the unit's own copy. A unit the
+    supervisor let carry `.nexgen-discipline.toml` is judged commit by commit,
+    so only an authorisation that already existed when the test went counts.
     """
-    ok, reason = pytest_runs.check(folder, base, head, files, surface)
+    ok, reason = pytest_runs.check(
+        folder, base, head, files, surface, by_commit=own_rules.may_carry(scope),
+    )
     return GateResult("test raccolti", ok, reason)
 
 
