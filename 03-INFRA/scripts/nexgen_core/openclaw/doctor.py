@@ -254,7 +254,8 @@ def _config_outcomes(
     outcomes = filter(None, [
         check_ollama_latest(config),
         check_cage(config),
-        check_evidence(config, path),        _check_heartbeat(config),
+        check_evidence(config, path),
+        _check_heartbeat(config),
         *_check_gateway(config),
         exposure(config),
         _check_google(config),
@@ -268,6 +269,7 @@ def _config_outcomes(
         *doctor_runtime.check_workshop_skills(config, path.parent, home_dir),
         doctor_runtime.check_unadopted(config, path, home_dir, resolve_vault_data(home_dir, vault_data)),
         doctor_runtime.check_bindings(config),
+        *_plugin_outcomes(path),
     ])
     return list(outcomes)
 
@@ -374,7 +376,6 @@ def collect(
     )
     if app_outcome is not None:
         outcomes.append(app_outcome)
-    outcomes.extend(_plugin_outcomes(path))
     outcomes.extend(_host_outcomes(snapshot, engine_root, values, system, node_version, linger_dir))
     return outcomes
 
