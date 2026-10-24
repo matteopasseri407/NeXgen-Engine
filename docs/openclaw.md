@@ -372,7 +372,9 @@ state it had before that step.
 6. **Service.** The gateway is installed as a service when it is not one already, started when the install
    only registered it, and the port is awaited for up to ten minutes, with the elapsed seconds printed: a
    cold start takes about five minutes.
-7. **Module.** The host declares `openclaw: local` in `modules.state.yaml`, under its own name.
+7. **Module and bridge.** The host declares `openclaw: local` in `modules.state.yaml`, under its own name,
+   and enables the canonical `openclaw` MCP server (`openclaw mcp serve`) in `manifest.yaml` so other harnesses
+   can reach OpenClaw tools.
 8. **Phone.** It prints `openclaw qr`, to be run in a terminal of one's own, and `nexgen openclaw pair` for
    the approval.
 9. **Doctor.** `doctor.collect()` runs and its summary is printed.
@@ -385,6 +387,26 @@ plan, never a device approval, and a run with no terminal approves nothing and p
 Several requests are listed and none is chosen for the person.
 
 Everything is idempotent: a second `setup` with nothing to change writes no file and restarts no gateway.
+
+## OpenClaw as an MCP server for other harnesses
+
+OpenClaw can serve its tools to all other harnesses (`claude`, `codex`, `antigravity`, `opencode`) via
+`openclaw mcp serve`.
+The canonical entry is declared in `03-INFRA/agent-universal-layer/mcp/manifest.yaml` with stdio transport:
+
+```yaml
+openclaw:
+  exposure: eager
+  transport: stdio
+  command: openclaw
+  args: ["mcp", "serve"]
+  targets: [claude, codex, antigravity, opencode]
+  enabled: false
+```
+
+It is disabled by default (`enabled: false`) and automatically enabled during `nexgen openclaw setup` when
+OpenClaw is installed on the machine. The OpenClaw renderer explicitly filters it out, ensuring OpenClaw never
+configures itself as an MCP client.
 
 To go back, stop the gateway first, copy the backup over the file, then let it start again so the plugins are
 reloaded:
@@ -502,8 +524,12 @@ both are computed by the same pure function. On a Windows machine it also ends b
 gateway and offering the request the app leaves, in the paragraph that follows the summary the doctor prints.
 
 `nexgen openclaw adopt [--skills] [--mcp] [--dry-run] [--yes]` takes what was created inside OpenClaw and
-makes it canonical: the skills the Skill Workshop learned, and the servers in `mcp.servers` that no manifest
-declares. It prints the plan with every check before writing anything. A name already taken is a refusal and
+makes it canonical: the skills the Skill Workshop learned, the servers in `mcp.servers` that no manifest
+declares, and ClawHub plugins wrapping MCP servers (detected from plugin manifests `openclaw.plugin.json`,
+`package.json`, bundled `mcp.json`/`.mcp.json`, or catalog descriptions matching official/hosted MCP services).
+Underlying MCP servers are extracted and proposed for adoption as unmanaged servers, with credentials in `${VAR}`
+preserved as references. Installed plugins that are not MCP wrappers (such as channels, memory, or model
+providers) are omitted from adoption with a one-line explanatory note. It prints the plan with every check before writing anything. A name already taken is a refusal and
 never an overwrite, a plaintext credential blocks, and a skill holding a script, an executable or an unknown
 file is a question: `--yes` adopts only what the checks cleared and names what it left. An adopted skill is
 copied into `03-INFRA/agent-universal-layer/skills/<name>/`, declared `origin: vault` in the skills manifest,

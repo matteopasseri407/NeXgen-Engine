@@ -30,6 +30,17 @@ and nothing else in that file is touched: models, channels, gateway settings and
 servers the manifest does not declare are OpenClaw's own. A machine where OpenClaw
 was never set up has no config file, and the renderer does not invent one.
 
+OpenClaw can also act as an MCP server for the other harnesses (`claude`, `codex`,
+`antigravity`, `opencode`) via `openclaw mcp serve`. The canonical manifest entry is
+`enabled: false` by default and flipped to `true` by `nexgen openclaw setup`. The
+OpenClaw renderer explicitly excludes this server when rendering `openclaw.json`, so
+OpenClaw never mounts itself recursively.
+
+Conversely, ClawHub plugins installed in OpenClaw that wrap external or bundled MCP
+servers can be adopted into the canonical library using `nexgen openclaw adopt --mcp`.
+Once adopted, their underlying servers enter `manifest.yaml` and are materialized for
+all target harnesses across all machines.
+
 In `mcp.servers.*.env`, every `${VAR}` stays a reference in `openclaw.json`:
 OpenClaw substitutes it itself, and a credential must not be copied out of the
 environment into a file. The exception is a value whose references are all
