@@ -28,6 +28,7 @@ from nexgen_core.i18n import t
 from nexgen_core.openclaw import background, companion, doctor_runtime, node_checks, observation
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
+from nexgen_core.openclaw.doctor_install import check_config, check_declaration, check_installed
 from nexgen_core.openclaw.evidence import check_evidence
 from nexgen_core.openclaw.governor import check_fallbacks
 from nexgen_core.openclaw.model_checks import check_agent_models, check_cage, check_ollama_latest
@@ -64,75 +65,6 @@ def _has_trace(home: Path, env: Mapping[str, str]) -> bool:
 
 def _pinned(engine_root: Path | None) -> str | None:
     return pinned_version(engine_root)
-
-
-def _check_installed(snapshot: Detection, declared: bool, pinned: str | None) -> CheckOutcome:
-    """Installed, and on the release the engine configures against."""
-    install = snapshot.openclaw
-    install_command = f"npm install -g openclaw@{pinned or 'latest'}"
-    if not install.installed:
-        return CheckOutcome(
-            id="openclaw.installed",
-            severity=Severity.BROKEN,
-            message=t("The OpenClaw module is declared on this machine but OpenClaw is not installed."),
-            action=t("Install the pinned release: {command}", command=install_command),
-        )
-    if pinned is None:
-        return CheckOutcome(
-            id="openclaw.installed",
-            severity=Severity.WARN,
-            message=t("OpenClaw {version} is installed, but the engine cannot read its pin.",
-                      version=install.version or "?"),
-            action=t("Check agent-universal-layer/openclaw/pin.json: it holds the release the engine expects."),
-        )
-    if install.version != pinned:
-        return CheckOutcome(
-            id="openclaw.installed",
-            severity=Severity.WARN,
-            message=t("OpenClaw {version} is installed, the engine configures {pinned}.",
-                      version=install.version or "?", pinned=pinned),
-            action=t("Align it with: {command}", command=install_command),
-        )
-    return CheckOutcome(
-        id="openclaw.installed",
-        severity=Severity.OK,
-        message=t("OpenClaw {version} is the pinned release.", version=install.version),
-    )
-
-
-def _check_declaration(declared: bool) -> CheckOutcome | None:
-    """Installed but not declared: the engine will not keep it aligned."""
-    if declared:
-        return None
-    return CheckOutcome(
-        id="openclaw.declared",
-        severity=Severity.WARN,
-        message=t("OpenClaw is installed but this machine does not declare the module: the engine will not keep it aligned."),
-        action=t("Declare 'openclaw: local' under this host in modules.state.yaml, or remove OpenClaw."),
-    )
-
-
-def _check_config(path: Path, config: dict[str, Any] | None, error: str | None) -> CheckOutcome:
-    """The file exists, is JSON, and is an object OpenClaw can use."""
-    if config is not None:
-        return CheckOutcome(
-            id="openclaw.config",
-            severity=Severity.OK,
-            message=t("The configuration at {path} is valid JSON.", path=path),
-        )
-    if error:
-        return CheckOutcome(
-            id="openclaw.config",
-            severity=Severity.BROKEN,
-            message=t("The configuration at {path} cannot be read: {error}", path=path, error=error),
-            action=t("Fix the file or move it aside; 'nexgen openclaw plan' shows what the engine would write."),
-        )
-    return CheckOutcome(
-        id="openclaw.config",
-        severity=Severity.WARN,
-        message=t("OpenClaw has no configuration at {path} yet.", path=path),
-        action=t("Run 'nexgen openclaw plan' to see what the engine would write."),
-    )
 
 
 def _check_heartbeat(config: dict[str, Any]) -> CheckOutcome:
@@ -351,6 +283,35 @@ def _store_gateway_outcomes(
     return outcomes
 
 
+def _speaking_snapshot(
+    detected: Detection | None,
+    *,
+    declared: bool,
+    app_gateway: companion.Companion,
+    home_dir: Path,
+    values: Mapping[str, str],
+    system: str,
+    engine_root: Path | None,
+    vault_data: Path | None,
+    wsl_distributions: Callable[[], list[str]] | None,
+) -> Detection | None:
+    """The snapshot, or None when this machine has nothing to say about OpenClaw.
+
+    Two reasons to speak, and the cheap one is asked first: the module is
+    declared or a configuration exists, and the Windows app's own gateway. An
+    app that is installed and has no gateway here says nothing, and a machine
+    that says nothing pays for no probe.
+    """
+    if detected is not None:
+        return detected
+    if not declared and not _has_trace(home_dir, values) and app_gateway.situation(False) == companion.NONE:
+        return None
+    return detect(
+        home=home_dir, env=values, engine_root=engine_root, vault_data=vault_data, platform=system,
+        wsl_distributions=wsl_distributions,
+    )
+
+
 def collect(
     detected: Detection | None = None,
     *,
@@ -380,19 +341,12 @@ def collect(
     app_gateway = detected.companion if detected is not None else companion.probe(
         home_dir, values, system, wsl_distributions,
     )
-
-    snapshot = detected
+    snapshot = _speaking_snapshot(
+        detected, declared=declared, app_gateway=app_gateway, home_dir=home_dir, values=values,
+        system=system, engine_root=engine_root, vault_data=vault_data, wsl_distributions=wsl_distributions,
+    )
     if snapshot is None:
-        # The app's own gateway is the second reason this machine has something
-        # to say about OpenClaw, and it is asked before the expensive snapshot.
-        # An app that is installed and has no gateway here says nothing, and a
-        # machine that says nothing pays for no probe.
-        if not declared and not _has_trace(home_dir, values) and app_gateway.situation(False) == companion.NONE:
-            return []
-        snapshot = detect(
-            home=home_dir, env=values, engine_root=engine_root, vault_data=vault_data, platform=system,
-            wsl_distributions=wsl_distributions,
-        )
+        return []
     if not snapshot.openclaw.installed and not declared:
         # Only the app's gateway is here: the native checks have nothing to judge.
         app_only = doctor_runtime.check_companion_gateway(app_gateway, False, system)
@@ -401,11 +355,11 @@ def collect(
     pinned = _pinned(engine_root)
     path = Path(snapshot.openclaw.config_path)
     config, error = read_config(path)
-    outcomes: list[CheckOutcome] = [_check_installed(snapshot, declared, pinned)]
-    declaration = _check_declaration(declared)
+    outcomes: list[CheckOutcome] = [check_installed(snapshot, declared, pinned)]
+    declaration = check_declaration(declared)
     if declaration is not None:
         outcomes.append(declaration)
-    outcomes.append(_check_config(path, config, error))
+    outcomes.append(check_config(path, config, error))
     if config is not None:
         outcomes.extend(_config_outcomes(
             config, snapshot, path, home_dir, vault_data, failover, connect, node_lister, system,
