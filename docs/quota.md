@@ -26,7 +26,7 @@ The command always exits 0: a source that cannot be read is an answer, not a fai
 | Codex | the last `rate_limits` event in the newest `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | `5h`, `7d`, `30d`, as the event declares them | yes, `used_percent`, repeated as given | yes, `resets_at` |
 | OpenCode Go, OpenCode Zen | the harness archive `~/.local/share/opencode/opencode.db`, spend per session split by the provider that was paid | `5h`, `7d`, `30d` | only when `quota.yaml` declares a ceiling for that window | no |
 | Claude Code | `message.usage` in `~/.claude/projects/*/*.jsonl` | `5h`, `7d` | never, the plan's limit is not in any local file | no |
-| Antigravity | nothing is written locally | none | no | no |
+| Antigravity | local quota extension logs `*-Antigravity Quota.log` under `%APPDATA%\Antigravity IDE\logs` (prompt credits) | `30d` | yes, when a local log exists; otherwise not measured | no |
 
 ### Codex
 
@@ -49,7 +49,7 @@ An engine installed without that lane says so in one line and shows the other so
 
 `nexgen quota` sums the `message.usage` counters of the transcripts written in the last seven days, split into a 5h and a 7d window, deduplicated by message id.
 
-It prints token counts and no percentage, because Claude Code's plan usage is not in any local file.
+It prints token counts and no percentage, because Claude Code's plan usage is not in any local file (`~/.claude` settings, cache, or transcripts): `/usage` queries Anthropic's remote plan-usage endpoint dynamically.
 The line says so: `the limit is not readable on this machine`.
 That is the honest answer, and it is deliberately not turned into a guess.
 
@@ -58,8 +58,7 @@ They were 613 MB in eight days on the machine this was written on, which is affo
 
 ### Antigravity
 
-Antigravity writes nothing about its own usage.
-Its row says `not measured`.
+Antigravity's desktop environment logs prompt credits usage via the `ag-quota` extension into local session logs (`*-Antigravity Quota.log` under `%APPDATA%\Antigravity IDE\logs` or `%APPDATA%\Antigravity\logs`). The engine reads the newest log tail and extracts the monthly prompt credits used percentage for the `30d` window, dropping it as stale if older than 30 days. When no local log exists on disk (such as on a machine using only the `agy` CLI, where quota is fetched in-memory from the Google Cloud Code API without being written to disk), its row reports `not measured`.
 It exists so the list is complete and nobody has to wonder whether it was forgotten.
 
 ## A percentage needs a ceiling
@@ -143,4 +142,4 @@ A machine where nothing is readable says so in one sentence instead of an empty 
 - It keeps no history and makes no forecast. Every run reads the present.
 - It does not treat a stale reading as a current one, and does not carry the last known percentage forward.
 - It does not read any credential file to obtain a number.
-- It does not measure Antigravity, and says so rather than showing a zero.
+- It does not call remote quota endpoints (such as Claude Code's plan-usage endpoint or Google Cloud Code's fetchAvailableModels) with user credentials to fetch quotas dynamically.
