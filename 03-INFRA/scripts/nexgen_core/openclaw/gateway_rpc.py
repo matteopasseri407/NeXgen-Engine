@@ -19,12 +19,16 @@ from typing import Any, Self
 import websockets.sync.client as ws_sync
 from websockets.exceptions import ConnectionClosed, WebSocketException
 
+from nexgen_core import __version__ as ENGINE_VERSION
 from nexgen_core.paths import openclaw_config
 
 DEFAULT_GATEWAY_PORT = 18789
 DEFAULT_GATEWAY_URL = f"ws://127.0.0.1:{DEFAULT_GATEWAY_PORT}"
 DEFAULT_TIMEOUT = 10.0
 PROTOCOL_VERSION = 4
+CLIENT_ID = "cli"
+CLIENT_MODE = "cli"
+CLIENT_DISPLAY_NAME = "nexgen"
 SCOPE_READ = "operator.read"
 SCOPE_WRITE = "operator.write"
 SCOPE_ADMIN = "operator.admin"
@@ -165,11 +169,19 @@ class GatewayRpcClient:
         home: Path | None = None,
         env: Mapping[str, str] | None = None,
         scopes: list[str] | tuple[str, ...] | None = None,
+        client_id: str = CLIENT_ID,
+        client_mode: str = CLIENT_MODE,
+        client_display_name: str = CLIENT_DISPLAY_NAME,
+        client_version: str = ENGINE_VERSION,
     ) -> None:
         self.url = resolve_gateway_url(url, home=home, env=env)
         self._token = resolve_gateway_token(token, home=home, env=env)
         self.default_timeout = float(timeout)
         self.scopes = list(scopes) if scopes is not None else [SCOPE_READ]
+        self.client_id = client_id
+        self.client_mode = client_mode
+        self.client_display_name = client_display_name
+        self.client_version = client_version
         self._ws: ws_sync.ClientConnection | None = None
         self._hello_payload: dict[str, Any] | None = None
 
@@ -222,10 +234,11 @@ class GatewayRpcClient:
             "minProtocol": PROTOCOL_VERSION,
             "maxProtocol": PROTOCOL_VERSION,
             "client": {
-                "id": "gateway-client",
-                "version": "1.0.0",
+                "id": self.client_id,
+                "version": self.client_version,
                 "platform": sys.platform,
-                "mode": "backend",
+                "mode": self.client_mode,
+                "displayName": self.client_display_name,
             },
             "role": "operator",
             "scopes": list(self.scopes),

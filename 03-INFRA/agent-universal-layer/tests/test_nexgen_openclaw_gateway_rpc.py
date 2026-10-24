@@ -300,6 +300,19 @@ def test_rpc_operations_request_minimum_scopes():
     assert reqs[0]["params"]["scopes"] == ["operator.admin"]
 
 
+def test_rpc_client_external_operator_identity():
+    """Client presents as external operator CLI with engine display name, not internal helper."""
+    reqs: list[dict] = []
+    with fake_gateway_server(expected_token="tok", recorded_requests=reqs) as url:
+        health(url=url, token="tok", timeout=2.0)
+    client_info = reqs[0]["params"]["client"]
+    assert client_info["id"] == "cli"
+    assert client_info["mode"] == "cli"
+    assert client_info["displayName"] == "nexgen"
+    assert client_info["id"] != "gateway-client"
+    assert client_info["mode"] != "backend"
+
+
 def test_handshake_and_health():
     """Client successfully connects, authenticates and fetches health."""
     with fake_gateway_server(expected_token="tok123") as url:
