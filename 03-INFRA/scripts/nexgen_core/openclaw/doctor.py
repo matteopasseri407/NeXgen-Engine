@@ -19,7 +19,7 @@ from typing import Any
 
 from nexgen_core import quota_policy
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import doctor_runtime
+from nexgen_core.openclaw import background, doctor_runtime
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.evidence import check_evidence, local_refs
@@ -135,22 +135,6 @@ def _check_config(path: Path, config: dict[str, Any] | None, error: str | None) 
     )
 
 
-def _agent_model_refs(config: dict[str, Any]) -> dict[str, str]:
-    """Every agent's model, read from the string, object or ACP-primary shape."""
-    entries = config.get("agents", {}).get("entries") if isinstance(config.get("agents"), dict) else None
-    if not isinstance(entries, dict):
-        return {}
-    refs: dict[str, str] = {}
-    for name, entry in entries.items():
-        model = entry.get("model") if isinstance(entry, dict) else entry
-        if isinstance(model, dict):
-            # An ACP agent selects its harness model through `model.primary`.
-            model = model.get("primary")
-        if isinstance(model, str) and model.strip():
-            refs[str(name)] = model.strip()
-    return refs
-
-
 def _provider_model_ids(config: dict[str, Any], provider: str) -> list[str]:
     """The ids a provider block declares, tolerating both shapes OpenClaw accepts."""
     providers = config.get("models", {}).get("providers") if isinstance(config.get("models"), dict) else None
@@ -169,7 +153,7 @@ def _provider_model_ids(config: dict[str, Any], provider: str) -> list[str]:
 def _check_ollama_latest(config: dict[str, Any]) -> CheckOutcome:
     """OpenClaw does not recognise `:latest`, and then guesses the context window."""
     suffixed = [model_id for model_id in _provider_model_ids(config, "ollama") if model_id.endswith(":latest")]
-    suffixed.extend(ref for ref in _agent_model_refs(config).values() if ref.startswith("ollama/") and ref.endswith(":latest"))
+    suffixed.extend(ref for ref in background.agent_model_refs(config).values() if ref.startswith("ollama/") and ref.endswith(":latest"))
     if suffixed:
         return CheckOutcome(
             id="openclaw.ollama_latest",
@@ -331,7 +315,7 @@ def _check_agent_models(config: dict[str, Any], snapshot: Detection) -> CheckOut
         "opencode-go": snapshot.opencode_go,
     }
     unusable = []
-    for agent, model in sorted(_agent_model_refs(config).items()):
+    for agent, model in sorted(background.agent_model_refs(config).items()):
         provider = model.split("/", 1)[0]
         if provider in available and not available[provider]:
             unusable.append(f"{agent} -> {model} ({SUBSCRIPTION_LABELS[provider]})")
@@ -412,6 +396,7 @@ def _config_outcomes(
         _check_google(config),
         _check_acp(config),
         _check_agent_models(config, snapshot),
+        background.report(config),
         check_fallbacks(config, policy),
         _listening(config, connect, home_dir),
         *doctor_runtime.check_workshop_skills(config, path.parent, home_dir),

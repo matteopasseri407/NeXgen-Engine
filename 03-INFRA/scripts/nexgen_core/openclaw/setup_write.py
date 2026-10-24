@@ -84,19 +84,27 @@ def _merge_models(current: Any, proposed: list[Any]) -> list[Any]:
 
 
 def _merge_plugin_entries(current: Any, proposed: Any) -> Any:
-    """Plugin entries merged per plugin, then the allow list unioned."""
-    merged = _merge_dict(current, proposed) if isinstance(current, dict) and isinstance(proposed, dict) else proposed
-    if isinstance(merged, dict) and isinstance(proposed, dict) and "allow" in proposed:
-        merged["allow"] = _union_allow(current.get("allow") if isinstance(current, dict) else None, proposed["allow"])
+    """Plugin entries merged per plugin, then the allow list unioned.
+
+    The set-aware pass runs here too: `subagent.allowedModels` and the other
+    list-valued leaves live inside this section, so a plain merge would replace
+    a list the person wrote.
+    """
+    if not (isinstance(current, dict) and isinstance(proposed, dict)):
+        return proposed
+    merged = _merge_sets(current, proposed, _merge_dict(current, proposed))
+    if "allow" in proposed:
+        merged["allow"] = _union_allow(current.get("allow"), proposed["allow"])
     return merged
 
 
 #: List-valued leaves that are sets, not sequences. `alsoAllow` and `deny` are
-#: one model's tool permissions; `send` is the ids one agent may message.
+#: one model's tool permissions; `send` is the ids one agent may message;
+#: `allowedModels` is the models a plugin may name for a background run.
 #: Replacing any of them whole would silently remove what the person added.
 #: `fallbacks` is the ordered chain a plan hands over to: the person's own entries
 #: stay first and the policy only adds what is missing.
-SET_LISTS = frozenset({"alsoAllow", "deny", "send", "fallbacks"})
+SET_LISTS = frozenset({"alsoAllow", "deny", "send", "allowedModels", "fallbacks"})
 
 #: One list that is a set only on a specific path. `tools.agentToAgent.allow`
 #: names every agent allowed to talk, and replacing it would cut the person's

@@ -16,6 +16,11 @@ outside Google's own clients), a local model always comes with a cage around its
 tools, Ollama ids are written without `:latest` (OpenClaw fails to recognise the
 suffixed id), and a model block carries its context window (without it OpenClaw
 miscounts and overflows).
+
+Two proposals are not about an agent at all and live in their own module:
+`background` keeps the unattended jobs off a local model, and `observation` keeps
+the gateway from watching the whole home. Both arrive as the `current` file and
+the machine's platform, never as a read of either.
 """
 from __future__ import annotations
 
@@ -24,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import detect_language
+from nexgen_core.openclaw import background
 from nexgen_core.openclaw.acp import SVILUPPO_ID, SVILUPPO_NAMES, acp_block, acpx_entry, sviluppo_enabled
 from nexgen_core.openclaw.detect import Detection
 from nexgen_core.openclaw.local_models import LocalModel, local_models, provider_blocks
@@ -412,6 +418,19 @@ def _missing_channel_bindings(
     return missing
 
 
+def _add_machine_rules(
+    config: dict[str, Any], agents: dict[str, str], current: dict[str, Any] | None,
+) -> None:
+    """What this machine needs rather than what an agent wants: the unattended jobs' models."""
+    block = background.blocks(agents, current)
+    entries = block.get("plugins", {}).get("entries", {})
+    if entries:
+        config["plugins"]["entries"].update(entries)
+    defaults = block.get("agents", {}).get("defaults", {})
+    if defaults:
+        config["agents"]["defaults"].update(defaults)
+
+
 def build_config(
     detected: Detection,
     choices: Choices | None = None,
@@ -466,6 +485,7 @@ def build_config(
     providers = provider_blocks(models, current)
     if providers:
         config["models"] = {"providers": providers}
+    _add_machine_rules(config, agents, current)
     bindings = _missing_channel_bindings(current, config["agents"]["entries"])
     if bindings:
         config["bindings"] = bindings
