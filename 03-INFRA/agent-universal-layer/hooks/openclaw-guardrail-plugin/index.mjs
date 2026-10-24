@@ -13,11 +13,13 @@
 // Two engine-owned files travel beside the jobs, both read fresh on every call:
 //   nexgen-guardrail.config.json  the guardrail bodies, timeout, strict/autoAllow, audit file
 //   nexgen.config.json            the engine's switches: briefing, posture, engine, governor
+// `engine-run.mjs` is the one way a job starts the engine: no shell, a deadline, a sentence.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { registerBriefing } from "./briefing.mjs";
+import { registerCouncil } from "./council.mjs";
 import { registerGovernor } from "./governor.mjs";
 import { registerGuardrail } from "./guardrail.mjs";
 import { registerQuota } from "./quota.mjs";
@@ -47,5 +49,6 @@ export default {
     registerQuota(api);
     registerWorkshop(api);
     registerGovernor(api);
+    registerCouncil(api);
   },
 };

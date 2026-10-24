@@ -810,6 +810,20 @@ MESSAGES: dict[str, str] = {
         "Branch di quarantena ({count}):",
     "AI Council orchestrator not found at {path}. Reinstall the engine.":
         "Orchestratore AI Council non trovato in {path}. Reinstalla il motore.",
+    "Council {mode} finished":
+        "Council {mode} concluso",
+    "Council {mode} stopped":
+        "Council {mode} interrotto",
+    "Request: {tag}.":
+        "Richiesta: {tag}.",
+    "It stopped before the end: {reason}":
+        "Si è fermato prima della fine: {reason}",
+    "Outcome: {summary}.":
+        "Esito: {summary}.",
+    "It ended without a verdict to quote.":
+        "È finito senza un verdetto da citare.",
+    "Full outcome: {path}":
+        "Esito completo: {path}",
 
     # --- Secondo giro: sync/guard production grade ---------------------------
     "Refusing to quarantine: HEAD is on '{found}', not '{expected}'":

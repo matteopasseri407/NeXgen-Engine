@@ -11,7 +11,7 @@
 // plugin must never spawn a shell. A job that needs to outlive the chat opens the same pair
 // detached, writes what the engine said to a log, and says where that log is.
 import { spawn } from "node:child_process";
-import { closeSync, mkdirSync, openSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -132,11 +132,13 @@ export async function engineLines(args, options = {}) {
 
 //: One engine run that outlives the turn: detached from this process, output to a log.
 //: Returns `{ok, pid, log}` or `{ok: false, text}` with the same sentences as above.
+//: `header` is written before the child starts, so it is always the log's first line.
 export function startEngine(args, {
   configPath = CONFIG_PATH,
   spawnFn = spawn,
   logDir = LOG_DIR,
   logName = "engine.log",
+  header = "",
   label = "nexgen",
   hint,
 } = {}) {
@@ -150,6 +152,9 @@ export function startEngine(args, {
   try {
     mkdirSync(logDir, { recursive: true });
     fd = openSync(log, "a");
+    if (header) {
+      writeSync(fd, header);
+    }
   } catch {
     return { ok: false, text: say.noStart };
   }

@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import socket
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 # Council may validate a data-root file directly. That read-only check must
@@ -52,7 +53,6 @@ from proposal import (
     resolve_seat,
 )
 from relay import (
-    DEFAULT_MAX_SEATS,
     RelayQuarantine,
     _load_relay_sequence,
     _run_relay_stage,
@@ -60,13 +60,10 @@ from relay import (
 )
 from routing import seat_capabilities
 from seat_process import (
-    DEFAULT_SEAT_TIMEOUT_SECONDS,
     _format_timeout_seconds,
     _resolve_timeout_seconds,
-    _timeout_seconds_argument,
 )
 from session import (
-    DEFAULT_TTL_DAYS,
     SESSIONS_DIR,
     _cleanup_sessions,
     _finalize_session,
@@ -78,7 +75,22 @@ from session import (
 )
 from verdict import build_brief, run_rounds, write_verdict
 
-DEFAULT_MAX_ROUNDS = 3
+#: The mode handlers live here; the command line that calls them lives in `cli_spec.py`.
+#: Both imports sit with the siblings above, after this file's path constants, and are marked
+#: for it: `cli_spec` imports no handler (they arrive as a mapping), so nothing here is circular.
+from cli_spec import build_parser  # noqa: E402 - after this file's path constants, like its siblings
+
+#: What the notification prints when a run ends: one sentence, through `announce`.
+from announce import run_notified  # noqa: E402 - after this file's path constants, like its siblings
+
+#: What the last run produced, for the one message `--notify` sends. The mode handlers
+#: own the session and the verdict; the wrapper in `main` only knows how the call ended.
+_OUTCOME: dict[str, str] = {"mode": "", "session": "", "summary": ""}
+
+
+def _record(mode: str, session_dir: Path | None, summary: str = "") -> None:
+    """Remember what to say to the person when the caller asked to be told."""
+    _OUTCOME.update(mode=mode, session=str(session_dir) if session_dir else "", summary=summary)
 
 
 def cmd_reset_health(args: argparse.Namespace) -> None:
@@ -124,6 +136,7 @@ def _run_mode(
         )
 
         write_verdict(session_dir, seat_name, seat, mode, verdicts, responses[-1])
+        _record(mode, session_dir, verdicts[-1])
 
         degraded_suffix = f" (DEGRADED QUORUM: {seat['degraded_reason']})" if seat.get("degraded") else ""
         print(f"[council] final verdict: {verdicts[-1]}{degraded_suffix}")
@@ -210,6 +223,7 @@ def _cmd_relay_ephemeral(args: argparse.Namespace) -> None:
                 break
 
         write_relay_verdict(session_dir, records)
+        _record("relay", session_dir, records[-1].verdict)
         print(f"[council] final verdict: {records[-1].verdict}")
         if keep_session:
             print(f"[council] file: {session_dir / 'verdict.md'}")
@@ -237,6 +251,7 @@ def _cmd_relay_start_resumable(args: argparse.Namespace) -> None:
         )
     except RelayError as e:
         sys.exit(str(e))
+    _record("relay", None, str(summary.get("final_verdict") or ""))
     print(f"[council] resumable relay {summary['status']}: "
           f"{summary['completed']}/{summary['total']} stages complete.")
     if summary.get("final_verdict"):
@@ -270,6 +285,7 @@ def _cmd_relay_resume(args: argparse.Namespace) -> None:
         )
     except RelayError as e:
         sys.exit(str(e))
+    _record("relay", None, str(summary.get("final_verdict") or ""))
     print(f"[council] resumed relay {summary['status']}: "
           f"{summary['completed']}/{summary['total']} stages complete.")
     if summary.get("final_verdict"):
@@ -303,6 +319,7 @@ def cmd_consult(args: argparse.Namespace) -> None:
             print(f"[council] consult complete: {len(result.opinions)} opinions, "
                   f"{len(result.rebuttals)} rebuttals, {len(result.abstentions)} abstentions.")
             tally = ", ".join(f"{verdict}={count}" for verdict, count in sorted(result.tally.items()))
+            _record("consult", session_dir, tally)
             print(f"[council] tally: {tally or '(none)'}")
             if result.disagreements:
                 print("[council] disagreements: " + ", ".join(f"{a} vs {b}" for a, b in result.disagreements))
@@ -401,126 +418,30 @@ def cmd_propose(args: argparse.Namespace) -> None:
         print("[council] you choose a candidate and rerun the mode with --seat NAME.")
 
 
-def _add_common_args(parser: argparse.ArgumentParser, *, include_seat: bool = True) -> None:
-    if include_seat:
-        parser.add_argument("--seat", metavar="NAME", help="seat explicitly chosen by the human")
-        parser.add_argument("--auto", action="store_true", help="choose a seat without asking (default: ask)")
-        parser.add_argument("--routing-role", metavar="ROLE",
-                            help="document role to propose, e.g. L-Sys; does not start a seat by itself")
-    parser.add_argument(
-        "--strict", action="store_true",
-        help="fail-closed: do not allow fallback outside Governor approved candidates",
-    )
-    parser.add_argument(
-        "--allow-degraded", action="store_true",
-        help="permit fallback outside Governor approved candidates even in non-interactive/CI environments",
-    )
-    parser.add_argument(
-        "--keep-session", action="store_true",
-        help="keep local artefacts for debugging, otherwise removed at the end",
-    )
-    parser.add_argument(
-        "--timeout-seconds", metavar="SECONDS", type=_timeout_seconds_argument,
-        help=(
-            "timeout for this invocation, overrides seat.timeout_seconds "
-            f"(default: {int(DEFAULT_SEAT_TIMEOUT_SECONDS)}s)"
-        ),
-    )
+def _handlers() -> dict[str, Callable[[argparse.Namespace], None]]:
+    """The mode handlers by mode, read from this module so a caller can replace one."""
+    return {
+        "brainstorm": cmd_brainstorm,
+        "challenge": cmd_challenge,
+        "code-review": cmd_code_review,
+        "relay": cmd_relay,
+        "consult": cmd_consult,
+        "clean": cmd_clean,
+        "reset-health": cmd_reset_health,
+        "contract": cmd_contract,
+        "routing-status": cmd_routing_status,
+        "propose": cmd_propose,
+    }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    """Run one mode, and tell the person how it ended when the caller asked to be told."""
     _install_shutdown_handlers()
-    ap = argparse.ArgumentParser(prog="council", description=__doc__)
-    sub = ap.add_subparsers(dest="mode", required=True)
-
-    brainstorm = sub.add_parser("brainstorm", help="brainstorming, 1+ round with the proponent replying")
-    brainstorm.add_argument("question", help="the question to put to the council")
-    brainstorm.add_argument("--context", metavar="FILE", help="context file to attach")
-    brainstorm.add_argument("--rounds", type=int, default=1, help="number of rounds (default: 1)")
-    brainstorm.add_argument("--max-rounds", type=int, default=DEFAULT_MAX_ROUNDS, help=f"hard cap on rounds (default: {DEFAULT_MAX_ROUNDS})")
-    _add_common_args(brainstorm)
-    brainstorm.set_defaults(func=cmd_brainstorm)
-
-    challenge = sub.add_parser("challenge", help="an adversarial seat looks for a plan's dominant flaw")
-    challenge.add_argument("plan", help="the plan/proposal to put to the test")
-    challenge.add_argument("--context", metavar="FILE", help="context file to attach")
-    _add_common_args(challenge)
-    challenge.set_defaults(func=cmd_challenge)
-
-    code_review = sub.add_parser("code-review", help="cross-vendor review of a diff (vendor different from whoever wrote it)")
-    code_review.add_argument("diff", metavar="DIFF_FILE", help="file with the diff/patch to review")
-    code_review.add_argument("--context", metavar="FILE", help="additional context file (e.g. why of the change)")
-    code_review.add_argument("--author-vendor", metavar="VENDOR", help="vendor who wrote the code: blocks if it matches the seat's vendor")
-    _add_common_args(code_review)
-    code_review.set_defaults(func=cmd_code_review)
-
-    relay = sub.add_parser("relay", help="sequential multi-seat relay, up to 5 stages")
-    relay.add_argument("question", help="brief/question to pass to every stage")
-    relay.add_argument("--context", metavar="FILE", help="context file to attach")
-    relay.add_argument("--diff", metavar="DIFF_FILE", help="diff/patch to attach to the brief")
-    relay.add_argument(
-        "--sequence",
-        metavar="SPEC|NAME",
-        help="inline role=seat|fallback,... or the name of a sequence in seats.yaml",
-    )
-    relay.add_argument("--max-seats", type=int, default=DEFAULT_MAX_SEATS, help=f"hard cap on stages (1-{DEFAULT_MAX_SEATS})")
-    relay.add_argument(
-        "--continue-on-reject", action="store_true",
-        help="do not stop the relay on an intermediate VERDICT: REJECT (default: stops)",
-    )
-    relay.add_argument(
-        "--resumable", action="store_true",
-        help="persist checkpoints in the kept session so the relay can resume after an interruption",
-    )
-    relay.add_argument(
-        "--resume", metavar="SESSION", default="",
-        help="resume a kept resumable session (name or path); brief and sequence must match",
-    )
-    relay.add_argument(
-        "--allow-uncertain-rerun", action="store_true",
-        help="on resume, re-invoke a stage whose provider response may already exist (quota billed twice at most)",
-    )
-    _add_common_args(relay, include_seat=False)
-    relay.set_defaults(func=cmd_relay)
-
-    consult = sub.add_parser("consult", help="independent parallel opinions plus one aimed rebuttal round")
-    consult.add_argument("brief", help="question/plan to put to every seat independently")
-    consult.add_argument("--seat", action="append", required=True, help="seat to consult (repeatable, max 5)")
-    consult.add_argument("--context", metavar="FILE", help="context file to attach")
-    consult.add_argument("--diff", metavar="DIFF_FILE", help="diff/patch to attach to the brief")
-    consult.add_argument(
-        "--rebuttals", type=int, default=1,
-        help="aimed rebuttal rounds on disagreement (0-1; default: 1)",
-    )
-    _add_common_args(consult, include_seat=False)
-    consult.set_defaults(func=cmd_consult)
-
-    clean = sub.add_parser("clean", help="removes sessions past the TTL (retention)")
-    clean.add_argument("--ttl-days", type=int, default=DEFAULT_TTL_DAYS, help=f"default: {DEFAULT_TTL_DAYS}")
-    clean.add_argument("--all", action="store_true", help="removes every session, ignores the TTL")
-    clean.set_defaults(func=cmd_clean)
-
-    reset_health = sub.add_parser("reset-health", help="clears active error cooldowns for all seats or a specific seat")
-    reset_health.add_argument("--seat", metavar="NAME", help="seat to unblock (default: unblocks all)")
-    reset_health.set_defaults(func=cmd_reset_health)
-
-    contract = sub.add_parser("contract", help="checks the vendor CLIs still accept the flags a seat passes them (no model is invoked)")
-    contract.set_defaults(func=cmd_contract)
-
-    routing_status = sub.add_parser("routing-status", help="shows the candidates proposed and verified on this host")
-    routing_status.set_defaults(func=cmd_routing_status)
-
-    propose = sub.add_parser("propose", help="proposes verified seats, without invoking any model")
-    propose.add_argument(
-        "--mode", dest="proposal_mode", choices=("brainstorm", "challenge", "code-review", "relay"),
-        help="show the proposal for a Council mode",
-    )
-    propose.add_argument("--routing-role", metavar="ROLE", help="show the proposal for a specific role")
-    propose.set_defaults(func=cmd_propose)
-
-    args = ap.parse_args()
-    args.func(args)
-    return 0
+    args = build_parser(_handlers(), description=__doc__).parse_args(argv)
+    if not getattr(args, "notify", False):
+        args.func(args)
+        return 0
+    return run_notified(args, _OUTCOME)
 
 
 if __name__ == "__main__":
