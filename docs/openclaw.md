@@ -340,20 +340,90 @@ On Windows this is the only thing that restarts it: OpenClaw's own `gateway rest
 one, asking first unless `--yes` is given. No token is ever printed: `pending()` strips every field whose
 name looks like a secret before it reaches the screen.
 
+A node, another machine rather than a phone, gets in through a second request with an id of its own.
+`nexgen openclaw pair` lists those too, and `--approve-node <id>` shows the node's name, its platform and
+the commands it would be allowed to run before asking. An id that is not waiting is refused, because an
+approval that cannot be described is an approval nobody gave.
+
+## Due PC
+
+One gateway, one node. The gateway is the machine that holds the channels, the cron jobs, the memory and the
+model routing; the node is a machine that runs OpenClaw's commands for it. What a person reads still arrives
+through the gateway, wherever the command ran.
+
+A channel lives on one gateway at a time. The same PC can run a gateway of its own and be a node of another
+gateway, but a Telegram bot cannot answer from both.
+
+### At home: the laptop as a node of the fixed PC
+
+On the fixed PC, once:
+
+1. `nexgen openclaw setup --lan` writes `gateway.bind: "lan"` and a real token. `nexgen openclaw plan --lan`
+   shows the same change without writing it.
+   Check: `nexgen openclaw doctor` says the gateway listens on the home network.
+2. `nexgen openclaw restart` if the gateway was already running, so it binds again.
+   Check: the command prints the port answering, and the doctor agrees.
+
+On the laptop, once:
+
+1. `nexgen openclaw setup` installs the pinned release, writes the laptop's own configuration and its own
+   loopback gateway. That local gateway is not the one the node talks to, and this setup does not touch it again.
+   Check: `nexgen openclaw doctor` passes on the laptop.
+2. `nexgen openclaw node --host <address of the fixed PC>` prints the two documented routes, in order, with the
+   check after each command. It runs none of them.
+   Check: the printed commands are the ones below.
+3. Either the one-paste route: `openclaw devices join-code` on the fixed PC, then the command it prints,
+   `openclaw connect <url> --service`, on the laptop. OpenClaw approves the device and its first command surface
+   in the same step. The URL is single use, lasts about ten minutes and carries administrator access: treat it
+   like a password and paste it nowhere else.
+   Or the explicit route: `openclaw node install --host <address> --port 18789` and `openclaw node start` on the
+   laptop, then `nexgen openclaw pair` on the fixed PC to read the device request, `nexgen openclaw pair
+   --approve <device id>` to admit it, a reconnect that asks for the commands, and `nexgen openclaw pair
+   --approve-node <node request id>` to allow them.
+   Check: `openclaw node status --json` on the laptop.
+4. On Linux, `loginctl enable-linger <user>` once: without it the systemd user service stops when the last
+   session closes. `nexgen doctor` already says when lingering is off.
+
+On the fixed PC, to see the result: `nexgen openclaw doctor --nodes` adds the paired nodes to the report, and
+`nexgen openclaw pair` lists them with their state. Neither approves anything on its own.
+
+### Outside the house
+
+The laptop keeps its own gateway in loopback, with no channels. That is what a person reads from when the
+fixed PC is out of reach, and it is why the doctor's line about a loopback gateway is information rather than
+a fault there: a node on another PC cannot reach it, and on that machine nothing should.
+
+The node connection to the fixed PC exists only while the two machines can reach each other. Approvals are not
+lost when it is down, and nothing else is either: memory, channels and cron jobs never lived on the laptop.
+
+### What stays the person's
+
+- The address of the other machine. The engine does not guess it and does not read it from anywhere.
+- Both approvals, the device and the commands. Nothing is approved automatically, and every request says which
+  machine asks and what it would be allowed to run.
+- Which gateway owns a channel. Putting one bot on both gateways is the mistake this page exists to prevent.
+
 ## Commands
 
 `nexgen openclaw plan [--json] [--lan] [--acpx]` reads the configuration in force, computes what the engine
 would write, and prints what it would add, what it would change, what it no longer proposes, and which keys
 are the person's and stay. It writes nothing.
 
-`nexgen openclaw doctor [--json]` checks installation, version against the pin, the configuration's validity,
-`:latest` ids, caged local models, whether the evidence check runs and for which local models, the heartbeat,
-the gateway's bind and authentication, Google entries, ACP seats, agents on subscriptions this machine does
-not have, which background job would wake a local model, whether the gateway watches the whole home
-recursively, whether the gateway is listening, whether every agent has a fallback chain, a second gateway
-from the Microsoft Store, and how many skills and servers OpenClaw created that the canonical library does
-not declare yet. `nexgen doctor` runs the same checks as part of its own report, and says nothing at all on a
-machine that never installed OpenClaw and never declared the module.
+`nexgen openclaw doctor [--json] [--nodes]` checks installation, version against the pin, the configuration's
+validity, `:latest` ids, caged local models, whether the evidence check runs and for which local models, the
+heartbeat, the gateway's bind and authentication, Google entries, ACP seats, agents on subscriptions this
+machine does not have, which background job would wake a local model, whether the gateway watches the whole
+home recursively, whether the gateway is listening, whether every agent has a fallback chain, a second
+gateway from the Microsoft Store, and how many skills and servers OpenClaw created that the canonical library
+does not declare yet. `--nodes` adds the nodes the running gateway knows, which costs one run of OpenClaw's
+CLI and is therefore never done unless asked; the line about the network needs no query, so it is always
+there. `nexgen doctor` runs the same checks as part of its own report, without `--nodes`, and says nothing at
+all on a machine that never installed OpenClaw and never declared the module.
+
+`nexgen openclaw node --host <address> [--port 18789] [--name <label>]` prints the commands that make this
+machine a node of a gateway elsewhere: OpenClaw's one-paste route with a join code, and the explicit route with
+its two approvals. It writes nothing and runs nothing, because `openclaw node install` already writes the
+service on each platform.
 
 `nexgen openclaw setup` applies that same plan: it installs the pinned release, onboards when there is no
 file, merges the owned sections with a backup beside them, writes the agent manuals, installs and starts the
@@ -371,6 +441,6 @@ loads the canonical copy like every other CLI; an adopted server enters the MCP 
 same writer `nexgen mcp add` uses. The doctor says how much is still waiting and adopts nothing by itself:
 adoption is a person's act.
 
-`nexgen openclaw restart` and `nexgen openclaw pair` bring the gateway back and let a phone in; they are
-described above, with the rest of the installation. `nexgen openclaw stop` takes it down and waits until the
-port is free, which is what a hand edit of `openclaw.json` needs.
+`nexgen openclaw restart` and `nexgen openclaw pair` bring the gateway back and let a phone, or another
+machine, in; they are described above, with the rest of the installation. `nexgen openclaw stop` takes it down
+and waits until the port is free, which is what a hand edit of `openclaw.json` needs.

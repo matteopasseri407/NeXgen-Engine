@@ -176,6 +176,17 @@ def test_the_doctor_with_a_stopped_gateway_says_nothing_about_nodes(tmp_path):
     assert outcomes["openclaw.gateway.lan"].severity == Severity.OK
 
 
+def test_the_nodes_flag_is_what_turns_the_question_on():
+    from nexgen_core.cli import build_parser
+
+    parser = build_parser()
+    openclaw = parser._subparsers._group_actions[0].choices["openclaw"]
+    doctor = openclaw._subparsers._group_actions[0].choices["doctor"]
+
+    assert doctor.parse_args([]).nodes is False
+    assert doctor.parse_args(["--nodes"]).nodes is True
+
+
 def test_the_unscheduled_doctor_asks_nobody_anything(tmp_path):
     """`nexgen doctor` runs on the updater's schedule with no lister, and stays passive."""
     config_path = tmp_path / "home" / ".openclaw" / "openclaw.json"
