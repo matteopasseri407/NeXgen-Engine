@@ -53,7 +53,6 @@ def clean_config() -> dict:
             },
         },
         "tools": {
-            "toolSearch": False,
             "exec": {"security": "allowlist", "ask": "on-miss"},
             "byProvider": {"ollama/qwen3:8b": {"profile": "messaging", "deny": ["write"]}},
             "agentToAgent": {"enabled": True, "allow": [["main", "capo"], ["capo", "main"]]},
@@ -537,3 +536,91 @@ def test_an_empty_report_says_why_it_is_empty():
     text = render([])
     assert "OpenClaw" in text
     assert "PASS" not in text
+
+
+def test_tool_search_active_by_default(tmp_path):
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()))
+    ts = by_id(outcomes)["openclaw.tool_search"]
+    assert ts.severity == Severity.OK
+    assert "Tool Search is active" in ts.message
+    assert "default" in ts.message
+
+
+def test_tool_search_explicitly_configured(tmp_path):
+    cfg = clean_config()
+    cfg["tools"]["toolSearch"] = {"mode": "directory"}
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg))
+    ts = by_id(outcomes)["openclaw.tool_search"]
+    assert ts.severity == Severity.OK
+    assert "directory" in ts.message
+
+
+def test_tool_search_disabled_with_few_mcp_servers_passes(tmp_path):
+    cfg = clean_config()
+    cfg["tools"]["toolSearch"] = False
+    cfg["mcp"] = {
+        "servers": {
+            "srv1": {"command": "node", "args": ["s1.js"]},
+            "srv2": {"command": "node", "args": ["s2.js"]},
+        }
+    }
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg))
+    ts = by_id(outcomes)["openclaw.tool_search"]
+    assert ts.severity == Severity.OK
+    assert "disabled" in ts.message
+
+
+def test_tool_search_disabled_with_many_mcp_servers_warns(tmp_path):
+    cfg = clean_config()
+    cfg["tools"]["toolSearch"] = False
+    cfg["mcp"] = {
+        "servers": {
+            f"srv{i}": {"command": "node", "args": [f"s{i}.js"]}
+            for i in range(4)
+        }
+    }
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg))
+    ts = by_id(outcomes)["openclaw.tool_search"]
+    assert ts.severity == Severity.WARN
+    assert "4 MCP servers" in ts.message
+    assert "openclaw.json" in (ts.action or "")
+
+
+def test_mcp_lazy_absent_passes(tmp_path):
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()))
+    lazy = by_id(outcomes)["openclaw.mcp.lazy"]
+    assert lazy.severity == Severity.OK
+
+
+def test_mcp_lazy_mounted_by_engine_fails(tmp_path):
+    cfg = clean_config()
+    cfg["mcp"] = {
+        "servers": {
+            "lazy-mcp": {
+                "command": "python",
+                "args": ["/path/to/lazy-mcp.py"],
+                "env": {"LAZY_MCP_CLI": "openclaw"},
+            }
+        }
+    }
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg))
+    lazy = by_id(outcomes)["openclaw.mcp.lazy"]
+    assert lazy.severity == Severity.BROKEN
+    assert "lazy-mcp" in lazy.message
+
+
+def test_mcp_lazy_mounted_by_user_warns(tmp_path):
+    cfg = clean_config()
+    cfg["mcp"] = {
+        "servers": {
+            "lazy-mcp": {
+                "command": "node",
+                "args": ["custom-proxy.js"],
+            }
+        }
+    }
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg))
+    lazy = by_id(outcomes)["openclaw.mcp.lazy"]
+    assert lazy.severity == Severity.WARN
+    assert "custom" in lazy.message.lower()
+

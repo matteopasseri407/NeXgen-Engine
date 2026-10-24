@@ -1532,6 +1532,24 @@ MESSAGES: dict[str, str] = {
         "Lancia 'nexgen openclaw setup': li collega all'agente main e non tocca i tuoi binding.",
     "Every configured channel has an agent binding.":
         "Ogni canale configurato ha un binding verso un agente.",
+    "Tool Search is active ({mode}): MCP and runtime tools are deferred behind search and call.":
+        "Tool Search è attivo ({mode}): i tool MCP e di runtime sono differiti dietro ricerca e chiamata.",
+    "Tool Search is disabled with {count} MCP servers mounted: direct schemas add large overhead to every prompt.":
+        "Tool Search è disattivato con {count} server MCP montati: gli schemi diretti appesantiscono ogni prompt.",
+    "Remove 'tools.toolSearch' from openclaw.json to restore native Tool Search.":
+        "Rimuovi 'tools.toolSearch' da openclaw.json per ripristinare il Tool Search nativo.",
+    "Tool Search is disabled ({count} MCP servers mounted, direct schemas in use).":
+        "Tool Search è disattivato ({count} server MCP montati, in uso gli schemi diretti).",
+    "No lazy-mcp gateway is mounted in OpenClaw (connectors are direct).":
+        "Nessun gateway lazy-mcp è montato in OpenClaw (i connettori sono diretti).",
+    "The lazy-mcp gateway is mounted inside OpenClaw by the engine: OpenClaw connects MCP servers directly.":
+        "Il gateway lazy-mcp è montato dentro OpenClaw dal motore: OpenClaw collega i server MCP direttamente.",
+    "Run 'nexgen sync' or 'nexgen mcp render' to remove the engine's lazy-mcp entry.":
+        "Esegui 'nexgen sync' o 'nexgen mcp render' per rimuovere la voce lazy-mcp del motore.",
+    "A custom 'lazy-mcp' connector is configured under mcp.servers; OpenClaw does not use the engine gateway.":
+        "Un connettore 'lazy-mcp' personalizzato è configurato in mcp.servers; OpenClaw non usa il gateway del motore.",
+    "Verify if this custom connector is needed or rename it to avoid collision with the engine gateway.":
+        "Verifica se questo connettore personalizzato serve o rinominalo per evitare collisioni con il gateway del motore.",
     "The setup adds a binding for these channels: {pairs}.":
         "Il setup aggiunge un binding per questi canali: {pairs}.",
     "The gateway asks for a token.":

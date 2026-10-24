@@ -183,6 +183,76 @@ def _check_acp(config: dict[str, Any]) -> CheckOutcome:
     )
 
 
+MANY_MCP_SERVERS_THRESHOLD = 4
+
+
+def _check_tool_search(config: dict[str, Any]) -> CheckOutcome:
+    """Tool Search: active by default in OpenClaw; warned if disabled with many MCP servers."""
+    tools = config.get("tools") if isinstance(config.get("tools"), dict) else {}
+    ts = tools.get("toolSearch")
+    mcp = config.get("mcp") if isinstance(config.get("mcp"), dict) else {}
+    servers = mcp.get("servers") if isinstance(mcp.get("servers"), dict) else {}
+    mounted_count = sum(1 for s in servers.values() if isinstance(s, dict) and s.get("enabled", True) is not False)
+
+    if ts is False:
+        if mounted_count >= MANY_MCP_SERVERS_THRESHOLD:
+            return CheckOutcome(
+                id="openclaw.tool_search",
+                severity=Severity.WARN,
+                message=t(
+                    "Tool Search is disabled with {count} MCP servers mounted: direct schemas add large overhead to every prompt.",
+                    count=mounted_count,
+                ),
+                action=t("Remove 'tools.toolSearch' from openclaw.json to restore native Tool Search."),
+            )
+        return CheckOutcome(
+            id="openclaw.tool_search",
+            severity=Severity.OK,
+            message=t(
+                "Tool Search is disabled ({count} MCP servers mounted, direct schemas in use).",
+                count=mounted_count,
+            ),
+        )
+
+    mode = t("default") if ts is None else (str(ts.get("mode")) if isinstance(ts, dict) and ts.get("mode") else t("configured"))
+    return CheckOutcome(
+        id="openclaw.tool_search",
+        severity=Severity.OK,
+        message=t(
+            "Tool Search is active ({mode}): MCP and runtime tools are deferred behind search and call.",
+            mode=mode,
+        ),
+    )
+
+
+def _check_mcp_lazy(config: dict[str, Any]) -> CheckOutcome:
+    """The lazy-mcp gateway: must never be mounted by the engine in OpenClaw."""
+    from nexgen_core.mcp_render.openclaw import is_engine_lazy_mcp
+
+    mcp = config.get("mcp") if isinstance(config.get("mcp"), dict) else {}
+    servers = mcp.get("servers") if isinstance(mcp.get("servers"), dict) else {}
+    entry = servers.get("lazy-mcp")
+    if entry is None:
+        return CheckOutcome(
+            id="openclaw.mcp.lazy",
+            severity=Severity.OK,
+            message=t("No lazy-mcp gateway is mounted in OpenClaw (connectors are direct)."),
+        )
+    if is_engine_lazy_mcp(entry):
+        return CheckOutcome(
+            id="openclaw.mcp.lazy",
+            severity=Severity.BROKEN,
+            message=t("The lazy-mcp gateway is mounted inside OpenClaw by the engine: OpenClaw connects MCP servers directly."),
+            action=t("Run 'nexgen sync' or 'nexgen mcp render' to remove the engine's lazy-mcp entry."),
+        )
+    return CheckOutcome(
+        id="openclaw.mcp.lazy",
+        severity=Severity.WARN,
+        message=t("A custom 'lazy-mcp' connector is configured under mcp.servers; OpenClaw does not use the engine gateway."),
+        action=t("Verify if this custom connector is needed or rename it to avoid collision with the engine gateway."),
+    )
+
+
 def _listening(config: dict[str, Any], connect: doctor_runtime.Connect | None,
                home: Path) -> CheckOutcome:
     """The gateway probe, asked only where it can be about something here.
@@ -260,6 +330,8 @@ def _config_outcomes(
         exposure(config),
         _check_google(config),
         _check_acp(config),
+        _check_tool_search(config),
+        _check_mcp_lazy(config),
         check_agent_models(config, snapshot),
         background.report(config),
         observation.report(config, path, home_dir, platform),
