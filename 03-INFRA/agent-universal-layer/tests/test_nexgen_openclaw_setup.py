@@ -36,6 +36,15 @@ def _english_and_no_sockets(monkeypatch):
     """English output to assert on, and never a real TCP connect to port 18789."""
     i18n.set_language("en")
     monkeypatch.setattr("nexgen_core.openclaw.doctor_runtime.default_connect", lambda host, port, timeout: False)
+
+    def _fake_plugin_step(setup):
+        if (setup.state_dir / "extensions" / PLUGIN_ID / "index.mjs").is_file():
+            setup.out(i18n.t("The engine plugin {plugin} is deposited and enabled.", plugin=PLUGIN_ID))
+        else:
+            setup.out(i18n.t("The engine plugin {plugin} is not deposited on this machine: not enabled.", plugin=PLUGIN_ID))
+        return True
+
+    monkeypatch.setattr("nexgen_core.openclaw.setup.plugin_step", _fake_plugin_step)
     yield
     i18n.set_language(None)
 
@@ -1135,3 +1144,17 @@ def test_setup_enables_the_openclaw_mcp_server_in_local_state(tmp_path):
     renderer = McpRenderer(vault_data=machine.vault, home=machine.home)
     resolved = renderer.load_resolved_servers("claude")
     assert "openclaw" in resolved
+
+
+def test_find_engine_hooks_dir_returns_none_when_explicit_root_lacks_hooks(tmp_path: Path) -> None:
+    from nexgen_core.openclaw.setup_steps import _find_engine_hooks_dir
+
+    empty_engine_root = tmp_path / "engine_without_hooks"
+    empty_engine_root.mkdir(parents=True, exist_ok=True)
+
+    # Module hooks exist in this repository checkout
+    assert _find_engine_hooks_dir(None) is not None
+
+    # An explicit engine root without hooks must return None (no fallback to module hooks)
+    assert _find_engine_hooks_dir(empty_engine_root) is None
+

@@ -449,14 +449,18 @@ def phone_step(setup: Setup) -> None:
 
 
 def _find_engine_hooks_dir(engine_root: Path | None) -> Path | None:
-    candidates = []
     if engine_root:
-        candidates.extend([
+        for candidate in (
             engine_root / "03-INFRA" / "agent-universal-layer" / "hooks",
             engine_root / "agent-universal-layer" / "hooks",
-        ])
-    candidates.append(Path(__file__).resolve().parents[3] / "agent-universal-layer" / "hooks")
-    return next((c for c in candidates if c.is_dir()), None)
+        ):
+            if candidate.is_dir():
+                return candidate
+        return None
+    candidate = Path(__file__).resolve().parents[3] / "agent-universal-layer" / "hooks"
+    if candidate.is_dir():
+        return candidate
+    return None
 
 
 def is_plugin_verified(setup: Setup) -> bool:
