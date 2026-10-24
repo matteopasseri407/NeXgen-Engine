@@ -1,4 +1,4 @@
-"""The tools: the real time, a folder to open, the browser, search.
+"""The tools: the real time, a folder to open, the browser.
 
 These are small commands the engine ships because agents use them. Each
 stays its own module: this is just the hook into the dispatcher.
@@ -35,7 +35,6 @@ def _register_utilities(sub) -> None:
     q.add_argument("args", nargs="*", help=t("Additional Chrome arguments or URLs"))
     q.set_defaults(func=cmd_chrome)
 
-    _register_firecrawl(tsub)
     _register_update_notifier(tsub)
     p.set_defaults(func=lambda a: _usage(p))
 
@@ -44,34 +43,6 @@ def _register_utilities(sub) -> None:
     # agent-universal-layer/council/council.py where the logic lives.
     c = sub.add_parser("council", help=t("Convene a review across models from different vendors"))
     c.set_defaults(func=cmd_council)
-
-
-def _register_firecrawl(tsub) -> None:
-    """One local service, its four verbs: search and scrape through the engine's own instance."""
-    q = tsub.add_parser("firecrawl", help=t("Search and scraping via the local instance"))
-    fsub = q.add_subparsers(dest="firecrawl_action", metavar="action")
-
-    qs = fsub.add_parser("status", help=t("Check the service status"))
-    qs.set_defaults(func=lambda a: _run("firecrawl", ["status"]))
-
-    qs = fsub.add_parser("scrape", help=t("Scrape a URL"))
-    qs.add_argument("url", help=t("URL to fetch"))
-    qs.add_argument("-f", "--format", default="markdown", help=t("Comma-separated formats (markdown, links)"))
-    qs.add_argument("--json", action="store_true", help=t("Raw JSON output"))
-    qs.add_argument("-o", "--output", help=t("Save the output to a file"))
-    qs.set_defaults(func=_forward_firecrawl_scrape)
-
-    qs = fsub.add_parser("search", help=t("Run a web search"))
-    qs.add_argument("query", nargs="+", help=t("Search terms"))
-    qs.add_argument("--limit", type=int, default=20, help=t("Maximum number of results"))
-    qs.add_argument("--sources", help=t("Comma-separated sources (web, news, images)"))
-    qs.add_argument("--scrape", action="store_true", help=t("Also fetch the content of the results"))
-    qs.add_argument("--scrape-formats", default="markdown", help=t("Scraping formats"))
-    qs.add_argument("--json", action="store_true", help=t("Raw JSON output"))
-    qs.add_argument("-o", "--output", help=t("Save the output to a file"))
-    qs.set_defaults(func=_forward_firecrawl_search)
-
-    q.set_defaults(func=lambda a: _run("firecrawl", _all(a)))
 
 
 def _register_update_notifier(tsub) -> None:
@@ -245,40 +216,6 @@ def cmd_chrome(args) -> int:
         argv.extend(args.args)
     argv.extend(_all(args))
     return chrome_main(argv)
-
-
-def _forward_firecrawl_scrape(args) -> int:
-    from nexgen_core.tools.firecrawl import main as fc_main
-
-    argv = ["scrape", args.url]
-    if getattr(args, "format", None):
-        argv.extend(["-f", args.format])
-    if getattr(args, "json", False):
-        argv.append("--json")
-    if getattr(args, "output", None):
-        argv.extend(["-o", args.output])
-    argv.extend(_all(args))
-    return fc_main(argv)
-
-
-def _forward_firecrawl_search(args) -> int:
-    from nexgen_core.tools.firecrawl import main as fc_main
-
-    argv = ["search", *args.query]
-    if getattr(args, "limit", None) is not None:
-        argv.extend(["--limit", str(args.limit)])
-    if getattr(args, "sources", None):
-        argv.extend(["--sources", args.sources])
-    if getattr(args, "scrape", False):
-        argv.append("--scrape")
-    if getattr(args, "scrape_formats", None):
-        argv.extend(["--scrape-formats", args.scrape_formats])
-    if getattr(args, "json", False):
-        argv.append("--json")
-    if getattr(args, "output", None):
-        argv.extend(["-o", args.output])
-    argv.extend(_all(args))
-    return fc_main(argv)
 
 
 def cmd_council(args) -> int:

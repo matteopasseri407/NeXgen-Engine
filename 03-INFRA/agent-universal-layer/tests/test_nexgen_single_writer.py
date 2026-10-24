@@ -19,7 +19,6 @@ CORE = Path(__file__).resolve().parents[2] / "scripts" / "nexgen_core"
 ALLOWED = {
     "files.py": "the single writer itself",
     "release_trust.py": "a signers file inside a throwaway directory that is deleted right after",
-    "tools/firecrawl.py": "the output file the user named on the command line",
     "vault/groom.py": "per-run log files under the state directory, never read back as state",
     "stack/secrets.py": "creates the file 0600 with os.open before the first byte, which the writer cannot",
     "tools/notifier_boot.py": "its own mkstemp + fdopen sequence for a boot script",

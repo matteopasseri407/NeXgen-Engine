@@ -1,4 +1,4 @@
-"""Unit test per i tool unificati di nexgen_core/tools/: now, open_folder, chrome, firecrawl."""
+"""Unit test per i tool unificati di nexgen_core/tools/: now, open_folder, chrome."""
 from __future__ import annotations
 
 import os
@@ -13,7 +13,6 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.tools.chrome import get_profile_dir
-from nexgen_core.tools.firecrawl import FirecrawlClient
 from nexgen_core.tools.now import format_human, format_shell, get_agent_now_data
 from nexgen_core.tools.open_folder import open_folder
 
@@ -87,9 +86,13 @@ def test_chrome_profile_windows_fallback(monkeypatch, tmp_path: Path):
 
 
 def test_firecrawl_client_structure():
-    client = FirecrawlClient(api_url="http://127.0.0.1:33002", api_key="test-key")
-    assert client.api_url == "http://127.0.0.1:33002"
-    assert client.api_key == "test-key"
+    """The wrapper is retired: the connector is the vendor's MCP server, so no
+    engine client speaks the Firecrawl HTTP API any more."""
+    with pytest.raises(ImportError):
+        import nexgen_core.tools.firecrawl  # noqa: F401
+    tools_dir = SCRIPTS_DIR / "nexgen_core" / "tools"
+    assert not (tools_dir / "firecrawl.py").exists()
+    assert "firecrawl" not in {path.name for path in tools_dir.iterdir()}
 
 
 def test_shims_installation(tmp_path: Path):
@@ -147,7 +150,6 @@ ENTRY_POINTS_RUN_BY_PATH = (
     "03-INFRA/scripts/agent-skill.py",
     "03-INFRA/scripts/skills-sync.py",
     "03-INFRA/scripts/vault-map.py",
-    "03-INFRA/scripts/firecrawl-search-health.py",
     "03-INFRA/scripts/check_required_rules.py",
     "03-INFRA/agent-universal-layer/mcp/render.py",
 )

@@ -57,7 +57,7 @@ def _extract_probe_target(entry: dict) -> str | None:
 
     An http connector declares it directly in `url`. A stdio connector can
     still depend on a local backend reachable over HTTP, declared in `env`
-    (e.g. FIRECRAWL_API_URL) or in `args` (e.g. Playwright's CDP endpoint):
+    (e.g. VAULT_OCR_API_URL) or in `args` (e.g. Playwright's CDP endpoint):
     we look for it there instead of assuming which connector exposes it and
     how.
     """

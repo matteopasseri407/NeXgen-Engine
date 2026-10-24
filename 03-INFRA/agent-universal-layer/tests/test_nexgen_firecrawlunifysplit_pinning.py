@@ -1,17 +1,16 @@
-"""Pinning dell'unify probe di firecrawl prima del refactor.
+"""Pinning del ritiro della superficie `firecrawl-local`.
 
-Fissa il comportamento attuale (non quello desiderato): probe su backend
-finto ritorna l'esito atteso, probe stabile a parita' di backend finto,
-firme pubbliche invariate. Solo chiamate finte, mai rete, mai chiavi vere.
+Il wrapper era insieme un verbo del CLI, un alias storico installato su ogni
+piattaforma, un punto d'ingresso del pacchetto e una voce della tabella di sync.
+Il connettore è un server MCP, quindi quella superficie non deve poter
+rientrare da una di quelle porte. Solo introspezione del parser e del
+filesystem: nessun processo, nessuna rete.
 """
 from __future__ import annotations
 
-import inspect
-import io
-import json
+import argparse
+import importlib
 import sys
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 import pytest
@@ -20,144 +19,86 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-import nexgen_core.tools.firecrawl_health as health_mod  # noqa: E402
+from nexgen_core.cli import build_parser  # noqa: E402
+from nexgen_core.shims import COMMANDS, LEGACY_ALIASES, install_shims  # noqa: E402
+
+#: Le voci di traduzione che esistevano solo per l'aiuto del wrapper.
+RETIRED_TRANSLATIONS = ("Firecrawl Local CLI (v2)", "Check the service status", "local default")
+
+#: I file che potrebbero riportare l'alias in vita.
+ALIAS_TABLES = ("nexgen_core/shims.py", "nexgen_core/entrypoints.py", "agent_sync.py")
 
 
-def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    import socket
-
-    def _blocked(*args, **kwargs):
-        raise AssertionError("rete toccata")
-
-    monkeypatch.setattr(socket, "create_connection", _blocked)
-
-
-def _fake_urlopen_json(monkeypatch: pytest.MonkeyPatch, payload: object, seen: dict | None = None):
-    class _FakeResp(io.StringIO):
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-    def _fake(request, timeout=None):
-        if seen is not None:
-            seen["url"] = request.full_url
-            seen["timeout"] = timeout
-            try:
-                seen["body"] = json.loads(request.data.decode("utf-8"))
-            except Exception:
-                seen["body"] = None
-            seen["auth"] = request.get_header("Authorization")
-        return _FakeResp(json.dumps(payload))
-
-    monkeypatch.setattr(urllib.request, "urlopen", _fake)
+def _subparser(parser: argparse.ArgumentParser, name: str) -> argparse.ArgumentParser:
+    """The named sub-command of a parser, without starting anything."""
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction) and name in action.choices:
+            return action.choices[name]
+    raise AssertionError(f"nessun sottocomando '{name}'")
 
 
-def _fake_urlopen_error(monkeypatch: pytest.MonkeyPatch, exc: BaseException):
-    def _fake(request, timeout=None):
-        raise exc
-
-    monkeypatch.setattr(urllib.request, "urlopen", _fake)
-
-
-def test_probe_su_backend_finto_ritorna_esito_ok(monkeypatch: pytest.MonkeyPatch) -> None:
-    _no_network(monkeypatch)
-    seen: dict = {}
-    _fake_urlopen_json(
-        monkeypatch,
-        {"success": True, "data": [{"url": "https://example.com/"}]},
-        seen,
+def test_il_verbo_firecrawl_non_e_piu_un_sottocomando() -> None:
+    tools = _subparser(build_parser(), "tool")
+    verbs = {action.dest for action in tools._actions if isinstance(action, argparse._SubParsersAction)}
+    choices = next(
+        action.choices for action in tools._actions if isinstance(action, argparse._SubParsersAction)
     )
-    ok, count, detail = health_mod.probe("http://finto.invalid", "finta-chiave", 5.0)
-    assert ok is True
-    assert count == 1
-    assert detail == "ok"
-    assert seen["url"] == "http://finto.invalid/v2/search"
-    assert seen["body"] == {"query": health_mod.DEFAULT_QUERY, "limit": 1}
-    assert seen["auth"] == "Bearer finta-chiave"
+    assert "firecrawl" not in choices
+    assert {"now", "open", "chrome", "update-notifier"} <= set(choices)
+    assert verbs, "il verbo tool non ha sottocomandi: la verifica sarebbe vuota"
 
 
-def test_probe_su_backend_finto_ritorna_esiti_di_fallimento(monkeypatch: pytest.MonkeyPatch) -> None:
-    _no_network(monkeypatch)
-    # Risposta non andata a buon fine.
-    _fake_urlopen_json(monkeypatch, {"success": False, "data": []})
-    ok, count, detail = health_mod.probe("http://finto.invalid", "finta-chiave", 5.0)
-    assert (ok, count, detail) == (False, 0, "Firecrawl returned an unsuccessful response")
-    # Nessun risultato da example.com.
-    _fake_urlopen_json(monkeypatch, {"success": True, "data": [{"url": "https://altro.invalid/"}]})
-    ok, count, detail = health_mod.probe("http://finto.invalid", "finta-chiave", 5.0)
-    assert ok is False
-    assert detail == "search returned no result from example.com"
-    # Errore di rete finto.
-    _fake_urlopen_error(monkeypatch, urllib.error.URLError("finto giu"))
-    ok, count, detail = health_mod.probe("http://finto.invalid", "finta-chiave", 5.0)
-    assert ok is False and count == 0
-    assert detail.startswith("request failed:")
+def test_nessun_alias_storico_si_chiama_firecrawl_local() -> None:
+    assert "firecrawl-local" not in LEGACY_ALIASES
+    assert "firecrawl-local" not in dict(COMMANDS)
+    assert "agent-sync" in LEGACY_ALIASES and "council" in LEGACY_ALIASES
 
 
-def test_probe_stabile_a_parita_di_backend_finto(monkeypatch: pytest.MonkeyPatch) -> None:
-    _no_network(monkeypatch)
-    _fake_urlopen_json(monkeypatch, {"success": True, "data": [{"url": "https://example.com/"}]})
-    first = health_mod.probe("http://finto.invalid", "finta-chiave", 5.0)
-    second = health_mod.probe("http://finto.invalid", "finta-chiave", 5.0)
-    assert first == second == (True, 1, "ok")
+def test_il_pacchetto_non_registra_l_entry_point() -> None:
+    entrypoints = importlib.import_module("nexgen_core.entrypoints")
+    assert not hasattr(entrypoints, "firecrawl_local")
+    assert not [name for name in dir(entrypoints) if "firecrawl" in name]
+    assert hasattr(entrypoints, "agent_sync") and hasattr(entrypoints, "council")
 
 
-def test_probe_striscia_la_barra_finale_dell_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    _no_network(monkeypatch)
-    seen: dict = {}
-    _fake_urlopen_json(
-        monkeypatch,
-        {"success": True, "data": [{"url": "https://example.com/"}]},
-        seen,
-    )
-    health_mod.probe("http://finto.invalid/", "finta-chiave", 5.0)
-    assert seen["url"] == "http://finto.invalid/v2/search"
+def test_il_sync_non_installa_lo_shim() -> None:
+    agent_sync = importlib.import_module("agent_sync")
+    assert "firecrawl-local" not in agent_sync.LINKED_COMMANDS
+    assert "firecrawl-search-health" not in str(agent_sync.LINKED_COMMANDS)
+    assert "agent-sync" in agent_sync.LINKED_COMMANDS
 
 
-def test_helper_di_probe_fissati() -> None:
-    assert health_mod.DEFAULT_QUERY == '"Example Domain" site:example.com'
-    assert health_mod.extract_urls({"data": {"web": [{"url": "https://example.com/a"}]}}) == [
-        "https://example.com/a"
-    ]
-    assert health_mod.extract_urls({"data": [{"url": "https://example.com/b"}]}) == [
-        "https://example.com/b"
-    ]
-    assert health_mod.extract_urls({"data": None}) == []
-    assert health_mod.is_expected_result("https://example.com/") is True
-    assert health_mod.is_expected_result("https://sub.example.com/x") is True
-    assert health_mod.is_expected_result("https://altro.invalid/") is False
+@pytest.mark.parametrize("source, name", [(path, "firecrawl-local") for path in ALIAS_TABLES])
+def test_nessuna_tabella_di_alias_nomina_il_wrapper(source: str, name: str) -> None:
+    text = (SCRIPTS_DIR / source).read_text(encoding="utf-8")
+    assert name not in text
+    assert "agent-sync" in text, f"{source} non è la tabella degli alias"
 
 
-def test_firme_pubbliche_invariate() -> None:
-    assert list(inspect.signature(health_mod.probe).parameters) == ["api_url", "api_key", "timeout"]
-    assert list(inspect.signature(health_mod.read_cached_success).parameters) == [
-        "path",
-        "ttl_seconds",
-        "now",
-    ]
-    assert list(inspect.signature(health_mod.extract_urls).parameters) == ["payload"]
-    assert list(inspect.signature(health_mod.is_expected_result).parameters) == ["url"]
-    assert list(inspect.signature(health_mod.write_success).parameters) == [
-        "path",
-        "now",
-        "result_count",
-    ]
-    assert list(inspect.signature(health_mod.parse_args).parameters) == []
-    assert list(inspect.signature(health_mod.main).parameters) == []
+@pytest.mark.parametrize("text", RETIRED_TRANSLATIONS)
+def test_nessuna_traduzione_porta_l_aiuto_del_wrapper(text: str) -> None:
+    from nexgen_core import i18n
+
+    catalog = i18n._load_catalog("it")
+    assert text not in catalog
+    assert len(catalog) > 200, "il catalogo italiano non si è caricato"
 
 
-def test_unify_delega_senza_cambiare_esito(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Se firecrawl espone probe, deve dare lo stesso esito (wrapper che delega)."""
-    _no_network(monkeypatch)
-    import nexgen_core.tools.firecrawl as fc_mod
+def test_il_sync_scrive_gli_alias_rimasti_e_non_il_wrapper(tmp_path: Path) -> None:
+    """L'installer materializza la tabella: una voce in meno si vede qui, non sulla macchina."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    install_shims(bin_dir=bin_dir, home=tmp_path / "home")
 
-    if not hasattr(fc_mod, "probe"):
-        pytest.skip("unify non ancora applicata: solo health espone probe")
-    _fake_urlopen_json(monkeypatch, {"success": True, "data": [{"url": "https://example.com/"}]})
-    expected = (True, 1, "ok")
-    assert health_mod.probe("http://finto.invalid", "finta-chiave", 5.0) == expected
-    _fake_urlopen_json(monkeypatch, {"success": True, "data": [{"url": "https://example.com/"}]})
-    assert fc_mod.probe("http://finto.invalid", "finta-chiave", 5.0) == expected
-    assert list(inspect.signature(fc_mod.probe).parameters) == ["api_url", "api_key", "timeout"]
+    written = {path.name for path in bin_dir.iterdir()}
+    assert any(name.startswith("agent-sync") for name in written)
+    assert not [name for name in written if "firecrawl" in name]
+    assert len(written) >= len(LEGACY_ALIASES)
+
+
+def test_l_aiuto_del_verbo_tool_non_promette_piu_la_ricerca() -> None:
+    parser = build_parser()
+    assert "firecrawl" not in parser.format_help().lower()
+    tools_help = _subparser(parser, "tool").format_help().lower()
+    assert "firecrawl" not in tools_help
+    assert "now" in tools_help

@@ -569,25 +569,6 @@ MESSAGES: dict[str, str] = {
     "{name}: did not stop ({detail})": "{name}: non si è fermato ({detail})",
     "Unknown service '{name}'.": "Servizio '{name}' sconosciuto.",
 
-    # --- tools/firecrawl.py ---
-    "Firecrawl Local CLI (v2)": "CLI locale di Firecrawl (v2)",
-    "Check the service status": "Controlla lo stato del servizio",
-    "Scrape a URL": "Esegue lo scrape di un URL",
-    "URL to fetch": "URL da scaricare",
-    "Comma-separated formats (markdown, links)": "Formati separati da virgola (markdown, links)",
-    "Raw JSON output": "Output JSON grezzo",
-    "Save the output to a file": "Salva l'output su file",
-    "Run a web search": "Esegue una ricerca web",
-    "Search terms": "Termini di ricerca",
-    "Maximum number of results": "Numero massimo di risultati",
-    "Comma-separated sources (web, news, images)": "Sorgenti separate da virgola (web, news, images)",
-    "Also fetch the content of the results": "Scarica anche il contenuto dei risultati",
-    "Scraping formats": "Formati di scraping",
-    "local default": "predefinito locale",
-    "status: up": "stato: attivo",
-    "status: unreachable ({error})": "stato: non raggiungibile ({error})",
-    "unknown error": "errore sconosciuto",
-
     # --- tools/chrome.py ---
     "agent-chrome: Chrome or Chromium not found on this system.": "agent-chrome: Chrome o Chromium non trovato su questo sistema.",
     "agent-chrome: error launching Chrome ({error})": "agent-chrome: errore nell'avvio di Chrome ({error})",
