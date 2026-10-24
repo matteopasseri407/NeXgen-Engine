@@ -110,7 +110,6 @@ class Doctor:
         state_dir: Path | None = None,
         home: Path | None = None,
         engine_root: Path | None = None,
-        deadline_seconds: float | None = None,
     ) -> None:
         self.home = resolve_home(home)
         _v = resolve_vault_data(self.home, vault_data)
@@ -119,8 +118,10 @@ class Doctor:
         self.engine_root = resolve_engine_root(self.home, engine_root)
         #: How long a read-only run may take before it reports what is still
         #: missing. `None` means "wait for everything", which is what the full
-        #: doctor does: someone reading it wants the whole answer.
-        self.deadline_seconds = deadline_seconds
+        #: doctor does: someone reading it wants the whole answer. `diagnose`
+        #: sets it from the flags rather than the constructor, so every caller
+        #: that builds a `Doctor` keeps the plain signature it already used.
+        self.deadline_seconds: float | None = None
 
     def run_diagnostics(self, apply_remedies: bool = False) -> Report:
         """Runs every registered check (read-only by default).
@@ -153,13 +154,13 @@ class Doctor:
     def _diagnose(self, apply_remedies: bool) -> Report:
         """The checks themselves (read-only unless ``apply_remedies``).
 
-        The registration below says *what* to check; `checks.schedule` decides
-        *how*: in order when remedies are applied, together inside a deadline
-        when this is the summary. A check that raises becomes a finding of its
-        own and the report goes on. The doctor exists to describe a damaged
-        machine, so a damaged file must never be able to end it before it
-        has said anything (a corrupt manifest used to stop it with no report,
-        and the alert that depends on it with it).
+        This method says *what* is checked, family by family; `checks.schedule`
+        decides *how*: in order when remedies are applied, together inside a
+        deadline when this is the summary. A check that raises becomes a
+        finding of its own and the report goes on: the doctor exists to
+        describe a damaged machine, so a damaged file must never be able to
+        end it before it has said anything (a corrupt manifest used to stop it
+        with no report, and the alert that depends on it with it).
         """
         checks: list[schedule.Check] = []
 
@@ -167,85 +168,13 @@ class Doctor:
             """Register one check. Nothing runs here: the schedule runs it."""
             checks.append(schedule.Check(check_id, produce, resource))
 
-        vault, home, state = self.vault_data, self.home, self.state_dir
-        manifest_mcp = vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
-        manifest_skills = vault / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml"
-
-        # 1. Environment and directory checks
-        run("env.state_dir", lambda: check_state_dir(state))
-        run("env.vault_path", lambda: check_vault_path(vault))
-        run("env.runtime", lambda: check_engine_runtime(home, self.engine_root))
-        run("guardrail.consulted", lambda: check_guardrail_consulted(home))
-        run("guardrail.openclaw_plugin", lambda: check_openclaw_guardrail_plugin(home))
-        run("host.timers", check_timers_armed)
-        run("host.launchers", lambda: check_launchers(home))
-
-        # 1b. Which engine last completed a cycle here: the per-machine
-        # answer to "are all my machines migrated?".
-        run("takeover.engine_version", lambda: check_engine_version_recorded(state))
-        run("guard.last_cycle", lambda: check_last_cycle_phases(state))
-
-        if vault.is_dir():
-            # 2. Git checks
-            # The two that fetch share one repository lock: run together they
-            # contend for `.git/FETCH_HEAD.lock`, and one fails for no reason.
-            run("git.alignment", lambda: check_git_alignment(vault), "vault-git-remote")
-            run("git.remotes_config", lambda: check_remotes_config(vault))
-            run("git.vault_remote_privacy", lambda: check_vault_remote_privacy(vault))
-            run("git.engine_lane", lambda: check_engine_lane(self.engine_root))
-            run("git.quarantine", lambda: check_quarantine_branches(vault))
-            run("git.mirror_alignment", lambda: check_mirror_alignment(vault), "vault-git-remote")
-
-            # 3. MCP checks
-            run("mcp.manifest", lambda: check_mcp_manifest(manifest_mcp))
-            run("mcp.rendered_configs", lambda: check_mcp_configs_rendered(vault, home))
-            run("mcp.placement", lambda: check_mcp_placement(vault))
-            run("mcp.trials", check_mcp_trials)
-            run("mcp.antigravity_fanout", lambda: check_antigravity_fanout(vault, home))
-            run("mcp.rendered_content", lambda: check_mcp_content_drift(vault, home, self.engine_root))
-            run("mcp.commands", lambda: check_mcp_commands(vault, home))
-            run("mcp.orphans", lambda: check_mcp_orphans(vault, home))
-            run("mcp.desktop_allowlist", lambda: check_desktop_allowlist(vault, home))
-            run("mcp.unresolved_refs", lambda: check_mcp_unresolved_refs(vault, home))
-            run("mcp.reachability", lambda: check_mcp_reachability(vault, home))
-            run("mcp.deps", lambda: check_mcp_deps(manifest_mcp, state))
-            run("modules.catalog", lambda: check_modules_catalog(self.engine_root, vault))
-            # Installed is not working: a module says so itself, and only the
-            # doctor asks, never the guard cycle.
-            run("modules.ready", lambda: check_modules_ready(self.engine_root, vault))
-            # The harness with the interface, when this machine chose it.
-            run("openclaw", lambda: check_openclaw(self.home, self.engine_root, vault))
-            # One plugin, two hosts: every layer OpenClaw must receive from Claude Code.
-            run("openclaw.parity", lambda: check_openclaw_parity(self.home, vault))
-
-            # 4. Skill checks
-            run("skills.manifest", lambda: check_skills_manifest(manifest_skills))
-            run("skills.deps", lambda: check_skill_deps(manifest_skills, state))
-            run("skills.library_and_index", lambda: check_skill_library_and_index(vault, home))
-            run("skills.library_symlinks", lambda: check_skill_library_symlinks(home))
-            run("skills.not_materialized", lambda: check_skills_not_materialized(vault, home))
-            run("skills.pin_freshness", lambda: check_skills_pin_freshness(vault, home))
-            run("skills.out_of_manifest", lambda: check_skills_out_of_manifest(vault, home))
-            run("skills.engine_starter_views", lambda: check_engine_starter_views(vault, home))
-            run("skills.engine_copies", lambda: check_skill_engine_copies(vault, home, self.engine_root))
-            run("skills.manifest_semantics", lambda: check_skills_manifest_semantics(vault, home))
-
-            # 5. Identity checks
-            run("identity.agent_self", lambda: check_agent_self(vault))
-            run("identity.agent_self_metadata", lambda: check_agent_self_metadata(vault))
-            run("identity.native_memory_boundary", lambda: check_native_memory_boundary(home))
-
-            # 6. Bootstrap and env-secret checks (ported from the release)
-            run("bootstrap.rules_guard", lambda: check_required_rules(vault, self.engine_root))
-            run("env.tokens_in_env", lambda: check_tokens_in_env(vault))
-            run("security.secrets_materialized", lambda: check_secrets_materialized(home, vault))
-            run("security.leak_patterns_twin", lambda: check_leak_patterns_twin(vault, self.engine_root))
-
-            # 6b. Desktop apps that share a config with their CLI
-            run("desktop.codex_version_skew", check_codex_desktop_skew)
-
-            # 7. Canonical instructions and bootstrap hygiene
-            _run_instruction_checks(run, vault, home)
+        _environment_checks(run, self)
+        if self.vault_data.is_dir():
+            _git_checks(run, self)
+            _mcp_and_module_checks(run, self)
+            _skill_checks(run, self)
+            _identity_and_secret_checks(run, self)
+            _run_instruction_checks(run, self.vault_data, self.home)
 
         # A repair must never race the checks that judge the same machine, so
         # `--fix` keeps its one-at-a-time run. Everything else is read-only and
@@ -253,6 +182,91 @@ class Doctor:
         if apply_remedies:
             return schedule.run_in_order(checks, apply_remedies=True)
         return schedule.run(checks, deadline_seconds=self.deadline_seconds)
+
+
+def _environment_checks(run, doc: "Doctor") -> None:
+    """The machine itself: its folders, its launchers, its last cycle."""
+    vault, home, state = doc.vault_data, doc.home, doc.state_dir
+    run("env.state_dir", lambda: check_state_dir(state))
+    run("env.vault_path", lambda: check_vault_path(vault))
+    run("env.runtime", lambda: check_engine_runtime(home, doc.engine_root))
+    run("guardrail.consulted", lambda: check_guardrail_consulted(home))
+    run("guardrail.openclaw_plugin", lambda: check_openclaw_guardrail_plugin(home))
+    run("host.timers", check_timers_armed)
+    run("host.launchers", lambda: check_launchers(home))
+    # Which engine last completed a cycle here: the per-machine answer to
+    # "are all my machines migrated?".
+    run("takeover.engine_version", lambda: check_engine_version_recorded(state))
+    run("guard.last_cycle", lambda: check_last_cycle_phases(state))
+
+
+def _git_checks(run, doc: "Doctor") -> None:
+    """The vault's own repository, and the engine checkout's lane."""
+    vault = doc.vault_data
+    # The two that fetch share one repository lock: run together they contend
+    # for `.git/FETCH_HEAD.lock`, and one fails for no reason.
+    run("git.alignment", lambda: check_git_alignment(vault), "vault-git-remote")
+    run("git.remotes_config", lambda: check_remotes_config(vault))
+    run("git.vault_remote_privacy", lambda: check_vault_remote_privacy(vault))
+    run("git.engine_lane", lambda: check_engine_lane(doc.engine_root))
+    run("git.quarantine", lambda: check_quarantine_branches(vault))
+    run("git.mirror_alignment", lambda: check_mirror_alignment(vault), "vault-git-remote")
+
+
+def _mcp_and_module_checks(run, doc: "Doctor") -> None:
+    """The connectors, the modules, and the harness with the interface."""
+    vault, home, state, engine_root = doc.vault_data, doc.home, doc.state_dir, doc.engine_root
+    manifest_mcp = vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+    run("mcp.manifest", lambda: check_mcp_manifest(manifest_mcp))
+    run("mcp.rendered_configs", lambda: check_mcp_configs_rendered(vault, home))
+    run("mcp.placement", lambda: check_mcp_placement(vault))
+    run("mcp.trials", check_mcp_trials)
+    run("mcp.antigravity_fanout", lambda: check_antigravity_fanout(vault, home))
+    run("mcp.rendered_content", lambda: check_mcp_content_drift(vault, home, engine_root))
+    run("mcp.commands", lambda: check_mcp_commands(vault, home))
+    run("mcp.orphans", lambda: check_mcp_orphans(vault, home))
+    run("mcp.desktop_allowlist", lambda: check_desktop_allowlist(vault, home))
+    run("mcp.unresolved_refs", lambda: check_mcp_unresolved_refs(vault, home))
+    run("mcp.reachability", lambda: check_mcp_reachability(vault, home))
+    run("mcp.deps", lambda: check_mcp_deps(manifest_mcp, state))
+    run("modules.catalog", lambda: check_modules_catalog(engine_root, vault))
+    # Installed is not working: a module says so itself, and only the doctor
+    # asks, never the guard cycle.
+    run("modules.ready", lambda: check_modules_ready(engine_root, vault))
+    # The harness with the interface, when this machine chose it.
+    run("openclaw", lambda: check_openclaw(home, engine_root, vault))
+    # One plugin, two hosts: every layer OpenClaw must receive from Claude Code.
+    run("openclaw.parity", lambda: check_openclaw_parity(home, vault))
+
+
+def _skill_checks(run, doc: "Doctor") -> None:
+    """The skills: declared, installed, materialized, and on the pinned commit."""
+    vault, home, state, engine_root = doc.vault_data, doc.home, doc.state_dir, doc.engine_root
+    manifest_skills = vault / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml"
+    run("skills.manifest", lambda: check_skills_manifest(manifest_skills))
+    run("skills.deps", lambda: check_skill_deps(manifest_skills, state))
+    run("skills.library_and_index", lambda: check_skill_library_and_index(vault, home))
+    run("skills.library_symlinks", lambda: check_skill_library_symlinks(home))
+    run("skills.not_materialized", lambda: check_skills_not_materialized(vault, home))
+    run("skills.pin_freshness", lambda: check_skills_pin_freshness(vault, home))
+    run("skills.out_of_manifest", lambda: check_skills_out_of_manifest(vault, home))
+    run("skills.engine_starter_views", lambda: check_engine_starter_views(vault, home))
+    run("skills.engine_copies", lambda: check_skill_engine_copies(vault, home, engine_root))
+    run("skills.manifest_semantics", lambda: check_skills_manifest_semantics(vault, home))
+
+
+def _identity_and_secret_checks(run, doc: "Doctor") -> None:
+    """Who the machine is, what it keeps secret, and the apps beside it."""
+    vault, home, engine_root = doc.vault_data, doc.home, doc.engine_root
+    run("identity.agent_self", lambda: check_agent_self(vault))
+    run("identity.agent_self_metadata", lambda: check_agent_self_metadata(vault))
+    run("identity.native_memory_boundary", lambda: check_native_memory_boundary(home))
+    run("bootstrap.rules_guard", lambda: check_required_rules(vault, engine_root))
+    run("env.tokens_in_env", lambda: check_tokens_in_env(vault))
+    run("security.secrets_materialized", lambda: check_secrets_materialized(home, vault))
+    run("security.leak_patterns_twin", lambda: check_leak_patterns_twin(vault, engine_root))
+    # Desktop apps that share a config with their CLI.
+    run("desktop.codex_version_skew", check_codex_desktop_skew)
 
 
 def _run_instruction_checks(run, vault: Path, home: Path) -> None:
@@ -283,9 +297,9 @@ def summary_budget(*, summary: bool, fix: bool) -> float | None:
 
 def diagnose(*, summary: bool = False, fix: bool = False) -> Report:
     """Run every check the way the caller asked: no deadline, or the summary's."""
-    return Doctor(deadline_seconds=summary_budget(summary=summary, fix=fix)).run_diagnostics(
-        apply_remedies=fix
-    )
+    doctor = Doctor()
+    doctor.deadline_seconds = summary_budget(summary=summary, fix=fix)
+    return doctor.run_diagnostics(apply_remedies=fix)
 
 
 def _print_timings(report: Report) -> None:
