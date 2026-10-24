@@ -22,7 +22,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.detect import Detection, Installation, LocalModels, Login  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.doctor import collect  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.openclaw.doctor_runtime import check_nodes  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.node_checks import check_nodes  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.report import Severity  # noqa: E402 - sys.path shim for cloned checkout
 
 PINNED = "2026.10.6"

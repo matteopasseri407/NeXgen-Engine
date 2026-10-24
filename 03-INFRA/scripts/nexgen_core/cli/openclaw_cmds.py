@@ -114,10 +114,10 @@ def cmd_setup(args) -> int:
 
 
 def cmd_doctor(args) -> int:
-    from nexgen_core.openclaw import doctor_runtime
+    from nexgen_core.openclaw import node_checks
     from nexgen_core.openclaw.doctor import collect, exit_code, render
 
-    lister = doctor_runtime.default_node_lister if getattr(args, "nodes", False) else None
+    lister = node_checks.default_node_lister if getattr(args, "nodes", False) else None
     outcomes = collect(node_lister=lister)
     if getattr(args, "json", False):
         print(json.dumps([outcome.to_dict() for outcome in outcomes], indent=2, ensure_ascii=False))

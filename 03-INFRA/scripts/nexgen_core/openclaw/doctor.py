@@ -23,7 +23,7 @@ from typing import Any
 
 from nexgen_core import quota_policy
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import background, doctor_runtime, observation
+from nexgen_core.openclaw import background, doctor_runtime, node_checks, observation
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.evidence import check_evidence
@@ -305,7 +305,7 @@ def _config_outcomes(
     vault_data: Path | None,
     failover: quota_policy.Failover | None,
     connect: doctor_runtime.Connect | None,
-    node_lister: doctor_runtime.NodeLister | None,
+    node_lister: node_checks.NodeLister | None,
     platform: str,
 ) -> list[CheckOutcome]:
     """Every check that reads the configuration in force, in the order a person reads them.
@@ -329,7 +329,7 @@ def _config_outcomes(
         observation.report(config, path, home_dir, platform),
         check_fallbacks(config, policy),
         _listening(config, connect, home_dir),
-        *doctor_runtime.check_nodes(config, _probe(home_dir, connect), node_lister),
+        *node_checks.check_nodes(config, _probe(home_dir, connect), node_lister),
         *doctor_runtime.check_workshop_skills(config, path.parent, home_dir),
         doctor_runtime.check_unadopted(config, path, home_dir, resolve_vault_data(home_dir, vault_data)),
         doctor_runtime.check_bindings(config),
@@ -362,7 +362,7 @@ def collect(
     engine_root: Path | None = None,
     vault_data: Path | None = None,
     connect: doctor_runtime.Connect | None = None,
-    node_lister: doctor_runtime.NodeLister | None = None,
+    node_lister: node_checks.NodeLister | None = None,
     platform: str | None = None,
     wsl_distributions: Callable[[], list[str]] | None = None,
     node_version: Callable[[], str | None] | None = None,
