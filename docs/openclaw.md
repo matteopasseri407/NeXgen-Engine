@@ -181,7 +181,8 @@ instead of one action at a time, and they are pure functions of text and receipt
 
 An answer that does not stand on its receipts gets one more model pass, told exactly which claims have
 no evidence. If it comes back the same way, or the run cannot be rewound, the answer is delivered with a
-visible note under it. Never dropped in silence.
+visible note under it. Never dropped in silence, and never a note on somebody else's message: the note
+goes on the delivery that carries the judged text.
 
 The switch is not in the plugin: it is the `evidence` section of `nexgen.config.json` beside it, written
 by the deposit from the configuration in force. It lists exactly the local providers this machine serves,

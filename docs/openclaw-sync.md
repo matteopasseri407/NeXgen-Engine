@@ -209,7 +209,10 @@ list, so it is never checked.
 Two limits worth knowing. `revise` needs a finalization integration: the embedded
 runner and the Codex hook relay have one, the Copilot harness does not, and a run that
 already had a deterministic side effect is not rewound, which is why the note is the
-path that always lands. The phrase tables are Italian, like the owners' agents: an
+path that does not depend on the harness. The note is added to the delivery that
+carries the judged text, recognized by its first line: a channel that rewrites the
+answer beyond recognition gets no note, and no other message of that session is ever
+annotated in its place. The phrase tables are Italian, like the owners' agents: an
 answer in another language is still checked where the rule does not depend on a phrase
 (a cited source, an invented result, facts with nothing retrieved).
 >>>>>>> ff847637 (docs(openclaw): the evidence check, its hooks and its two limits)
