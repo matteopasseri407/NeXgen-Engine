@@ -1634,7 +1634,12 @@ MESSAGES: dict[str, str] = {
     "The OpenClaw Companion app is connected to a gateway elsewhere: nothing here is in conflict, and the setup below writes the native gateway on this PC only.":
         "L'app OpenClaw Companion è collegata a un gateway altrove: qui non c'è nessun conflitto, e il setup qui sotto scrive solo il gateway nativo di questo PC.",
     "The OpenClaw Companion app is installed and names no gateway on this PC: once the setup below has configured this PC's gateway, open Connections in OpenClaw Companion and choose 'a local Gateway on this PC'.":
-        "L'app OpenClaw Companion è installata e non nomina nessun gateway su questo PC: quando il setup qui sotto ha configurato il gateway di questo PC, apri Connections in OpenClaw Companion e scegli 'a local Gateway on this PC'.",
+        "L'app OpenClaw Companion è installata e non nomina nessun gateway su questo PC: quando il setup qui sotto ha configurato il gateway di questo PC, apri Connections in OpenClaw Companion e scegli 'a local Gateway on this PC'.",    "Session continuity checkpoint is enabled.":
+        "Il checkpoint di continuità della sessione è abilitato.",
+    "Session continuity checkpoint is disabled.":
+        "Il checkpoint di continuità della sessione è disabilitato.",
+    "Enable 'checkpoint' in {path} or run 'nexgen sync'.":
+        "Abilita 'checkpoint' in {path} o lancia 'nexgen sync'.",
     "{passed} passed, {warned} warnings, {failed} failures":
         "{passed} superati, {warned} avvisi, {failed} errori",
     # Il comando

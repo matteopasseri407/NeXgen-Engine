@@ -2,12 +2,13 @@
 
 OpenClaw runs native plugins inside its gateway process, so everything the engine gives
 Claude Code reaches OpenClaw through a single plugin, split into jobs that know nothing
-about each other (`guardrail.mjs`, `briefing.mjs`, `quota.mjs`, `workshop.mjs`,
-`governor.mjs`, `council.mjs`, `sup.mjs`, `sup-tools.mjs`, `evidence.mjs`, registered by
-`index.mjs`):
+about each other (`guardrail.mjs`, `briefing.mjs`, `checkpoint.mjs`, `quota.mjs`,
+`workshop.mjs`, `governor.mjs`, `council.mjs`, `sup.mjs`, `sup-tools.mjs`, `evidence.mjs`,
+registered by `index.mjs`):
 
 - the **guardrail** on `before_tool_call`, the same private body the other CLIs run;
 - the **vault briefing** after a compaction, the same text Claude's checkpoint hook injects;
+- the **session checkpoint** on compaction and session end, keeping continuity in machine state;
 - **`/quota`**, which runs the engine and forwards the lines it already rendered;
 - **`/council`** and **`/sup`**, the same, and the **supervision tools** an agent drives;
 - the **evidence check**, which holds a local model's answer to the receipts of its own turn;
@@ -34,7 +35,7 @@ from typing import Any
 
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.evidence import evidence_section
-from nexgen_core.paths import openclaw_config, resolve_home
+from nexgen_core.paths import openclaw_config, resolve_home, resolve_state_dir
 from nexgen_core.runtimes.base import (
     EVENT_SINK_NAME,
     GUARDRAIL_CORE_NAME,
@@ -238,9 +239,14 @@ class OpenClawRuntime(Runtime):
         #    The `evidence` section names the local models whose answers are checked: derived
         #    from the configuration in force, so a cloud model is never in it.
         config_in_force, _ = read_config(openclaw_config(home))
+        state_dir = resolve_state_dir(home) / "nexgen"
         changed |= self._write_plugin_config(
             home,
             briefing={"enabled": self._briefing_installed(home)},
+            checkpoint={
+                "enabled": self._checkpoint_installed(home),
+                "state_dir": str(state_dir),
+            },
             engine=engine_deposit(),
             evidence=evidence_section(config_in_force),
         )
@@ -290,6 +296,15 @@ class OpenClawRuntime(Runtime):
         path = self._plugin_config_path(home)
         self.atomic_write(path, json.dumps(current, indent=2, sort_keys=True) + "\n")
         return True
+
+    @staticmethod
+    def _checkpoint_installed(home: Path) -> bool:
+        """Does OpenClaw participate in session continuity checkpointing?
+
+        Enabled by default like the briefing, following the observable fact of whether
+        the vault hook is registered in Claude's settings.
+        """
+        return OpenClawRuntime._briefing_installed(home)
 
     # ---- event sink -----------------------------------------------------
 

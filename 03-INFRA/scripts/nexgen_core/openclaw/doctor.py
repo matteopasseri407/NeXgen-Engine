@@ -253,8 +253,7 @@ def _config_outcomes(
     outcomes = filter(None, [
         check_ollama_latest(config),
         check_cage(config),
-        check_evidence(config, path),
-        _check_heartbeat(config),
+        check_evidence(config, path),        _check_heartbeat(config),
         *_check_gateway(config),
         _check_google(config),
         _check_acp(config),
@@ -279,6 +278,12 @@ def _store_gateway_outcomes(
     """The second gateway a person may have installed beside this one."""
     store = doctor_runtime.check_store_gateway(home_dir, values, system)
     return [store] if store is not None else []
+
+
+def _plugin_outcomes(path: Path) -> list[CheckOutcome]:
+    """The switches the plugin reads on every call, kept in the gateway's own extensions folder."""
+    checkpoint = doctor_runtime.check_checkpoint(path.parent / "extensions" / "nexgen")
+    return [checkpoint] if checkpoint is not None else []
 
 
 def _speaking_snapshot(
@@ -308,7 +313,6 @@ def _speaking_snapshot(
         home=home_dir, env=values, engine_root=engine_root, vault_data=vault_data, platform=system,
         wsl_distributions=wsl_distributions,
     )
-
 
 def collect(
     detected: Detection | None = None,
@@ -368,6 +372,7 @@ def collect(
     )
     if app_outcome is not None:
         outcomes.append(app_outcome)
+    outcomes.extend(_plugin_outcomes(path))
     outcomes.extend(_host_outcomes(snapshot, engine_root, values, system, node_version, linger_dir))
     return outcomes
 

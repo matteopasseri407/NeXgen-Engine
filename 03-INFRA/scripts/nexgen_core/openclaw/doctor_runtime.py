@@ -12,6 +12,7 @@ question; here it is only a value that decides which sentence a person reads.
 """
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -451,3 +452,30 @@ def _devices_sentence(
         return t("The gateway lists its device.")
     return t("The gateway lists {count} device(s), none of them naming the app: 'nexgen openclaw pair' shows the "
              "request and approves it.", count=len(devices))
+
+
+def check_checkpoint(plugin_dir: Path) -> CheckOutcome | None:
+    """Whether session continuity checkpoint is enabled in nexgen.config.json."""
+    config_path = plugin_dir / "nexgen.config.json"
+    if not config_path.is_file():
+        return None
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # nexgen: allow reason="an unreadable plugin config file means checkpoint cannot be judged"
+        return None
+    checkpoint = data.get("checkpoint") if isinstance(data, dict) else None
+    enabled = checkpoint.get("enabled") if isinstance(checkpoint, dict) else None
+    if enabled is True:
+        return CheckOutcome(
+            id="openclaw.checkpoint",
+            severity=Severity.OK,
+            message=t("Session continuity checkpoint is enabled."),
+        )
+    if enabled is False:
+        return CheckOutcome(
+            id="openclaw.checkpoint",
+            severity=Severity.WARN,
+            message=t("Session continuity checkpoint is disabled."),
+            action=t("Enable 'checkpoint' in {path} or run 'nexgen sync'.", path=config_path),
+        )
+    return None
