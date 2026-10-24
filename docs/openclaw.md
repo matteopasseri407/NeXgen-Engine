@@ -189,14 +189,26 @@ are the person's and stay. It writes nothing.
 
 `nexgen openclaw doctor [--json]` checks installation, version against the pin, the configuration's validity,
 `:latest` ids, caged local models, the heartbeat, the gateway's bind and authentication, Google entries, ACP
-seats, agents on subscriptions this machine does not have, whether the gateway is listening, and a second
-gateway from the Microsoft Store. `nexgen doctor` runs the same checks as part of its own report, and says
+seats, agents on subscriptions this machine does not have, whether the gateway is listening, a second
+gateway from the Microsoft Store, and how many skills and servers OpenClaw created that the canonical
+library does not declare yet. `nexgen doctor` runs the same checks as part of its own report, and says
 nothing at all on a machine that never installed OpenClaw and never declared the module.
 
 `nexgen openclaw setup` applies that same plan: it installs the pinned release, onboards when there is no
 file, merges the owned sections with a backup beside them, writes the agent manuals, installs and starts the
 service, declares the module and runs the doctor. What the plan promises is what the setup writes, because
 both are computed by the same pure function.
+
+`nexgen openclaw adopt [--skills] [--mcp] [--dry-run] [--yes]` takes what was created inside OpenClaw and
+makes it canonical: the skills the Skill Workshop learned, and the servers in `mcp.servers` that no manifest
+declares. It prints the plan with every check before writing anything. A name already taken is a refusal and
+never an overwrite, a plaintext credential blocks, and a skill holding a script, an executable or an unknown
+file is a question: `--yes` adopts only what the checks cleared and names what it left. An adopted skill is
+copied into `03-INFRA/agent-universal-layer/skills/<name>/`, declared `origin: vault` in the skills manifest,
+built into every view and archived in the Workshop through `openclaw skills workshop archive`, so OpenClaw
+loads the canonical copy like every other CLI; an adopted server enters the MCP manifest lazily, through the
+same writer `nexgen mcp add` uses. The doctor says how much is still waiting and adopts nothing by itself:
+adoption is a person's act.
 
 `nexgen openclaw restart` and `nexgen openclaw pair` bring the gateway back and let a phone in; they are
 described above, with the rest of the installation. `nexgen openclaw stop` takes it down and waits until the
