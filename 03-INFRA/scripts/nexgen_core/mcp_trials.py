@@ -1,10 +1,10 @@
-"""Trying an MCP server before committing to it: this machine only, behind the gateway, and it expires.
+"""Trying an MCP server before committing to it: this machine only, behind the gateway (direct in OpenClaw), and it expires.
 
 A server you only want to look at should not have to be added to the manifest (which every machine syncs) and
 then remembered and removed. A trial is the other thing: written to this machine's state directory, never to the
-Vault, served by the gateway like any lazy server, and gone by itself after its time (24 hours unless told
-otherwise, a week at most). Because it is lazy it is never written into a CLI's configuration, so there is
-nothing to find in four config files afterwards: expiry is the gateway ceasing to list it, with no restart.
+Vault, served by the gateway like any lazy server (or mounted directly in OpenClaw, which has no gateway), and gone
+by itself after its time (24 hours unless told otherwise, a week at most). For the four gateway CLIs it lives in
+no config file; for OpenClaw it is unmounted at the next sync following expiration or drop.
 
 `promote` turns a trial into a real manifest entry (which then syncs); `drop` ends it now.
 """
@@ -29,21 +29,36 @@ def _path() -> Path:
     return resolve_state_dir() / FILENAME
 
 
-def _load() -> dict[str, dict[str, Any]]:
-    """Every recorded trial, expired or not. An unreadable file is no trials: it must never stop a render."""
+def _load_data() -> dict[str, Any]:
     try:
         data = json.loads(_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    trials = data.get("trials") if isinstance(data, dict) else None
+        if isinstance(data, dict):
+            return data
+    except (OSError, ValueError):  # nexgen: allow reason="missing or unreadable state returns empty fallback"
+        pass
+    return {}
+
+
+def _load() -> dict[str, dict[str, Any]]:
+    """Every recorded trial, expired or not. An unreadable file is no trials: it must never stop a render."""
+    data = _load_data()
+    trials = data.get("trials")
     if not isinstance(trials, dict):
         return {}
     return {name: info for name, info in trials.items() if isinstance(info, dict) and isinstance(info.get("entry"), dict)
             and isinstance(info.get("expires"), (int, float))}
 
 
-def _save(trials: dict[str, dict[str, Any]]) -> None:
-    write_private_text(_path(), json.dumps({"schema_version": 1, "trials": trials}, indent=2, ensure_ascii=False) + "\n")
+def _save(trials: dict[str, dict[str, Any]], purged: set[str] | list[str] | None = None) -> None:
+    data = _load_data()
+    existing_purged = set(data.get("purged", [])) if isinstance(data.get("purged"), list) else set()
+    if purged is not None:
+        existing_purged |= set(purged)
+    existing_purged -= set(trials)
+    payload: dict[str, Any] = {"schema_version": 1, "trials": trials}
+    if existing_purged:
+        payload["purged"] = sorted(existing_purged)
+    write_private_text(_path(), json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
 
 
 def active(now: float | None = None) -> dict[str, dict[str, Any]]:
@@ -89,18 +104,29 @@ def drop(name: str) -> bool:
     if name not in trials:
         return False
     del trials[name]
-    _save(trials)
+    _save(trials, purged=[name])
     return True
 
 
 def purge_expired(now: float | None = None) -> list[str]:
-    """Forgets the trials whose time is up. Nothing needs undoing elsewhere: a lazy trial lives in no CLI config."""
+    """Forgets the trials whose time is up; remembers them as purged so OpenClaw unmounts them at next sync."""
     moment = time.time() if now is None else now
     trials = _load()
     gone = sorted(name for name, info in trials.items() if info["expires"] <= moment)
     if gone:
-        _save({n: i for n, i in trials.items() if n not in gone})
+        remaining = {n: i for n, i in trials.items() if n not in gone}
+        _save(remaining, purged=gone)
     return gone
+
+
+def retired_names(now: float | None = None) -> set[str]:
+    """Trial names that have expired or been purged, so OpenClaw unmounts them at next sync."""
+    data = _load_data()
+    moment = time.time() if now is None else now
+    trials = _load()
+    expired = {name for name, info in trials.items() if info["expires"] <= moment}
+    purged = set(data.get("purged", [])) if isinstance(data.get("purged"), list) else set()
+    return expired | purged
 
 
 def time_left(info: dict[str, Any], now: float | None = None) -> str:

@@ -127,10 +127,19 @@ class McpRenderer:
         return self._retired_server_names_impl()
 
     def _retired_server_names_impl(self) -> set[str]:
-        if not self.manifest_path.is_file():
-            return set()
-        data = load_mcp_manifest(self.manifest_path)
-        return set(data.get("retired_servers", set()))
+        retired: set[str] = set()
+        manifest_names: set[str] = set()
+        if self.manifest_path.is_file():
+            data = load_mcp_manifest(self.manifest_path)
+            retired = set(data.get("retired_servers", set()))
+            manifest_names = set(data.get("servers", {}))
+        try:
+            from nexgen_core import mcp_trials
+
+            retired |= {n for n in mcp_trials.retired_names() if n not in manifest_names}
+        except Exception:  # nexgen: allow reason="trial state failure must not stop manifest retirements"
+            pass
+        return retired
 
     def _resolve_command_and_args(self, entry: dict[str, Any]) -> None:
         cmd = entry.get("command") or entry.get("cmd")
@@ -218,11 +227,17 @@ class McpRenderer:
         return entry
 
     def _manifest_servers(self) -> dict[str, dict[str, Any]]:
-        if not self.manifest_path.is_file():
-            return {}
+        servers: dict[str, dict[str, Any]] = {}
+        if self.manifest_path.is_file():
+            servers = load_mcp_manifest(self.manifest_path).get("servers", {})
+        try:
+            from nexgen_core import mcp_trials
+
+            servers = mcp_trials.overlay(servers)
+        except Exception:  # nexgen: allow reason="trial state failure must not stop manifest rendering"
+            pass
         from nexgen_core.mcp_state import apply_state_overrides
 
-        servers = load_mcp_manifest(self.manifest_path).get("servers", {})
         return apply_state_overrides(servers, home=self.home)
 
     def manifest_server_names(self) -> list[str]:
