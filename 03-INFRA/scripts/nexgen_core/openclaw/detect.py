@@ -1,3 +1,4 @@
+# nexgen: one-job reason="take one snapshot of what this machine already has, so every command decides from the same facts"
 """What this machine already has, asked in the least invasive way possible.
 
 Every credential is only asked whether it EXISTS, with one deliberate
@@ -23,6 +24,7 @@ import subprocess
 import sys
 import urllib.request
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -37,6 +39,10 @@ DEFAULT_LLAMACPP_URL = "http://127.0.0.1:8080"
 
 #: A probe answers fast or not at all: a stopped backend must never delay a command.
 PROBE_TIMEOUT_SECONDS = 1.5
+#: How many local model calls are asked at the same time. Each one is a wait on
+#: a loopback server, so the sum was the catalogue's cost on a machine with
+#: several models.
+PROBE_WORKERS = 4
 #: `npm root -g` is a local read, not a network call.
 NPM_ROOT_TIMEOUT_SECONDS = 20.0
 
@@ -373,26 +379,35 @@ def _ollama_reasoning(show: dict[str, Any]) -> bool:
     return "thinking" in _capabilities(show)
 
 
+def _ollama_model(url: str, name: str, probe: HttpJson) -> LocalModelInfo:
+    """One model, with the facts its own `/api/show` adds to the tags list."""
+    show = probe(f"{url}/api/show", PROBE_TIMEOUT_SECONDS, {"model": name, "name": name})
+    details = show if isinstance(show, dict) else {}
+    return LocalModelInfo(
+        name=name,
+        context_window=_ollama_context(details),
+        vision=_ollama_vision(details),
+        reasoning=_ollama_reasoning(details),
+    )
+
+
 def _probe_ollama(url: str, probe: HttpJson) -> tuple[LocalModelInfo, ...]:
-    """The models Ollama reports, each with the facts its `/api/show` adds."""
+    """The models Ollama reports, each with the facts its `/api/show` adds.
+
+    The detail calls are one round trip per installed model, so they are asked
+    at the same time: a machine with eight models was paying eight waits for a
+    catalogue that a health summary reads once. The order is the one Ollama
+    reported, never the order the answers came back in.
+    """
     answer = probe(f"{url}/api/tags", PROBE_TIMEOUT_SECONDS)
     models = answer.get("models") if isinstance(answer, dict) else None
     if not isinstance(models, list):
         return ()
-    found: list[LocalModelInfo] = []
-    for item in models:
-        if not isinstance(item, dict) or not item.get("name"):
-            continue
-        name = str(item["name"])
-        show = probe(f"{url}/api/show", PROBE_TIMEOUT_SECONDS, {"model": name, "name": name})
-        details = show if isinstance(show, dict) else {}
-        found.append(LocalModelInfo(
-            name=name,
-            context_window=_ollama_context(details),
-            vision=_ollama_vision(details),
-            reasoning=_ollama_reasoning(details),
-        ))
-    return tuple(found)
+    names = [str(item["name"]) for item in models if isinstance(item, dict) and item.get("name")]
+    if not names:
+        return ()
+    with ThreadPoolExecutor(max_workers=min(PROBE_WORKERS, len(names))) as pool:
+        return tuple(pool.map(lambda name: _ollama_model(url, name, probe), names))
 
 
 def _llamacpp_context(url: str, probe: HttpJson) -> int | None:
@@ -417,11 +432,18 @@ def _probe_llamacpp(url: str, probe: HttpJson) -> tuple[LocalModelInfo, ...]:
 
 
 def _detect_local(env: dict[str, str], probe: HttpJson) -> LocalModels:
-    """Both local backends, each with its own URL and its own short timeout."""
+    """Both local backends, each with its own URL and its own short timeout.
+
+    Asked at the same time: they are two independent servers on this machine and
+    a health summary paid the sum of their waits. Each one is still bounded by
+    its own timeout, so a wedged backend cannot hold the other.
+    """
     ollama_url = _base_url(env.get("OLLAMA_HOST"), DEFAULT_OLLAMA_URL)
     llamacpp_url = _base_url(env.get("NEXGEN_LLAMACPP_URL"), DEFAULT_LLAMACPP_URL)
-    ollama = _probe_ollama(ollama_url, probe)
-    llamacpp = _probe_llamacpp(llamacpp_url, probe)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        ollama_call = pool.submit(_probe_ollama, ollama_url, probe)
+        llamacpp_call = pool.submit(_probe_llamacpp, llamacpp_url, probe)
+        ollama, llamacpp = ollama_call.result(), llamacpp_call.result()
     detail = ""
     if not ollama and not llamacpp:
         detail = t("no local model backend answered")
