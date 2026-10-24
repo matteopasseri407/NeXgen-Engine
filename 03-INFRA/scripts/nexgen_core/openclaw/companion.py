@@ -12,6 +12,10 @@ and a file that does not parse says nothing. The keys this engine knows are
 carry a token in its query string, so it is parsed for its host and its port and
 then dropped. No URL, token or device key is ever returned, kept or printed, and
 a `device-key*` file is never opened.
+
+An app aimed at this engine's own port is its own answer: `points_here` says the
+person has already chosen the gateway this engine configures, which is neither a
+second gateway nor a missing one.
 """
 from __future__ import annotations
 
@@ -57,6 +61,8 @@ class Companion:
     present: bool = False
     owns_local_gateway: bool = False
     points_remote: bool = False
+    #: The app's settings name this engine's own gateway, on its port.
+    points_here: bool = False
     #: The loopback port the app's settings name, when they name one.
     port: int | None = None
     signals: tuple[str, ...] = ()
@@ -69,15 +75,34 @@ class Companion:
             return APP_REMOTE
         return NATIVE if native_installed else NONE
 
+    def names_this_gateway(self) -> bool:
+        """Whether the app is set to talk to the gateway this engine configures."""
+        return self.points_here and not self.owns_local_gateway
+
+    def names_no_gateway(self) -> bool:
+        """Whether the app is installed and its files name no gateway at all."""
+        return self.present and not (self.owns_local_gateway or self.points_remote or self.points_here)
+
     def to_dict(self) -> dict[str, Any]:
         """The value as JSON-safe data: never a URL, a token or a device key."""
         return {
             "present": self.present,
             "owns_local_gateway": self.owns_local_gateway,
             "points_remote": self.points_remote,
+            "points_here": self.points_here,
             "port": self.port,
             "signals": list(self.signals),
         }
+
+
+@dataclass(frozen=True)
+class _Reading:
+    """What one app file answered, before the two files are put together."""
+
+    local: bool = False
+    remote: bool = False
+    here: bool = False
+    port: int | None = None
 
 
 def _pairs(document: Any) -> Iterator[tuple[str, Any]]:
@@ -110,8 +135,8 @@ def _address(text: str) -> tuple[bool, int | None] | None:
     return host in LOCAL_HOSTS, port
 
 
-def _scan(document: Any, *, only_gateway_keys: bool, engine_port: int) -> tuple[bool, bool, int | None]:
-    """What one app file says about a gateway: local, remote, and which port.
+def _scan(document: Any, *, only_gateway_keys: bool, engine_port: int) -> _Reading:
+    """What one app file says about a gateway: local, remote, which port, and here.
 
     `sshTunnel` wins over everything else: a tunnel forwards to a gateway on
     another machine, so whatever address it exposes on this PC says nothing
@@ -123,8 +148,8 @@ def _scan(document: Any, *, only_gateway_keys: bool, engine_port: int) -> tuple[
     there, only a key with "gateway" in its name is read.
     """
     if any(key.casefold() == "sshtunnel" and bool(value) for key, value in _pairs(document)):
-        return False, True, None
-    local = remote = False
+        return _Reading(remote=True)
+    local = remote = here = False
     own_port: int | None = None
     engine_seen: int | None = None
     for key, value in _pairs(document):
@@ -144,10 +169,14 @@ def _scan(document: Any, *, only_gateway_keys: bool, engine_port: int) -> tuple[
                 remote = True
             elif named_port == engine_port:
                 engine_seen = named_port
+                here = True
             else:
                 local = True
                 own_port = own_port if own_port is not None else named_port
-    return local, remote, own_port if own_port is not None else engine_seen
+    return _Reading(
+        local=local, remote=remote, here=here,
+        port=own_port if own_port is not None else engine_seen,
+    )
 
 
 def _json(path: Path) -> Any:
@@ -171,7 +200,7 @@ def engine_port() -> int:
 
 def read_settings(settings_dir: Path) -> Companion:
     """What the app's own files say, with every missing field simply absent."""
-    local = remote = False
+    local = remote = here = False
     port: int | None = None
     present = False
     for name in SETTINGS_FILES:
@@ -179,19 +208,19 @@ def read_settings(settings_dir: Path) -> Companion:
         if document is None:
             continue
         present = True
-        found_local, found_remote, found_port = _scan(
+        found = _scan(
             document, only_gateway_keys=name == "settings.json", engine_port=engine_port(),
         )
-        local, remote = local or found_local, remote or found_remote
+        local, remote, here = local or found.local, remote or found.remote, here or found.here
         if port is None:
-            port = found_port
+            port = found.port
     signals: list[str] = []
     if local:
         signals.append(t("its settings name a gateway on this PC"))
     if remote:
         signals.append(t("its settings name a gateway elsewhere"))
     return Companion(
-        present=present, owns_local_gateway=local, points_remote=remote,
+        present=present, owns_local_gateway=local, points_remote=remote, points_here=here,
         port=port, signals=tuple(signals),
     )
 
@@ -260,6 +289,7 @@ def probe(
         present=bool(signals) or settings.present,
         owns_local_gateway=distro or storage or settings.owns_local_gateway,
         points_remote=settings.points_remote,
+        points_here=settings.points_here,
         port=settings.port,
         signals=tuple(signals),
     )

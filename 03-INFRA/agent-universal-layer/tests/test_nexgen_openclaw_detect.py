@@ -338,6 +338,7 @@ def test_off_windows_there_is_no_app_gateway_to_find(tmp_path):
 
     assert found.companion.present is False
     assert found.to_dict()["companion"] == {
-        "present": False, "owns_local_gateway": False, "points_remote": False, "port": None, "signals": [],
+        "present": False, "owns_local_gateway": False, "points_remote": False, "points_here": False,
+        "port": None, "signals": [],
     }
 

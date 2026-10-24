@@ -112,6 +112,35 @@ def test_a_gateway_url_on_the_engine_port_is_the_apps_own_connection(tmp_path):
     assert found.port == 18789
 
 
+def test_the_app_aimed_at_this_pc_says_so_and_is_not_a_second_gateway(tmp_path):
+    """`points_here`: the person already chose the gateway this engine configures."""
+    home, env = machine(tmp_path)
+    write(app_dir(env), "settings.json", {"GatewayUrl": "ws://127.0.0.1:18789"})
+
+    found = probe(home, env, "win32", wsl_distributions=lambda: [])
+
+    assert found.points_here
+    assert found.names_this_gateway()
+    assert not found.names_no_gateway()
+    assert found.to_dict()["points_here"] is True
+
+
+def test_an_app_that_names_no_gateway_is_only_installed(tmp_path):
+    home, env = machine(tmp_path)
+    write(app_dir(env), "settings.json", {"docsUrl": "https://openclaw.ai/docs"})
+
+    found = probe(home, env, "win32", wsl_distributions=lambda: [])
+
+    assert found.names_no_gateway()
+    assert not found.names_this_gateway()
+
+
+def test_an_app_with_a_gateway_of_its_own_is_never_aimed_here(tmp_path):
+    aimed_here_too = Companion(present=True, owns_local_gateway=True, points_here=True, port=18789)
+
+    assert not aimed_here_too.names_this_gateway(), "the app's own gateway is the one in force"
+
+
 def test_a_loopback_url_on_another_port_is_a_gateway_of_its_own(tmp_path):
     home, env = machine(tmp_path)
     write(app_dir(env), "gateways.json", {"draft": {"url": "ws://127.0.0.1:52190"}})
