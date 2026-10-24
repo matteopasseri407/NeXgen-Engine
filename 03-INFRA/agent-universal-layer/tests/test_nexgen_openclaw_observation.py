@@ -70,7 +70,12 @@ def test_a_state_directory_outside_the_home_does_not():
 
 
 def test_the_comparison_ignores_case_the_way_windows_does():
-    assert observation.is_inside(Path("C:/work/Person/AppData"), Path("c:/work/person")) is True
+    assert observation.is_inside(Path("C:/work/Person/AppData"), Path("c:/work/person"), platform="win32") is True
+
+
+def test_the_comparison_respects_case_on_linux():
+    assert observation.is_inside(Path("/work/Person/AppData"), Path("/work/person"), platform="linux") is False
+    assert observation.is_inside(Path("/work/person/AppData"), Path("/work/person"), platform="linux") is True
 
 
 def test_the_engine_tells_the_gateway_to_poll_on_windows():

@@ -38,11 +38,10 @@ new.
 from __future__ import annotations
 
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from nexgen_core.i18n import t
-from nexgen_core.paths import is_inside
 from nexgen_core.report import CheckOutcome, Severity
 
 #: The variable OpenClaw reads. Any value but `false`, `0` or an empty string
@@ -61,11 +60,26 @@ def observation_root(state_dir: Path) -> Path:
     return Path(state_dir).parent
 
 
-def watches_the_home(state_dir: Path | None, home: Path | None) -> bool:
+def _parts(path: Path | str, platform: str | None = None) -> tuple[str, ...]:
+    """A path split into the components this platform's filesystem compares."""
+    if is_windows(platform):
+        return tuple(part.lower() for part in PureWindowsPath(path).parts)
+    return tuple(str(part) for part in PurePosixPath(path).parts)
+
+
+def is_inside(child: Path | str | None, parent: Path | str | None, platform: str | None = None) -> bool:
+    """Whether `child` sits at or below `parent`, from their own parts: no filesystem read."""
+    if child is None or parent is None:
+        return False
+    kid, root = _parts(child, platform), _parts(parent, platform)
+    return len(kid) >= len(root) and kid[: len(root)] == root
+
+
+def watches_the_home(state_dir: Path | None, home: Path | None, platform: str | None = None) -> bool:
     """Whether the admitted root contains the home, which is the case for `~/.openclaw`."""
     if state_dir is None:
         return False
-    return is_inside(home, observation_root(state_dir))
+    return is_inside(home, observation_root(state_dir), platform=platform)
 
 
 def _polling_value(value: Any) -> bool:
@@ -101,7 +115,7 @@ def env_block(
     costs events, and a proposal that silently turned it back on would undo a choice
     the engine cannot see the reason for.
     """
-    if not is_windows(platform) or not watches_the_home(state_dir, home):
+    if not is_windows(platform) or not watches_the_home(state_dir, home, platform=platform):
         return None
     if declares_polling(current):
         return None
@@ -115,7 +129,7 @@ def report(
     state_dir = Path(config_path).parent
     root = observation_root(state_dir)
     forced = forces_polling(config)
-    if not watches_the_home(state_dir, home):
+    if not watches_the_home(state_dir, home, platform=platform):
         if forced:
             return CheckOutcome(
                 id="openclaw.observation",
