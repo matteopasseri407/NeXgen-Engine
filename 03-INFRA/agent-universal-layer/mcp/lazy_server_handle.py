@@ -142,7 +142,11 @@ class ServerHandle:
             kwargs["start_new_session"] = True
         _, command_argv, no_window = self._process_helpers()
         kwargs.update(no_window())
-        self.proc = subprocess.Popen(command_argv(cmd), **kwargs)
+        try:
+            argv = command_argv(cmd)
+        except RuntimeError as exc:  # the launcher's own refusal: a shim on this machine, not argv values
+            raise TransportError(str(exc)) from exc
+        self.proc = subprocess.Popen(argv, **kwargs)
         self._process_group = self.proc.pid if not is_win else None
         with self._stderr_lock:
             self._stderr_lines.clear()

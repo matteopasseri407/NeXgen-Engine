@@ -12,6 +12,7 @@ proved there, on the platform the module reads, without flipping `os.name` proce
 """
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,6 +21,8 @@ import pytest
 
 INFRA = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = INFRA / "scripts"
+MCP_DIR = INFRA / "agent-universal-layer" / "mcp"
+LAZY_MCP = MCP_DIR / "lazy-mcp.py"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
@@ -96,3 +99,30 @@ def test_a_shim_that_is_not_npms_keeps_the_command_interpreter(tmp_path, monkeyp
     monkeypatch.setattr(processes.shutil, "which", lambda name: str(shim) if name == "codex" else None)
 
     assert processes.windows_command_argv(["codex", "exec"]) == ["cmd.exe", "/d", "/s", "/c", str(shim), "exec"]
+
+
+def test_the_gateway_repeats_the_reason_an_npm_server_cannot_start(monkeypatch):
+    # Provisioning runs inside the proxy, which used to answer only the exception's class name.
+    spec = importlib.util.spec_from_file_location("lazy_mcp_for_shims", LAZY_MCP)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+        said = ("npx: the npm shim C:\\Program Files\\nodejs\\npx.CMD has no Node entry beside it "
+                "(C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npx-cli.js)")
+
+        def refuse(_cmd):
+            raise RuntimeError(said)
+
+        monkeypatch.setattr(module, "_process_helpers", lambda: (lambda *a, **k: None, refuse, lambda: {}))
+        handle = module._ServerHandle("npx", {"command": "npx", "args": ["-y", PACKAGE],
+                                             "timeouts": {"startup": 5}})
+
+        reply = handle.rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                          "clientInfo": {"name": "test", "version": "1"}}, 1)
+    finally:
+        sys.modules.pop(spec.name, None)
+
+    message = reply["error"]["message"]
+    assert "no Node entry beside it" in message
+    assert "failed to start request" not in message
