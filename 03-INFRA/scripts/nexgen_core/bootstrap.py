@@ -621,8 +621,10 @@ def _main_impl(argv: list[str] | None = None) -> int:
                         help=t("Checks only: no questions and no writes"))
     parser.add_argument("--role", choices=["server", "node", "standalone"], default=None,
                         help=t("Role for this machine: server, node, or standalone"))
+    parser.add_argument("--target", default=None,
+                        help=t("Gateway join URL or setup code (for node role)"))
     parser.add_argument("--gateway-url", default=None,
-                        help=t("Gateway WebSocket URL (for node role)"))
+                        help=t("Gateway WebSocket or join URL (for node role)"))
     parser.add_argument("--gateway-token", default=None,
                         help=t("Gateway authentication token (for node role)"))
     parser.add_argument("--node-name", default=None,
@@ -694,8 +696,8 @@ def _main_impl(argv: list[str] | None = None) -> int:
         if args.role == "node":
             return roles.run_node_role(
                 root,
+                target=args.target,
                 gateway_url=args.gateway_url,
-                gateway_token=args.gateway_token,
                 node_name=args.node_name,
                 out=print,
             )

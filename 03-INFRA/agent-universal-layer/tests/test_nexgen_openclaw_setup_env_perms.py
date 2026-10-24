@@ -1,4 +1,4 @@
-"""Tests for OpenClaw state permissions, plugin deposit verification, and gateway.systemd.env."""
+"""Tests for OpenClaw state permissions, plugin deposit verification, and .env."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -76,18 +76,15 @@ def test_extract_referenced_env_vars() -> None:
     assert "UNUSED_SECRET" not in extracted
 
 
-def test_write_gateway_service_env(tmp_path: Path) -> None:
+def test_write_gateway_service_env_new_file(tmp_path: Path) -> None:
     setup = _make_dummy_setup(tmp_path, platform="linux")
-    systemd_user_dir = setup.home / ".config" / "systemd" / "user"
-    systemd_user_dir.mkdir(parents=True, exist_ok=True)
-
     config = {
         "agents": {"entries": {"capo": {"model": "anthropic/claude-opus-5-5"}}},
         "tools": {"web": "${BRAVE_API_KEY}"},
     }
 
-    env_file = write_gateway_service_env(setup, config, systemd_user_dir=systemd_user_dir)
-    assert env_file is not None
+    env_file = write_gateway_service_env(setup, config)
+    assert env_file == setup.state_dir / ".env"
     assert env_file.is_file()
 
     content = env_file.read_text(encoding="utf-8")
@@ -95,19 +92,46 @@ def test_write_gateway_service_env(tmp_path: Path) -> None:
     assert 'BRAVE_API_KEY="brave-test1234"' in content
     assert "UNUSED_SECRET" not in content
 
-    # Check drop-in unit
-    dropin = systemd_user_dir / "openclaw-gateway.service.d" / "10-env.conf"
-    assert dropin.is_file()
-    assert "EnvironmentFile=%h/" in dropin.read_text(encoding="utf-8")
+    # Verify no secret values were printed in setup.out
+    for call in setup.out.call_args_list:
+        msg = str(call[0][0])
+        assert "sk-ant-test1234" not in msg
+        assert "brave-test1234" not in msg
+        assert "secret-never-written" not in msg
+
+
+def test_write_gateway_service_env_preserves_existing_keys(tmp_path: Path) -> None:
+    setup = _make_dummy_setup(tmp_path, platform="linux")
+    env_file = setup.state_dir / ".env"
+    env_file.write_text('ANTHROPIC_API_KEY="user-own-custom-key"\nCUSTOM_VAR="preserved"\n', encoding="utf-8")
+
+    config = {
+        "agents": {"entries": {"capo": {"model": "anthropic/claude-opus-5-5"}}},
+        "tools": {"web": "${BRAVE_API_KEY}"},
+    }
+
+    res_file = write_gateway_service_env(setup, config)
+    assert res_file == env_file
+
+    content = env_file.read_text(encoding="utf-8")
+    # User-defined key was preserved and NOT overwritten
+    assert 'ANTHROPIC_API_KEY="user-own-custom-key"' in content
+    assert 'CUSTOM_VAR="preserved"' in content
+    # Missing referenced key was appended
+    assert 'BRAVE_API_KEY="brave-test1234"' in content
+
+    # Verify no secret values in output
+    for call in setup.out.call_args_list:
+        msg = str(call[0][0])
+        assert "user-own-custom-key" not in msg
+        assert "brave-test1234" not in msg
 
 
 def test_fix_state_permissions(tmp_path: Path) -> None:
     setup = _make_dummy_setup(tmp_path, platform="linux")
-    # Simulate a file and directory
     sample_file = setup.state_dir / "openclaw.json"
     sample_file.write_text("{}", encoding="utf-8")
 
-    # Call fix_state_permissions
     res = fix_state_permissions(setup)
     assert res is True
 

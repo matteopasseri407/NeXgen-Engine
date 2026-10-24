@@ -16,6 +16,7 @@
 param(
     [switch]$Check,
     [string]$Role,
+    [string]$Target,
     [Parameter(ValueFromRemainingArguments = $true)] [string[]]$Rest
 )
 
@@ -29,9 +30,10 @@ if (-not (Test-Path $bootstrap)) {
 }
 
 $forward = @()
-if ($Check) { $forward += '--check' }
-if ($Role)  { $forward += @('--role', $Role) }
-if ($Rest)  { $forward += $Rest }
+if ($Check)  { $forward += '--check' }
+if ($Role)   { $forward += @('--role', $Role) }
+if ($Target) { $forward += @('--target', $Target) }
+if ($Rest)   { $forward += $Rest }
 
 $found = $null
 foreach ($candidate in @(@('python'), @('py', '-3'), @('python3'))) {

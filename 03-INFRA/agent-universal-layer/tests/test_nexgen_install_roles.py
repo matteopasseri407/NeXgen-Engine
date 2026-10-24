@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from nexgen_core import roles
+from nexgen_core.openclaw_service import RunResult
 
 
 def test_install_sh_contains_uv_user_fallback() -> None:
@@ -31,6 +32,10 @@ def test_standalone_role_sets_up_local(tmp_path: Path) -> None:
     fake_align = MagicMock(return_value=(True, "aligned"))
     fake_problems = MagicMock(return_value=(0, []))
 
+    profile_file = tmp_path / "99-INDEX" / "USER-PROFILE.md"
+    profile_file.parent.mkdir(parents=True, exist_ok=True)
+    profile_file.write_text("- **clis**: `[list of installed CLIs]`\n- **profile**: `[MINIMAL | MULTI]`\n", encoding="utf-8")
+
     code = roles.run_standalone_role(
         root=tmp_path,
         home=tmp_path / "home",
@@ -41,10 +46,13 @@ def test_standalone_role_sets_up_local(tmp_path: Path) -> None:
     )
     assert code == 0
     assert fake_setup.call_count == 1
-    # Check that standalone passed yes=True and server=False
     call_kwargs = fake_setup.call_args.kwargs
     assert call_kwargs.get("server") is False
     assert call_kwargs.get("yes") is True
+
+    # Check that standalone profile writes 'openclaw' to CLIs
+    profile_content = profile_file.read_text(encoding="utf-8")
+    assert "openclaw" in profile_content
 
 
 def test_server_role_invokes_setup_server(tmp_path: Path) -> None:
@@ -68,26 +76,52 @@ def test_server_role_invokes_setup_server(tmp_path: Path) -> None:
     assert call_kwargs.get("yes") is True
 
 
-def test_node_role_registers_agent_via_rpc_without_writing_gateway(tmp_path: Path) -> None:
+def test_node_role_connects_service_and_prints_squad_instruction(tmp_path: Path) -> None:
     log_messages = []
     fake_align = MagicMock(return_value=(True, "aligned"))
-    fake_rpc_client = MagicMock()
+    fake_runner = MagicMock()
+    fake_runner.return_value = RunResult(0, '{"connected": true}\n', "")
 
     code = roles.run_node_role(
         root=tmp_path,
         home=tmp_path / "home",
-        gateway_url="ws://gateway.tailnet:18789",
-        gateway_token="secret-token",
+        target="https://gateway.tailnet:18789/j/sample-join-code-123",
         node_name="test-node",
         align_fn=fake_align,
-        rpc_client_factory=lambda **kwargs: fake_rpc_client,
+        runner=fake_runner,
+        wait_probe_fn=lambda: True,
         out=log_messages.append,
     )
     assert code == 0
-    assert fake_rpc_client.config_patch.call_count == 1
-    patch_args = fake_rpc_client.config_patch.call_args.kwargs
-    # Verifies agent patch sent to gateway via RPC
-    assert "patch" in patch_args
+    # Verifies runner called connect with --target-file
+    assert fake_runner.called
+    cmd = fake_runner.call_args_list[0][0][0]
+    assert cmd[0:4] == ["openclaw", "connect", "--service", "--session-host"]
+    assert "--target-file" in cmd
+
+    # Verifies squad instruction is printed at the end
+    output = "\n".join(log_messages)
+    assert "host: node" in output
+    assert "node: test-node" in output
+
+
+def test_node_role_without_target_shows_join_instructions(tmp_path: Path) -> None:
+    log_messages = []
+    fake_align = MagicMock(return_value=(True, "aligned"))
+
+    code = roles.run_node_role(
+        root=tmp_path,
+        home=tmp_path / "home",
+        target=None,
+        node_name="test-node",
+        align_fn=fake_align,
+        out=log_messages.append,
+    )
+    assert code == 0
+    output = "\n".join(log_messages)
+    assert "openclaw devices join-code" in output
+    assert "openclaw connect" in output
+    assert "host: node" in output
 
 
 def test_roles_idempotency(tmp_path: Path) -> None:

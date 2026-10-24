@@ -32,6 +32,19 @@ A map of agent IDs to agent configuration:
     - `host`: `"node"` or `"gateway"`.
     - `node`: Name of the satellite node machine executing commands for this agent.
 
+### Node Execution Delegation
+When machines connect in the `node` role, they act as headless execution hosts. Node agents are not registered from the satellite machine via RPC; instead, all node agents are declared directly in the central `squad.yaml` file evaluated on the gateway server:
+```yaml
+agents:
+  builder:
+    name: "Build Node"
+    model: "anthropic/claude-opus-5-5"
+    tools:
+      exec:
+        host: "node"
+        node: "desktop-linux"
+```
+
 ### `models`
 Optional dictionary of model entries and custom provider specifications.
 
