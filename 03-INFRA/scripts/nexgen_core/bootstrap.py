@@ -768,7 +768,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
     if aligned and count == 0:
         print(safe_text(f"  {c['green']}" + t("Ready.") + f"{c['reset']} " + t("Nothing else is required.")))
         if mode == "LOCAL-FULL":
-            print(safe_text(f"  {c['dim']}→ " + t("the five connectors run here: 'nexgen stack up' starts them.") + c['reset']))
+            print(safe_text(f"  {c['dim']}→ " + t("the local services run here: 'nexgen stack up' starts them.") + c['reset']))
         elif mode == "CLOUD-SERVER":
             print(safe_text(f"  {c['dim']}→ " + t("the services live on a server: see 03-INFRA/deploy/.") + c['reset']))
         print(safe_text("\n  " + t("From now on: 'nexgen doctor' tells you if anything is wrong, "

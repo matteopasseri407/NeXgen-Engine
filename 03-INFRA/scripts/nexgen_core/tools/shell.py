@@ -200,7 +200,7 @@ class NeXgenShell(cmd.Cmd):
             pass
 
     def do_modules(self, arg: str) -> None:
-        """Manage engine modules (memory, firecrawl, ocr, n8n, browser, council, sync).
+        """Manage engine modules (memory, ocr, n8n, browser, council, sync).
         Usage: modules list
                modules set <id> <absent|local|remote>"""
         from nexgen_core.cli import _run_cli

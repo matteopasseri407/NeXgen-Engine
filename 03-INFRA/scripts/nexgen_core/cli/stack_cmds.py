@@ -1,8 +1,8 @@
 """The verbs on the local stack: start, stop, see how it's doing.
 
-The full install is no longer just "get a server": these five connectors
-can run on the machine of whoever's using them, and these commands are how
-you get them without knowing what a tunnel is.
+The full install is no longer just "get a server": the connectors that run as
+containers can run on the machine of whoever's using them, and these commands
+are how you get them without knowing what a tunnel is.
 """
 from __future__ import annotations
 

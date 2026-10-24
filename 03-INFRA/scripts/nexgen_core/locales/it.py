@@ -409,7 +409,7 @@ MESSAGES: dict[str, str] = {
     'No file gets written: this is just a recommendation.': 'Nessun file viene scritto: è solo un consiglio.',
     'Profile:': 'Profilo:',
     'Services:': 'Servizi:',
-    "the five connectors run here: 'nexgen stack up' starts them.": "i cinque connettori girano qui: 'nexgen stack up' li avvia.",
+    "the local services run here: 'nexgen stack up' starts them.": "i servizi locali girano qui: 'nexgen stack up' li avvia.",
     'the services live on a server: see 03-INFRA/deploy/.': 'i servizi stanno su un server: vedi 03-INFRA/deploy/.',
     'no services: native search, no remote automation.': 'nessun servizio: ricerca nativa, niente automazioni remote.',
     'Next step': 'Passo successivo',

@@ -5,7 +5,6 @@
 # Local-Full / Cloud-Server); edit it here when something moves.
 #
 #   memory:    always local (this machine) or remote (vault-library on a VPS)
-#   firecrawl: local | remote | absent
 #   ocr:       local | remote | absent
 #   n8n:       local | remote | absent
 #   semantic-rag: local | remote | absent
@@ -13,6 +12,9 @@
 #   council:   local | absent
 #   local-lane: local | absent
 #   sync:      local | absent
+#
+# Firecrawl is not here: the connector is the vendor's cloud API and mounts on
+# its own wherever FIRECRAWL_API_KEY is set, so there is nothing to place.
 #
 # This file travels between machines through the vault, so entries under
 # `modules:` apply EVERYWHERE. A module bound to one machine goes under
@@ -28,7 +30,6 @@ schema_version: 1
 
 modules:
   memory: local
-  firecrawl: absent
   ocr: absent
   n8n: absent
   semantic-rag: absent

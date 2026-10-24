@@ -30,11 +30,11 @@ CATALOG = {
         "env_gates": ["VAULT_LIBRARY_URL"],
         "mcp_servers": ["vault-library"],
     },
-    "firecrawl": {
-        "label": "Firecrawl",
+    "crawler": {
+        "label": "Crawler",
         "kind": "connector",
         "states": ["absent", "local", "remote"],
-        "env_gates": ["FIRECRAWL_TUNNEL_PORT"],
+        "env_gates": ["CRAWLER_PORT"],
     },
     "browser": {
         "label": "Browser",
@@ -65,6 +65,14 @@ def test_catalog_loads_and_validates() -> None:
     assert catalog["browser"].supports("local") and not catalog["browser"].supports("remote")
 
 
+def test_the_catalog_no_longer_places_a_firecrawl_backend() -> None:
+    """The connector is the cloud API with the person's key: no stack to place."""
+    engine = Path(__file__).resolve().parents[3] / "03-INFRA"
+    catalog = load_catalog(engine)
+    assert "firecrawl" not in catalog
+    assert not [m for m in catalog.values() if m.stack == "firecrawl"]
+
+
 def test_catalog_rejects_unknown_dependency(tmp_path: Path) -> None:
     from nexgen_core.config import ConfigError
     _catalog_file(tmp_path, """
@@ -85,9 +93,9 @@ def test_derivation_declared_state_wins(tmp_path: Path) -> None:
         env_gates=tuple(v.get("env_gates", [])),
         depends_on=tuple(v.get("depends_on", [])),
     ) for mid, v in CATALOG.items()}
-    states = derive_state(catalog, {"firecrawl": "remote"}, {"FIRECRAWL_TUNNEL_PORT": "33002"})
+    states = derive_state(catalog, {"crawler": "remote"}, {"CRAWLER_PORT": "33002"})
     by_id = {s.module.id: s for s in states}
-    assert by_id["firecrawl"].state == "remote" and by_id["firecrawl"].source == "state-file"
+    assert by_id["crawler"].state == "remote" and by_id["crawler"].source == "state-file"
 
 
 def test_derivation_declared_but_gate_missing_is_absent(tmp_path: Path) -> None:
@@ -97,10 +105,10 @@ def test_derivation_declared_but_gate_missing_is_absent(tmp_path: Path) -> None:
         env_gates=tuple(v.get("env_gates", [])),
         depends_on=tuple(v.get("depends_on", [])),
     ) for mid, v in CATALOG.items()}
-    states = derive_state(catalog, {"firecrawl": "remote"}, {})
+    states = derive_state(catalog, {"crawler": "remote"}, {})
     by_id = {s.module.id: s for s in states}
-    assert by_id["firecrawl"].state == "absent"
-    assert "env gates" in by_id["firecrawl"].note
+    assert by_id["crawler"].state == "absent"
+    assert "env gates" in by_id["crawler"].note
 
 
 def test_derivation_no_gates_absent_until_declared(tmp_path: Path) -> None:
