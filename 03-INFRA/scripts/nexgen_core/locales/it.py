@@ -1636,6 +1636,8 @@ MESSAGES: dict[str, str] = {
         "L'app OpenClaw Companion ha un gateway suo su questo PC ({signals}){uses}: il setup qui sotto scrive quello nativo.",
     "The OpenClaw Companion app is connected to a gateway elsewhere: nothing here is in conflict, and the setup below writes the native gateway on this PC only.":
         "L'app OpenClaw Companion è collegata a un gateway altrove: qui non c'è nessun conflitto, e il setup qui sotto scrive solo il gateway nativo di questo PC.",
+    "The OpenClaw Companion app is installed and names no gateway on this PC: once the setup below has configured this PC's gateway, open Connections in OpenClaw Companion and choose 'a local Gateway on this PC'.":
+        "L'app OpenClaw Companion è installata e non nomina nessun gateway su questo PC: quando il setup qui sotto ha configurato il gateway di questo PC, apri Connections in OpenClaw Companion e scegli 'a local Gateway on this PC'.",
     "{passed} passed, {warned} warnings, {failed} failures":
         "{passed} superati, {warned} avvisi, {failed} errori",
     # Il comando

@@ -241,6 +241,10 @@ def _companion_note(detected: Detection) -> str | None:
     if situation == app_gateway.APP_REMOTE:
         return t("The OpenClaw Companion app is connected to a gateway elsewhere: nothing here is in conflict, "
                  "and the setup below writes the native gateway on this PC only.")
+    if situation == app_gateway.NATIVE and gateway.names_no_gateway():
+        return t("The OpenClaw Companion app is installed and names no gateway on this PC: once the setup below "
+                 "has configured this PC's gateway, open Connections in OpenClaw Companion and choose 'a local "
+                 "Gateway on this PC'.")
     return None
 
 

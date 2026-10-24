@@ -218,3 +218,25 @@ def test_the_plan_says_when_the_app_owns_the_only_gateway(tmp_path):
     assert "the native Node gateway, which is the road it supports" in text
     assert "open Connections in OpenClaw Companion and choose 'a local Gateway on this PC'" in text
     assert "--node-gateway" in text
+
+
+def test_the_plan_says_the_step_that_connects_an_app_without_a_gateway(tmp_path):
+    """The common machine: the exe is there, the engine configures the gateway, and the plan says how to join them."""
+    home = tmp_path / "home"
+    path = put_config(home, {})
+
+    text = render_plan(build_plan(
+        detected=detected(path, companion=Companion(present=True)), home=home, env={},
+    ))
+
+    assert "names no gateway on this PC" in text
+    assert "open Connections in OpenClaw Companion and choose 'a local Gateway on this PC'" in text
+
+
+def test_the_plan_says_nothing_about_an_app_that_is_not_installed(tmp_path):
+    home = tmp_path / "home"
+    path = put_config(home, {})
+
+    text = render_plan(build_plan(detected=detected(path), home=home, env={}))
+
+    assert "OpenClaw Companion" not in text
