@@ -225,8 +225,9 @@ def test_every_local_model_carries_the_cage():
     assert cage["ollama/one"]["profile"] == "messaging"
     assert cage["ollama/one"]["alsoAllow"] == ["read", "view_image", "pdf", "tts", "memory_search", "memory_get"]
     for pattern in ("group:web", "group:runtime", "write", "edit", "apply_patch", "skill_workshop",
-                    "playwright__*", "lazy-mcp__lazy_mutate"):
+                    "playwright__*"):
         assert pattern in deny
+    assert "lazy-mcp__lazy_mutate" not in deny
     for pattern in ("n8n-mcp__create_*", "n8n-mcp__delete_*", "vault-library__update_section",
                     "drive__drive_confirm_upload"):
         assert pattern in deny
@@ -363,9 +364,9 @@ def test_the_agents_may_talk_only_to_the_pairs_that_exist():
     assert "agentToAgent" not in alone["tools"]
 
 
-def test_exec_is_allowlisted_and_tool_search_is_off():
+def test_exec_is_allowlisted_and_tool_search_is_not_written():
     tools = build_config(machine(go=True))["tools"]
-    assert tools["toolSearch"] is False
+    assert "toolSearch" not in tools
     assert tools["exec"] == {"security": "allowlist", "ask": "on-miss"}
 
 

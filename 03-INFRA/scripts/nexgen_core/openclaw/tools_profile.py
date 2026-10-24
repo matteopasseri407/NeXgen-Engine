@@ -25,7 +25,7 @@ LOCAL_SAFE_TOOLS = ("read", "view_image", "pdf", "tts", "memory_search", "memory
 LOCAL_DENY = (
     "group:web", "group:runtime", "group:ui", "group:nodes", "group:automation",
     "write", "edit", "apply_patch", "skill_workshop",
-    "playwright__*", "lazy-mcp__lazy_mutate",
+    "playwright__*",
 )
 
 #: The agent that supervises work, and the plugin tools that change the engine's state.
@@ -111,10 +111,8 @@ def allow_supervisor_tools(entries: dict[str, Any], current: dict[str, Any] | No
 
 
 def tools_block(models: tuple[LocalModel, ...], partners: dict[str, list[str]]) -> dict[str, Any]:
-    """The tools block: a fixed small list, the exec policy, the cage, and who may message whom."""
+    """The tools block: the exec policy, the cage, and who may message whom."""
     tools: dict[str, Any] = {
-        # With small models, tool search fails; a fixed small list works.
-        "toolSearch": False,
         "exec": {"security": "allowlist", "ask": "on-miss"},
         "byProvider": cage_block(models),
     }
