@@ -146,11 +146,38 @@ def _mcp_block(existing: dict[str, Any], cfg_file: Path) -> dict[str, Any]:
     return block
 
 
+def _bridged_http_entry(srv: dict[str, Any], bridge_spec: Any) -> dict[str, Any]:
+    """Render a server in OpenClaw's Streamable HTTP shape when requested by the engine."""
+    if isinstance(bridge_spec, dict):
+        url = str(bridge_spec.get("url") or "")
+        token_env = bridge_spec.get("token_env") or bridge_spec.get("auth_env") or "NEXGEN_MCP_BRIDGE_TOKEN"
+        custom_headers = bridge_spec.get("headers")
+    else:
+        url = str(bridge_spec)
+        token_env = "NEXGEN_MCP_BRIDGE_TOKEN"
+        custom_headers = None
+
+    headers = dict(custom_headers) if isinstance(custom_headers, dict) else {"Authorization": f"Bearer ${{{token_env}}}"}
+    entry: dict[str, Any] = {"url": url, "transport": STREAMABLE_HTTP, "headers": headers}
+    deny = srv.get("tools_deny")
+    if isinstance(deny, list) and deny:
+        entry["toolFilter"] = {"exclude": [str(tool) for tool in deny]}
+    timeouts = srv.get("timeouts")
+    connection = _millis(timeouts, "startup")
+    request = _millis(timeouts, "tool")
+    if connection is not None:
+        entry["connectionTimeoutMs"] = connection
+    if request is not None:
+        entry["requestTimeoutMs"] = request
+    return entry
+
+
 def _apply_servers(
     renderer,
     servers_table: dict[str, Any],
     servers: dict[str, dict[str, Any]],
     references: dict[str, dict[str, str]] | None = None,
+    http_servers: dict[str, Any] | None = None,
 ) -> None:
     """Mounts every resolved server and drops the ones this engine retired."""
     for retired in renderer.retired_server_names():
@@ -159,6 +186,10 @@ def _apply_servers(
     renderer._drop_unmounted(servers_table, servers, cli_target="openclaw")
     for name, srv in servers.items():
         if name == "openclaw":
+            continue
+        bridge_spec = (http_servers or {}).get(name) if http_servers else None
+        if bridge_spec is not None:
+            servers_table[name] = _bridged_http_entry(srv, bridge_spec)
             continue
         is_http = srv.get("transport") == "http" or bool(srv.get("url"))
         if is_http and _resolved_url(srv) is None:
@@ -224,7 +255,11 @@ def _env_references(renderer) -> dict[str, dict[str, str]]:
     return found
 
 
-def render(renderer, write: bool = False) -> tuple[bool, str]:
+def render(
+    renderer,
+    write: bool = False,
+    http_servers: dict[str, Any] | None = None,
+) -> tuple[bool, str]:
     """Writes the manifest's connectors into OpenClaw's `mcp.servers` table.
 
     Nothing else in the file is touched: the gateway settings, the models and
@@ -241,7 +276,8 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
     before = copy.deepcopy(existing)
     mcp_config = _mcp_block(existing, cfg_file)
     servers_table = dict(mcp_config["servers"])
-    _apply_servers(renderer, servers_table, servers, _env_references(renderer))
+    effective_http = http_servers if http_servers is not None else getattr(renderer, "openclaw_http_servers", None)
+    _apply_servers(renderer, servers_table, servers, _env_references(renderer), effective_http)
     mcp_config["servers"] = servers_table
     existing["mcp"] = mcp_config
     if write:

@@ -361,3 +361,52 @@ def test_openclaw_server_rendered_without_env_secrets_or_references(tmp_path: Pa
         assert "${" not in dumped
 
 
+def test_render_writes_http_bridge_shape_when_requested(renderer) -> None:
+    """When the engine requests HTTP bridge rendering, the server gets URL and auth header instead of command."""
+    _install_openclaw(renderer)
+    bridge_map = {
+        "py-tool": {
+            "url": "http://127.0.0.1:8765/mcp/py-tool",
+            "token_env": "NEXGEN_MCP_BRIDGE_TOKEN",
+        }
+    }
+    assert renderer.render_openclaw(write=True, http_servers=bridge_map)[0]
+    servers = _servers(renderer)
+    py_tool = servers["py-tool"]
+
+    assert py_tool["url"] == "http://127.0.0.1:8765/mcp/py-tool"
+    assert py_tool["transport"] == "streamable-http"
+    assert py_tool["headers"] == {"Authorization": "Bearer ${NEXGEN_MCP_BRIDGE_TOKEN}"}
+    assert "command" not in py_tool
+    assert "args" not in py_tool
+
+    # Unbridged servers remain stdio
+    assert servers["node-tool"]["command"] == "node"
+    assert "url" not in servers["node-tool"]
+
+
+def test_render_writes_http_bridge_shape_preserves_tool_filters(renderer) -> None:
+    """A bridged HTTP server retains manifest tool denials as toolFilter exclusions."""
+    _install_openclaw(renderer)
+    bridge_map = {"trimmed": "http://127.0.0.1:8765/mcp/trimmed"}
+    assert renderer.render_openclaw(write=True, http_servers=bridge_map)[0]
+    servers = _servers(renderer)
+    trimmed = servers["trimmed"]
+
+    assert trimmed["url"] == "http://127.0.0.1:8765/mcp/trimmed"
+    assert trimmed["transport"] == "streamable-http"
+    assert trimmed["headers"] == {"Authorization": "Bearer ${NEXGEN_MCP_BRIDGE_TOKEN}"}
+    assert trimmed["toolFilter"] == {"exclude": ["expensive_tool"]}
+
+
+def test_render_with_renderer_attribute_http_servers(renderer) -> None:
+    """The engine can also configure bridged servers via an attribute on the renderer."""
+    _install_openclaw(renderer)
+    renderer.openclaw_http_servers = {
+        "py-tool": {"url": "http://127.0.0.1:8765/mcp"}
+    }
+    assert renderer.render_openclaw(write=True)[0]
+    servers = _servers(renderer)
+    assert servers["py-tool"]["url"] == "http://127.0.0.1:8765/mcp"
+    assert servers["py-tool"]["transport"] == "streamable-http"
+

@@ -363,10 +363,14 @@ class McpRenderer:
         from nexgen_core.mcp_render import claude_desktop
         return claude_desktop.render(self, write=write)
 
-    def render_openclaw(self, write: bool = False) -> tuple[bool, str]:
+    def render_openclaw(
+        self,
+        write: bool = False,
+        http_servers: dict[str, Any] | None = None,
+    ) -> tuple[bool, str]:
         """Writes the connectors into OpenClaw's own config (~/.openclaw/openclaw.json)."""
         from nexgen_core.mcp_render import openclaw
-        return openclaw.render(self, write=write)
+        return openclaw.render(self, write=write, http_servers=http_servers)
 
     def render_all(self, write: bool = False) -> dict[str, bool]:
         """Renders for all targets, each isolated: one corrupt live config must not stall the others."""
