@@ -1,8 +1,17 @@
-"""Tests for NeXgen MCP HTTP Bridge (Streamable HTTP + Bearer Auth)."""
+"""The bridge's transport: a bearer token on everything, one path per connector, ids that stay each caller's.
+
+These tests start a real listener on loopback and a real fake MCP server as its
+child, because the rules that matter here are the ones a mock cannot show: a
+missing `Authorization` header, a POST that opens a notification, a backend that
+answers out of order. The fake backend is a Python script, never a connector of
+the real vault: no test starts the owner's servers.
+"""
 from __future__ import annotations
 
 import json
 import sys
+import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -14,182 +23,321 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.mcp_bridge import (  # noqa: E402
-    DEFAULT_HOST,
-    McpHttpBridgeServer,
-    StdioProcessChannel,
+    BridgeError,
+    detect_wsl_host_ip,
     ensure_bridge_token,
     resolve_listen_address,
-    status_bridge,
-    stop_bridge,
 )
+from nexgen_core.mcp_bridge_server import McpHttpBridgeServer  # noqa: E402
 
-FAKE_MCP_SCRIPT = """
-import sys
+#: A standard-in/standard-out MCP server with one tool that answers slowly, which
+#: is what makes an id mix-up visible instead of theoretical.
+FAKE_MCP = '''
 import json
+import sys
+import time
+
+print("a banner that is not JSON at all")
+sys.stdout.flush()
 
 for line in sys.stdin:
     line = line.strip()
     if not line:
         continue
-    try:
-        req = json.loads(line)
-    except Exception:
-        continue
-    req_id = req.get("id")
-    method = req.get("method")
-    if method == "notifications/initialized":
-        continue
-    if req_id is None:
+    request = json.loads(line)
+    request_id = request.get("id")
+    method = request.get("method")
+    if request_id is None:
         continue
     if method == "initialize":
-        res = {"protocolVersion": "2026-07-28", "capabilities": {"tools": {}}, "serverInfo": {"name": "fake", "version": "1.0"}}
-        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": res}) + "\\n")
-        sys.stdout.flush()
+        result = {"protocolVersion": "2026-07-28", "capabilities": {"tools": {}},
+                  "serverInfo": {"name": "fake", "version": "1.0"}}
     elif method == "tools/list":
-        tools = [{"name": "fake_tool", "description": "A fake tool", "inputSchema": {"type": "object"}}]
-        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": {"tools": tools}}) + "\\n")
-        sys.stdout.flush()
+        result = {"tools": [{"name": "slow_echo", "inputSchema": {"type": "object"}}]}
     elif method == "tools/call":
-        params = req.get("params") or {}
-        args = params.get("arguments") or {}
-        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": {"content": [{"type": "text", "text": f"called with {args}"}]}}) + "\\n")
-        sys.stdout.flush()
+        arguments = (request.get("params") or {}).get("arguments") or {}
+        time.sleep(float(arguments.get("ms", 0)) / 1000.0)
+        result = {"content": [{"type": "text", "text": "waited " + str(arguments.get("ms", 0))}]}
     else:
-        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": "not found"}}) + "\\n")
-        sys.stdout.flush()
-"""
+        print(json.dumps({"jsonrpc": "2.0", "id": request_id,
+                          "error": {"code": -32601, "message": "not found"}}), flush=True)
+        continue
+    print(json.dumps({"jsonrpc": "2.0", "id": request_id, "result": result}), flush=True)
+'''
+
+TOKEN = "test-token-6f0c1a2b3c4d5e6f"
+
+
+@pytest.fixture(autouse=True)
+def never_taskkill(monkeypatch):
+    """Closing a fake backend must not run `taskkill` on the machine that runs the suite."""
+    def _kill(proc, *, process_group=None, timeout=5.0):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=timeout)
+        except Exception:  # noqa: BLE001 - a test double that will not die must not fail the test
+            pass
+        return True
+
+    monkeypatch.setattr("nexgen_core.mcp_bridge_channel.force_stop_process_tree", _kill)
 
 
 @pytest.fixture
-def fake_mcp_cmd(tmp_path: Path) -> list[str]:
-    script_path = tmp_path / "fake_mcp.py"
-    script_path.write_text(FAKE_MCP_SCRIPT, encoding="utf-8")
-    return [sys.executable, str(script_path)]
+def fake_backend(tmp_path: Path) -> dict:
+    script = tmp_path / "fake_mcp.py"
+    script.write_text(FAKE_MCP, encoding="utf-8")
+    return {"command": [sys.executable, str(script)], "env": {}}
 
 
 @pytest.fixture
-def running_bridge(fake_mcp_cmd):
-    channel = StdioProcessChannel(fake_mcp_cmd)
-    token = "test-token-abcdef123456"
-    server = McpHttpBridgeServer(("127.0.0.1", 0), token=token, default_channel=channel)
+def bridge(fake_backend):
+    server = McpHttpBridgeServer(
+        ("127.0.0.1", 0),
+        token=TOKEN,
+        backends={"lazy-mcp": fake_backend, "fake-tool": fake_backend},
+        nonce="nonce-of-this-run",
+    )
     server.start_in_thread()
-    port = server.server_address[1]
-    url = f"http://127.0.0.1:{port}/mcp"
+    base = f"http://127.0.0.1:{server.server_address[1]}"
     try:
-        yield {"server": server, "url": url, "token": token, "port": port}
+        yield {"server": server, "base": base, "url": f"{base}/mcp"}
     finally:
         server.shutdown_and_close()
 
 
-def _http_request(url: str, method: str = "GET", headers: dict[str, str] | None = None, data: bytes | None = None):
-    req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
+def _post(url: str, payload, token: str | None = TOKEN, timeout: float = 10.0):
+    body = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, data=body, method="POST", headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=5.0) as resp:
-            return resp.status, resp.headers, resp.read().decode("utf-8")
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.status, json.loads(response.read().decode("utf-8") or "{}")
     except urllib.error.HTTPError as exc:
-        return exc.code, exc.headers, exc.read().decode("utf-8")
+        return exc.code, json.loads(exc.read().decode("utf-8") or "{}")
 
 
-def test_bridge_rejects_missing_or_invalid_bearer_token(running_bridge):
-    url = running_bridge["url"]
-    data = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}).encode("utf-8")
+def _get(url: str, token: str | None = TOKEN):
+    headers = {"Authorization": f"Bearer {token}"} if token is not None else {}
+    request = urllib.request.Request(url, method="GET", headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=5.0) as response:
+            return response.status, json.loads(response.read().decode("utf-8") or "{}"), response.headers
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode("utf-8") or "{}"), exc.headers
 
-    # Missing token
-    status, _, body = _http_request(url, method="POST", data=data)
+
+def test_every_path_refuses_a_request_without_the_token(bridge):
+    """The token is the only lock this listener has: no path may answer before it."""
+    status, payload = _post(bridge["url"], {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, token=None)
     assert status == 401
-    assert "Unauthorized" in body
+    assert payload["error"]["message"] == "Unauthorized"
 
-    # Invalid token
-    bad_headers = {"Authorization": "Bearer wrong-token", "Content-Type": "application/json"}
-    status, _, body = _http_request(url, method="POST", headers=bad_headers, data=data)
-    assert status == 401
-    assert "Unauthorized" in body
-
-    # Wrong scheme
-    status, _, _ = _http_request(url, method="POST", headers={"Authorization": "Basic 1234"}, data=data)
+    status, _ = _post(bridge["url"], {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, token="wrong")
     assert status == 401
 
+    status, _, _ = _get(f"{bridge['base']}/health", token=None)
+    assert status == 401, "even the health probe must prove it holds the token"
 
-def test_bridge_forwards_tools_list_and_call_with_token(running_bridge):
-    url = running_bridge["url"]
-    token = running_bridge["token"]
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-    # tools/list
-    data_list = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}).encode("utf-8")
-    status, _, body = _http_request(url, method="POST", headers=headers, data=data_list)
+def test_tools_list_is_forwarded_and_keeps_the_caller_id(bridge):
+    status, payload = _post(bridge["url"], {"jsonrpc": "2.0", "id": "abc-1", "method": "tools/list"})
     assert status == 200
-    doc = json.loads(body)
-    assert doc["id"] == 1
-    assert doc["result"]["tools"][0]["name"] == "fake_tool"
+    assert payload["id"] == "abc-1"
+    assert payload["result"]["tools"][0]["name"] == "slow_echo"
 
-    # tools/call
-    data_call = json.dumps({
-        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-        "params": {"name": "fake_tool", "arguments": {"value": 99}}
-    }).encode("utf-8")
-    status, _, body = _http_request(url, method="POST", headers=headers, data=data_call)
+
+def test_a_tool_call_is_forwarded_to_the_named_connector(bridge):
+    status, payload = _post(
+        f"{bridge['base']}/mcp/fake-tool",
+        {"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+         "params": {"name": "slow_echo", "arguments": {"ms": 5}}},
+    )
     assert status == 200
-    doc_call = json.loads(body)
-    assert doc_call["id"] == 2
-    assert "called with {'value': 99}" in doc_call["result"]["content"][0]["text"]
+    assert payload["id"] == 7
+    assert payload["result"]["content"][0]["text"] == "waited 5"
 
 
-def test_bridge_handles_notifications_with_202(running_bridge):
-    url = running_bridge["url"]
-    token = running_bridge["token"]
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+def test_two_callers_using_the_same_id_each_get_their_own_answer(bridge):
+    """The regression this bridge exists to avoid: one caller's answer handed to another."""
+    answers: dict[str, str] = {}
 
-    notif = json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}).encode("utf-8")
-    status, _, _ = _http_request(url, method="POST", headers=headers, data=notif)
+    def call(name: str, ms: int) -> None:
+        _, payload = _post(
+            bridge["url"],
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "slow_echo", "arguments": {"ms": ms}}},
+        )
+        answers[name] = payload["result"]["content"][0]["text"]
+
+    first = threading.Thread(target=call, args=("slow", 300))
+    first.start()
+    time.sleep(0.15)  # the slow call is registered first, and must keep its own slot
+    second = threading.Thread(target=call, args=("quick", 10))
+    second.start()
+    first.join(10)
+    second.join(10)
+
+    assert answers == {"slow": "waited 300", "quick": "waited 10"}
+
+
+def test_a_notification_is_accepted_without_a_reply(bridge):
+    status, _ = _post(bridge["url"], {"jsonrpc": "2.0", "method": "notifications/initialized"})
     assert status == 202
 
 
-def test_bridge_handles_get_with_405(running_bridge):
-    url = running_bridge["url"]
-    token = running_bridge["token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
-    status, resp_headers, _ = _http_request(url, method="GET", headers=headers)
+def test_get_on_the_endpoint_is_a_405_because_there_is_no_stream(bridge):
+    status, _, headers = _get(bridge["url"])
     assert status == 405
-    assert "POST" in resp_headers.get("Allow", "")
+    assert "POST" in headers.get("Allow", "")
 
 
-def test_bridge_listen_address_protection():
-    # 0.0.0.0 without token must be refused
-    with pytest.raises(ValueError, match="0.0.0.0"):
+def test_a_path_that_names_no_connector_is_a_404(bridge):
+    status, _ = _post(
+        f"{bridge['base']}/mcp/not-a-connector",
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+    )
+    assert status == 404
+
+
+def test_health_names_the_run_and_the_connectors(bridge):
+    status, payload, _ = _get(f"{bridge['base']}/health")
+    assert status == 200
+    assert payload["nonce"] == "nonce-of-this-run"
+    assert payload["servers"] == ["fake-tool", "lazy-mcp"]
+    assert payload["url"].endswith("/mcp")
+
+
+def test_shutdown_stops_the_listener(bridge):
+    status, _ = _post(f"{bridge['base']}/shutdown", {})
+    assert status == 200
+    bridge["server"]._thread.join(5)
+    assert not bridge["server"]._thread.is_alive(), "the serving loop must return, not keep polling"
+
+
+def test_a_body_that_is_not_a_request_is_refused(bridge):
+    status, payload = _post(bridge["url"], [{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+    assert status == 400, "a batch is not a single JSON-RPC message"
+    assert payload["error"]["code"] == -32600
+
+    status, payload = _post(bridge["url"], {"jsonrpc": "2.0", "id": 1})
+    assert status == 400
+    assert payload["error"]["message"] == "Missing method"
+
+
+def test_the_listener_binds_loopback_and_nowhere_else(bridge):
+    """`ascolta solo dove deve`: 127.0.0.1, and a URL that says so."""
+    assert bridge["server"].server_address[0] == "127.0.0.1"
+    assert bridge["server"].get_url().startswith("http://127.0.0.1:")
+    wildcard = McpHttpBridgeServer(("127.0.0.1", 0), token=TOKEN, backends={}, client_host="0.0.0.0")
+    try:
+        assert wildcard.get_url().startswith("http://127.0.0.1:"), "a gateway is never handed 0.0.0.0"
+    finally:
+        wildcard.server_close()
+
+
+def test_the_default_address_is_loopback_and_the_wildcard_needs_a_token():
+    assert resolve_listen_address() == ("127.0.0.1", "127.0.0.1")
+    assert resolve_listen_address(host="localhost") == ("127.0.0.1", "127.0.0.1")
+    assert resolve_listen_address(host="192.0.2.10") == ("192.0.2.10", "192.0.2.10")
+    with pytest.raises(BridgeError):
         resolve_listen_address(host="0.0.0.0", token="")
-
-    # 0.0.0.0 with token is permitted
-    bind_h, client_h = resolve_listen_address(host="0.0.0.0", token="valid-tok")
-    assert bind_h == "0.0.0.0"
-    assert client_h == "127.0.0.1"
-
-    # Default is loopback
-    b_def, c_def = resolve_listen_address(host=None)
-    assert b_def == DEFAULT_HOST
-    assert c_def == DEFAULT_HOST
+    assert resolve_listen_address(host="0.0.0.0", token=TOKEN) == ("0.0.0.0", "127.0.0.1")
 
 
-def test_bridge_token_generation_and_storage(tmp_path: Path, monkeypatch):
-    secrets_env = tmp_path / "secrets.env"
-    monkeypatch.setenv("NEXGEN_SECRETS_ENV", str(secrets_env))
+def test_the_wsl_address_comes_from_the_interface_and_never_falls_back(monkeypatch):
+    """A WSL bind that quietly degraded to loopback would report success and be unreachable."""
+    monkeypatch.setattr("nexgen_core.mcp_bridge.detect_wsl_host_ip", lambda: "192.0.2.10")
+    assert resolve_listen_address(wsl=True) == ("192.0.2.10", "192.0.2.10")
+
+    monkeypatch.setattr("nexgen_core.mcp_bridge.detect_wsl_host_ip", lambda: None)
+    with pytest.raises(BridgeError, match="WSL"):
+        resolve_listen_address(wsl=True)
+
+
+def test_the_wsl_probe_reads_the_first_ipv4_and_ignores_noise(monkeypatch):
+    monkeypatch.delenv("NEXGEN_WSL_HOST_IP", raising=False)
+    assert detect_wsl_host_ip(runner=lambda argv: "noise\n192.0.2.10\n", is_windows=True) == "192.0.2.10"
+    assert detect_wsl_host_ip(runner=lambda argv: "", is_windows=True) is None
+    assert detect_wsl_host_ip(runner=lambda argv: "192.0.2.10", is_windows=False) is None, "no PowerShell off Windows"
+    monkeypatch.setenv("NEXGEN_WSL_HOST_IP", "192.0.2.11")
+    assert detect_wsl_host_ip(runner=lambda argv: "192.0.2.10", is_windows=True) == "192.0.2.11"
+
+
+def test_the_token_is_generated_once_into_the_deposit(tmp_path: Path, monkeypatch):
+    """A token that is not stored changes on every start, and the gateway keeps yesterday's."""
+    deposit = tmp_path / "secrets.env"
+    monkeypatch.setenv("NEXGEN_SECRETS_ENV", str(deposit))
     monkeypatch.delenv("NEXGEN_MCP_BRIDGE_TOKEN", raising=False)
 
-    token = ensure_bridge_token(home=tmp_path)
+    token = ensure_bridge_token()
     assert len(token) == 64
-    assert secrets_env.is_file()
-    assert token in secrets_env.read_text(encoding="utf-8")
+    assert deposit.is_file()
+    assert f"NEXGEN_MCP_BRIDGE_TOKEN={token}" in deposit.read_text(encoding="utf-8")
+    assert ensure_bridge_token() == token
 
-    # Calling again returns same token without changing file
-    token2 = ensure_bridge_token(home=tmp_path)
-    assert token2 == token
+    monkeypatch.setenv("NEXGEN_MCP_BRIDGE_TOKEN", "an-owner-chosen-token")
+    assert ensure_bridge_token() == "an-owner-chosen-token", "the environment wins over the deposit"
 
 
-def test_bridge_status_and_stop_lifecycle(tmp_path: Path):
-    # When stopped:
-    status_info = status_bridge(home=tmp_path)
-    assert status_info["running"] is False
+def test_a_token_that_cannot_be_stored_is_an_error_not_an_ephemeral_value(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("NEXGEN_SECRETS_ENV", str(tmp_path / "secrets.env"))
+    monkeypatch.delenv("NEXGEN_MCP_BRIDGE_TOKEN", raising=False)
+    monkeypatch.setattr("nexgen_core.deposit_env.read_deposit", lambda: {})
+    with pytest.raises(BridgeError):
+        ensure_bridge_token()
 
-    # Stop when already stopped is a clean no-op:
-    assert stop_bridge(home=tmp_path) is False
+
+def test_a_dead_backend_is_a_reply_and_the_next_call_starts_a_fresh_one(tmp_path: Path, monkeypatch):
+    """A bridge that has to be restarted by hand is worse than no bridge."""
+    dying = tmp_path / "dying.py"
+    dying.write_text(
+        "import json, os, sys\n"
+        "request = json.loads(sys.stdin.readline())\n"
+        "print(json.dumps({'jsonrpc': '2.0', 'id': request['id'],"
+        " 'error': {'code': -32000, 'message': 'bye'}}), flush=True)\n"
+        "os._exit(0)\n",
+        encoding="utf-8",
+    )
+    server = McpHttpBridgeServer(
+        ("127.0.0.1", 0),
+        token=TOKEN,
+        backends={"dies": {"command": [sys.executable, str(dying)], "env": {}}},
+    )
+    server.start_in_thread()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        status, payload = _post(f"{base}/mcp/dies", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        assert status == 200
+        assert payload["error"]["message"] == "bye"
+        time.sleep(0.2)  # the child has exited; the request below must start another
+        status, payload = _post(f"{base}/mcp/dies", {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        assert status == 200
+        assert payload["error"]["message"] == "bye"
+    finally:
+        server.shutdown_and_close()
+
+
+def test_a_backend_that_never_answers_ends_in_a_phrase(tmp_path: Path):
+    mute = tmp_path / "mute.py"
+    mute.write_text("import sys, time\nsys.stdin.read(1)\ntime.sleep(30)\n", encoding="utf-8")
+    server = McpHttpBridgeServer(
+        ("127.0.0.1", 0),
+        token=TOKEN,
+        backends={"mute": {"command": [sys.executable, str(mute)], "env": {}}},
+    )
+    for channel in server.channels.values():
+        channel.request_timeout = 0.5
+    server.start_in_thread()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        status, payload = _post(f"{base}/mcp/mute", {"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
+        assert status == 200
+        assert payload["error"]["code"] == -32000
+        assert "time" in payload["error"]["message"]
+    finally:
+        server.shutdown_and_close()

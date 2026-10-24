@@ -5,6 +5,8 @@ stays its own module: this is just the hook into the dispatcher.
 """
 from __future__ import annotations
 
+import sys
+
 from nexgen_core.i18n import t
 
 
@@ -134,6 +136,33 @@ def _register_mcp_inspection(msub) -> None:
     a.add_argument("--timeout", type=float, default=90.0, help=t("Seconds to wait for the gateway's index (backends are started to build it)"))
     a.add_argument("--direct", action="store_true", help=t("Instead: measure the directly mounted servers (tools and weight of what a CLI loads up front)"))
     a.set_defaults(func=cmd_mcp_check)
+
+    _register_mcp_bridge(msub)
+
+
+def _register_mcp_bridge(msub) -> None:
+    """The bridge, for a gateway that cannot launch this machine's stdio connectors itself."""
+    from nexgen_core.mcp_bridge import DEFAULT_PORT
+
+    b = msub.add_parser("bridge", help=t("Serve this machine's stdio connectors over local HTTP, for a gateway that cannot launch them"))
+    bsub = b.add_subparsers(dest="bridge_command", metavar="action")
+
+    start = bsub.add_parser("start", help=t("Start the bridge: loopback by default, and never on its own"))
+    start.add_argument("--host", help=t("Address to bind (default: loopback; 'wsl' for the virtual WSL interface)"))
+    start.add_argument("--wsl", action="store_true", help=t("Bind the virtual WSL interface, the address the distro can reach"))
+    start.add_argument("--port", type=int, default=DEFAULT_PORT, help=t("Port to listen on (default: {port})", port=DEFAULT_PORT))
+    start.add_argument("--server", action="append", dest="servers",
+                       help=t("Bridge only this connector; repeatable (default: every stdio connector the OpenClaw gateway mounts)"))
+    start.add_argument("--foreground", action="store_true", help=t("Stay in this terminal instead of detaching"))
+    start.set_defaults(func=cmd_mcp_bridge_start)
+
+    stop = bsub.add_parser("stop", help=t("Ask the running bridge to stop"))
+    stop.set_defaults(func=cmd_mcp_bridge_stop)
+
+    status = bsub.add_parser("status", help=t("Where the bridge listens and which connectors it serves"))
+    status.set_defaults(func=cmd_mcp_bridge_status)
+
+    b.set_defaults(func=lambda a: _usage(b))
 
 
 def register(sub) -> None:
@@ -306,3 +335,66 @@ def cmd_mcp_list(args) -> int:
     from nexgen_core.renderer_cli import cmd_inventory
 
     return cmd_inventory()
+
+
+def cmd_mcp_bridge_start(args) -> int:
+    from nexgen_core.mcp_bridge import BridgeError, start_bridge
+
+    try:
+        info = start_bridge(
+            host=getattr(args, "host", None),
+            port=getattr(args, "port", 8765),
+            wsl=getattr(args, "wsl", False),
+            names=getattr(args, "servers", None),
+            foreground=getattr(args, "foreground", False),
+        )
+    except BridgeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print(t("MCP HTTP bridge stopped"))
+        return 0
+    if info.get("status") == "already_running":
+        print(t("MCP HTTP bridge is already running: {url}", url=info.get("url", "")))
+        return 0
+    print(t("MCP HTTP bridge started: {url} (PID {pid})", url=info.get("url", ""), pid=info.get("pid", "?")))
+    _print_bridge_connectors(info)
+    return 0
+
+
+def cmd_mcp_bridge_stop(args) -> int:
+    from nexgen_core.mcp_bridge import stop_bridge
+
+    result = stop_bridge()
+    if result.get("stopped"):
+        print(t("MCP HTTP bridge stopped"))
+        return 0
+    if result.get("reason") == "not running":
+        print(t("MCP HTTP bridge is not running"))
+        return 0
+    print(t("MCP HTTP bridge is still answering at {url}: stop the process {pid} by hand",
+            url=result.get("url", ""), pid=result.get("pid", "?")))
+    return 1
+
+
+def cmd_mcp_bridge_status(args) -> int:
+    from nexgen_core.mcp_bridge import status_bridge
+
+    status = status_bridge()
+    if status.get("running"):
+        print(t("MCP HTTP bridge is running: {url} (PID {pid})", url=status.get("url", ""), pid=status.get("pid", "?")))
+        _print_bridge_connectors(status)
+        return 0
+    if status.get("stale"):
+        print(t("MCP HTTP bridge is not running: the state file describes a run that ended"))
+        return 1
+    print(t("MCP HTTP bridge is not running"))
+    return 1
+
+
+def _print_bridge_connectors(info) -> None:
+    """The names a gateway can address, so a person can copy one into a config."""
+    servers = info.get("servers") or []
+    if servers:
+        print(t("Connectors: {servers}", servers=", ".join(str(name) for name in servers)))
+

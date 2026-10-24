@@ -1,490 +1,435 @@
-"""mcp_bridge.py — Local Streamable HTTP bridge for stdio MCP servers.
+#!/usr/bin/env python3
+"""mcp_bridge.py — the engine's stdio MCP servers, reachable over HTTP from a gateway that cannot launch them.
 
-Exposes local stdio MCP servers (like lazy-mcp or individual tools) as standard
-MCP Streamable HTTP servers for harnesses running in environments where Windows
-commands cannot be launched directly (e.g. OpenClaw Gateway in WSL2 without
-interop or mount of C:).
+The Windows companion app runs OpenClaw inside an app-owned WSL distro where
+interop is off and `C:` is not mounted, so a connector declared as a Windows
+command (`python C:\\...\\lazy-mcp.py`, `node ...\\playwright-human-safe.mjs`) never
+starts there. OpenClaw speaks Streamable HTTP, so this bridge runs on the Windows
+side, starts those same connectors as children, and serves them at `/mcp/<name>`.
 
-Security:
-- Listens on loopback (127.0.0.1) by default or the WSL host interface.
-- Strictly requires a Bearer token on every request (never 0.0.0.0 without token).
-- Tokens are stored in the engine's secrets store and never printed to stdout/logs.
+One job: the command surface (start, stop, status), the token, where the listener
+sits, and the state file that lets a later command find this run again. The HTTP
+transport lives in `mcp_bridge_server`, the child processes in `mcp_bridge_channel`,
+and the choice of which connectors to front in `mcp_bridge_targets`.
+
+Security is the reason most of the lines here exist:
+
+- loopback by default. The one other address worth binding is the virtual WSL
+  interface, because in WSL's default NAT mode the distro reaches the Windows host
+  at that address and not at 127.0.0.1 (mirrored networking is the exception, and
+  there loopback works). `0.0.0.0` is accepted only as an explicit `--host`, and
+  only with a token;
+- every request carries `Authorization: Bearer <token>`, compared in constant
+  time. The token is generated into the engine's own secrets deposit, at 0600,
+  and is never printed, logged or written into the state file;
+- the state file carries a nonce, and `/health` echoes it. `status` and `stop`
+  therefore talk to the listener they think they are talking to, and a leftover
+  state file from a killed run is recognised as stale instead of being believed;
+- nothing starts this automatically. A listener that outlives a forgotten
+  terminal is a port held open with a token in it.
 """
 from __future__ import annotations
 
-import http.server
 import json
-import logging
 import os
 import secrets
 import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
-from nexgen_core.paths import resolve_engine_root, resolve_state_dir
-from nexgen_core.processes import force_stop_process_tree, no_window_kwargs, spawn_detached
+SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
 
-logger = logging.getLogger("nexgen.mcp.bridge")
+from nexgen_core.i18n import t  # noqa: E402 - sys.path shim for a directly executed checkout
+from nexgen_core.mcp_bridge_server import McpHttpBridgeServer  # noqa: E402 - sys.path shim for a directly executed checkout
+from nexgen_core.mcp_bridge_state import (  # noqa: E402 - sys.path shim for a directly executed checkout
+    answering,
+    ask_to_stop,
+    endpoint_url,
+    public_record,
+    read_state,
+    state_file_path,
+    verified,
+    write_state,
+)
+from nexgen_core.mcp_bridge_targets import (  # noqa: E402 - sys.path shim for a directly executed checkout
+    UnknownBridgeServer,
+    select_backends,
+)
+from nexgen_core.processes import spawn_detached  # noqa: E402 - sys.path shim for a directly executed checkout
 
-DEFAULT_PORT = 8765
+#: Where a gateway that runs on the same machine should be pointed.
 DEFAULT_HOST = "127.0.0.1"
-DEFAULT_TOKEN_ENV = "NEXGEN_MCP_BRIDGE_TOKEN"
-STREAMABLE_HTTP = "streamable-http"
+
+#: High enough to be out of the way of the engine's own services.
+DEFAULT_PORT = 8765
+
+#: The variable the bearer token is read from, and the name the token gets in the
+#: engine's secrets deposit.
+TOKEN_ENV = "NEXGEN_MCP_BRIDGE_TOKEN"
+
+#: How long `start` waits for the detached listener to answer before calling it a failure.
+START_TIMEOUT_SECONDS = 20.0
+
+#: How long `stop` waits for the listener to go away after asking it to.
+STOP_TIMEOUT_SECONDS = 5.0
 
 
-def ensure_bridge_token(token_env_name: str = DEFAULT_TOKEN_ENV, home: Path | None = None) -> str:
-    """Gets or generates the bridge bearer token, storing it securely without printing."""
-    current = os.environ.get(token_env_name)
-    if current and current.strip():
-        return current.strip()
+class BridgeError(RuntimeError):
+    """A problem the person can fix by changing the command, said as one sentence."""
 
+
+# -- the token -------------------------------------------------------------
+
+def ensure_bridge_token(name: str = TOKEN_ENV) -> str:
+    """The bridge token, generated into the engine's deposit when it is missing.
+
+    The deposit (`~/.config/nexgen/secrets.env`, 0600) is where this engine keeps the
+    credentials its own processes read, and `deposit_env` is the reader every other
+    part of the engine already agrees on. A token that cannot be stored is an error,
+    not an ephemeral value: an ephemeral one changes on every start, and the gateway
+    configured with yesterday's token fails with a bare 401.
+    """
     from nexgen_core.deposit_env import deposit_path, read_deposit
     from nexgen_core.stack.secrets import ensure
 
-    path = deposit_path()
-    existing = read_deposit()
-    if existing.get(token_env_name):
-        token = existing[token_env_name]
-        os.environ[token_env_name] = token
-        return token
+    current = os.environ.get(name, "").strip()
+    if current:
+        return current
+    stored = read_deposit().get(name, "").strip()
+    if not stored:
+        ensure(deposit_path(), [name])
+        stored = read_deposit().get(name, "").strip()
+    if not stored:
+        raise BridgeError(
+            t("Could not store {name} in {path}: the file exists but this process cannot read it",
+              name=name, path=deposit_path())
+        )
+    # The detached listener arrives through this process's environment, and the
+    # token must not travel in an argv where every process on the machine sees it.
+    os.environ[name] = stored
+    return stored
 
-    # Generate and record securely
-    ensure(path, [token_env_name])
-    updated = read_deposit()
-    token = updated.get(token_env_name) or secrets.token_hex(32)
-    os.environ[token_env_name] = token
-    return token
+
+def _stored_token(name: str = TOKEN_ENV) -> str:
+    """The token already on this machine, without generating one: for status and stop."""
+    from nexgen_core.deposit_env import read_deposit
+
+    return os.environ.get(name, "").strip() or read_deposit().get(name, "").strip()
 
 
-def detect_wsl_host_ip() -> str | None:
-    """Detects the Windows host IPv4 address on the virtual WSL network interface."""
-    explicit = os.environ.get("NEXGEN_WSL_HOST_IP")
+# -- where the listener sits ----------------------------------------------
+
+def _run_capture(argv: list[str], timeout: float = 5.0) -> str | None:
+    """A short command's stdout, or None: asking the network stack must never take the command down."""
+    from nexgen_core.processes import no_window_kwargs
+
+    try:
+        result = subprocess.run(
+            argv,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=timeout,
+            check=False,
+            **no_window_kwargs(),
+        )
+    except (OSError, subprocess.TimeoutExpired):  # nexgen: allow reason="asking the network stack is best effort; a machine without the interface is reported by the caller"
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def detect_wsl_host_ip(
+    runner: Callable[[list[str]], str | None] | None = None,
+    is_windows: bool | None = None,
+) -> str | None:
+    """The Windows host's address on the virtual WSL network, when there is one.
+
+    `NEXGEN_WSL_HOST_IP` wins, because a machine whose adapter is named something the
+    filter below does not match still needs a way to say the address out loud.
+    """
+    explicit = os.environ.get("NEXGEN_WSL_HOST_IP", "").strip()
     if explicit:
-        return explicit.strip()
-
-    if os.name == "nt":
-        try:
-            cmd = ["powershell.exe", "-NoProfile", "-Command",
-                   "(Get-NetIPAddress -InterfaceAlias '*WSL*' -AddressFamily IPv4).IPAddress"]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=3.0, check=False)
-            if res.returncode == 0 and res.stdout.strip():
-                lines = [line.strip() for line in res.stdout.splitlines() if line.strip()]
-                if lines:
-                    return lines[0]
-        except (OSError, subprocess.TimeoutExpired):  # nexgen: allow reason="WSL interface detection is best-effort and falls back to loopback"
-            pass
+        return explicit
+    if not (os.name == "nt" if is_windows is None else is_windows):
+        return None
+    run = runner or _run_capture
+    output = run([
+        "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+        "(Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -like '*WSL*' }"
+        " | Select-Object -First 1 -ExpandProperty IPAddress)",
+    ])
+    for line in (output or "").splitlines():
+        candidate = line.strip()
+        if candidate.count(".") == 3 and all(part.isdigit() for part in candidate.split(".")):
+            return candidate
     return None
 
 
-def resolve_listen_address(host: str | None = None, wsl: bool = False, token: str | None = None) -> tuple[str, str]:
-    """Resolves (bind_address, client_address) ensuring protected exposure."""
-    if wsl or (host and host.lower() == "wsl"):
-        wsl_ip = detect_wsl_host_ip()
-        if wsl_ip:
-            return (wsl_ip, wsl_ip)
-        return (DEFAULT_HOST, DEFAULT_HOST)
+def resolve_listen_address(
+    host: str | None = None,
+    wsl: bool = False,
+    token: str | None = None,
+) -> tuple[str, str]:
+    """The address to bind and the address to hand to a gateway: `(bind, client)`.
 
-    if host:
-        cleaned = host.strip()
-        if cleaned in ("0.0.0.0", "::"):
-            if not token or not token.strip():
-                raise ValueError("Refusing to bind 0.0.0.0 without a bearer token")
-            return (cleaned, DEFAULT_HOST)
-        return (cleaned, cleaned)
+    Loopback unless asked otherwise. `--wsl` asks for the virtual interface, and a
+    missing one is an error: falling back to loopback would start a listener the
+    distro cannot reach while the command reports success.
+    """
+    if wsl or (host or "").strip().lower() == "wsl":
+        address = detect_wsl_host_ip()
+        if not address:
+            raise BridgeError(
+                t("No WSL network interface found: pass --host with the address the distro can reach")
+            )
+        return address, address
+    cleaned = (host or "").strip()
+    if not cleaned:
+        return DEFAULT_HOST, DEFAULT_HOST
+    if cleaned in ("0.0.0.0", "::"):
+        if not (token or "").strip():
+            raise BridgeError(t("Refusing to bind {host} without a bearer token", host=cleaned))
+        return cleaned, DEFAULT_HOST
+    if cleaned in ("localhost", "::1"):
+        return DEFAULT_HOST, DEFAULT_HOST
+    return cleaned, cleaned
 
-    return (DEFAULT_HOST, DEFAULT_HOST)
 
+# -- start, run, stop, status ---------------------------------------------
 
-class StdioProcessChannel:
-    """Thread-safe JSON-RPC communication over a child process's stdio streams."""
-
-    def __init__(self, command: list[str], cwd: str | None = None, env: dict[str, str] | None = None):
-        self.command = command
-        self.cwd = cwd
-        self.env = env
-        self.proc: subprocess.Popen | None = None
-        self._lock = threading.Lock()
-        self._pending: dict[Any, tuple[threading.Event, list[dict[str, Any]]]] = {}
-        self._reader_thread: threading.Thread | None = None
-        self._closed = False
-
-    def _ensure_started(self) -> None:
-        if self._closed:
-            raise RuntimeError("Channel is closed")
-        if self.proc is not None and self.proc.poll() is None:
-            return
-
-        kwargs = no_window_kwargs()
-        self.proc = subprocess.Popen(
-            self.command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=self.cwd,
-            env=self.env,
-            text=True,
-            encoding="utf-8",
-            bufsize=1,
-            **kwargs,
+def run_bridge(
+    bind_host: str,
+    port: int,
+    token: str,
+    backends: dict[str, dict[str, Any]],
+    client_host: str,
+    state_path: Path,
+) -> dict[str, Any]:
+    """Serves until stopped: the foreground path and the body of the detached listener."""
+    try:
+        server = McpHttpBridgeServer(
+            (bind_host, port),
+            token=token,
+            backends=backends,
+            client_host=client_host,
+            nonce=secrets.token_hex(16),
         )
-        self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True, name="mcp-bridge-reader")
-        self._reader_thread.start()
-
-    def _reader_loop(self) -> None:
-        while not self._closed and self.proc and self.proc.stdout:
-            line = self.proc.stdout.readline()
-            if not line:
-                break
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                msg = json.loads(stripped)
-            except (ValueError, UnicodeError):  # nexgen: allow reason="ignore non-JSON output on child stdout before or between frames"
-                continue
-            if isinstance(msg, dict) and "id" in msg:
-                req_id = msg["id"]
-                with self._lock:
-                    if req_id in self._pending:
-                        event, slot = self._pending.pop(req_id)
-                        slot.append(msg)
-                        event.set()
-
-        # Reached EOF or closed: release any remaining requests
-        with self._lock:
-            for req_id, (event, slot) in list(self._pending.items()):
-                slot.append({"jsonrpc": "2.0", "id": req_id, "error": {"code": -32000, "message": "Backend process exited"}})
-                event.set()
-            self._pending.clear()
-
-    def send_notification(self, msg: dict[str, Any]) -> None:
-        """Sends a one-way notification without waiting for a reply."""
-        self._ensure_started()
-        with self._lock:
-            if not self.proc or not self.proc.stdin:
-                return
-            line = json.dumps(msg, ensure_ascii=False) + "\n"
-            self.proc.stdin.write(line)
-            self.proc.stdin.flush()
-
-    def send_request(self, msg: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
-        """Sends a JSON-RPC request and waits for matching reply."""
-        self._ensure_started()
-        req_id = msg.get("id")
-        event = threading.Event()
-        slot: list[dict[str, Any]] = []
-        with self._lock:
-            self._pending[req_id] = (event, slot)
-            line = json.dumps(msg, ensure_ascii=False) + "\n"
-            if self.proc and self.proc.stdin:
-                self.proc.stdin.write(line)
-                self.proc.stdin.flush()
-            else:
-                return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32000, "message": "Process unavailable"}}
-
-        if not event.wait(timeout):
-            with self._lock:
-                self._pending.pop(req_id, None)
-            return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32000, "message": f"Request timed out after {timeout}s"}}
-        return slot[0] if slot else {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32000, "message": "No response"}}
-
-    def close(self) -> None:
-        self._closed = True
-        proc = self.proc
-        self.proc = None
-        if proc:
-            force_stop_process_tree(proc, timeout=2.0)
+    except OSError as exc:
+        # The listener's own stderr goes to the null device (it is detached), so
+        # the reason a bind failed is left where `start` is already looking.
+        write_state(state_path, {"error": str(exc), "failed_at": time.time()})
+        raise
+    state = {
+        "pid": os.getpid(),
+        "nonce": server.nonce,
+        "bind_host": bind_host,
+        "client_host": client_host,
+        "port": server.server_address[1],
+        "url": server.get_url(),
+        "token_env": TOKEN_ENV,
+        "servers": server.served_names(),
+        "started_at": server.started_at,
+    }
+    write_state(state_path, state)
+    try:
+        server.serve()
+    finally:
+        server.shutdown_and_close()
+        state_path.unlink(missing_ok=True)
+    return state
 
 
-class McpHttpBridgeHandler(http.server.BaseHTTPRequestHandler):
-    """HTTP request handler implementing MCP Streamable HTTP with Bearer authentication."""
-
-    server: McpHttpBridgeServer
-
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
-        # Silence default stderr logging to keep operational terminal clean
-        pass
-
-    def _send_json(self, status: int, data: dict[str, Any], headers: dict[str, str] | None = None) -> None:
-        payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(payload)))
-        if headers:
-            for k, v in headers.items():
-                self.send_header(k, v)
-        self.end_headers()
-        self.wfile.write(payload)
-
-    def _authorize(self) -> bool:
-        auth_header = self.headers.get("Authorization", "").strip()
-        expected = f"Bearer {self.server.token}"
-        if auth_header != expected:
-            self._send_json(401, {"jsonrpc": "2.0", "error": {"code": -32001, "message": "Unauthorized"}})
-            return False
-        return True
-
-    def _resolve_channel(self) -> StdioProcessChannel | None:
-        path = self.path.split("?")[0].rstrip("/")
-        if path == "/mcp" or path == "":
-            return self.server.default_channel
-        if path.startswith("/mcp/"):
-            name = path[5:].strip("/")
-            if name in self.server.channels:
-                return self.server.channels[name]
-            return self.server.default_channel
-        return None
-
-    def do_OPTIONS(self) -> None:  # noqa: N802
-        self.send_response(204)
-        self.send_header("Allow", "POST, GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, Mcp-Session-Id, Mcp-Protocol-Version")
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-
-    def do_GET(self) -> None:  # noqa: N802
-        if not self._authorize():
-            return
-        channel = self._resolve_channel()
-        if channel is None:
-            self._send_json(404, {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Endpoint not found: {self.path}"}})
-            return
-        # Per MCP Streamable HTTP specification, 405 indicates server does not offer standalone SSE stream on GET
-        self._send_json(405, {"jsonrpc": "2.0", "error": {"code": -32601, "message": "Streamable HTTP requires POST"}},
-                        headers={"Allow": "POST, OPTIONS"})
-
-    def do_POST(self) -> None:  # noqa: N802
-        if not self._authorize():
-            return
-        channel = self._resolve_channel()
-        if channel is None:
-            self._send_json(404, {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Endpoint not found: {self.path}"}})
-            return
-
-        try:
-            content_length = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            content_length = 0
-
-        if content_length <= 0:
-            self._send_json(400, {"jsonrpc": "2.0", "error": {"code": -32700, "message": "Missing request body"}})
-            return
-
-        body = self.rfile.read(content_length)
-        try:
-            req = json.loads(body.decode("utf-8"))
-        except Exception:
-            self._send_json(400, {"jsonrpc": "2.0", "error": {"code": -32700, "message": "Parse error"}})
-            return
-
-        # Notification handling
-        if isinstance(req, dict) and "id" not in req:
-            channel.send_notification(req)
-            self.send_response(202)
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return
-
-        # Request handling
-        reply = channel.send_request(req)
-        self._send_json(200, reply)
-
-
-class McpHttpBridgeServer(http.server.ThreadingHTTPServer):
-    """Server hosting the MCP HTTP Bridge."""
-
-    def __init__(
-        self,
-        server_address: tuple[str, int],
-        token: str,
-        default_channel: StdioProcessChannel,
-        channels: dict[str, StdioProcessChannel] | None = None,
-        client_host: str | None = None,
-    ):
-        super().__init__(server_address, McpHttpBridgeHandler)
-        self.token = token
-        self.default_channel = default_channel
-        self.channels = channels or {}
-        self.client_host = client_host or server_address[0]
-        self._thread: threading.Thread | None = None
-
-    def start_in_thread(self) -> None:
-        self._thread = threading.Thread(target=self.serve_forever, daemon=True, name="mcp-bridge-server")
-        self._thread.start()
-
-    def get_url(self) -> str:
-        port = self.server_address[1]
-        host = self.client_host if self.client_host not in ("0.0.0.0", "::") else DEFAULT_HOST
-        return f"http://{host}:{port}/mcp"
-
-    def shutdown_and_close(self) -> None:
-        self.shutdown()
-        self.server_close()
-        self.default_channel.close()
-        for ch in self.channels.values():
-            ch.close()
-
-
-def state_file_path(home: Path | None = None) -> Path:
-    """Path to the bridge daemon's state JSON file."""
-    return resolve_state_dir(home) / "mcp_bridge.json"
-
-
-def default_backend_command() -> list[str]:
-    """Default stdio command to bridge: NeXgen's universal lazy-mcp aggregator."""
-    engine_root = Path(resolve_engine_root())
-    lazy_mcp = engine_root / "agent-universal-layer" / "mcp" / "lazy-mcp.py"
-    return [sys.executable, str(lazy_mcp)]
+def _backends_or_phrase(names: Sequence[str] | None, renderer=None) -> dict[str, dict[str, Any]]:
+    """The connectors to front, with an unknown name turned into a sentence instead of a traceback."""
+    try:
+        return select_backends(names, renderer)
+    except UnknownBridgeServer as exc:
+        raise BridgeError(str(exc)) from exc
 
 
 def start_bridge(
     host: str | None = None,
     port: int = DEFAULT_PORT,
     wsl: bool = False,
+    names: Sequence[str] | None = None,
     foreground: bool = False,
     home: Path | None = None,
-    channel_command: list[str] | None = None,
-    spawn_fn: Callable[[list[str]], int | None] | None = None,
+    wait: float = START_TIMEOUT_SECONDS,
+    renderer=None,
+    spawn: Callable[[list[str]], int | None] | None = None,
 ) -> dict[str, Any]:
-    """Starts the MCP HTTP bridge server."""
-    state_file = state_file_path(home)
-    if state_file.is_file():
-        status = status_bridge(home)
-        if status.get("running"):
-            return {"status": "already_running", "url": status["url"], "pid": status.get("pid")}
+    """Starts the listener, once. Returns what `status` would say about it afterwards."""
+    state_path = state_file_path(home)
+    current = status_bridge(home)
+    if current.get("running"):
+        return {"status": "already_running", **public_record(current)}
 
-    token = ensure_bridge_token(home=home)
-    bind_h, client_h = resolve_listen_address(host, wsl=wsl, token=token)
-    cmd = channel_command or default_backend_command()
+    backends = _backends_or_phrase(names, renderer)
+    if not backends:
+        raise BridgeError(
+            t("Nothing to bridge: no stdio connector of the OpenClaw gateway is mounted on this machine")
+        )
+    token = ensure_bridge_token()
+    bind_host, client_host = resolve_listen_address(host, wsl=wsl, token=token)
 
     if foreground:
-        channel = StdioProcessChannel(cmd)
-        server = McpHttpBridgeServer((bind_h, port), token=token, default_channel=channel, client_host=client_h)
-        info = {
-            "pid": os.getpid(),
-            "bind_host": bind_h,
-            "port": server.server_address[1],
-            "url": server.get_url(),
-            "token_env": DEFAULT_TOKEN_ENV,
-            "started_at": time.time(),
-        }
-        state_file.parent.mkdir(parents=True, exist_ok=True)
-        state_file.write_text(json.dumps(info, indent=2), encoding="utf-8")
-        try:
-            server.serve_forever()
-        finally:
-            server.shutdown_and_close()
-            state_file.unlink(missing_ok=True)
-        return info
+        state = run_bridge(bind_host, port, token, backends, client_host, state_path)
+        return {"status": "started", **public_record(state)}
 
-    # Background detached process
-    launcher_argv = [
-        sys.executable, "-m", "nexgen_core.mcp_bridge", "run",
-        "--host", bind_h,
+    argv = [
+        sys.executable, str(Path(__file__).resolve()), "run",
+        "--host", bind_host,
         "--port", str(port),
+        *[f"--server={name}" for name in backends],
     ]
-    spawner = spawn_fn or spawn_detached
-    pid = spawner(launcher_argv)
-    info = {
-        "pid": pid,
-        "bind_host": bind_h,
-        "port": port,
-        "url": f"http://{client_h}:{port}/mcp",
-        "token_env": DEFAULT_TOKEN_ENV,
-        "started_at": time.time(),
-    }
-    state_file.parent.mkdir(parents=True, exist_ok=True)
-    state_file.write_text(json.dumps(info, indent=2), encoding="utf-8")
-    return info
+    spawner = spawn or spawn_detached
+    spawner(argv)
+
+    deadline = time.monotonic() + max(0.0, wait)
+    while time.monotonic() < deadline:
+        state = read_state(state_path)
+        if state is not None:
+            failure = state.get("error")
+            if failure:
+                state_path.unlink(missing_ok=True)
+                raise BridgeError(t("The bridge could not start: {reason}", reason=failure))
+            health = verified(state, token)
+            if health is not None:
+                return {"status": "started", **public_record(state)}
+        time.sleep(0.1)
+    raise BridgeError(
+        t("The bridge did not answer at {url} within {seconds} seconds",
+          url=endpoint_url({"client_host": client_host, "port": port}), seconds=int(wait))
+    )
 
 
-def stop_bridge(home: Path | None = None, force_stop_fn: Callable[[int], bool] | None = None) -> bool:
-    """Stops the running bridge daemon, if active."""
-    state_file = state_file_path(home)
-    if not state_file.is_file():
-        return False
-    try:
-        data = json.loads(state_file.read_text(encoding="utf-8"))
-        pid = data.get("pid")
-    except (OSError, ValueError):
-        pid = None
+def stop_bridge(home: Path | None = None, wait: float = STOP_TIMEOUT_SECONDS) -> dict[str, Any]:
+    """Asks the listener to stop and forgets it. Never kills a process by pid.
 
-    stopped = False
-    if pid and isinstance(pid, int):
-        if force_stop_fn:
-            stopped = force_stop_fn(pid)
-        else:
-            class DummyProc:
-                def __init__(self, p: int):
-                    self.pid = p
-
-                def poll(self):
-                    return None
-
-                def kill(self):
-                    pass
-
-                def wait(self, timeout=None):
-                    return 0
-
-            stopped = force_stop_process_tree(DummyProc(pid), timeout=3.0)
-
-    state_file.unlink(missing_ok=True)
-    return stopped or True
+    A pid read out of a file can belong to somebody else by the time it is used:
+    there is no question here that a `taskkill` would answer safely. The daemon is
+    ours, it has a shutdown path, and a daemon that will not take it is reported
+    instead of shot.
+    """
+    state_path = state_file_path(home)
+    state = read_state(state_path)
+    if state is None:
+        return {"stopped": False, "reason": "not running"}
+    token = _stored_token(str(state.get("token_env") or TOKEN_ENV))
+    started = time.monotonic()
+    if token:
+        ask_to_stop(state, token)
+    while time.monotonic() - started < max(0.0, wait):
+        gone = (not answering(state)) if not token else (verified(state, token) is None)
+        if gone:
+            break
+        time.sleep(0.1)
+    still = answering(state) if not token else (verified(state, token) is not None)
+    if still:
+        return {
+            "stopped": False,
+            "reason": "still answering" if token else "no token to ask with",
+            "url": state.get("url"),
+            "pid": state.get("pid"),
+        }
+    state_path.unlink(missing_ok=True)
+    return {"stopped": True, "url": state.get("url"), "pid": state.get("pid")}
 
 
-def status_bridge(home: Path | None = None, probe_fn: Callable[[str], bool] | None = None) -> dict[str, Any]:
-    """Inspects the running state of the MCP HTTP bridge."""
-    state_file = state_file_path(home)
-    if not state_file.is_file():
-        return {"running": False, "message": "MCP HTTP bridge is not running"}
-
-    try:
-        data = json.loads(state_file.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        state_file.unlink(missing_ok=True)
-        return {"running": False, "message": "Corrupt bridge state file removed"}
-
-    pid = data.get("pid")
-    url = data.get("url")
+def status_bridge(home: Path | None = None) -> dict[str, Any]:
+    """What the listener this machine recorded is doing right now."""
+    state = read_state(state_file_path(home))
+    if state is None:
+        return {"running": False}
+    token = _stored_token(str(state.get("token_env") or TOKEN_ENV))
+    if not token:
+        # Without the token the nonce cannot be read back, but a dead port is
+        # still a dead port: that much is answered without touching anybody.
+        if not answering(state):
+            return {**public_record(state), "running": False, "stale": True}
+        return {**public_record(state), "running": True, "verified": False}
+    health = verified(state, token)
+    if health is None:
+        return {**public_record(state), "running": False, "stale": True}
     return {
+        **public_record(state),
         "running": True,
-        "pid": pid,
-        "url": url,
-        "bind_host": data.get("bind_host"),
-        "port": data.get("port"),
-        "token_env": data.get("token_env", DEFAULT_TOKEN_ENV),
+        "verified": True,
+        "pid": health.get("pid", state.get("pid")),
+        "servers": health.get("servers", state.get("servers", [])),
+        "started_at": health.get("started_at", state.get("started_at")),
     }
 
+
+def bridged_http_servers(home: Path | None = None) -> dict[str, dict[str, str]]:
+    """The renderer's map for OpenClaw: each bridged connector as `url` plus the token's variable.
+
+    Empty when the bridge is not running, so a renderer pass never writes a URL that
+    nothing answers on: a connector pointed at a dead port fails at the first call,
+    which is worse than a connector that was never rewritten.
+    """
+    status = status_bridge(home)
+    if not status.get("running"):
+        return {}
+    state = read_state(state_file_path(home)) or {}
+    host = str(state.get("client_host") or DEFAULT_HOST)
+    port = int(state.get("port") or DEFAULT_PORT)
+    token_env = str(state.get("token_env") or TOKEN_ENV)
+    return {
+        str(name): {"url": f"http://{host}:{port}/mcp/{name}", "token_env": token_env}
+        for name in status.get("servers") or []
+    }
+
+
+# -- the command line ------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI runner entry point for the bridge daemon."""
-    args = argv if argv is not None else sys.argv[1:]
-    if not args:
-        print("Usage: python -m nexgen_core.mcp_bridge [run|start|stop|status] [options]")
-        return 1
+    """`run` is what `start` spawns; the rest is here so the module is testable alone."""
+    import argparse
 
-    verb = args[0]
-    if verb == "run":
-        import argparse
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--host", default=DEFAULT_HOST)
-        parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-        parsed = parser.parse_args(args[1:])
-        start_bridge(host=parsed.host, port=parsed.port, foreground=True)
-        return 0
-    if verb == "stop":
-        stop_bridge()
-        return 0
-    if verb == "status":
-        info = status_bridge()
-        print(json.dumps(info, indent=2))
-        return 0
-    return 1
+    parser = argparse.ArgumentParser(prog="mcp_bridge")
+    sub = parser.add_subparsers(dest="verb", required=True)
+
+    run = sub.add_parser("run", help="serve until stopped (the detached listener's own entry point)")
+    run.add_argument("--host", default=DEFAULT_HOST)
+    run.add_argument("--port", type=int, default=DEFAULT_PORT)
+    run.add_argument("--server", action="append", dest="servers", default=None)
+
+    sub.add_parser("stop", help="ask the listener to stop")
+    sub.add_parser("status", help="what the listener is doing")
+
+    args = parser.parse_args(argv)
+    try:
+        if args.verb == "run":
+            token = ensure_bridge_token()
+            backends = _backends_or_phrase(args.servers)
+            bind_host, client_host = resolve_listen_address(args.host, token=token)
+            run_bridge(bind_host, args.port, token, backends, client_host, state_file_path())
+            return 0
+        if args.verb == "stop":
+            result = stop_bridge()
+            if result["stopped"]:
+                print(t("MCP HTTP bridge stopped"))
+                return 0
+            if result.get("reason") == "not running":
+                print(t("MCP HTTP bridge is not running"))
+                return 0
+            print(t("MCP HTTP bridge is still answering at {url}", url=result.get("url", "")))
+            return 1
+        status = status_bridge()
+        print(json.dumps(status, indent=2))
+        return 0 if status.get("running") else 1
+    except BridgeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except OSError as exc:
+        print(t("Could not bind the bridge: {error}", error=exc), file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
