@@ -69,23 +69,19 @@ def _utf8_console() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     _utf8_console()
+    args_list = sys.argv[1:] if argv is None else list(argv)
+    if args_list and args_list[0] == "run":
+        print(
+            "nexgen-local run è stato ritirato: usa 'openclaw agent' o 'openclaw tui' "
+            "(l'esecuzione degli agenti appartiene a OpenClaw)."
+        )
+        return 0
     parser = argparse.ArgumentParser(
         prog="nexgen-local",
         description="Lane locale governata: sola lettura, tool decisi dal motore, ricevute su audit.",
     )
     parser.add_argument("--version", action="version", version=f"nexgen-local {_version()}")
     sub = parser.add_subparsers(dest="command", required=True)
-
-    run = sub.add_parser("run", help="risponde a una domanda attraverso la lane")
-    run.add_argument("question")
-    run.add_argument("--model")
-    run.add_argument("--router-model", help="modello per il routing (default: --model)")
-    run.add_argument("--answer-model", help="modello per la risposta (default: --model)")
-    run.add_argument("--vault")
-    run.add_argument("--repo", action="append")
-    run.add_argument("--audit")
-    run.add_argument("--json", action="store_true")
-    run.set_defaults(func=cmd_run)
 
     evaluate = sub.add_parser("eval", help="esegue le suite di valutazione")
     evaluate.add_argument("--suite", choices=("capability", "traps", "all"), default="all")

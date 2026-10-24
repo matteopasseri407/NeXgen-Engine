@@ -15,12 +15,12 @@ from nexgen_local import cli
 
 #: Every verb the lane offers. A new verb is added here on purpose.
 EXPECTED_COMMANDS = [
-    "run", "eval", "drive-propose", "drive-upload", "drive-mcp", "doctor", "tier", "sup",
+    "eval", "drive-propose", "drive-upload", "drive-mcp", "doctor", "tier", "sup",
 ]
 
 #: Verbs retired on 2026-10-24. None of them may reach the subcommand list.
 RETIRED_COMMANDS = [
-    "relay", "mail-propose", "mails", "mail-send", "cal-propose", "cals", "cal-apply",
+    "run", "relay", "mail-propose", "mails", "mail-send", "cal-propose", "cals", "cal-apply",
     "wf-propose", "wfs", "wf-run", "propose", "proposals", "apply", "mcp",
     "research", "explore", "close",
 ]
@@ -62,3 +62,11 @@ def test_eval_lists_only_the_surviving_suites(capsys) -> None:
     assert "{capability,traps,all}" in printed
     for gone in ("patch", "jobs", "agent"):
         assert f",{gone}" not in printed
+
+
+def test_retired_run_redirects_to_openclaw(capsys) -> None:
+    rc = cli.main(["run", "question about focus"])
+    assert rc == 0
+    printed = capsys.readouterr().out
+    assert "openclaw" in printed.lower()
+    assert "ritirato" in printed.lower()
