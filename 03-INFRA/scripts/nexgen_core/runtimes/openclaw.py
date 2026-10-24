@@ -47,7 +47,8 @@ _PLUGIN_SOURCE_DIRNAME = "openclaw-guardrail-plugin"
 PLUGIN_ID = "nexgen"
 #: The name unit C deposited it under. It is removed on sight: one plugin, one id.
 LEGACY_PLUGIN_ID = "nexgen-guardrail"
-#: The engine-owned switches beside the plugin: briefing, posture, governor. Never `openclaw.json`.
+#: The engine-owned switches beside the plugin: briefing, posture, engine, governor, evidence.
+#: Never `openclaw.json`.
 PLUGIN_CONFIG_NAME = "nexgen.config.json"
 #: The briefing text, shared with Claude's checkpoint hook (`hooks/vault-briefing.txt`).
 BRIEFING_NAME = "vault-briefing.txt"

@@ -169,6 +169,29 @@ A block with only an id makes OpenClaw lose the context window, and it overflows
 report one, the plan names the model and leaves the field out instead of inventing a number.
 A model entry already in the file keeps its fields, and the engine only adds what is missing.
 
+The cage limits what a local model can do. What it may claim is a second question, answered below.
+
+## The evidence check
+
+Every answer an agent on a local model gives is compared, before the harness accepts it, with the tool
+receipts of the same turn: a read that was not performed, a search that never ran, a command or a test
+that never executed, a write that never happened, a cited note that was never opened.
+The rules come from the retired local lane and live in the plugin now, so they cover every agent
+instead of one action at a time, and they are pure functions of text and receipts.
+
+An answer that does not stand on its receipts gets one more model pass, told exactly which claims have
+no evidence. If it comes back the same way, or the run cannot be rewound, the answer is delivered with a
+visible note under it. Never dropped in silence.
+
+The switch is not in the plugin: it is the `evidence` section of `nexgen.config.json` beside it, written
+by the deposit from the configuration in force. It lists exactly the local providers this machine serves,
+so a cloud model is never checked, and a machine with no local model carries an explicit `off`.
+
+The check reads the conversation, which OpenClaw withholds from every non-bundled plugin unless
+`plugins.entries.nexgen.hooks.allowConversationAccess` is true. `nexgen openclaw setup` writes that grant,
+merged into the `hooks` block already there, and `nexgen openclaw doctor` warns when it is missing.
+The hooks themselves are handed to the plugin by OpenClaw, so nothing else has to be installed.
+
 ## Terms of service
 
 OpenClaw uses the person's own subscriptions through the logins that already exist on the machine.
@@ -212,8 +235,8 @@ before that step.
      by `id` so a hand-written model is not dropped;
    - the gateway token generated with `secrets.token_urlsafe(32)` only when there is none, and never
      printed;
-   - the engine's guardrail plugin enabled only when its folder is actually deposited, with the
-     conversation-access grant its governor hook needs;
+   - the engine's guardrail plugin enabled only when its folder is actually deposited, and granted
+     `hooks.allowConversationAccess`, which both its governor hook and the evidence check need;
    - an atomic write, then `openclaw config validate` on the file just written. A failure puts the backup
      back, prints OpenClaw's own error, and exits non-zero;
    - after OpenClaw has accepted the file, the fallback chains reach the plugin's own
@@ -257,12 +280,12 @@ would write, and prints what it would add, what it would change, what it no long
 are the person's and stay. It writes nothing.
 
 `nexgen openclaw doctor [--json]` checks installation, version against the pin, the configuration's validity,
-`:latest` ids, caged local models, the heartbeat, the gateway's bind and authentication, Google entries, ACP
-seats, agents on subscriptions this machine does not have, whether the gateway is listening, whether every
-agent has a fallback chain, a second gateway from the Microsoft Store, and how many skills and servers
-OpenClaw created that the canonical library does not declare yet. `nexgen doctor` runs the same checks as
-part of its own report, and says nothing at all on a machine that never installed OpenClaw and never
-declared the module.
+`:latest` ids, caged local models, whether the evidence check runs and for which local models, the heartbeat,
+the gateway's bind and authentication, Google entries, ACP seats, agents on subscriptions this machine does
+not have, whether the gateway is listening, whether every agent has a fallback chain, a second gateway from
+the Microsoft Store, and how many skills and servers OpenClaw created that the canonical library does not
+declare yet. `nexgen doctor` runs the same checks as part of its own report, and says nothing at all on a
+machine that never installed OpenClaw and never declared the module.
 
 `nexgen openclaw setup` applies that same plan: it installs the pinned release, onboards when there is no
 file, merges the owned sections with a backup beside them, writes the agent manuals, installs and starts the
