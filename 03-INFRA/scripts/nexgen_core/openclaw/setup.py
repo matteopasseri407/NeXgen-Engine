@@ -29,6 +29,7 @@ from nexgen_core.openclaw.plan import Plan, build_plan, render_plan
 from nexgen_core.openclaw.profile import GATEWAY_PORT, Choices
 from nexgen_core.openclaw.setup_agents import snapshot_dirs
 from nexgen_core.openclaw.setup_app import app_gateway_stop, app_step, device_line
+from nexgen_core.openclaw.setup_service_env import write_gateway_service_env
 from nexgen_core.openclaw.server_gateway import server_stop
 from nexgen_core.openclaw.setup_steps import (
     START_TIMEOUT_SECONDS,
@@ -184,10 +185,12 @@ def _plan_phase(
 def _apply(setup: Setup, installed: Detection, plan, before: set[str], ask: Callable[[str], bool]) -> int:
     """Steps 4 to 9: write, workspaces, service, module, phone, doctor."""
     _step(setup.out, 4, t("Safe write"))
-    plugin_step(setup)
+    if not plugin_step(setup):
+        return 1
     outcome = write_step(setup, plan)
     if outcome == "failed":
         return 1
+    write_gateway_service_env(setup, plan.config)
     # Only after OpenClaw accepted the file: chains the plugin would offer for agents
     # the file no longer carries would move a turn to a model the gateway cannot run.
     governor_step(setup, plan)
