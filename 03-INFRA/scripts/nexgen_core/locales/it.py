@@ -2134,4 +2134,6 @@ MESSAGES: dict[str, str] = {
         "Server MCP di OpenClaw abilitato per gli altri harness.",
     "Could not enable OpenClaw MCP server: {error}":
         "Impossibile abilitare il server MCP di OpenClaw: {error}",
+    "plugin '{id}' is not an MCP wrapper ({kind}): not adoptable":
+        "il plugin '{id}' non è un wrapper MCP ({kind}): non adottabile",
 }
