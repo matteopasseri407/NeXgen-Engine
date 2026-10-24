@@ -15,7 +15,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.openclaw.companion import Companion  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.openclaw.detect import Detection, Installation, LocalModelInfo, LocalModels, Login  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.detect import Detection, Installation, LocalModelInfo, LocalModels, Login, detect  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.doctor import collect, exit_code  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.profile import PENDING_TOKEN  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.report import Severity  # noqa: E402 - sys.path shim for cloned checkout
@@ -395,6 +395,29 @@ def test_the_companion_gateway_is_a_warning_when_its_wsl_distro_exists(tmp_path)
     companion = by_id(outcomes)["openclaw.companion_gateway"]
     assert companion.severity == Severity.WARN
     assert "Connections" in (companion.action or "")
+
+
+def test_an_app_gateway_alone_is_reported_through_the_real_probe(tmp_path, monkeypatch):
+    """Case (b) end to end: the app's file is read, the snapshot is built, one line comes out."""
+    settings = tmp_path / "roaming" / "OpenClawTray" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({"gatewayUrl": "ws://127.0.0.1:52190"}), encoding="utf-8")
+    real_detect = detect
+    monkeypatch.setattr(
+        "nexgen_core.openclaw.doctor.detect",
+        lambda **kwargs: real_detect(
+            which=lambda name: None, run=lambda *a, **k: None, http_json=lambda *a, **k: None, **kwargs,
+        ),
+    )
+
+    outcomes = collect(
+        home=tmp_path / "home", vault_data=tmp_path / "vault", engine_root=tmp_path / "engine",
+        env={"APPDATA": str(tmp_path / "roaming")}, platform="win32", wsl_distributions=lambda: [],
+    )
+
+    assert [outcome.id for outcome in outcomes] == ["openclaw.companion_gateway"]
+    assert outcomes[0].severity is Severity.OK
+    assert exit_code(outcomes) == 0
 
 
 def test_an_installed_app_with_no_gateway_of_its_own_costs_no_probe(tmp_path, monkeypatch):
