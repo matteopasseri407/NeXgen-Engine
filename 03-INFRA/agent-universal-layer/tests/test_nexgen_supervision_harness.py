@@ -722,3 +722,78 @@ def test_a_turn_that_dies_before_its_envelope_keeps_what_it_said(unit, monkeypat
     assert written["stderr"] is not subprocess.DEVNULL
     assert log.is_file(), "nessun file di stderr nella cartella del compito"
     assert "provider ha rifiutato il modello" in log.read_text(encoding="utf-8")
+
+
+def test_open_first_tab_records_pid_in_event(task, unit, monkeypatch):
+    """L'apertura della scheda registra il PID dell'handle nel diario degli eventi."""
+    result = harness._open_first_tab(
+        task, "prova", unit, "prompt",
+        opener=lambda title, argv, cwd, marker="": {"title": title, "pid": 9876},
+        lister=lambda: [], wait_s=0,
+    )
+    assert result["window"]["pid"] == 9876
+    events = [r for r in state.read_events(task) if r.get("event") == "unit_started"]
+    assert len(events) == 1
+    assert events[0]["pid"] == 9876
+
+
+def test_agy_tab_finds_and_attaches_session_after_tab_open(task, unit, tmp_path, monkeypatch):
+    """Con agy, la conversazione nel DB sqlite viene cercata e agganciata."""
+    conv_dir = tmp_path / "conversations"
+    conv_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path))
+
+    conv_id = "c0555555-5555-5555-5555-55555555555c"
+    db_file = conv_dir / f"{conv_id}.db"
+    import sqlite3
+    con = sqlite3.connect(db_file)
+    con.execute("CREATE TABLE steps (idx integer, step_payload blob)")
+    con.execute("INSERT INTO steps VALUES (0, ?)", (str(unit).encode("utf-8"),))
+    con.commit()
+    con.close()
+
+    adapter = harness.adapters.get("agy")
+    result = harness._open_first_tab(
+        task, "prova", unit, "prompt",
+        opener=lambda title, argv, cwd, marker="": {"title": title, "pid": 4321},
+        lister=lambda: [], wait_s=0.1, adapter=adapter,
+    )
+    assert result["session"] is not None
+    assert result["session"]["id"] == conv_id
+    rec = state.harness_session_record(task, "agy", unit="prova")
+    assert rec is not None
+    assert rec["session"] == conv_id
+
+
+def test_rework_delivers_to_agy_by_reopening_interactive_tab(task, unit, monkeypatch):
+    """Agy non sa send_turn: la consegna di correzioni riapre la scheda con resume_argv."""
+    conv_id = "a544d85d-f5b3-4741-bbe2-8044c85b348f"
+    state.append_event(
+        task, "attached", unit="prova", role="esecutore", harness="agy",
+        session=conv_id, folder=str(unit),
+    )
+    review_file = unit.parent / "45-revisione-prova-1.md"
+    review_file.write_text("# Revisione\n\ncorrezioni per agy\n", encoding="utf-8")
+
+    opened: list = []
+    result = harness.send_corrections(
+        task, "prova", review_file, 1,
+        opener=lambda title, argv, *, cwd, marker="": opened.append((title, argv, cwd)) or {"title": title, "pid": 77},
+        runner=lambda *a: pytest.fail("agy non deve mai ricevere un run invisibile"),
+        measure=lambda session: pytest.fail("agy non ha misura di costo da interrogare"),
+        lister=lambda: [], wait_s=0,
+    )
+
+    assert len(opened) == 1
+    title, argv, cwd = opened[0]
+    assert title == "esecutore · prova"
+    assert "agy" in argv[0].lower()
+    assert argv[1:] == [
+        "--mode", "accept-edits", "--conversation", conv_id,
+        "--prompt-interactive", harness.corrections_text(task, "prova", review_file, 1),
+    ]
+    assert cwd == unit
+    assert result["mode"] == "tab" and result["reopened"] is True
+    assert result["session"] == {"id": conv_id}
+
+

@@ -323,7 +323,11 @@ def _enter_the_session(
     the owner cannot see is what this engine exists to prevent.
     """
     adapter = adapter or _adapter("opencode")
-    adapter.require("send_turn", "una sessione esistente non può ricevere un turno")
+    if not adapter.capabilities.has("send_turn") or _tab_closed(task_id):
+        return _reopen_tab(
+            task_id, unit, session, folder, prompt, event=event, extra=extra,
+            opener=opener, model=model, adapter=adapter,
+        )
     facts = _measure_or_lost(measure, session)
     running = str(getattr(facts, "model", "") or "")
     chosen = model or running
@@ -344,11 +348,6 @@ def _enter_the_session(
             reason=reason, folder=str(folder), **extra,
         )
         return {"unit": unit, "mode": "queued", "session": session, "reason": reason}
-    if _tab_closed(task_id):
-        return _reopen_tab(
-            task_id, unit, session, folder, prompt, event=event, extra=extra,
-            opener=opener, model=model, adapter=adapter,
-        )
     proc = runner(session, prompt, folder, model)
     state.append_event(
         task_id, event, unit=unit, harness=adapter.name, session=session, mode="run",
@@ -427,7 +426,7 @@ def _open_first_tab(
     )
     state.append_event(
         task_id, event, unit=unit, harness=adapter.name, window=str(handle.get("title", "")),
-        mode="tab", folder=str(folder), **dict(extra or {}),
+        mode="tab", folder=str(folder), pid=handle.get("pid"), **dict(extra or {}),
     )
     found, note = _session_after(adapter, folder, started_ms, lister, wait_s, chosen)
     if found is None:
@@ -566,7 +565,7 @@ def _reopen_tab(
     )
     state.append_event(
         task_id, event, unit=unit, harness=adapter.name, window=str(handle.get("title", "")),
-        mode="tab", session=session, reopened=True, folder=str(folder), **extra,
+        mode="tab", session=session, reopened=True, folder=str(folder), pid=handle.get("pid"), **extra,
     )
     row = costs.record(
         task_id, unit, "esecutore", session, harness=adapter.name, window=windows.WINDOW_NAME,
