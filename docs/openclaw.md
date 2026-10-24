@@ -333,6 +333,25 @@ Full support, which means talking to the gateway through its own protocol and in
 comes in a later release. Until then the two gateways stay two separate things, and the engine only ever writes the
 native one.
 
+## Talking to the gateway
+
+The RPC client (`nexgen_core.openclaw.gateway_rpc`) implements the WebSocket JSON-RPC transport (protocol v4)
+so the engine speaks to the OpenClaw gateway directly (`ws://127.0.0.1:18789`).
+
+It authenticates as an operator client with the gateway's own token, never printing or logging it, and exposes
+one primitive per operation:
+- `health()`: the gateway's operational state and the plugins it loaded;
+- `config_get()`: the configuration snapshot and the base hash the concurrency check needs;
+- `config_patch(patch, base_hash)`: a partial configuration update, protected by optimistic locking;
+- `plugins_install(source)` and `plugins_reload(id)`: installing a plugin and reloading it in place.
+
+With this client the engine configures OpenClaw and manages its plugins whatever the hosting environment is (a
+native Windows gateway, a WSL gateway managed by OpenClaw Companion, a Linux or a remote one): it never has to
+reach into an isolated filesystem, and it never has to restart a process.
+
+One read-only command inspects the RPC connection by hand:
+`nexgen openclaw rpc health [--json] [--url URL]`
+
 ## Installazione con un comando
 
 `nexgen openclaw setup [--yes] [--lan] [--dry-run] [--no-sviluppo] [--node-gateway]` runs nine steps, in this
@@ -541,3 +560,6 @@ adoption is a person's act.
 `nexgen openclaw restart` and `nexgen openclaw pair` bring the gateway back and let a phone, or another
 machine, in; they are described above, with the rest of the installation. `nexgen openclaw stop` takes it down
 and waits until the port is free, which is what a hand edit of `openclaw.json` needs.
+
+`nexgen openclaw rpc health [--json] [--url URL]` inspects the gateway's operational state through the
+WebSocket `health` call, reporting uptime and the plugins it loaded without changing anything.
