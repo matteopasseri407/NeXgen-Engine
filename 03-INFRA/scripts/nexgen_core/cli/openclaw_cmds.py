@@ -63,8 +63,10 @@ def _register(sub) -> None:
     q = psub.add_parser("stop", help=t("Stop the gateway before editing its file by hand"))
     q.set_defaults(func=cmd_stop)
 
-    q = psub.add_parser("pair", help=t("List the phones waiting to be paired, and approve one"))
-    q.add_argument("--approve", metavar="ID", default=None, help=t("Approve the request with this id"))
+    q = psub.add_parser("pair", help=t("List the phones and the nodes waiting to be paired, and approve one"))
+    q.add_argument("--approve", metavar="ID", default=None, help=t("Approve the device request with this id"))
+    q.add_argument("--approve-node", dest="approve_node", metavar="ID", default=None,
+                   help=t("Approve the node request with this id, showing the commands it exposes"))
     q.add_argument("--yes", action="store_true", help=t("Do not ask for confirmation"))
     q.set_defaults(func=cmd_pair)
 
@@ -140,4 +142,8 @@ def cmd_stop(args) -> int:
 def cmd_pair(args) -> int:
     from nexgen_core.openclaw.setup import run_pair
 
-    return run_pair(approve_id=args.approve, yes=bool(args.yes))
+    return run_pair(
+        approve_id=args.approve,
+        approve_node_id=args.approve_node,
+        yes=bool(args.yes),
+    )

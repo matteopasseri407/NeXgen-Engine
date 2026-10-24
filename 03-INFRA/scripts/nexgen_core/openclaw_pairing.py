@@ -1,16 +1,23 @@
-"""OpenClaw mobile device pairing management.
+"""OpenClaw pairing management, in its two stages.
 
 Handles device pairing workflows including QR display instructions, pending
-request discovery (with sensitive token stripping), and device approval.
+request discovery (with sensitive token stripping), and device approval, and the
+second stage a node needs: the requests waiting on the gateway, the approval of
+the commands it would expose, and the nodes the gateway already knows. A node
+gets in only after both stages, and the two request ids are different, so the
+module keeps them apart and never confuses one for the other.
 Never exposes or prints auth tokens.
 """
 from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 from typing import Any, Callable
 
 from nexgen_core.openclaw_service import RunResult, default_runner
+from nexgen_core.processes import no_window_kwargs
 
 SENSITIVE_KEY_SUBSTRINGS = ("token", "secret", "authkey", "private", "credential")
 
@@ -132,5 +139,185 @@ def approve(
         "commands": commands,
         "device_id": clean_id,
         "output": _scrub_text(res.stdout.strip()),
+        "dry_run": False,
+    }
+
+
+# ------------------------------------------------------------------ the node stage
+#
+# A node is a machine that runs OpenClaw's commands on the gateway's behalf. Device
+# approval admits the connection; a second, separate request lists the commands the
+# node would expose, and that one has an id of its own. Both are answered here, and
+# neither is ever answered on its own initiative: the caller asks the person first.
+
+#: A node query that has not answered in twenty seconds has a gateway behind it that
+#: will not answer, and the caller (a doctor, usually) must not wait forever.
+NODE_QUERY_TIMEOUT_SECONDS = 20.0
+
+#: The keys a pending node request may carry its declared commands under. OpenClaw
+#: writes `commands` in the pairing list; `declaredCommands` is what the node itself
+#: advertises on connect, and an older payload can have only that one.
+_COMMAND_KEYS = ("commands", "declaredCommands")
+
+
+def default_node_runner(argv: list[str]) -> RunResult:
+    """Run one node query, with a deadline: argv only, never a shell string.
+
+    A gateway that is up answers in a second; one that is wedged answers never, and
+    the deadline is what turns that into a silent "no nodes" instead of a hung doctor.
+    """
+    executable = shutil.which(argv[0]) if argv else None
+    cmd = [executable, *argv[1:]] if executable else argv
+    try:
+        done = subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=NODE_QUERY_TIMEOUT_SECONDS,
+            **no_window_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError):  # nexgen: allow reason="an OpenClaw that cannot be asked has no nodes to report, and silence is the answer the caller renders"
+        return RunResult(returncode=1, stdout="", stderr="")
+    return RunResult(done.returncode, done.stdout, done.stderr)
+
+
+def node_name(node: dict[str, Any]) -> str:
+    """The name a person recognises for a node, falling back to its ids."""
+    for key in ("displayName", "nodeId", "requestId"):
+        value = node.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return "?"
+
+
+def node_platform(node: dict[str, Any]) -> str:
+    """The platform a node reports, or an empty string when it reports none."""
+    value = node.get("platform")
+    return value.strip() if isinstance(value, str) else ""
+
+
+def node_commands(node: dict[str, Any]) -> list[str]:
+    """The commands a node declares, whichever key this release puts them under."""
+    for key in _COMMAND_KEYS:
+        value = node.get(key)
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+    return []
+
+
+def _parse_text_nodes(output: str) -> list[dict[str, Any]]:
+    """Fallback parser for the textual `nodes pending` table, when `--json` is unsupported.
+
+    The table is a header row and then `request  node  ip  requested`; the request id
+    is the first column, and the rest of the line is kept, scrubbed, as the summary so
+    a person still sees which machine is asking.
+    """
+    nodes: list[dict[str, Any]] = []
+    for line in output.splitlines():
+        clean = line.strip()
+        if not clean or clean.lower().startswith(("request", "no pending")):
+            continue
+        parts = [part.strip() for part in re.split(r"\t+|\s{2,}", clean) if part.strip()]
+        if not parts:
+            continue
+        node: dict[str, Any] = {"requestId": parts[0], "summary": _scrub_text(clean), "status": "pending"}
+        if len(parts) > 1:
+            node["displayName"] = parts[1]
+        nodes.append(node)
+    return nodes
+
+
+def nodes_pending(
+    runner: Callable[[list[str]], RunResult] | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Retrieve the node requests waiting on the gateway, stripping all tokens."""
+    cmd = ["openclaw", "nodes", "pending", "--json"]
+    commands = [cmd]
+    if dry_run:
+        return {"ok": True, "commands": commands, "nodes": [], "dry_run": True}
+
+    run_cmd = runner or default_node_runner
+    res = run_cmd(cmd)
+
+    nodes: list[dict[str, Any]] = []
+    if res.stdout.strip():
+        try:
+            data = json.loads(res.stdout)
+            raw_list = data if isinstance(data, list) else data.get("pending", [])
+            if isinstance(raw_list, list):
+                nodes = [_strip_tokens(node) for node in raw_list if isinstance(node, dict)]
+        except (json.JSONDecodeError, ValueError):  # nexgen: allow reason="fallback to text parsing when json is invalid"
+            nodes = _parse_text_nodes(res.stdout)
+
+    return {
+        "ok": res.returncode == 0,
+        "commands": commands,
+        "nodes": nodes,
+        "dry_run": False,
+    }
+
+
+def approve_node(
+    request_id: str,
+    runner: Callable[[list[str]], RunResult] | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Approve the command surface a node asked for, by its own request id."""
+    clean_id = str(request_id).strip()
+    if not clean_id:
+        return {"ok": False, "error": "Node request ID cannot be empty", "commands": [], "dry_run": dry_run}
+
+    cmd = ["openclaw", "nodes", "approve", clean_id]
+    commands = [cmd]
+    if dry_run:
+        return {"ok": True, "commands": commands, "request_id": clean_id, "dry_run": True}
+
+    run_cmd = runner or default_node_runner
+    res = run_cmd(cmd)
+    return {
+        "ok": res.returncode == 0,
+        "commands": commands,
+        "request_id": clean_id,
+        "output": _scrub_text(res.stdout.strip()),
+        "dry_run": False,
+    }
+
+
+def nodes_status(
+    runner: Callable[[list[str]], RunResult] | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """The nodes the gateway already knows, with the state it reports for each.
+
+    An unreachable gateway is not an error here: `ok` is false and the list is empty,
+    and the caller decides whether silence or a warning is the honest answer.
+    """
+    cmd = ["openclaw", "nodes", "status", "--json"]
+    commands = [cmd]
+    if dry_run:
+        return {"ok": True, "commands": commands, "nodes": [], "dry_run": True}
+
+    run_cmd = runner or default_node_runner
+    res = run_cmd(cmd)
+
+    nodes: list[dict[str, Any]] = []
+    if res.stdout.strip():
+        try:
+            data = json.loads(res.stdout)
+            raw_list = data.get("nodes", []) if isinstance(data, dict) else data
+            if isinstance(raw_list, list):
+                nodes = [_strip_tokens(node) for node in raw_list if isinstance(node, dict)]
+        except (json.JSONDecodeError, ValueError):  # nexgen: allow reason="a gateway that prints something else has no node list this module can read"
+            nodes = []
+
+    return {
+        "ok": res.returncode == 0,
+        "commands": commands,
+        "nodes": nodes,
         "dry_run": False,
     }

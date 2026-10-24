@@ -47,6 +47,11 @@ from nexgen_core.openclaw.setup_steps import (
     write_step,
 )
 from nexgen_core.openclaw_pairing import approve as pairing_approve
+from nexgen_core.openclaw_pairing import approve_node as pairing_approve_node
+from nexgen_core.openclaw_pairing import node_commands as pairing_node_commands
+from nexgen_core.openclaw_pairing import node_name as pairing_node_name
+from nexgen_core.openclaw_pairing import node_platform as pairing_node_platform
+from nexgen_core.openclaw_pairing import nodes_pending as pairing_nodes_pending
 from nexgen_core.openclaw_pairing import pending as pairing_pending
 from nexgen_core.openclaw_service import OpenClawService, RunResult
 from nexgen_core.paths import openclaw_config, resolve_home
@@ -281,29 +286,41 @@ def run_stop(
     return 1
 
 
-def run_pair(
-    *,
-    approve_id: str | None = None,
-    yes: bool = False,
-    runner: Callable[[list[str]], RunResult] | None = None,
-    confirm: Callable[[str], bool] | None = None,
-    out: Emit = print,
-) -> int:
-    """`nexgen openclaw pair`: what is waiting, and the approval of one request."""
-    ask = confirm or ask_yes_no
-    listing = pairing_pending(runner=runner)
-    devices = listing.get("devices") or []
-    if devices:
-        out(t("Requests waiting for approval:"))
-        for device in devices:
-            label = device.get("summary") or device.get("status") or ""
-            out(f"  {device.get('id')}  {label}".rstrip())
-    else:
+def _device_lines(devices: list[dict], out: Emit) -> None:
+    """The phones waiting, one line each, with the label the gateway gave them."""
+    if not devices:
         out(t("No device is waiting to be paired."))
-    if not approve_id:
-        if devices:
-            out(t("Approve one with 'nexgen openclaw pair --approve <id>'."))
-        return 0
+        return
+    out(t("Requests waiting for approval:"))
+    for device in devices:
+        label = device.get("summary") or device.get("status") or ""
+        out(f"  {device.get('id')}  {label}".rstrip())
+
+
+def _node_description(request: dict) -> str:
+    """What a person is being asked to approve: the node's name, platform and commands."""
+    name = pairing_node_name(request)
+    platform = pairing_node_platform(request)
+    commands = pairing_node_commands(request)
+    where = f"{name} ({platform})" if platform else name
+    if commands:
+        return t("{node}, commands: {commands}", node=where, commands=", ".join(commands))
+    return where
+
+
+def _node_lines(requests: list[dict], out: Emit) -> None:
+    """The second stage: a node's command surface waits on an approval of its own."""
+    if not requests:
+        out(t("No node is waiting for approval."))
+        return
+    out(t("Node requests waiting for approval, with the commands they would expose:"))
+    for request in requests:
+        out(f"  {request.get('requestId')}  {_node_description(request)}")
+
+
+def _pair_device(approve_id: str, yes: bool, ask: Callable[[str], bool],
+                 runner: Callable[[list[str]], RunResult] | None, out: Emit) -> int:
+    """The first stage's approval, asked first and never assumed."""
     if not yes and not ask(t("Approve device {id}?", id=approve_id)):
         out(t("Nothing approved."))
         return 0
@@ -313,3 +330,48 @@ def run_pair(
         return 0
     out(t("The approval failed: {error}", error=outcome.get("error") or t("no reason given")))
     return 1
+
+
+def _pair_node(request_id: str, requests: list[dict], yes: bool, ask: Callable[[str], bool],
+               runner: Callable[[list[str]], RunResult] | None, out: Emit) -> int:
+    """The second stage's approval: an id it cannot describe is not approved at all."""
+    request = next((item for item in requests if str(item.get("requestId") or "") == request_id), None)
+    if request is None:
+        out(t("No node request {id} is waiting: nothing was approved.", id=request_id))
+        return 1
+    if not yes and not ask(t("Approve node {node}?", node=_node_description(request))):
+        out(t("Nothing approved."))
+        return 0
+    outcome = pairing_approve_node(request_id, runner=runner)
+    if outcome.get("ok"):
+        out(t("Node {node} approved.", node=pairing_node_name(request)))
+        return 0
+    out(t("The approval failed: {error}", error=outcome.get("error") or t("no reason given")))
+    return 1
+
+
+def run_pair(
+    *,
+    approve_id: str | None = None,
+    approve_node_id: str | None = None,
+    yes: bool = False,
+    runner: Callable[[list[str]], RunResult] | None = None,
+    confirm: Callable[[str], bool] | None = None,
+    out: Emit = print,
+) -> int:
+    """`nexgen openclaw pair`: what is waiting in both stages, and the approval of one request."""
+    ask = confirm or ask_yes_no
+    devices = pairing_pending(runner=runner).get("devices") or []
+    requests = pairing_nodes_pending(runner=runner).get("nodes") or []
+    _device_lines(devices, out)
+    _node_lines(requests, out)
+    if not approve_id and not approve_node_id:
+        if devices:
+            out(t("Approve one with 'nexgen openclaw pair --approve <id>'."))
+        if requests:
+            out(t("Approve a node with 'nexgen openclaw pair --approve-node <id>'."))
+        return 0
+    code = _pair_device(approve_id, yes, ask, runner, out) if approve_id else 0
+    if approve_node_id:
+        code = max(code, _pair_node(approve_node_id, requests, yes, ask, runner, out))
+    return code

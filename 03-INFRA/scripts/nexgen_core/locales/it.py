@@ -1731,6 +1731,20 @@ MESSAGES: dict[str, str] = {
         "Non ho approvato niente.",
     "Device {id} approved.":
         "Dispositivo {id} approvato.",
+    "No node is waiting for approval.":
+        "Nessun nodo è in attesa di approvazione.",
+    "Node requests waiting for approval, with the commands they would expose:":
+        "Richieste dei nodi in attesa di approvazione, con i comandi che esporrebbero:",
+    "{node}, commands: {commands}":
+        "{node}, comandi: {commands}",
+    "Approve node {node}?":
+        "Approvo il nodo {node}?",
+    "No node request {id} is waiting: nothing was approved.":
+        "Nessuna richiesta di nodo {id} è in attesa: non ho approvato niente.",
+    "Node {node} approved.":
+        "Nodo {node} approvato.",
+    "Approve a node with 'nexgen openclaw pair --approve-node <id>'.":
+        "Approva un nodo con 'nexgen openclaw pair --approve-node <id>'.",
     "The approval failed: {error}":
         "L'approvazione è fallita: {error}",
     "{agent}: {path} ({written} manuals written, {bootstrap})":
@@ -1763,10 +1777,12 @@ MESSAGES: dict[str, str] = {
         "Riavvia il gateway e aspetta la porta",
     "How long to wait for the port (default: 600)":
         "Quanto aspettare la porta (predefinito: 600)",
-    "List the phones waiting to be paired, and approve one":
-        "Elenca i telefoni in attesa di accoppiamento e ne approva uno",
-    "Approve the request with this id":
-        "Approva la richiesta con questo id",
+    "List the phones and the nodes waiting to be paired, and approve one":
+        "Elenca i telefoni e i nodi in attesa di accoppiamento e ne approva uno",
+    "Approve the device request with this id":
+        "Approva la richiesta del dispositivo con questo id",
+    "Approve the node request with this id, showing the commands it exposes":
+        "Approva la richiesta del nodo con questo id, mostrando i comandi che espone",
     # --- Quota: quanto resta di ogni abbonamento --------------------------------
     "No Codex session on this machine: {path} does not exist.":
         "Nessuna sessione Codex su questa macchina: {path} non esiste.",
