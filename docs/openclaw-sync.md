@@ -33,8 +33,11 @@ was never set up has no config file, and the renderer does not invent one.
 Inside OpenClaw, connectors are always mounted **directly**, never behind `lazy-mcp`. OpenClaw already provides
 native **Tool Search** (active by default when `tools.toolSearch` is unset) to compact tool schemas behind search
 and call controls while applying OpenClaw's own tool policies, inventory, and approval cards. The engine never
-writes `tools.toolSearch`, and the MCP renderer removes any engine-written `lazy-mcp` entry from `mcp.servers`
-while preserving any user-defined connector with that name.
+writes `tools.toolSearch` and retires any legacy `tools.toolSearch: false` left by earlier setups. As documented in
+OpenClaw's `docs/gateway/local-models.md`, local routes use structured Tool Search on their own to preserve capabilities
+without blowing prompt context; an operator who explicitly wishes to disable Tool Search globally can do so by configuring
+an object such as `tools.toolSearch: { "enabled": false }` (see `docs/concepts/experimental-features.md`). The MCP renderer
+removes any engine-written `lazy-mcp` entry from `mcp.servers` while preserving any user-defined connector with that name.
 
 OpenClaw can also act as an MCP server for the other harnesses (`claude`, `codex`,
 `antigravity`, `opencode`) via `openclaw mcp serve`. The canonical manifest entry is

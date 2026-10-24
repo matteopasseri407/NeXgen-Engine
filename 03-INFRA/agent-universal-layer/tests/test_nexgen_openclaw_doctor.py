@@ -555,9 +555,19 @@ def test_tool_search_explicitly_configured(tmp_path):
     assert "directory" in ts.message
 
 
-def test_tool_search_disabled_with_few_mcp_servers_passes(tmp_path):
+def test_tool_search_legacy_bare_false_warns(tmp_path):
     cfg = clean_config()
     cfg["tools"]["toolSearch"] = False
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg))
+    ts = by_id(outcomes)["openclaw.tool_search"]
+    assert ts.severity == Severity.WARN
+    assert "legacy engine setting" in ts.message
+    assert "nexgen openclaw setup" in (ts.action or "")
+
+
+def test_tool_search_user_disabled_with_few_mcp_servers_passes(tmp_path):
+    cfg = clean_config()
+    cfg["tools"]["toolSearch"] = {"enabled": False}
     cfg["mcp"] = {
         "servers": {
             "srv1": {"command": "node", "args": ["s1.js"]},
@@ -567,12 +577,12 @@ def test_tool_search_disabled_with_few_mcp_servers_passes(tmp_path):
     outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg))
     ts = by_id(outcomes)["openclaw.tool_search"]
     assert ts.severity == Severity.OK
-    assert "disabled" in ts.message
+    assert "disabled by user configuration" in ts.message
 
 
-def test_tool_search_disabled_with_many_mcp_servers_warns(tmp_path):
+def test_tool_search_user_disabled_with_many_mcp_servers_warns(tmp_path):
     cfg = clean_config()
-    cfg["tools"]["toolSearch"] = False
+    cfg["tools"]["toolSearch"] = {"enabled": False}
     cfg["mcp"] = {
         "servers": {
             f"srv{i}": {"command": "node", "args": [f"s{i}.js"]}

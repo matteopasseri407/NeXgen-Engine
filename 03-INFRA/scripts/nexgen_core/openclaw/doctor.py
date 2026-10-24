@@ -195,12 +195,22 @@ def _check_tool_search(config: dict[str, Any]) -> CheckOutcome:
     mounted_count = sum(1 for s in servers.values() if isinstance(s, dict) and s.get("enabled", True) is not False)
 
     if ts is False:
+        return CheckOutcome(
+            id="openclaw.tool_search",
+            severity=Severity.WARN,
+            message=t(
+                "Tool Search is disabled by a legacy engine setting; next setup will remove it.",
+            ),
+            action=t("Run 'nexgen openclaw setup' to retire the legacy setting and restore native Tool Search."),
+        )
+
+    if isinstance(ts, dict) and ts.get("enabled") is False:
         if mounted_count >= MANY_MCP_SERVERS_THRESHOLD:
             return CheckOutcome(
                 id="openclaw.tool_search",
                 severity=Severity.WARN,
                 message=t(
-                    "Tool Search is disabled with {count} MCP servers mounted: direct schemas add large overhead to every prompt.",
+                    "Tool Search is disabled by user configuration with {count} MCP servers mounted: direct schemas add large overhead to every prompt.",
                     count=mounted_count,
                 ),
                 action=t("Remove 'tools.toolSearch' from openclaw.json to restore native Tool Search."),
@@ -209,7 +219,7 @@ def _check_tool_search(config: dict[str, Any]) -> CheckOutcome:
             id="openclaw.tool_search",
             severity=Severity.OK,
             message=t(
-                "Tool Search is disabled ({count} MCP servers mounted, direct schemas in use).",
+                "Tool Search is disabled by user configuration ({count} MCP servers mounted, direct schemas in use).",
                 count=mounted_count,
             ),
         )

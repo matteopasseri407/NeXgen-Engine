@@ -1534,12 +1534,16 @@ MESSAGES: dict[str, str] = {
         "Ogni canale configurato ha un binding verso un agente.",
     "Tool Search is active ({mode}): MCP and runtime tools are deferred behind search and call.":
         "Tool Search è attivo ({mode}): i tool MCP e di runtime sono differiti dietro ricerca e chiamata.",
-    "Tool Search is disabled with {count} MCP servers mounted: direct schemas add large overhead to every prompt.":
-        "Tool Search è disattivato con {count} server MCP montati: gli schemi diretti appesantiscono ogni prompt.",
+    "Tool Search is disabled by a legacy engine setting; next setup will remove it.":
+        "Tool Search è disabilitato da un residuo del motore: il prossimo setup lo toglie.",
+    "Run 'nexgen openclaw setup' to retire the legacy setting and restore native Tool Search.":
+        "Esegui 'nexgen openclaw setup' per rimuovere il residuo e ripristinare Tool Search.",
+    "Tool Search is disabled by user configuration with {count} MCP servers mounted: direct schemas add large overhead to every prompt.":
+        "Tool Search è disattivato dalla configurazione utente con {count} server MCP montati: gli schemi diretti appesantiscono ogni prompt.",
     "Remove 'tools.toolSearch' from openclaw.json to restore native Tool Search.":
         "Rimuovi 'tools.toolSearch' da openclaw.json per ripristinare il Tool Search nativo.",
-    "Tool Search is disabled ({count} MCP servers mounted, direct schemas in use).":
-        "Tool Search è disattivato ({count} server MCP montati, in uso gli schemi diretti).",
+    "Tool Search is disabled by user configuration ({count} MCP servers mounted, direct schemas in use).":
+        "Tool Search è disattivato dalla configurazione utente ({count} server MCP montati, in uso gli schemi diretti).",
     "No lazy-mcp gateway is mounted in OpenClaw (connectors are direct).":
         "Nessun gateway lazy-mcp è montato in OpenClaw (i connettori sono diretti).",
     "The lazy-mcp gateway is mounted inside OpenClaw by the engine: OpenClaw connects MCP servers directly.":
