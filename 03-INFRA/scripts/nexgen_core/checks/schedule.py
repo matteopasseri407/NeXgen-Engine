@@ -31,9 +31,9 @@ from nexgen_core.report import CheckOutcome, Report, Severity
 
 #: How long `doctor --summary` waits before it reports what is still missing.
 #: Chosen from the measurements, not from the air: the checks of a full home sum
-#: to more than this, the slowest single one takes a couple of seconds, and the
-#: whole run has to leave room inside the smoke's own budget.
-SUMMARY_DEADLINE_SECONDS = 6.0
+#: to more than this, the slowest single one takes a few seconds on a busy
+#: machine, and the whole run has to leave room inside the smoke's own budget.
+SUMMARY_DEADLINE_SECONDS = 7.0
 
 
 @dataclass(frozen=True)
