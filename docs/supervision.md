@@ -38,7 +38,7 @@ The journal is the machine truth: `started`, `unit_created`, `unit_started`,
 `unit_queued`, `attached`, `harness_session_lost`, `harness_session_foreign`,
 `unit_reworked`, `unit_model_refused`, `unit_stalled`, `unit_resumed`,
 `unit_rebased`, `unit_collected`, `report_relocated`, `unit_reviewed`,
-`unit_published`, `unit_retired`, `unit_retire_failed`, `session_closed`,
+`unit_published`, `unit_publish_failed`, `unit_retired`, `unit_retire_failed`, `session_closed`,
 `workboard_card`, `workboard_moved`, `local_server_started`, `local_server_stopped`,
 and for the scout `scout_opened` and `scout_finished`. The Markdown files are what a person reads
 and writes; the engine never rewrites them, so an edit is not lost.
@@ -51,7 +51,7 @@ nexgen-local sup start "porta la fase 2 dentro il motore"   # id and folder
 nexgen-local sup status                                     # every task, one line each
 nexgen-local sup status <id>                                # units, states, verdicts, costs
 nexgen-local sup unit <id> <unit> --repo <checkout> --base <ref> --brief <file> \
-    --allow 'docs/*.md' [--allow ...] [--verify "<command>"]
+    --allow 'docs/*.md' [--allow ...] [--verify "<command>"] [--mcp <server>]
 nexgen-local sup run <id> <unit> [--harness <name>]         # the executor's window
 nexgen-local sup collect <id> <unit>                        # the tab closes when the turn is over, then the gates and the cost
 nexgen-local sup review <id> <unit> --approve "<why>" [--close]  # one review round, APPROVA
@@ -129,14 +129,14 @@ are. `sup run --harness <name>` and `sup scout --harness <name>` use that harnes
 for that run only; the journal records which one actually ran the unit, so the
 review delivery goes back to the same session.
 
-| harness | opens a tab | finds the session | sends a turn | state | cost | tokens | writes permissions | resume | scout | frees a folder | stops a push |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| `opencode` | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | project profile + blocked pushurl |
-| `local` (OpenCode + local provider) | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | project profile + blocked pushurl |
-| `claude` | yes | yes | yes | yes | yes | yes | yes (`.claude/settings.json`) | yes | yes | no | project profile + blocked pushurl |
-| `codex` | yes | yes | yes | yes | no (said unreadable) | yes | no (launch sandbox) | yes | yes | no | `workspace-write` without network + blocked pushurl |
-| `openclaw` | yes (a session, not a window) | yes | yes | yes | yes (the turn's own envelope) | yes | no | yes | no | no | blocked pushurl only |
-| `agy` | yes | no | no | no | no | no | no | yes | yes | no | blocked pushurl only |
+| harness | opens a tab | finds the session | sends a turn | state | cost | tokens | writes permissions | resume | scout | frees a folder | stops a push | mcp |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `opencode` | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | project profile + blocked pushurl | yes |
+| `local` (OpenCode + local provider) | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | project profile + blocked pushurl | yes |
+| `claude` | yes | yes | yes | yes | yes | yes | yes (`.claude/settings.json`) | yes | yes | no | project profile + blocked pushurl | no |
+| `codex` | yes | yes | yes | yes | no (said unreadable) | yes | no (launch sandbox) | yes | yes | no | `workspace-write` without network + blocked pushurl | no |
+| `openclaw` | yes (a session, not a window) | yes | yes | yes | yes (the turn's own envelope) | yes | no | yes | no | no | blocked pushurl only | no |
+| `agy` | yes | no | no | no | no | no | no | yes | yes | no | blocked pushurl only | no |
 
 The table is the answer to "can this harness do it", not a promise that every
 operation is useful. `agy` opens a tab and writes its report, but it cannot be
@@ -144,8 +144,27 @@ asked for its session later, so it is a scout and not an executor; Codex can
 execute and resume, but its cost is not exposed in a form the engine reads, and
 the package says so instead of writing zero. `openclaw` opens no window of its
 own: its session is the work surface, and the section below says how it is driven.
-The last column is the real stop behind the others: a harness with no project
-profile is still running in a copy whose `pushurl` points at a blocked URL.
+The `stops a push` column is the real stop behind the others: a harness with no
+project profile is still running in a copy whose `pushurl` points at a blocked URL.
+
+The `mcp` column says whether the profile in the copy can choose the MCP servers.
+A unit starts with none: the supervisor names the ones it needs with
+`sup unit ... --mcp <name>`, repeatable, and the journal keeps the list, which
+`sup status` shows. For an OpenCode worker the profile is the copy's
+`opencode.json`, and it switches off every server the owner's global
+configuration declares and the unit did not get. The entry uses the native
+OpenCode 2 shape (`mcp.servers.<name>` with `disabled`, `type` plus `command` or
+`url`: the fields `opencode.ai/config.json` requires of `Mcp.LocalConfigEncoded`
+and `Mcp.RemoteConfigEncoded`), and it repeats the transport of the global
+definition so it stays valid whether OpenCode merges the two configurations or
+lets the project entry replace the global one. Environment variables, headers and
+OAuth credentials are not copied: they stay in the global file, which is only
+read and never written. A server the unit asked for and the global file disables
+is switched back on in the same place, and a name no configuration declares stops
+the run with a message listing the servers that exist, instead of leaving the unit
+without the server it asked for. Claude Code is `no` because its only switch,
+`--strict-mcp-config`, is a launch flag and not a project file; Codex and
+Antigravity write no project profile at all.
 
 
 ## OpenClaw come harness e il Workboard
@@ -236,6 +255,11 @@ own `config.worktree`. A push from the copy fails with
 keeps its real remote. Shared git hooks are never touched: they live in the
 common directory and stay exactly as the owner installed them.
 
+`--mcp <name>` is how the supervisor gives the unit a connector it actually
+needs. Without it the copy's profile has no MCP server at all, and every global
+one is switched off in the copy by name (see the `mcp` column above): the
+connectors the owner uses in their own sessions are not the executor's budget.
+
 The fetch URL and the blocked push URL of every remote are written into the
 journal when the unit is created, and its refs are read with `git ls-remote` on
 that URL. `sup collect` asks three questions: are the creation's remotes still
@@ -298,13 +322,19 @@ guess made from a clock. OpenClaw is that harness today; the section "OpenClaw
 come harness e il Workboard" above says what it does and where it stops.
 
 The journal records the folder with the session (`attached`, `unit_started`,
-`unit_queued`, `unit_reworked`). `sup run` reuses a session only when that folder
-is the unit's own copy; when it is another unit's copy, the engine writes
-`harness_session_foreign` with both paths, opens a new tab in the right copy and
-says `sessione nata in un'altra copia`. This is the 2026-10-21 failure: the h5
-run inherited h4's idle session, whose folder had already been removed, and the
-executor saw "working directory no longer exists". A journal row written before
-the folder was recorded has no folder, and stays reusable as before.
+`unit_queued`, `unit_reworked`). A unit looks first for the session recorded for
+that unit; the task's last session for the same harness is a fallback only for a
+unit that never had one. The engine reuses a session only when that folder is the
+unit's own copy; when it is another unit's copy it writes
+`harness_session_foreign` with both paths, and it opens a new tab in the right
+copy only when the harness says that session is free. While it works, or while
+the harness cannot read it, a review round goes to `unit_queued` with its reason
+and `--resend` delivers it later: the 2026-10-24 failure was four `sup review
+--rework` calls to busy sessions, each opening a tab in the same copy and
+re-pointing the unit at the new one. The 2026-10-21 failure is the other half:
+the h5 run inherited h4's idle session, whose folder had already been removed,
+and the executor saw "working directory no longer exists". A journal row written
+before the folder was recorded has no folder, and stays reusable as before.
 
 A session the harness reports as gone (the export says it does not exist) is
 not a busy session: queueing on it would wait on nothing for ever. The journal
@@ -543,6 +573,11 @@ where the executor can still fix it: a personal name in a fake path or a
 seven-digit number in a test used to stop the push, after the review had already
 said yes.
 
+The brief model tells the executor what to run while it works: the tests of the
+files it touched, `discipline.py check`, `ruff_baseline_check.py` and the leak
+scan. Not the whole suite: `sup collect` runs that independently, and asking the
+executor for it twice doubled the wait without adding a fact the engine trusts.
+
 Before judging, `sup collect` looks for a `30-resoconto-<unit>.md` left **inside
 the copy**. An untracked report is moved to the task folder and the move is said
 in the output and in the journal (`report_relocated`); this is the local
@@ -678,9 +713,10 @@ way out when the provider refuses the configured one. A resend that has to open
 a new tab says the model was not applied: the tab takes the model from the
 owner's configuration.
 
-`sup status` shows, per unit, the review round, whether it is approved, and the
-published head with its branch. It also shows the cost of the unit and of the
-task in one form, the same sentence `sup collect` prints:
+`sup status` shows, per unit, the review round, whether it is approved, the
+published head with its branch, and the MCP servers the supervisor assigned
+(`mcp: nessuno` when there are none). It also shows the cost of the unit and of
+the task in one form, the same sentence `sup collect` prints:
 
 ```
 costo: giro 0.0047 $, unità 0.0047 $, compito 0.0047 $ (modello opencode-go/…)
@@ -756,7 +792,7 @@ happens after every refusal that can be decided without touching anything:
 | `bump di versione` | a commit touches `VERSION` or `CHANGELOG.md`, a rename included, **even inside the unit's boundary** |
 | `servirebbe un force-push: il motore non lo fa mai` | the fetched remote branch is not an ancestor of the owner's head |
 | `i cancelli del motore, rieseguiti ora, danno FAIL` | the gates fail on the interval, named line by line |
-| `conflitto` | a cherry-pick conflicts; the files are named and the checkout goes back |
+| `conflitto` | a cherry-pick conflicts; the files are named, the checkout goes back, and the unit stays approved and unpublished |
 
 The order is deliberate: the cheap and decisive refusals come first, and the
 gates re-run on the interval before the first cherry-pick, so a failing gate
@@ -774,7 +810,10 @@ No tag is ever created, and no option of force exists in any code path.
 
 A conflict runs `git cherry-pick --abort` and, if the head still moved, resets
 the checkout to the commit publish found there; the refusal names the files in
-conflict and says the checkout went back. A unit already pushed at the same
+conflict and says the checkout went back. The journal records
+`unit_publish_failed` with those files, and nothing records the unit as
+published or retired: its copy and its branch stay, so the head a review
+approved is still there to fix. A unit already pushed at the same
 head is refused rather than replayed, because a second replay would double its
 commits. A unit applied locally but never pushed (`pushed: false`) is the
 exception: `--push` or `--push-with` checks that the branch still contains the
