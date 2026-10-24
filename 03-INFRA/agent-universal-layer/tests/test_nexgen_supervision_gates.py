@@ -107,6 +107,8 @@ def test_a_clean_unit_inside_its_boundary_passes(task, repo, tmp_path):
     assert "nessuna sessione agganciata" in package
     assert "## Test saltati su questa piattaforma" in package
     assert "nessun test saltato fra i file toccati" in package
+    assert "## Voci di test_removal_ok aggiunte dall'unità" in package
+    assert "nessuna voce aggiunta" in package
     raw = Path(result["raw"]).read_text(encoding="utf-8")
     assert "PASS confine" in raw
     collected = [row for row in state.read_events(task) if row.get("event") == "unit_collected"]
@@ -842,6 +844,73 @@ def test_a_retirement_the_owner_authorised_on_the_base_passes(task, repo, tmp_pa
     assert "2 test ritirati" in gate.reason
     assert "tests/test_sample.py" in gate.reason
     assert result["verdict"] == "PASS", [str(item) for item in result["gates"] if not item.ok]
+
+
+# --- il permesso è del supervisore, e il pacchetto lo mostra -----------------
+
+
+def test_a_unit_allowed_to_carry_the_rules_retires_across_two_commits(task, repo, tmp_path):
+    """Il supervisore ha messo `.nexgen-discipline.toml` nel confine: l'unità autorizza, poi ritira."""
+    folder = _unit(task, repo, tmp_path, allow=["**"])
+    _commit(folder, "chore: autorizza il ritiro del campione", {
+        ".nexgen-discipline.toml": 'test_removal_ok = ["tests/test_sample.py"]\n',
+    })
+    (folder / "tests" / "test_sample.py").unlink()
+    git_in(folder, "add", "-A")
+    git_in(folder, "commit", "-q", "-m", "test: ritira il campione")
+
+    result = gates.collect(task, "prova")
+
+    integrity = _gate(result, "integrità dei test")
+    assert integrity.ok, integrity.reason
+    assert "2 casi ritirati" in integrity.reason
+    assert "tests/test_sample.py" in integrity.reason
+    collected = _gate(result, "test raccolti")
+    assert collected.ok, collected.reason
+    assert "2 test ritirati" in collected.reason
+    assert "tests/test_sample.py" in collected.reason
+    package = Path(result["package"]).read_text(encoding="utf-8")
+    assert "## Voci di test_removal_ok aggiunte dall'unità" in package
+    assert "- `tests/test_sample.py`" in package
+    assert result["verdict"] == "PASS", [str(item) for item in result["gates"] if not item.ok]
+
+
+def test_a_unit_that_authorises_and_retires_in_one_commit_fails_both_test_gates(task, repo, tmp_path):
+    """Autorizzare e usare l'autorizzazione nello stesso commit è il caso che non deve passare mai."""
+    folder = _unit(task, repo, tmp_path, allow=["**"])
+    _write(folder, ".nexgen-discipline.toml", 'test_removal_ok = ["tests/test_sample.py"]\n')
+    (folder / "tests" / "test_sample.py").unlink()
+    git_in(folder, "add", "-A")
+    git_in(folder, "commit", "-q", "-m", "test: autorizza e ritira insieme")
+
+    result = gates.collect(task, "prova")
+
+    integrity = _gate(result, "integrità dei test")
+    assert not integrity.ok
+    assert "commit " in integrity.reason
+    assert "tests went from 2 to 0" in integrity.reason
+    collected = _gate(result, "test raccolti")
+    assert not collected.ok
+    assert "tests/test_sample.py::test_value" in collected.reason
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_unit_without_the_configuration_in_its_boundary_is_still_judged_on_the_base(task, repo, tmp_path):
+    """Senza il permesso nulla cambia: il confine rifiuta il file e i due cancelli leggono solo la base."""
+    folder = _unit(task, repo, tmp_path, allow=["tests/*.py", "module.py"])
+    _write(folder, ".nexgen-discipline.toml", 'test_removal_ok = ["tests/test_sample.py"]\n')
+    (folder / "tests" / "test_sample.py").unlink()
+    git_in(folder, "add", "-A")
+    git_in(folder, "commit", "-q", "-m", "test: autorizza e ritira insieme")
+
+    result = gates.collect(task, "prova")
+
+    scope = _gate(result, "confine")
+    assert not scope.ok
+    assert ".nexgen-discipline.toml" in scope.reason
+    assert not _gate(result, "integrità dei test").ok
+    assert not _gate(result, "test raccolti").ok
+    assert result["verdict"] == "FAIL"
 
 
 # --- il cancello lint -------------------------------------------------------
