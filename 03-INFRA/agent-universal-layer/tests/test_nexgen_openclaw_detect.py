@@ -320,3 +320,24 @@ def test_detection_serializes_to_json(tmp_path):
     assert payload.startswith("{")
     assert found.to_dict()["claude"]["available"] is False
     assert found.to_dict()["openclaw"]["installed"] is False
+
+
+def test_on_windows_the_snapshot_carries_the_apps_own_gateway(tmp_path):
+    """The app's gateway is a fact about the machine, so it travels in the snapshot."""
+    env = {"LOCALAPPDATA": str(tmp_path / "local"), "APPDATA": str(tmp_path / "roaming")}
+
+    found = _detect(tmp_path, env=env, platform="win32", wsl_distributions=lambda: ["OpenClawGateway"])
+
+    assert found.companion.present is True
+    assert found.companion.situation(found.openclaw.installed) == "app"
+    assert found.to_dict()["companion"]["owns_local_gateway"] is True
+
+
+def test_off_windows_there_is_no_app_gateway_to_find(tmp_path):
+    found = _detect(tmp_path, platform="linux", wsl_distributions=lambda: ["OpenClawGateway"])
+
+    assert found.companion.present is False
+    assert found.to_dict()["companion"] == {
+        "present": False, "owns_local_gateway": False, "points_remote": False, "port": None, "signals": [],
+    }
+

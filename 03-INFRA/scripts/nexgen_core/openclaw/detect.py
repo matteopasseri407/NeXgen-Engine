@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import t
+from nexgen_core.openclaw.companion import Companion, probe as probe_companion
 from nexgen_core.paths import openclaw_config, resolve_engine_root, resolve_home, resolve_vault_data
 
 #: Ollama's own default, and the variable that overrides it (Ollama reads it too).
@@ -141,6 +142,8 @@ class Detection:
     opencode: bool = False
     #: The executable to hand the ACP bridge, resolved once (empty when unknown).
     opencode_command: str = ""
+    #: The Windows app's own gateway: where it is, or that this machine has none.
+    companion: Companion = Companion()
 
     def to_dict(self) -> dict[str, Any]:
         """The snapshot as JSON-safe data, for `plan --json` and the doctor."""
@@ -151,6 +154,7 @@ class Detection:
             "opencode_go": self.opencode_go,
             "opencode": self.opencode,
             "opencode_command": self.opencode_command,
+            "companion": self.companion.to_dict(),
             "local": {**asdict(self.local), "available": self.local.available},
             "n8n": self.n8n,
         }
@@ -475,6 +479,7 @@ def detect(
     engine_root: Path | None = None,
     vault_data: Path | None = None,
     platform: str | None = None,
+    wsl_distributions: Callable[[], list[str]] | None = None,
 ) -> Detection:
     """What this machine has, in one snapshot.
 
@@ -502,6 +507,8 @@ def detect(
         # The command line itself, not a login: the ACP agent launches it.
         opencode=resolved_which("opencode") is not None,
         opencode_command=opencode_command(resolved_which("opencode")),
+        # The Windows app may run the gateway of this machine instead of npm.
+        companion=probe_companion(home_dir, values, system, wsl_distributions),
     )
 
 
