@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.20.0] - 2026-10-24
+
 ### Added
 
 - OpenClaw is a first-class harness. `nexgen openclaw plan`, `doctor`, `setup` and `node` detect what the machine already has (Node, the npm prefix, a Go key, local models, the Windows app and its own gateway) without reading a secret, propose the configuration the engine owns as a diff, and install a working gateway. The person's agents, bindings, tool lists and environment variables are kept. See `docs/openclaw.md`.
