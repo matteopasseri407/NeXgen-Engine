@@ -23,7 +23,7 @@ from typing import Any
 
 from nexgen_core import quota_policy
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import background, doctor_runtime, node_checks, observation
+from nexgen_core.openclaw import background, companion, doctor_runtime, node_checks, observation
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.evidence import check_evidence
@@ -337,20 +337,15 @@ def _config_outcomes(
     return list(outcomes)
 
 
-def _other_gateway_outcomes(
+def _store_gateway_outcomes(
     home_dir: Path,
     values: Mapping[str, str],
     system: str,
-    wsl_distributions: Callable[[], list[str]] | None,
 ) -> list[CheckOutcome]:
-    """The second gateways a person may have installed beside this one."""
-    outcomes: list[CheckOutcome] = []
+    """The second gateway a person may have installed beside this one."""
     store = doctor_runtime.check_store_gateway(home_dir, values, system)
-    if store is not None:
-        outcomes.append(store)
-    companion = doctor_runtime.check_companion_gateway(home_dir, values, system, wsl_distributions)
-    if companion is not None:
-        outcomes.append(companion)
+    return [store] if store is not None else []
+
     return outcomes
 
 
@@ -374,16 +369,24 @@ def collect(
     home_dir = resolve_home(home)
     system = platform or sys.platform
     declared = _declared(vault_data, home_dir)
+    app_gateway = detected.companion if detected is not None else companion.probe(
+        home_dir, values, system, wsl_distributions,
+    )
 
     snapshot = detected
     if snapshot is None:
-        if not declared and not _has_trace(home_dir, values):
+        # The app's own gateway is the second reason this machine has something
+        # to say about OpenClaw, and it is asked before the expensive snapshot.
+        if not declared and not _has_trace(home_dir, values) and not app_gateway.present:
             return []
         snapshot = detect(
             home=home_dir, env=values, engine_root=engine_root, vault_data=vault_data, platform=system,
+            wsl_distributions=wsl_distributions,
         )
     if not snapshot.openclaw.installed and not declared:
-        return []
+        # Only the app's gateway is here: the native checks have nothing to judge.
+        app_only = doctor_runtime.check_companion_gateway(app_gateway, False, system)
+        return [app_only] if app_only is not None else []
 
     pinned = _pinned(engine_root)
     path = Path(snapshot.openclaw.config_path)
@@ -397,7 +400,10 @@ def collect(
         outcomes.extend(_config_outcomes(
             config, snapshot, path, home_dir, vault_data, failover, connect, node_lister, system,
         ))
-    outcomes.extend(_other_gateway_outcomes(home_dir, values, system, wsl_distributions))
+    outcomes.extend(_store_gateway_outcomes(home_dir, values, system))
+    app_outcome = doctor_runtime.check_companion_gateway(app_gateway, snapshot.openclaw.installed, system)
+    if app_outcome is not None:
+        outcomes.append(app_outcome)
     outcomes.extend(_host_outcomes(snapshot, engine_root, values, system, node_version, linger_dir))
     return outcomes
 

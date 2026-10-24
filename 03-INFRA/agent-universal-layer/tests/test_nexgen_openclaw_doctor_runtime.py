@@ -1,7 +1,9 @@
 """The live-state checks: learned skills per agent and the Companion's own gateway.
 
 Every test builds its own folders under `tmp_path` and injects the WSL list:
-nothing here reads the real home, the real registry, or the real settings.
+nothing here reads the real home, the real registry, or the real settings. The
+Companion section is about words as much as severities: the app is never
+something to remove, and only two gateways claiming the same PC is a conflict.
 """
 from __future__ import annotations
 
@@ -17,6 +19,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.companion import Companion, probe  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.doctor_runtime import (  # noqa: E402 - sys.path shim for cloned checkout
     check_companion_gateway,
     check_unadopted,
@@ -186,62 +189,90 @@ def companion_env(tmp_path: Path) -> dict:
     }
 
 
+def app_gateway(tmp_path: Path, distros: list[str] | None = None) -> Companion:
+    """The app's gateway as the probe would return it, on a fake home."""
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    return probe(home, companion_env(tmp_path), "win32", wsl_distributions=lambda: list(distros or []))
+
+
 def test_a_machine_without_the_companion_says_nothing(tmp_path):
-    assert check_companion_gateway(
-        tmp_path / "home", companion_env(tmp_path), "win32", wsl_distributions=lambda: [],
-    ) is None
+    assert check_companion_gateway(Companion(), True, "win32") is None
 
 
 def test_the_app_owned_wsl_distribution_is_a_warning(tmp_path):
-    outcome = check_companion_gateway(
-        tmp_path / "home", companion_env(tmp_path), "win32",
-        wsl_distributions=lambda: ["Ubuntu", "OpenClawGateway"],
-    )
+    outcome = check_companion_gateway(app_gateway(tmp_path, ["Ubuntu", "OpenClawGateway"]), True, "win32")
 
     assert outcome is not None and outcome.severity is Severity.WARN
     assert "OpenClawGateway" in outcome.message
-    assert "local Gateway on this PC" in (outcome.action or "")
+    assert "Connections" in (outcome.action or "")
 
 
 def test_the_app_wsl_storage_folder_is_a_warning(tmp_path):
-    env = companion_env(tmp_path)
-    (Path(env["LOCALAPPDATA"]) / "OpenClawTray" / "wsl").mkdir(parents=True)
+    (Path(companion_env(tmp_path)["LOCALAPPDATA"]) / "OpenClawTray" / "wsl").mkdir(parents=True)
 
-    outcome = check_companion_gateway(
-        tmp_path / "home", env, "win32", wsl_distributions=lambda: [],
-    )
+    outcome = check_companion_gateway(app_gateway(tmp_path), True, "win32")
 
     assert outcome is not None and outcome.severity is Severity.WARN
 
 
 def test_a_companion_gateway_url_on_another_port_is_a_warning(tmp_path):
-    env = companion_env(tmp_path)
-    settings = Path(env["APPDATA"]) / "OpenClawTray" / "settings.json"
+    settings = Path(companion_env(tmp_path)["APPDATA"]) / "OpenClawTray" / "settings.json"
     settings.parent.mkdir(parents=True)
     settings.write_text(json.dumps({
         "gatewayUrl": "ws://localhost:9999/?token=super-secret-token",
     }), encoding="utf-8")
 
-    outcome = check_companion_gateway(
-        tmp_path / "home", env, "win32", wsl_distributions=lambda: [],
-    )
+    outcome = check_companion_gateway(app_gateway(tmp_path), True, "win32")
 
     assert outcome is not None and outcome.severity is Severity.WARN
     assert "super-secret-token" not in outcome.message, "a URL can carry a token: never print it"
 
 
 def test_a_companion_pointing_at_this_gateway_is_not_a_warning(tmp_path):
-    env = companion_env(tmp_path)
-    settings = Path(env["APPDATA"]) / "OpenClawTray" / "settings.json"
+    settings = Path(companion_env(tmp_path)["APPDATA"]) / "OpenClawTray" / "settings.json"
     settings.parent.mkdir(parents=True)
     settings.write_text(json.dumps({"gatewayUrl": "ws://localhost:18789"}), encoding="utf-8")
 
-    assert check_companion_gateway(
-        tmp_path / "home", env, "win32", wsl_distributions=lambda: [],
-    ) is None
+    assert check_companion_gateway(app_gateway(tmp_path), True, "win32") is None
 
 
 def test_the_companion_check_is_windows_only(tmp_path):
     assert check_companion_gateway(
-        tmp_path / "home", companion_env(tmp_path), "linux", wsl_distributions=lambda: ["OpenClawGateway"],
+        Companion(present=True, owns_local_gateway=True), True, "linux",
     ) is None
+
+
+def test_the_app_alone_is_one_informative_line(tmp_path):
+    """Case (b): the app runs the only gateway, so there is nothing to conflict with."""
+    outcome = check_companion_gateway(app_gateway(tmp_path, ["OpenClawGateway"]), False, "win32")
+
+    assert outcome is not None and outcome.severity is Severity.OK
+    assert "not the app's one" in outcome.message
+    assert "conflict" not in outcome.message.casefold()
+    assert "as it is" in (outcome.action or "")
+
+
+def test_a_remote_app_is_informative_and_says_so(tmp_path):
+    """Case (d): the app talks to a gateway elsewhere, which no native install can contradict."""
+    settings = Path(companion_env(tmp_path)["APPDATA"]) / "OpenClawTray" / "gateways.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({"vps": {"url": "wss://gateway.example.com"}}), encoding="utf-8")
+
+    outcome = check_companion_gateway(app_gateway(tmp_path), True, "win32")
+
+    assert outcome is not None and outcome.severity is Severity.OK
+    assert "elsewhere" in outcome.message
+
+
+def test_the_line_never_tells_the_person_to_remove_the_app(tmp_path):
+    """The app is a gateway the person chose: the engine says what it writes, not what to uninstall."""
+    both = check_companion_gateway(app_gateway(tmp_path, ["OpenClawGateway"]), True, "win32")
+    alone = check_companion_gateway(app_gateway(tmp_path, ["OpenClawGateway"]), False, "win32")
+
+    for outcome in (both, alone):
+        words = f"{outcome.message} {outcome.action or ''}".casefold()
+        assert "remove the app" not in words
+        assert "uninstall the app" not in words
+    assert "npm uninstall -g openclaw" in (both.action or ""), "the native one is the engine's to give up"
+

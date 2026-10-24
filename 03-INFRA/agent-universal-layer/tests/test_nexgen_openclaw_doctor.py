@@ -14,6 +14,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from nexgen_core.openclaw.companion import Companion  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.detect import Detection, Installation, LocalModelInfo, LocalModels, Login  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.doctor import collect, exit_code  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.profile import PENDING_TOKEN  # noqa: E402 - sys.path shim for cloned checkout
@@ -56,7 +57,7 @@ def clean_config() -> dict:
 
 def machine(config_path: Path, *, version: str = PINNED, installed: bool = True,
             go: bool = True, claude: bool = False, codex: bool = False,
-            ollama: tuple[str, ...] = ("qwen3:8b",)) -> Detection:
+            ollama: tuple[str, ...] = ("qwen3:8b",), companion: Companion | None = None) -> Detection:
     return Detection(
         openclaw=Installation(installed=installed, version=version, config_path=str(config_path), config_present=config_path.is_file()),
         claude=Login(binary=claude, login=True if claude else None),
@@ -64,6 +65,7 @@ def machine(config_path: Path, *, version: str = PINNED, installed: bool = True,
         opencode_go=go,
         local=LocalModels(ollama=tuple(LocalModelInfo(name=name) for name in ollama)),
         n8n=False,
+        companion=companion or Companion(),
     )
 
 
@@ -380,14 +382,34 @@ def test_every_agent_gets_a_learned_skills_line(tmp_path):
 
 
 def test_the_companion_gateway_is_a_warning_when_its_wsl_distro_exists(tmp_path):
+    """Case (c): the native gateway is here and the app runs one of its own."""
+    app_gateway = Companion(
+        present=True, owns_local_gateway=True,
+        signals=("the app-owned WSL distribution OpenClawGateway",),
+    )
     outcomes = run_doctor(
         tmp_path, write_config(tmp_path, clean_config()), platform="win32",
-        wsl_distributions=lambda: ["OpenClawGateway"],
+        wsl_distributions=lambda: ["OpenClawGateway"], companion=app_gateway,
     )
 
     companion = by_id(outcomes)["openclaw.companion_gateway"]
     assert companion.severity == Severity.WARN
     assert "Connections" in (companion.action or "")
+
+
+def test_the_app_gateway_alone_is_informative_and_never_a_failure(tmp_path):
+    """Case (b): one line, no failure, and no native check judging a gateway that is not there."""
+    app_gateway = Companion(
+        present=True, owns_local_gateway=True,
+        signals=("the app-owned WSL distribution OpenClawGateway",),
+    )
+    outcomes = run_doctor(
+        tmp_path, installed=False, declared=False, platform="win32", companion=app_gateway,
+    )
+
+    assert [outcome.id for outcome in outcomes] == ["openclaw.companion_gateway"]
+    assert outcomes[0].severity is Severity.OK
+    assert exit_code(outcomes) == 0
 
 
 def test_a_second_gateway_from_the_microsoft_store_is_a_warning(tmp_path):

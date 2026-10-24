@@ -10,16 +10,15 @@ URL read from the Companion's settings is never printed.
 """
 from __future__ import annotations
 
-import json
-import os
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 from nexgen_core.i18n import t
+from nexgen_core.openclaw import companion as app
 from nexgen_core.openclaw import host_preflight
+from nexgen_core.openclaw.companion import Companion
 from nexgen_core.openclaw.pin import node_satisfies
 from nexgen_core.openclaw.profile import GATEWAY_PORT
 from nexgen_core.report import CheckOutcome, Severity
@@ -29,9 +28,6 @@ LISTEN_TIMEOUT_SECONDS = 0.4
 #: The window the learned-skills line speaks about, and the count that is too many.
 WORKSHOP_WINDOW_SECONDS = 24 * 60 * 60
 WORKSHOP_WARN_OVER = 10
-#: The Windows Companion's own gateway and where it keeps it.
-COMPANION_DISTRO = "OpenClawGateway"
-COMPANION_DIRNAME = "OpenClawTray"
 
 Connect = Callable[[str, int, float], bool]
 
@@ -346,119 +342,45 @@ def check_unadopted(
 # ------------------------------------------------------------- the Companion app
 
 
-def default_wsl_distributions() -> list[str]:
-    """The WSL distributions registered for this Windows user, read-only.
+def check_companion_gateway(companion: Companion, native_installed: bool, platform: str) -> CheckOutcome | None:
+    """Where the Windows app's gateway is, said in the terms of the case at hand.
 
-    The Companion's first-run setup creates one named `OpenClawGateway`; the
-    registry is the only place that says so without starting WSL or a gateway.
-    """
-    if os.name != "nt":
-        return []
-    try:
-        import winreg  # type: ignore[import-not-found]
-    except ImportError:  # nexgen: allow reason="winreg only exists on Windows"
-        return []
-    names: list[str] = []
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Lxss") as key:
-            index = 0
-            while True:
-                try:
-                    subkey = winreg.EnumKey(key, index)
-                except OSError:
-                    break
-                index += 1
-                try:
-                    with winreg.OpenKey(key, subkey) as distro:
-                        name, _ = winreg.QueryValueEx(distro, "DistributionName")
-                except OSError:  # nexgen: allow reason="one malformed distro entry is skipped"
-                    continue
-                if isinstance(name, str) and name:
-                    names.append(name)
-    except OSError:  # nexgen: allow reason="no Lxss key means WSL is not installed"
-        return []
-    return names
-
-
-def _is_foreign_local_url(text: str) -> bool:
-    """A loopback gateway address that is not the engine's port."""
-    if not text.startswith(("ws://", "wss://", "http://", "https://")):
-        return False
-    try:
-        parsed = urlsplit(text)
-        port = parsed.port
-    except ValueError:  # nexgen: allow reason="an unparseable URL is not evidence of a gateway"
-        return False
-    host = (parsed.hostname or "").casefold()
-    if host not in ("localhost", "127.0.0.1", "::1"):
-        return False
-    return port != GATEWAY_PORT
-
-
-def _gateway_urls(value: Any, *, only_gateway_keys: bool, key: str = "") -> list[str]:
-    """Every gateway-looking URL string in a settings document, never printed."""
-    found: list[str] = []
-    if isinstance(value, str):
-        if not only_gateway_keys or "gateway" in key.casefold():
-            found.append(value)
-    elif isinstance(value, dict):
-        for name, item in value.items():
-            found.extend(_gateway_urls(item, only_gateway_keys=only_gateway_keys, key=str(name)))
-    elif isinstance(value, list):
-        for item in value:
-            found.extend(_gateway_urls(item, only_gateway_keys=only_gateway_keys, key=key))
-    return found
-
-
-def _companion_points_elsewhere(settings_dir: Path) -> bool:
-    """Whether the Companion's own settings name a loopback gateway that is not ours.
-
-    The Companion's settings schema is not documented field by field, so the
-    check reads only what is verifiable: `settings.json` is examined for values
-    under a gateway-named key, and `gateways.json` for any URL it holds.
-    """
-    for name, only_gateway_keys in (("settings.json", True), ("gateways.json", False)):
-        path = settings_dir / name
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):  # nexgen: allow reason="a missing or unreadable settings file is not evidence of a gateway"
-            continue
-        if any(_is_foreign_local_url(url) for url in _gateway_urls(data, only_gateway_keys=only_gateway_keys)):
-            return True
-    return False
-
-
-def check_companion_gateway(
-    home: Path,
-    env: Mapping[str, str],
-    platform: str,
-    wsl_distributions: Callable[[], list[str]] | None = None,
-) -> CheckOutcome | None:
-    """The Windows Companion may have provisioned a gateway of its own.
-
-    Two gateways on one machine fight over the same state and port. The
-    evidence is the app-owned WSL distribution, the app's WSL storage folder,
-    or a gateway URL in the Companion's settings that is local but not this
-    engine's loopback port.
+    The app is never something to remove: it is a gateway the person chose, and
+    what the engine owes them is which gateway it configures itself and the
+    promise to stay out of the other one's way. Only two gateways claiming the
+    same PC is a conflict.
     """
     if not platform.startswith("win"):
         return None
-    local_appdata = Path(env.get("LOCALAPPDATA") or (home / "AppData" / "Local"))
-    roaming = Path(env.get("APPDATA") or (home / "AppData" / "Roaming"))
-    distros = (wsl_distributions or default_wsl_distributions)()
-    signals: list[str] = []
-    if any(str(name).casefold() == COMPANION_DISTRO.casefold() for name in distros):
-        signals.append(t("the app-owned WSL distribution {name}", name=COMPANION_DISTRO))
-    if (local_appdata / COMPANION_DIRNAME / "wsl").is_dir():
-        signals.append(t("the app's own WSL storage"))
-    if _companion_points_elsewhere(roaming / COMPANION_DIRNAME):
-        signals.append(t("its settings point at another local gateway"))
-    if not signals:
-        return None
-    return CheckOutcome(
-        id="openclaw.companion_gateway",
-        severity=Severity.WARN,
-        message=t("The OpenClaw Companion manages a gateway of its own on this PC ({signals}): "
-                  "two gateways in conflict.", signals=", ".join(signals)),
-        action=t("In OpenClaw Companion open Connections and choose 'a local Gateway on this PC'."),
-    )
+    situation = companion.situation(native_installed)
+    if situation == app.APP:
+        return CheckOutcome(
+            id="openclaw.companion_gateway",
+            severity=Severity.OK,
+            message=t("The OpenClaw Companion app runs the gateway on this PC ({signals}). This version of the "
+                      "engine configures the native gateway, not the app's one: it writes nothing here and "
+                      "starts no second gateway.", signals=", ".join(companion.signals)),
+            action=t("Use the app as it is, or install the native gateway with {command} and run "
+                     "'nexgen openclaw setup'.", command="npm install -g openclaw"),
+        )
+    if situation == app.BOTH:
+        return CheckOutcome(
+            id="openclaw.companion_gateway",
+            severity=Severity.WARN,
+            message=t("The OpenClaw Companion app runs a gateway of its own on this PC ({signals}) and the native "
+                      "gateway is here too: two gateways in conflict.",
+                      signals=", ".join(companion.signals)),
+            action=t("Keep the one you want: in OpenClaw Companion open Connections and point it at this PC's "
+                     "gateway, or stay with the app's one and remove the native gateway with "
+                     "'npm uninstall -g openclaw'."),
+        )
+    if situation == app.APP_REMOTE:
+        return CheckOutcome(
+            id="openclaw.companion_gateway",
+            severity=Severity.OK,
+            message=t("The OpenClaw Companion app is connected to a gateway elsewhere ({signals}). Nothing here "
+                      "is in conflict: this version of the engine configures the native gateway on this PC only.",
+                      signals=", ".join(companion.signals)),
+            action=t("Nothing to do: the app keeps its own gateway."),
+        )
+    return None

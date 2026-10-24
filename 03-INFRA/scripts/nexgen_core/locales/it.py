@@ -1580,12 +1580,38 @@ MESSAGES: dict[str, str] = {
         "la distribuzione WSL dell'app {name}",
     "the app's own WSL storage":
         "lo spazio WSL dell'app",
-    "its settings point at another local gateway":
-        "le sue impostazioni puntano a un altro gateway locale",
-    "The OpenClaw Companion manages a gateway of its own on this PC ({signals}): two gateways in conflict.":
-        "OpenClaw Companion gestisce un gateway suo su questo PC ({signals}): due gateway in conflitto.",
-    "In OpenClaw Companion open Connections and choose 'a local Gateway on this PC'.":
-        "In OpenClaw Companion apri Connections e scegli 'a local Gateway on this PC'.",
+    "its settings name a gateway on this PC":
+        "le sue impostazioni nominano un gateway su questo PC",
+    "its settings name a gateway elsewhere":
+        "le sue impostazioni nominano un gateway altrove",
+    "The OpenClaw Companion app runs the gateway on this PC ({signals}). This version of the engine configures the native gateway, not the app's one: it writes nothing here and starts no second gateway.":
+        "L'app OpenClaw Companion esegue il gateway su questo PC ({signals}). Questa versione del motore configura il gateway nativo, non quello dell'app: qui non scrive niente e non avvia un secondo gateway.",
+    "Use the app as it is, or install the native gateway with {command} and run 'nexgen openclaw setup'.":
+        "Usa l'app così com'è, oppure installa il gateway nativo con {command} e lancia 'nexgen openclaw setup'.",
+    "The OpenClaw Companion app runs a gateway of its own on this PC ({signals}) and the native gateway is here too: two gateways in conflict.":
+        "L'app OpenClaw Companion esegue un gateway suo su questo PC ({signals}) e c'è anche il gateway nativo: due gateway in conflitto.",
+    "Keep the one you want: in OpenClaw Companion open Connections and point it at this PC's gateway, or stay with the app's one and remove the native gateway with 'npm uninstall -g openclaw'.":
+        "Tieni quello che vuoi: in OpenClaw Companion apri Connections e puntalo al gateway di questo PC, oppure resta su quello dell'app e rimuovi il gateway nativo con 'npm uninstall -g openclaw'.",
+    "The OpenClaw Companion app is connected to a gateway elsewhere ({signals}). Nothing here is in conflict: this version of the engine configures the native gateway on this PC only.":
+        "L'app OpenClaw Companion è collegata a un gateway altrove ({signals}). Qui non c'è nessun conflitto: questa versione del motore configura solo il gateway nativo di questo PC.",
+    "Nothing to do: the app keeps its own gateway.":
+        "Niente da fare: l'app tiene il suo gateway.",
+    "The OpenClaw Companion app runs the gateway on this PC ({signals}) and there is no native one.":
+        "L'app OpenClaw Companion esegue il gateway su questo PC ({signals}) e non ce n'è uno nativo.",
+    "This version of the engine configures the native gateway, not the app's one, so nothing was installed and nothing was written: a native gateway beside it would fight over the same port.":
+        "Questa versione del motore configura il gateway nativo, non quello dell'app, quindi non è stato installato né scritto niente: un gateway nativo accanto a quello dell'app si batterebbe per la stessa porta.",
+    "Two ways forward: use the app as it is, or install the native gateway with {command} and run this setup again.":
+        "Due strade: usa l'app così com'è, oppure installa il gateway nativo con {command} e rilancia questo setup.",
+    ", and it is connected to this PC's gateway on port {port}":
+        ", e l'app è collegata al gateway di questo PC sulla porta {port}",
+    ", and it is connected to a gateway of its own on port {port}":
+        ", e l'app è collegata a un gateway suo sulla porta {port}",
+    "The OpenClaw Companion app runs the gateway on this PC ({signals}): this engine configures the native gateway, so 'nexgen openclaw setup' stops here instead of installing a second one.":
+        "L'app OpenClaw Companion esegue il gateway su questo PC ({signals}): il motore configura il gateway nativo, quindi 'nexgen openclaw setup' si ferma qui invece di installarne un secondo.",
+    "The OpenClaw Companion app has a gateway of its own on this PC ({signals}){uses}: the setup below writes the native one.":
+        "L'app OpenClaw Companion ha un gateway suo su questo PC ({signals}){uses}: il setup qui sotto scrive quello nativo.",
+    "The OpenClaw Companion app is connected to a gateway elsewhere ({signals}): nothing here is in conflict, and the setup below writes the native gateway on this PC only.":
+        "L'app OpenClaw Companion è collegata a un gateway altrove ({signals}): qui non c'è nessun conflitto, e il setup qui sotto scrive solo il gateway nativo di questo PC.",
     "{passed} passed, {warned} warnings, {failed} failures":
         "{passed} superati, {warned} avvisi, {failed} errori",
     # Il comando
