@@ -61,10 +61,11 @@ servers:
     windows:
       args: ["${AGENT_ENGINE_ROOT}\\agent-universal-layer\\mcp\\playwright-human-safe.mjs", "--cdp-endpoint", "http://localhost:9222"]
 
-  # ---- self-hosted backend (Cloud-Server mode only) --------------------
-  # Ports come from env vars set by the user; sane defaults aligned with
-  # 03-INFRA/deploy/*.yml. If the env var is absent, the renderer omits the
-  # server (require_env).
+  # ---- cloud connector: the vendor's API, the user's own key -----------
+  # The connector is Firecrawl's own MCP server against the official cloud
+  # API. Nothing is self-hosted and there is no tunnel: the key lives in the
+  # person's secret store (`nexgen-secrets`), arrives here only as a
+  # reference, and a machine without it mounts nothing (require_env).
 
   firecrawl:
     transport: stdio
@@ -72,9 +73,14 @@ servers:
     command: npx
     args: ["-y", "firecrawl-mcp@3.25.3"]
     env:
-      FIRECRAWL_API_URL: "http://127.0.0.1:${FIRECRAWL_TUNNEL_PORT:-33002}"
-    require_env: FIRECRAWL_TUNNEL_PORT
+      FIRECRAWL_API_KEY: "${FIRECRAWL_API_KEY}"
+    require_env: FIRECRAWL_API_KEY
     targets: [claude, codex, antigravity, opencode, openclaw]
+
+  # ---- self-hosted backend (Cloud-Server mode only) --------------------
+  # Ports come from env vars set by the user; sane defaults aligned with
+  # 03-INFRA/deploy/*.yml. If the env var is absent, the renderer omits the
+  # server (require_env).
 
   n8n-mcp:
     transport: http
