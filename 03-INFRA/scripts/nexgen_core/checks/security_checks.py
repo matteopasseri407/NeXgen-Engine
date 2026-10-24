@@ -131,9 +131,9 @@ def check_tokens_in_env(vault_data: Path) -> CheckOutcome:
             continue
         if os.environ.get(env_name):
             continue
-        # Behind the gateway the gateway itself finds the token in the secrets deposit's materialized file, whatever
-        # launched the CLI. A server mounted directly in a CLI needs the real environment: the CLI passes it on.
-        behind_gateway = all(place(srv, cli).kind != DIRECT for cli in CLIS)
+        # Behind the gateway the gateway finds the token in the secrets deposit; direct shell CLIs need os.environ.
+        # OpenClaw is excluded: direct servers read its daemon/.env rather than the shell, checked by openclaw doctor.
+        behind_gateway = all(place(srv, cli).kind != DIRECT for cli in CLIS if cli != "openclaw")
         if behind_gateway and read_deposit().get(env_name):
             continue
         missing.append(f"{name} (requires {env_name})")

@@ -259,3 +259,18 @@ def test_a_server_switched_off_needs_no_token(home):
     """
     outcome = check_tokens_in_env(manifest_with(home, enabled=False))
     assert outcome.severity is Severity.OK
+
+
+def test_the_doctor_still_wants_the_real_environment_when_direct_in_a_shell_cli(home):
+    write_deposit(home, "export SVC_API_TOKEN='deposit-value-3'\n")
+    outcome_eager = check_tokens_in_env(manifest_with(home, exposure="eager"))
+    assert outcome_eager.severity is Severity.BROKEN and "SVC_API_TOKEN" in outcome_eager.message
+    outcome_lazy_direct = check_tokens_in_env(manifest_with(home, tier="core", lazy=True, lazy_targets=["claude"]))
+    assert outcome_lazy_direct.severity is Severity.BROKEN and "SVC_API_TOKEN" in outcome_lazy_direct.message
+
+
+def test_the_doctor_accepts_a_deposit_token_when_direct_only_in_openclaw(home):
+    write_deposit(home, "export SVC_API_TOKEN='deposit-value-3'\n")
+    assert check_tokens_in_env(manifest_with(home, exposure="lazy")).severity is Severity.OK
+    assert check_tokens_in_env(manifest_with(home, exposure="lazy", targets=["openclaw"])).severity is Severity.OK
+
