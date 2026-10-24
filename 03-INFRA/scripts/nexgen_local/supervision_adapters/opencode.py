@@ -42,7 +42,7 @@ class OpenCodeAdapter(base.Adapter):
     capabilities = base.Capabilities(
         open_tab=True, find_session=True, send_turn=True, live_state=True, cost=True,
         tokens=True, write_permissions=True, resume=True, scout=True,
-        dispose_location=True, session_model=True, last_turn=True,
+        dispose_location=True, session_model=True, last_turn=True, mcp=True,
         deny_push="profilo del progetto (opencode.json) e pushurl bloccata della copia",
     )
 
@@ -130,9 +130,10 @@ class OpenCodeAdapter(base.Adapter):
         return turns.last_turn(session)
 
     def write_profile(self, task_id: str, folder: Path, *, model: str = "",
-                      models: dict[str, dict[str, dict]] | None = None) -> None:
+                      models: dict[str, dict[str, dict]] | None = None,
+                      mcp: list[str] | tuple[str, ...] | None = None) -> None:
         """`opencode.json` in the copy, with the project's other keys kept."""
-        permissions.write_profile(task_id, folder, model=model, models=models)
+        permissions.write_profile(task_id, folder, model=model, models=models, mcp=mcp)
 
     def scout_argv(self, executable: str, prompt: str) -> list[str]:
         """A read-only round through OpenCode's `plan` agent, never `--auto`."""

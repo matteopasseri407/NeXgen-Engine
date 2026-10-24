@@ -106,6 +106,23 @@ def isolated_runtime_overrides(monkeypatch, tmp_path_factory):
     monkeypatch.setenv("NEXGEN_DISABLE_HOST_MUTATIONS", "1")
 
 
+@pytest.fixture(autouse=True)
+def no_owner_global_mcp_config(monkeypatch, tmp_path_factory):
+    """The executor's profile reads the owner's global OpenCode config: in a test that file does not exist.
+
+    Writing a unit's profile switches off every MCP server the global file
+    declares, so an unguarded test would read the machine it runs on and its
+    result would change with that machine's connectors. A test that needs a
+    global file patches `opencode_config_path` itself, after this fixture.
+    """
+    try:
+        import nexgen_local.supervision_permissions as profiles
+    except ImportError:
+        return
+    absent = tmp_path_factory.getbasetemp() / "nessuna-configurazione-opencode.json"
+    monkeypatch.setattr(profiles, "opencode_config_path", lambda home=None: absent)
+
+
 @dataclass
 class Sandbox:
     home: Path

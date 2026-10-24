@@ -13,6 +13,7 @@ import pytest
 
 from nexgen_local import supervision_harness as harness
 from nexgen_local import supervision_costs as costs
+from nexgen_local import supervision_permissions as permissions
 from nexgen_local import supervision_policy as policy
 from nexgen_local import supervision_state as state
 
@@ -77,6 +78,35 @@ def test_run_opens_the_harness_on_the_unit_and_attaches_its_session(task, unit, 
     assert [row["event"] for row in state.read_events(task)] == [
         "started", "unit_created", "unit_started", "attached",
     ]
+
+
+def test_run_writes_the_profile_with_only_the_mcp_the_unit_was_given(task, lane, tmp_path, monkeypatch):
+    """La copia di un lavoratore nasce senza MCP: il profilo spegne i globali che il supervisore non ha assegnato."""
+    folder = lane / task / "23-unita-mcp"
+    folder.mkdir(parents=True)
+    (lane / task / "20-brief-mcp.md").write_text("# Brief\n", encoding="utf-8")
+    state.append_event(
+        task, "unit_created", unit="mcp", worktree=str(folder), branch=f"sup/{task}/mcp",
+        base="0" * 40, allow=["docs/*.md"], verify="", repo=str(tmp_path), mcp=["vault"],
+    )
+    global_config = tmp_path / "opencode-globale.json"
+    global_config.write_text(json.dumps({"mcp": {"servers": {
+        "vault": {"type": "local", "command": ["node", "v.js"]},
+        "playwright": {"type": "local", "command": ["node", "p.js"]},
+    }}}), encoding="utf-8")
+    monkeypatch.setattr(permissions, "opencode_config_path", lambda home=None: global_config)
+    monkeypatch.setattr(harness, "_opencode_executable", lambda: "opencode-finto")
+    monkeypatch.setattr(harness.costs, "record", lambda *a, **k: {"session": "s"})
+
+    harness.run_unit(
+        task, "mcp",
+        opener=lambda title, argv, *, cwd, marker="": {"title": title, "pid": 1},
+        lister=lambda: [], wait_s=0,
+    )
+
+    servers = json.loads((folder / "opencode.json").read_text(encoding="utf-8"))["mcp"]["servers"]
+    assert "vault" not in servers, "il server assegnato resta quello globale"
+    assert servers["playwright"] == {"type": "local", "command": ["node", "p.js"], "disabled": True}
 
 
 def test_run_says_so_when_no_session_can_be_told_apart(task, unit, monkeypatch):

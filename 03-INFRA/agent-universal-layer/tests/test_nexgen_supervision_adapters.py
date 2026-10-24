@@ -555,8 +555,8 @@ def test_local_is_opencode_with_the_model_the_lane_declares(tmp_path, monkeypatc
     seen: dict = {}
     monkeypatch.setattr(
         opencode.OpenCodeAdapter, "write_profile",
-        lambda self, task_id, folder, model="", models=None: seen.update(
-            {"task": task_id, "folder": folder, "model": model, "models": models}
+        lambda self, task_id, folder, model="", models=None, mcp=None, **kwargs: seen.update(
+            {"task": task_id, "folder": folder, "model": model, "models": models, "mcp": mcp}
         ),
     )
 
@@ -572,3 +572,11 @@ def test_a_local_unit_without_a_model_in_the_lane_is_refused(lane, tmp_path):
     adapter = local.LocalAdapter()
     with pytest.raises(base.AdapterError, match="nessun modello locale configurato"):
         adapter.write_profile("20261022-000000-prova", tmp_path)
+
+
+def test_mcp_capability_declared_only_for_supported_adapters():
+    assert registry.get("opencode").capabilities.has("mcp") is True
+    assert registry.get("local").capabilities.has("mcp") is True
+    assert registry.get("claude").capabilities.has("mcp") is False
+    assert registry.get("codex").capabilities.has("mcp") is False
+    assert registry.get("agy").capabilities.has("mcp") is False

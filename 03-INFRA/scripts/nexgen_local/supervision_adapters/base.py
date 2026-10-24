@@ -33,7 +33,7 @@ class Unsupported(AdapterError):
 OPERATIONS = (
     "open_tab", "find_session", "send_turn", "live_state", "cost", "tokens",
     "write_permissions", "resume", "scout", "dispose_location", "session_model",
-    "last_turn",
+    "last_turn", "mcp",
 )
 
 
@@ -63,6 +63,7 @@ class Capabilities:
     dispose_location: bool = False
     session_model: bool = False
     last_turn: bool = False
+    mcp: bool = False
     deny_push: str = ""
     limits: str = ""
 
@@ -129,7 +130,8 @@ class Adapter:
         """The session opened in this folder at or after `since_ms`, or None."""
         raise Unsupported(self.name, "find_session")
 
-    def write_profile(self, task_id: str, folder: Path, *, model: str = "") -> None:
+    def write_profile(self, task_id: str, folder: Path, *, model: str = "",
+                      mcp: list[str] | tuple[str, ...] | None = None) -> None:
         """Put the executor's permission profile in the copy before its tab opens."""
         raise Unsupported(self.name, "write_permissions")
 

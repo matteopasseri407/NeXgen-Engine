@@ -161,8 +161,14 @@ class ClaudeAdapter(base.Adapter):
         """The last assistant record, when it carries a provider error."""
         return _last_turn(self.session_file(session))
 
-    def write_profile(self, task_id: str, folder: Path, *, model: str = "") -> None:
-        """The project settings: edits accepted inside the copy and the task folder, push denied."""
+    def write_profile(self, task_id: str, folder: Path, *, model: str = "",
+                      mcp: list[str] | tuple[str, ...] | None = None) -> None:
+        """The project settings: edits accepted inside the copy and the task folder, push denied.
+
+        `mcp` is accepted and ignored: Claude Code limits MCP servers with
+        `--strict-mcp-config`, a launch flag, not a project file, so this adapter
+        declares the operation absent instead of pretending it turned them off.
+        """
         target = Path(folder) / SETTINGS_FILE
         if permissions.tracked(folder, SETTINGS_FILE):
             raise base.AdapterError(

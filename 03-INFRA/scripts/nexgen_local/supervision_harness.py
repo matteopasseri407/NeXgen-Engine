@@ -71,7 +71,7 @@ def run_unit(
         raise HarnessError(f"brief dell'unità sparito: {brief}")
     local_notes = _prepare_local(task_id, name, chosen)
     if adapter.capabilities.has("write_permissions"):
-        adapter.write_profile(task_id, folder)
+        adapter.write_profile(task_id, folder, mcp=record.get("mcp"))
     allowed = policy.allowed_models()
     prompt = prompt_text(task_id, name, brief, harness=chosen)
     previous = state.harness_session_record(task_id, chosen)
@@ -188,7 +188,7 @@ def send_corrections(
     if not path.is_file():
         raise HarnessError(f"file di revisione sparito: {path}")
     if adapter.capabilities.has("write_permissions"):
-        adapter.write_profile(task_id, folder)
+        adapter.write_profile(task_id, folder, mcp=record.get("mcp"))
     prompt = corrections_text(task_id, name, path, round_no)
     allowed = policy.allowed_models()
     previous = _resolve_unit_session(task_id, name, chosen, record, folder)
