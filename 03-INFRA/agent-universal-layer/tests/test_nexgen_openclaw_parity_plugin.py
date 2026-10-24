@@ -336,6 +336,30 @@ def test_a_removal_leaves_nothing_to_adopt_and_is_silent(tmp_path):
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_skill_is_named_whichever_side_of_the_event_carries_it(tmp_path):
+    """A removal keeps the artifact in `before`; the name is read from there too, not from `after`."""
+    target = deployed(tmp_path)
+    driver = target / "workshop-driver.mjs"
+    script = f'''import {{ adoptionNote }} from {json.dumps((target / "workshop.mjs").as_uri())};
+console.log(JSON.stringify({{
+  after: adoptionNote({{action: "updated", source: "workshop", after: {{name: "after-skill"}}}}),
+  before: adoptionNote({{action: "updated", source: "workshop", before: {{name: "before-skill"}}}}),
+  neither: adoptionNote({{action: "updated", source: "workshop"}}),
+}}));
+'''
+    driver.write_text(script, encoding="utf-8")
+    done = subprocess.run(
+        [NODE, str(driver)], capture_output=True, text=True, encoding="utf-8", timeout=60, check=False,
+    )
+
+    assert done.returncode == 0, done.stderr
+    notes = json.loads(done.stdout)
+    assert "after-skill" in notes["after"]
+    assert "before-skill" in notes["before"]
+    assert notes["neither"] == ""
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_an_event_without_a_name_is_silent_instead_of_announcing_nothing(tmp_path):
     fired = fire_workshop(tmp_path, workshop_event(named=False))
 

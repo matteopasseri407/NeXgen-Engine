@@ -22,7 +22,11 @@ export const ADOPT_HINT = "run `nexgen openclaw adopt` to make it canonical";
 const ADOPTABLE_ACTIONS = new Set(["created", "updated"]);
 
 function skillName(event) {
-  const artifact = event.after && typeof event.after === "object" ? event.after : null;
+  // A create or an update puts the artifact in `after`; a removal puts it in `before`, so the
+  // name is read from whichever side carries it and not from the action.
+  const artifact = event.after && typeof event.after === "object"
+    ? event.after
+    : event.before && typeof event.before === "object" ? event.before : null;
   const name = artifact ? artifact.name || artifact.skillKey : "";
   return typeof name === "string" ? name.trim() : "";
 }
