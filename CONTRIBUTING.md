@@ -35,6 +35,23 @@ full pytest suite. It stops on the first failing gate and never invokes sync or 
 For a bounded change, pass the relevant test file first; run the full command
 before integration. Fix new lint findings rather than regenerating the baseline.
 
+### Where the suite puts its temporary files
+
+On Windows `%TEMP%` is `C:\Users\<you>\AppData\Local\Temp`, inside your home, and
+OpenClaw's gateway watches the home with one recursive handle: the thousands of
+files a suite creates and deletes there are the event storm it cannot fold.
+`tests/conftest.py` therefore sets `PYTEST_DEBUG_TEMPROOT` before the first
+`tmp_path` exists, and pytest keeps its numbered trees in
+`%SystemDrive%\Temp\nexgen-<user>`, or in `%PUBLIC%\nexgen-<user>` when that one
+cannot be written.
+Set `NEXGEN_SCRATCH_ROOT` to choose the folder yourself; a `PYTEST_DEBUG_TEMPROOT`
+already set by the caller is never overruled, which is what a CI job pointing at a
+fast disk relies on.
+pytest rotates the last three numbered trees and deletes the rest, so nothing
+accumulates without a policy.
+On Linux the system temporary directory is already outside the home and nothing is
+changed.
+
 ### Finding the right module
 
 | Behavior | Owner | Closest tests in `03-INFRA/agent-universal-layer/tests/` |
@@ -44,6 +61,8 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | Sync phase ordering and failure status | `nexgen_core/guard.py` | `test_nexgen_phase3.py`, `test_nexgen_quality_regressions.py` |
 | Skill fetch, replacement and pins | `nexgen_core/skill_sources.py` | `test_nexgen_skill_fetch.py`, `test_nexgen_skill_versions.py`, `test_nexgen_lazy_skills.py`, `test_nexgen_quality_regressions.py` |
 | Skill catalog page (`~/.agents/skills/INDEX.md`) | `nexgen_core/skill_index.py` | `test_nexgen_skill_deps.py`, `test_nexgen_openclaw_sync_skills.py` |
+| OpenClaw's unattended jobs and its configuration watcher | `nexgen_core/openclaw/background.py`, `nexgen_core/openclaw/observation.py` | `test_nexgen_openclaw_background.py`, `test_nexgen_openclaw_observation.py` |
+| Where a process puts its scratch files | `nexgen_core/scratch.py`; the callers are `tests/conftest.py` and `nexgen_local/supervision_pytest.py` | `test_nexgen_pytest_scratch_root.py` |
 | Host locking | `nexgen_core/lock.py` | `test_nexgen_lock.py` |
 | Source checkout version fallback | `nexgen_local/version.py` | `test_nexgen_command_surface.py` |
 | Local CLI dispatch and shared config/LLM adapters | `nexgen_local/cli.py`, `nexgen_local/cmds/base.py`; domain commands in `cmds/` | `test_nexgen_command_surface.py`, `test_nexgen_local_help_surface.py`, `test_nexgen_cmdsservicesplit_pinning.py` |

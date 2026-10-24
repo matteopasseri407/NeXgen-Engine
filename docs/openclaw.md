@@ -197,6 +197,65 @@ The check reads the conversation, which OpenClaw withholds from every non-bundle
 merged into the `hooks` block already there, and `nexgen openclaw doctor` warns when it is missing.
 The hooks themselves are handed to the plugin by OpenClaw, so nothing else has to be installed.
 
+## The jobs that run when nobody is watching
+
+Dreaming, compaction, the memory flush before a compaction and active memory all resolve their model through the
+agents' default model when their own key is unset.
+On a machine whose default is a local model, the 03:00 dreaming sweep, an automatic compaction and a recall load
+that model while nobody is watching, and on a machine without a graphics card that is the whole computer for
+minutes.
+The person chose a local model for a conversation, not for a sweep.
+
+When the default is local and an agent already runs a cloud model, the setup writes:
+
+| Job | Key | Gate OpenClaw requires |
+| --- | --- | --- |
+| dreaming | `plugins.entries.memory-core.config.dreaming.model` | `plugins.entries.memory-core.subagent.allowModelOverride: true` |
+| compaction | `agents.defaults.compaction.model` | none |
+| memory flush | `agents.defaults.compaction.memoryFlush.model` | none |
+| active memory | `plugins.entries.active-memory.config.model` | the same gate, on `active-memory` |
+
+The cloud model is the one an agent already runs, `main` first.
+`allowedModels` is merged as a set, so an allowlist the person wrote keeps its entries and gains this one.
+Nothing is written when the default is already cloud, when no agent has a cloud model, or when the person set that
+key: a key that is present is the person's, and an explicit `allowModelOverride: false` is read as a
+decision rather than as a gap.
+Active memory is written only when that plugin is switched on.
+
+`nexgen openclaw doctor` says in one line which job would still wake a local model.
+
+## The watcher, and the whole home
+
+OpenClaw watches `openclaw.json` for changes.
+To do it, it steps one level up from the folder holding the file and watches that, so with the default
+`~/.openclaw` the watched folder is the home directory.
+On Windows the backend there is one recursive `ReadDirectoryChangesW` handle over the whole tree: every file any
+program creates under the home is an event the gateway has to fold.
+The engine's own test runs create and delete thousands of them, the queue folds, a reconciliation scan opens a file
+another process already deleted, and `EBADF` is not among the errors that library recovers from: after three
+attempts OpenClaw turns hot reload off.
+
+So the setup writes `env: { vars: { CHOKIDAR_USEPOLLING: "1" } }` when the state folder puts the home under the
+watcher and the platform is Windows.
+That is OpenClaw's documented switch: in `poll` mode the native hub is never started and only the configuration
+file is polled, every 100 ms by default.
+It reaches the gateway process because OpenClaw applies the configuration's own `env` block to `process.env`
+during the gateway-run bootstrap, before the reload manager creates the watcher, and it never overrides a value the
+process already has.
+Nothing is installed, no service is reinstalled, no wrapper script is added, and no user-wide environment variable
+is touched.
+
+The cost is real and named: with polling on, the memory index and the skills refresh poll every thirty seconds
+instead of receiving events.
+On Linux the engine writes nothing. The same one-level step-up happens there, but an entry scope on Linux is one
+non-recursive watch per directory, so the home is not walked.
+
+A change of mode takes effect at the next start.
+The setup does not cycle the gateway for this key alone: it writes the key, and the ordinary write path restarts
+the gateway once, which the plan says when the key is new.
+`nexgen openclaw doctor` says whether the machine is in the recursive case, already polling, or polling when
+nothing needs it any more.
+
 ## Terms of service
 
 OpenClaw uses the person's own subscriptions through the logins that already exist on the machine.
@@ -237,7 +296,10 @@ before that step.
    - a backup beside the file, `openclaw.json.pre-nexgen-<YYYYMMDD-HHMMSS>`;
    - the sections the engine owns merged into the file in force: dictionaries merged recursively, a key the
      person wrote outside the proposal kept, `plugins.allow` merged as a sorted union, model entries merged
-     by `id` so a hand-written model is not dropped;
+     by `id` so a hand-written model is not dropped, and list-valued leaves such as `deny` and `allowedModels`
+     merged as sets;
+   - the background-job models when the default model is local, and `env.vars.CHOKIDAR_USEPOLLING: "1"` on
+     Windows when the gateway would otherwise watch the home, both described above;
    - the gateway token generated with `secrets.token_urlsafe(32)` only when there is none, and never
      printed;
    - the engine's guardrail plugin enabled only when its folder is actually deposited, and granted
@@ -287,9 +349,10 @@ are the person's and stay. It writes nothing.
 `nexgen openclaw doctor [--json]` checks installation, version against the pin, the configuration's validity,
 `:latest` ids, caged local models, whether the evidence check runs and for which local models, the heartbeat,
 the gateway's bind and authentication, Google entries, ACP seats, agents on subscriptions this machine does
-not have, whether the gateway is listening, whether every agent has a fallback chain, a second gateway from
-the Microsoft Store, and how many skills and servers OpenClaw created that the canonical library does not
-declare yet. `nexgen doctor` runs the same checks as part of its own report, and says nothing at all on a
+not have, which background job would wake a local model, whether the gateway watches the whole home
+recursively, whether the gateway is listening, whether every agent has a fallback chain, a second gateway
+from the Microsoft Store, and how many skills and servers OpenClaw created that the canonical library does
+not declare yet. `nexgen doctor` runs the same checks as part of its own report, and says nothing at all on a
 machine that never installed OpenClaw and never declared the module.
 
 `nexgen openclaw setup` applies that same plan: it installs the pinned release, onboards when there is no
