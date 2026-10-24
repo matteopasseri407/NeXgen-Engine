@@ -12,6 +12,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -39,6 +40,8 @@ class CodexAdapter(base.Adapter):
     name = "codex"
     label = "Codex"
     executable = "codex"
+    session_id_pattern = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+    session_id_description = "UUID come '01a161aa-7ac3-7ab0-8371-e339b5bbc783'"
     capabilities = base.Capabilities(
         open_tab=True, find_session=True, send_turn=True, live_state=True, cost=False,
         tokens=True, write_permissions=False, resume=True, scout=True,

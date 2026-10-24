@@ -9,6 +9,7 @@ unit's work into the previous unit's conversation.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from . import base
@@ -20,6 +21,8 @@ class AntigravityAdapter(base.Adapter):
     name = "agy"
     label = "agy (Antigravity)"
     executable = "agy"
+    session_id_pattern = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+    session_id_description = "UUID come 'a544d85d-f5b3-4741-bbe2-8044c85b348f'"
     capabilities = base.Capabilities(
         open_tab=True, find_session=False, send_turn=False, live_state=False, cost=False,
         tokens=False, write_permissions=False, resume=True, scout=True,

@@ -83,6 +83,23 @@ def test_a_folder_is_compared_apart_from_separators_case_and_windows_prefix():
     assert base.normal_path("") == ""
 
 
+def test_each_adapter_declares_and_validates_its_session_id_format():
+    oc = registry.get("opencode")
+    assert oc.validate_session("ses_12345ABC") == "ses_12345ABC"
+    with pytest.raises(base.AdapterError, match="atteso `ses_`"):
+        oc.validate_session("a544d85d-f5b3-4741-bbe2-8044c85b348f")
+
+    agy_adapter = registry.get("agy")
+    assert agy_adapter.validate_session("a544d85d-f5b3-4741-bbe2-8044c85b348f") == "a544d85d-f5b3-4741-bbe2-8044c85b348f"
+    with pytest.raises(base.AdapterError, match="atteso UUID"):
+        agy_adapter.validate_session("ses_12345ABC")
+
+    cdx = registry.get("codex")
+    assert cdx.validate_session("a544d85d-f5b3-4741-bbe2-8044c85b348f") == "a544d85d-f5b3-4741-bbe2-8044c85b348f"
+    with pytest.raises(base.AdapterError, match="atteso UUID"):
+        cdx.validate_session("not-a-uuid")
+
+
 # --- OpenCode ---------------------------------------------------------------
 
 

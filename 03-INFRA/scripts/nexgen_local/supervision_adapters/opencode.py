@@ -9,6 +9,7 @@ runs: this adapter only decides when to call it and with which harness name.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -39,6 +40,8 @@ class OpenCodeAdapter(base.Adapter):
     name = "opencode"
     label = "OpenCode"
     executable = "opencode"
+    session_id_pattern = re.compile(r"ses_[A-Za-z0-9]{1,64}")
+    session_id_description = "`ses_` seguito da lettere e cifre"
     capabilities = base.Capabilities(
         open_tab=True, find_session=True, send_turn=True, live_state=True, cost=True,
         tokens=True, write_permissions=True, resume=True, scout=True,
