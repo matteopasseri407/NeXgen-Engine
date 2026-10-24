@@ -1,9 +1,10 @@
 """The checks behind `nexgen openclaw doctor` and `nexgen doctor`.
 
 One rule decides everything here: a machine that never chose OpenClaw must never
-be told about it. When the module is not declared and nothing of OpenClaw is
-installed, `collect` returns no outcomes at all, and `nexgen doctor` looks
-exactly as it did before this feature existed.
+be told about it. When the module is not declared, nothing of OpenClaw is
+installed and the Windows app has no gateway here, `collect` returns no
+outcomes at all, and `nexgen doctor` looks exactly as it did before this
+feature existed.
 
 The checks are read-only by construction. They read the configuration in force
 and they open one TCP connection. When a caller asks for the node list — the
