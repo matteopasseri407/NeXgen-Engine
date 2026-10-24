@@ -94,6 +94,7 @@ def collect(task_id: str, unit: str) -> dict:
         diffstat=git(folder, "diff", "--stat", base, head).strip(), diff=text,
         skipped=skipped, request_scan=request_scan, pytest_surface=surface,
         test_removals=added, test_removals_error=unreadable,
+        identity=record.get("identity"),
     )
     package_path = state.open_task(task_id) / f"40-pacchetto-{name}.md"
     raw_path = state.open_task(task_id) / f"50-gate-{name}.txt"
@@ -127,6 +128,7 @@ def _gate_results(
         _forbidden_gate(files, scope),
         _integrity_gate(folder, base, head, files, rules, scope),
         _per_commit_gate(folder, rules, base, head),
+        _identity_gate(folder, record, base, head),
         _verify_gate(folder, str(record.get("verify") or "")),
         _collected_tests_gate(folder, base, head, files, surface, scope),
         _lint_gate(folder),
@@ -330,6 +332,40 @@ def _per_commit_gate(folder: Path, rules: config.Config, base: str, head: str) -
             " | ".join(str(problem) for problem in problems)[:800],
         )
     return GateResult("prova per commit", True, "ogni commit fix porta un test che fallisce prima")
+
+
+def _identity_gate(folder: Path, record: dict, base: str, head: str) -> GateResult:
+    """Every commit in the unit's range must carry the owner identity recorded at creation."""
+    identity = record.get("identity")
+    if not identity:
+        return GateResult("identità", True, "unità senza identità registrata nel diario: passa")
+    expected_name = str(identity.get("name") or "").strip()
+    expected_email = str(identity.get("email") or "").strip()
+    if not expected_name or not expected_email:
+        return GateResult("identità", True, "unità senza identità registrata nel diario: passa")
+    try:
+        raw = git(folder, "log", "--format=%h%x1f%an%x1f%ae%x1f%cn%x1f%ce", f"{base}..{head}", check=False)
+    except (GitError, OSError) as exc:
+        return GateResult("identità", False, f"non verificabile ({type(exc).__name__}: {exc})")
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    if not lines:
+        return GateResult("identità", True, "nessun commit nell'intervallo")
+    mismatches = []
+    for line in lines:
+        parts = line.split("\x1f")
+        if len(parts) != 5:
+            continue
+        sha, an, ae, cn, ce = parts
+        details = []
+        if an != expected_name or ae != expected_email:
+            details.append(f"autore {an} <{ae}>")
+        if cn != expected_name or ce != expected_email:
+            details.append(f"committer {cn} <{ce}>")
+        if details:
+            mismatches.append(f"{sha} ({', '.join(details)})")
+    if mismatches:
+        return GateResult("identità", False, "commit con identità inattesa: " + ", ".join(mismatches))
+    return GateResult("identità", True, f"tutti i commit ({len(lines)}) portano l'identità registrata")
 
 
 def _clean_tree_gate(folder: Path) -> GateResult:
