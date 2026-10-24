@@ -7,6 +7,14 @@ from pathlib import Path
 
 STAGED = ":"  # head value meaning "the index"
 IGNORED = ":(exclude).nexgen-discipline"  # review artifacts must not alter the reviewed diff
+#: Windows refuses any path over MAX_PATH unless every command is told to allow it;
+#: the key is inert on POSIX. A revision with a path (`<rev>:<file>`) is an
+#: argument git stats before it resolves it, so a deep checkout failed here with
+#: `fatal: failed to stat '<sha>:03-INFRA/.../test_....py': Filename too long`.
+#: The constant lives in this layer because this is the one place that starts git.
+LONG_PATHS = ("-c", "core.longpaths=true")
+#: What every command carries: the encoding of the paths it prints, and their length.
+OPTIONS = ("-c", "core.quotepath=false", *LONG_PATHS)
 
 
 class GitError(RuntimeError):
@@ -14,7 +22,7 @@ class GitError(RuntimeError):
 
 
 def git(root: Path, *args: str, check: bool = True) -> str:
-    proc = subprocess.run(["git", "-c", "core.quotepath=false", "-C", str(root), *args],
+    proc = subprocess.run(["git", *OPTIONS, "-C", str(root), *args],
                           capture_output=True, text=True, encoding="utf-8", errors="replace")
     if check and proc.returncode:
         raise GitError(proc.stderr.strip() or f"git {' '.join(args)} failed")
@@ -55,7 +63,7 @@ def _diff_args(base: str, head: str | None) -> list[str]:
 
 
 def show(root: Path, spec: str) -> str | None:
-    proc = subprocess.run(["git", "-C", str(root), "show", spec], capture_output=True)
+    proc = subprocess.run(["git", *OPTIONS, "-C", str(root), "show", spec], capture_output=True)
     return proc.stdout.decode("utf-8", errors="replace").replace("\r\n", "\n") if proc.returncode == 0 else None
 
 
@@ -92,7 +100,7 @@ def parents(root: Path, rev: str) -> list[str]:
 
 
 def is_ancestor(root: Path, ancestor: str, descendant: str) -> bool:
-    proc = subprocess.run(["git", "-C", str(root), "merge-base", "--is-ancestor", ancestor, descendant],
+    proc = subprocess.run(["git", *OPTIONS, "-C", str(root), "merge-base", "--is-ancestor", ancestor, descendant],
                           capture_output=True)
     return proc.returncode == 0
 
@@ -119,7 +127,7 @@ def diff_text(root: Path, base: str, head: str | None = None) -> str:
     text = git(root, "diff", "--no-renames", *_diff_args(base, head), "--", ".", IGNORED)
     if head is None:
         for path in git(root, "ls-files", "--others", "--exclude-standard", "--", ".", IGNORED).splitlines():
-            proc = subprocess.run(["git", "-C", str(root), "diff", "--no-index", "--", "/dev/null", path],
+            proc = subprocess.run(["git", *OPTIONS, "-C", str(root), "diff", "--no-index", "--", "/dev/null", path],
                                   capture_output=True, text=True, encoding="utf-8", errors="replace")
             text += proc.stdout
     return text

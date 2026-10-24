@@ -15,15 +15,11 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from nexgen_core.discipline.gitutil import GitError, git
+from nexgen_core.discipline.gitutil import LONG_PATHS, GitError, git
 
 from . import supervision_gitconfig as gitconfig
 from . import supervision_state as state
 from .supervision_state import SupervisionError
-
-
-#: Windows refuses a path over MAX_PATH unless each git command is told to allow it.
-LONG_PATHS = ("-c", "core.longpaths=true")
 
 
 class RebaseError(SupervisionError):

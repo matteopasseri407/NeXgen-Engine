@@ -10,7 +10,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from nexgen_core.discipline.gitutil import GitError, git
+from nexgen_core.discipline.gitutil import LONG_PATHS, GitError, git
 
 from . import supervision_gitconfig as gitconfig
 from . import supervision_state as state
@@ -22,8 +22,6 @@ UNITS_DIR = "23-unita"
 BLOCKED_PUSH_URL = "nexgen-sup-disabled://push-blocked"
 #: A remote that does not answer within this budget is reported as unreadable, never as unchanged.
 REMOTE_TIMEOUT_S = 30.0
-#: Windows refuses a path over MAX_PATH unless each git command is told to allow it.
-LONG_PATHS = ("-c", "core.longpaths=true")
 
 
 class WorktreeError(SupervisionError):

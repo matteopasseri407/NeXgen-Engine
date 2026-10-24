@@ -15,7 +15,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from nexgen_core.discipline.gitutil import git, is_ancestor
+from nexgen_core.discipline.gitutil import LONG_PATHS, git, is_ancestor
 from nexgen_core.processes import no_window_kwargs, split_command_line, windows_command_argv
 
 from . import supervision_gates as gates
@@ -43,8 +43,6 @@ PUSH_BRANCHES = "il comando di pubblicazione ha toccato altri rami del remoto"
 FETCH_TIMEOUT_S = 120.0
 PUSH_TIMEOUT_S = 600.0
 PUBLISH_TIMEOUT_S = 1800.0
-#: Windows refuses a path over MAX_PATH unless each git command is told to allow it.
-LONG_PATHS = ("-c", "core.longpaths=true")
 
 
 class PublishError(SupervisionError):
