@@ -50,6 +50,7 @@ Il motore tiene separate tre fonti di configurazione:
 * **Segreti:** cifratura asimmetrica `age` (`99-SECRETS/secrets.yaml.age`) su chiavi locali (`0600`), slot OAuth isolati per host e `secrets.env` generato per shell e servizi.
   Non serve una passphrase.
 * **Shell operatore:** dashboard `nexgen info` e REPL interattiva `nexgen shell`, così la gestione ordinaria non richiede mai una CLI AI aperta.
+* **Quota dei piani (`nexgen quota`, `/quota` in OpenClaw):** quanto resta di ogni abbonamento, letto da quello che gli harness hanno già scritto in locale, con l'età di ogni lettura. Una finestra che da questa macchina non si può misurare lo dice, invece di tirare a indovinare. Vedi [quota.md](docs/quota.md).
 * **Cinque runtime più l'app Desktop:** Claude Code, Codex, OpenCode (nativo V2: istruzioni, `plugins`/`permissions`, viste skill), Antigravity e OpenClaw, ognuno nel suo dialetto, seggi Council inclusi. OpenClaw è tecnicamente la quinta CLI della sincronizzazione, ma è l'harness ufficiale di NeXgen Engine: la porta d'ingresso con interfaccia (pannello web, app sul telefono) da cui si usano gli altri harness e i tuoi abbonamenti. L'app Claude Desktop riceve solo server read-only esplicitamente consentiti (`desktop_allow`), dato che non ha hook guardrail.
   Vedi [openclaw.md](docs/openclaw.md) per cosa rileva il motore, i tre agenti, la gabbia del modello locale e le trappole note di Windows.
 * **Diagnostica (`nexgen doctor`):** controlli automatici su allineamento Git, manifest, link, token e permessi.
