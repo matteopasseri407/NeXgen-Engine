@@ -397,10 +397,10 @@ not evidence; every line below is read from git or run by the engine.
 |---|---|
 | `confine` | a touched file (both names of a rename) is outside every `--allow` glob |
 | `file vietati` | `VERSION`, `CHANGELOG.md` or `.github/**` changed and the boundary does not name it; both names of a rename count |
-| `integrità dei test` | an existing test was deleted, shrunk, skipped or renamed out of discovery (`nexgen_core/discipline/integrity.py`, reused) |
+| `integrità dei test` | an existing test was deleted, shrunk, skipped or renamed out of discovery (`nexgen_core/discipline/integrity.py`, reused); a unit whose boundary holds `.nexgen-discipline.toml` is judged commit by commit with the configuration of each commit's parent, so a commit that adds the authorisation and removes the test at once fails, and the PASS reason names the files it retired and how many cases each gave up |
 | `prova per commit` | a `fix:` commit has no test that fails on its parent (`nexgen_core/discipline/regress.py`, reused) |
 | `verifica indipendente` | the declared command is missing or exits non-zero; it is one command with no shell operator (`&&`, `\|\|`, `\|`, `;`, `&`), its executable must come from outside the unit's copy, a Python interpreter is started with `-P` and an environment cleaned of `PYTHONPATH`, `PYTHONSTARTUP`, `PYTHONHOME`, `PYTHONUSERBASE`, `PYTEST_ADDOPTS` and `PYTEST_PLUGINS` (the user site directory is left alone: it is outside the copy), and the run has a ceiling of 1800 seconds that `NEXGEN_SUP_VERIFY_TIMEOUT_S` moves for a slower machine (a value that is not a positive number is ignored) |
-| `test raccolti` | the head collects a test the base collected and its file is not in the **base's** `test_removal_ok`, or a collection cannot answer: both trees are exported with `git archive` (no `.git` in them), collected with `python -P -m pytest --collect-only -q` under the same cleaned environment, and the two node-id sets are compared, not the totals; a file the owner authorised is retired and the reason says how many tests and from which files, an increase is normal, and the head's own `.nexgen-discipline.toml` is never read, because a unit does not authorise itself |
+| `test raccolti` | the head collects a test the base collected and its file is not in the **base's** `test_removal_ok`, or a collection cannot answer: both trees are exported with `git archive` (no `.git` in them), collected with `python -P -m pytest --collect-only -q` under the same cleaned environment, and the two node-id sets are compared, not the totals; a file the owner authorised is retired and the reason says how many tests and from which files, an increase is normal, and the head's own `.nexgen-discipline.toml` is never read, because a unit does not authorise itself; a unit whose boundary holds that file is judged commit by commit instead, so a lost node id is accepted only where the commit that lost it inherited its file's authorisation from the parent, and a loss no commit accounts for stays a FAIL that names it |
 | `lint` | the project has `03-INFRA/scripts/ruff_baseline_check.py` and the copy adds a `(file, code)` finding group its committed baseline did not have; the copy only decides whether the gate exists and what its baseline allows, while the script that runs is the engine's own, so a unit cannot weaken the check |
 | `configurazione git` | either configuration file of the copy (the repository's shared `.git/config`, which every checkout reads, or the worktree's own `config.worktree`) changed since the unit was created, or the effective configuration carries a `url.*.insteadOf` / `url.*.pushInsteadOf` key the creation did not have; the file or the key is named |
 | `remoto intatto` | a remote of the creation is gone, added, points at another fetch URL or push URL, or one of its refs carries a commit of the unit's interval (the unit pushed); a branch that advanced for another reason is not a failure |
@@ -408,10 +408,24 @@ not evidence; every line below is read from git or run by the engine.
 | `scansione fughe` | the project declares CI's anti-leak scan (a workflow names `leak_scan.py`) and the scan exits non-zero on the unit's `base..head`, or the script and its patterns are not where the workflow says; a project that declares no scan adds no line |
 
 The verdict is PASS only when every line is. The package
-(`40-pacchetto-<unit>.md`) carries the verdict, the gate lines, the diffstat,
-the diff with a declared cap (400 lines) and the cost of the attached session;
-`50-gate-<unit>.txt` carries the raw output, including what the verification
-printed. `sup collect` exits 1 on FAIL, so a script sees it.
+(`40-pacchetto-<unit>.md`) carries the verdict, the gate lines, the
+`test_removal_ok` entries the unit added, the diffstat, the diff with a declared
+cap (400 lines) and the cost of the attached session; `50-gate-<unit>.txt`
+carries the raw output, including what the verification printed. `sup collect`
+exits 1 on FAIL, so a script sees it.
+
+The owner authorises a retirement by naming the file in `test_removal_ok` in
+`.nexgen-discipline.toml` on the base, the path `integrity.py` documents in
+`HOW_TO_ALLOW`. A unit may carry that file itself only when the supervisor wrote
+its path inside the unit's boundary at creation (`--allow .nexgen-discipline.toml`,
+or a glob that covers it): the boundary is the journal's `allow`, so a unit
+cannot hand itself the permission. With it, both test gates walk the unit's
+commits the way the project's own hook does, with the configuration of each
+commit's parent, and a commit that adds the authorisation and removes the test
+at once fails. Without it, the base's copy is the only one read and `confine`
+fails the file. The package lists the entries the unit added in a section of its
+own, because the gates say whether an authorised removal happened, not that
+someone agreed to it.
 
 Every git command the engine starts carries `-c core.longpaths=true`, from one
 constant in `nexgen_core/discipline/gitutil.py`. On Windows git states an
