@@ -78,7 +78,11 @@ Le installazioni come pacchetto si aggiornano tramite il gestore usato per insta
 ```bash
 git clone https://github.com/matteopasseri407/NeXgen-Engine.git ~/KnowledgeVault
 cd ~/KnowledgeVault
-bash install.sh --check          # Windows PowerShell: .\install.ps1 -Check
+# Scegli il comando per il ruolo della tua macchina (vedi docs/roles.md):
+sh install.sh --role server      # Gateway Linux headless sempre attivo
+sh install.sh --role node        # Nodo collegato a un gateway esistente
+sh install.sh --role standalone  # PC locale con il proprio gateway
+# Windows PowerShell: .\install.ps1 -Role <server|node|standalone>
 ```
 
 Per i clone Git, `nexgen update` richiede conferma; il heartbeat pianificato può applicare aggiornamenti patch senza intervento.

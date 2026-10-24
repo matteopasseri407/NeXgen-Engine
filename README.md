@@ -131,7 +131,11 @@ See [upgrade.md](docs/upgrade.md) for requirements and recovery.
 ```bash
 git clone https://github.com/matteopasseri407/NeXgen-Engine.git ~/KnowledgeVault
 cd ~/KnowledgeVault
-bash install.sh --check          # Windows PowerShell: .\install.ps1 -Check
+# Pick the command for your machine role (see docs/roles.md):
+sh install.sh --role server      # Headless Linux always-on gateway
+sh install.sh --role node        # Node connecting to an existing gateway
+sh install.sh --role standalone  # Local PC with its own gateway
+# Windows PowerShell: .\install.ps1 -Role <server|node|standalone>
 ```
 
 ### 1. Bootstrap

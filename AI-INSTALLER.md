@@ -46,7 +46,7 @@ CLI and 1 machine → `MINIMAL`; 2+ of either → `MULTI`.
 
 Follow `INIT.md`'s Steps 1.5 through 7 (English section) exactly, but as
 direct action instead of a guided conversation: run Step 1.5's read-only
-`nexgen inventory` scan first (or `python3 03-INFRA/scripts/agent_sync.py inventory`
+`nexgen inventory` scan first (or `python3 03-INFRA/scripts/nexgen.py inventory`
 before the commands are installed), and if it finds anything
 out-of-manifest, put its ADOPT / START FRESH / PICK BY HAND menu to the
 user and act on their choice — this is a real fork in behavior, not just

@@ -271,7 +271,6 @@ Top-level script shims.
 - `03-INFRA/scripts/check_engine.py` — `_resolve_python` (function, 15), `main` (function, 33)
 - `03-INFRA/scripts/release_packages.py` — `_pyyaml_pinned` (function, 66), `generate_formula` (function, 77), `main` (function, 90)
 - `03-INFRA/scripts/agent-skill.py` — (no top-level definitions)
-- `03-INFRA/scripts/agent_sync.py` — (no top-level definitions)
 - `03-INFRA/scripts/check_required_rules.py` — (no top-level definitions)
 - `03-INFRA/scripts/config_schema.py` — (no top-level definitions)
 - `03-INFRA/scripts/lane_guard.py` — (no top-level definitions)
