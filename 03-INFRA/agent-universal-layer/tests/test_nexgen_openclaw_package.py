@@ -181,3 +181,35 @@ def test_an_incomplete_plugin_is_refused_instead_of_half_packaged(tmp_path, miss
 
     with pytest.raises(NexgenError):
         build_package(home=tmp_path, engine_hooks_dir=hooks)
+
+
+# ---------------------------------------------------------------------- the command
+
+
+def test_the_command_prints_the_tarball_and_its_hash_and_installs_nothing(tmp_path, monkeypatch, capsys):
+    import hashlib
+
+    from nexgen_core.cli import build_parser
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("NEXGEN_HOME", str(home))
+    monkeypatch.setenv("AGENT_ENGINE_ROOT", str(REAL_UL.parent))
+    expected = resolve_state_dir(home) / "openclaw" / "plugin" / f"{PLUGIN_ID}-{__version__}.tgz"
+    parser = build_parser()
+
+    args = parser.parse_args(["openclaw", "package"])
+    assert args.func(args) == 0
+
+    printed = capsys.readouterr().out.splitlines()
+    assert Path(printed[0]) == expected
+    assert printed[1] == "sha256 " + hashlib.sha256(expected.read_bytes()).hexdigest()
+    # Packaging is not installing: OpenClaw's own folder was never touched.
+    assert not (home / ".openclaw").exists()
+
+    args = parser.parse_args(["openclaw", "package", "--json"])
+    assert args.func(args) == 0
+    reported = json.loads(capsys.readouterr().out)
+    assert Path(reported["path"]) == expected
+    assert reported["sha256"] == hashlib.sha256(expected.read_bytes()).hexdigest()
+    assert "index.mjs" in reported["files"]

@@ -109,6 +109,10 @@ def _register_upkeep(psub) -> None:
     r.set_defaults(func=cmd_rpc_health)
     q.set_defaults(func=lambda args: _usage(q))
 
+    q = psub.add_parser("package", help=t("Build the reproducible plugin tarball for OpenClaw gateways"))
+    q.add_argument("--json", action="store_true", help=t("Output in JSON format"))
+    q.set_defaults(func=cmd_package)
+
 
 def register(sub) -> None:
     """Declares the OpenClaw verbs on the dispatcher."""
@@ -230,3 +234,18 @@ def cmd_rpc_health(args) -> int:
     except GatewayRpcError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
+
+
+def cmd_package(args) -> int:
+    from nexgen_core.openclaw.plugin_package import build_package
+
+    result = build_package()
+    if getattr(args, "json", False):
+        print(json.dumps(
+            {"path": str(result.path), "sha256": result.sha256, "files": list(result.files)},
+            indent=2, ensure_ascii=False,
+        ))
+    else:
+        print(result.path)
+        print(f"sha256 {result.sha256}")
+    return 0
