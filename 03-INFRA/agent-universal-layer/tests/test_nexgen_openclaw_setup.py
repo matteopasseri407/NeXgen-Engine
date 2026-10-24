@@ -22,6 +22,7 @@ from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.companion import Companion  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.detect import Detection, Installation, LocalModelInfo, LocalModels, Login  # noqa: E402
 from nexgen_core.openclaw.setup import run_setup  # noqa: E402
+from nexgen_core.openclaw.setup_steps import Setup  # noqa: E402
 from nexgen_core.openclaw_service import ProcessInfo, RunResult  # noqa: E402
 from nexgen_core.runtimes.openclaw import PLUGIN_ID  # noqa: E402
 
@@ -716,10 +717,28 @@ def test_the_module_is_declared_local_for_this_host(tmp_path):
     assert "hosts:" in state
 
 
-def test_service_step_does_not_start_a_gateway_the_install_already_launched():
-    """`openclaw gateway install` brings the daemon up: starting it again made two."""
-    from types import SimpleNamespace
+def _make_setup_for_service(service: Any, out: Any, tmp_path: Path) -> Setup:
+    state_dir = tmp_path / ".openclaw"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return Setup(
+        home=tmp_path / "home",
+        env={},
+        config_path=state_dir / "openclaw.json",
+        engine_root=None,
+        vault_data=None,
+        pinned="2026.10.6",
+        dry_run=False,
+        out=out,
+        which=lambda cmd: None,
+        run=lambda cmd: RunResult(0, "", ""),
+        service=service,
+        stamp="20261024-test",
+        platform=sys.platform,
+    )
 
+
+def test_service_step_does_not_start_a_gateway_the_install_already_launched(tmp_path):
+    """`openclaw gateway install` brings the daemon up: starting it again made two."""
     from nexgen_core.openclaw.setup_steps import service_step
 
     class InstallLaunched(FakeService):
@@ -734,8 +753,9 @@ def test_service_step_does_not_start_a_gateway_the_install_already_launched():
 
     service = InstallLaunched()
     lines: list[str] = []
+    setup = _make_setup_for_service(service, lines.append, tmp_path)
 
-    assert service_step(SimpleNamespace(service=service, out=lines.append), restarted=False) is True
+    assert service_step(setup, restarted=False) is True
 
     assert service.events.count("install") == 1
     assert "start" not in service.events, "the install already started it"
@@ -758,10 +778,8 @@ def test_the_commands_the_setup_prints_quote_a_path_with_a_space(tmp_path):
     assert f'"{npm}" install' in output or f"'{npm}' install" in output
 
 
-def test_service_step_waits_for_an_install_that_is_still_starting():
+def test_service_step_waits_for_an_install_that_is_still_starting(tmp_path):
     """A slow install must not be doubled by an immediate start: wait, bounded, first."""
-    from types import SimpleNamespace
-
     from nexgen_core.openclaw.setup_steps import service_step
 
     class SlowInstall(FakeService):
@@ -781,17 +799,16 @@ def test_service_step_waits_for_an_install_that_is_still_starting():
 
     service = SlowInstall()
     lines: list[str] = []
+    setup = _make_setup_for_service(service, lines.append, tmp_path)
 
-    assert service_step(SimpleNamespace(service=service, out=lines.append), restarted=False) is True
+    assert service_step(setup, restarted=False) is True
 
     assert "start" not in service.events, "the wait found the gateway the install was bringing up"
     assert service.sleeps[:2] == [1.0, 1.0], "the grace checks once a second, not twice"
     assert any("the install started" in line for line in lines)
 
 
-def test_service_step_starts_the_gateway_when_the_install_only_registered_it():
-    from types import SimpleNamespace
-
+def test_service_step_starts_the_gateway_when_the_install_only_registered_it(tmp_path):
     from nexgen_core.openclaw.setup_steps import service_step
 
     class RegisteredOnly(FakeService):
@@ -802,8 +819,9 @@ def test_service_step_starts_the_gateway_when_the_install_only_registered_it():
 
     service = RegisteredOnly()
     lines: list[str] = []
+    setup = _make_setup_for_service(service, lines.append, tmp_path)
 
-    assert service_step(SimpleNamespace(service=service, out=lines.append), restarted=False) is True
+    assert service_step(setup, restarted=False) is True
 
     assert "start" in service.events
     assert any("Starting the gateway" in line for line in lines)

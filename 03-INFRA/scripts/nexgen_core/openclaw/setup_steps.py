@@ -327,10 +327,10 @@ def _install_left_a_gateway(setup: Setup, result: dict) -> bool:
 
 def fix_state_permissions(setup: Setup) -> bool:
     """Ensure OpenClaw state directory and files are not group/world-writable."""
-    if (getattr(setup, "platform", None) or sys.platform) == "win32":
+    if (setup.platform or sys.platform) == "win32":
         return True
-    state_dir = getattr(setup, "state_dir", None)
-    if not state_dir or not state_dir.exists():
+    state_dir = setup.state_dir
+    if not state_dir.exists():
         return True
     fixed = False
     try:
@@ -347,13 +347,10 @@ def fix_state_permissions(setup: Setup) -> bool:
             except OSError:  # nexgen: allow reason="unreadable individual files in state dir must not abort permission hardening"
                 pass
     except OSError as exc:
-        out = getattr(setup, "out", None)
-        if callable(out):
-            out(t("Warning: could not inspect state directory permissions: {error}", error=exc))
+        setup.out(t("Warning: could not inspect state directory permissions: {error}", error=exc))
         return False
-    out = getattr(setup, "out", None)
-    if fixed and callable(out):
-        out(t("OpenClaw state permissions corrected (removed group/world-writable)."))
+    if fixed:
+        setup.out(t("OpenClaw state permissions corrected (removed group/world-writable)."))
     return True
 
 
