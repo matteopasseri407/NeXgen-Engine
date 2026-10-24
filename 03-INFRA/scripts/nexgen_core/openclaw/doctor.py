@@ -19,24 +19,18 @@ from typing import Any
 
 from nexgen_core import quota_policy
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import background, doctor_runtime, observation, observation
+from nexgen_core.openclaw import background, doctor_runtime, observation
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
-from nexgen_core.openclaw.evidence import check_evidence, local_refs
+from nexgen_core.openclaw.evidence import check_evidence
 from nexgen_core.openclaw.governor import check_fallbacks
+from nexgen_core.openclaw.model_checks import check_agent_models, check_cage, check_ollama_latest
 from nexgen_core.openclaw.pin import pinned_version, required_node_version
 from nexgen_core.openclaw.profile import PENDING_TOKEN
 from nexgen_core.openclaw.terms import google_subscriptions
 from nexgen_core.paths import is_machine_home, openclaw_config, resolve_home, resolve_vault_data
 from nexgen_core.report import CheckOutcome, Severity
 
-#: Which subscription a model provider depends on. Local providers are not here:
-#: they are covered by the cage check, not by a login.
-SUBSCRIPTION_LABELS = {
-    "anthropic": "Claude",
-    "openai": "Codex",
-    "opencode-go": "the OpenCode Go key",
-}
 
 def _declared(vault_data: Path | None, home: Path | None = None) -> bool:
     """Whether this machine declared the OpenClaw module `local`."""
@@ -132,63 +126,6 @@ def _check_config(path: Path, config: dict[str, Any] | None, error: str | None) 
         severity=Severity.WARN,
         message=t("OpenClaw has no configuration at {path} yet.", path=path),
         action=t("Run 'nexgen openclaw plan' to see what the engine would write."),
-    )
-
-
-def _provider_model_ids(config: dict[str, Any], provider: str) -> list[str]:
-    """The ids a provider block declares, tolerating both shapes OpenClaw accepts."""
-    providers = config.get("models", {}).get("providers") if isinstance(config.get("models"), dict) else None
-    block = providers.get(provider) if isinstance(providers, dict) else None
-    models = block.get("models") if isinstance(block, dict) else None
-    if not isinstance(models, list):
-        return []
-    ids: list[str] = []
-    for item in models:
-        model_id = item.get("id") if isinstance(item, dict) else item
-        if isinstance(model_id, str) and model_id:
-            ids.append(model_id)
-    return ids
-
-
-def _check_ollama_latest(config: dict[str, Any]) -> CheckOutcome:
-    """OpenClaw does not recognise `:latest`, and then guesses the context window."""
-    suffixed = [model_id for model_id in _provider_model_ids(config, "ollama") if model_id.endswith(":latest")]
-    suffixed.extend(ref for ref in background.agent_model_refs(config).values() if ref.startswith("ollama/") and ref.endswith(":latest"))
-    if suffixed:
-        return CheckOutcome(
-            id="openclaw.ollama_latest",
-            severity=Severity.BROKEN,
-            message=t("Ollama model ids carry ':latest', which OpenClaw does not recognise: {ids}",
-                      ids=", ".join(sorted(set(suffixed)))),
-            action=t("Write the id without ':latest' and run 'nexgen openclaw setup' again."),
-        )
-    return CheckOutcome(
-        id="openclaw.ollama_latest",
-        severity=Severity.OK,
-        message=t("Every Ollama model id is written without ':latest'."),
-    )
-
-
-def _check_cage(config: dict[str, Any]) -> CheckOutcome:
-    """A local model without its cage is a model that can write the whole machine."""
-    tools = config.get("tools") if isinstance(config.get("tools"), dict) else {}
-    by_provider = tools.get("byProvider") if isinstance(tools.get("byProvider"), dict) else {}
-    caged = [
-        ref for ref in local_refs(config)
-        if isinstance(by_provider.get(ref), dict) and by_provider[ref].get("deny")
-    ]
-    missing = [ref for ref in local_refs(config) if ref not in caged]
-    if missing:
-        return CheckOutcome(
-            id="openclaw.cage",
-            severity=Severity.BROKEN,
-            message=t("This local model has no cage in tools.byProvider: {models}", models=", ".join(missing)),
-            action=t("Run 'nexgen openclaw plan', then setup: a local model must not write, execute or browse."),
-        )
-    return CheckOutcome(
-        id="openclaw.cage",
-        severity=Severity.OK,
-        message=t("Every local model is caged ({count}).", count=len(caged)),
     )
 
 
@@ -307,33 +244,6 @@ def _check_acp(config: dict[str, Any]) -> CheckOutcome:
     )
 
 
-def _check_agent_models(config: dict[str, Any], snapshot: Detection) -> CheckOutcome:
-    """An agent on a subscription this machine does not have cannot answer."""
-    available = {
-        "anthropic": snapshot.claude.available,
-        "openai": snapshot.codex.available,
-        "opencode-go": snapshot.opencode_go,
-    }
-    unusable = []
-    for agent, model in sorted(background.agent_model_refs(config).items()):
-        provider = model.split("/", 1)[0]
-        if provider in available and not available[provider]:
-            unusable.append(f"{agent} -> {model} ({SUBSCRIPTION_LABELS[provider]})")
-    if unusable:
-        return CheckOutcome(
-            id="openclaw.agent_models",
-            severity=Severity.WARN,
-            message=t("These agents use a subscription this machine does not have: {items}",
-                      items="; ".join(unusable)),
-            action=t("Log in to the subscription, or run 'nexgen openclaw plan' to see the model the engine would choose."),
-        )
-    return CheckOutcome(
-        id="openclaw.agent_models",
-        severity=Severity.OK,
-        message=t("Every agent uses a model this machine can reach."),
-    )
-
-
 def _listening(config: dict[str, Any], connect: doctor_runtime.Connect | None,
                home: Path) -> CheckOutcome:
     """The gateway probe, asked only where it can be about something here.
@@ -348,6 +258,19 @@ def _listening(config: dict[str, Any], connect: doctor_runtime.Connect | None,
     if not is_machine_home(home):
         return doctor_runtime.check_listening_of_a_copy(config)
     return doctor_runtime.check_listening(config, doctor_runtime.default_connect)
+
+
+def _probe(home: Path, connect: doctor_runtime.Connect | None) -> doctor_runtime.Connect:
+    """The connector the probes use: the caller's, or one that answers nothing on a copy.
+
+    There is one gateway per machine, so a copy of a home must never report on a
+    process it does not own.
+    """
+    if connect is not None:
+        return connect
+    if not is_machine_home(home):
+        return lambda *_args: False
+    return doctor_runtime.default_connect
 
 
 def _host_outcomes(
@@ -378,9 +301,10 @@ def _config_outcomes(
     vault_data: Path | None,
     failover: quota_policy.Failover | None,
     connect: doctor_runtime.Connect | None,
-    platform: str | None = None,
+    node_lister: doctor_runtime.NodeLister | None,
+    platform: str,
 ) -> list[CheckOutcome]:
-    """Every check that reads the configuration in force: what it says, and what it lets a model do.
+    """Every check that reads the configuration in force, in the order a person reads them.
 
     `failover` is the policy the caller already read, when it has one; without it the
     policy is read here, from the same Vault the other checks read.
@@ -389,23 +313,41 @@ def _config_outcomes(
         home_dir, vault=resolve_vault_data(home_dir, vault_data),
     )[0]
     outcomes = filter(None, [
-        _check_ollama_latest(config),
-        _check_cage(config),
+        check_ollama_latest(config),
+        check_cage(config),
         check_evidence(config, path),
         _check_heartbeat(config),
         *_check_gateway(config),
         _check_google(config),
         _check_acp(config),
-        _check_agent_models(config, snapshot),
+        check_agent_models(config, snapshot),
         background.report(config),
         observation.report(config, path, home_dir, platform),
         check_fallbacks(config, policy),
         _listening(config, connect, home_dir),
+        *doctor_runtime.check_nodes(config, _probe(home_dir, connect), node_lister),
         *doctor_runtime.check_workshop_skills(config, path.parent, home_dir),
         doctor_runtime.check_unadopted(config, path, home_dir, resolve_vault_data(home_dir, vault_data)),
         doctor_runtime.check_bindings(config),
     ])
     return list(outcomes)
+
+
+def _other_gateway_outcomes(
+    home_dir: Path,
+    values: Mapping[str, str],
+    system: str,
+    wsl_distributions: Callable[[], list[str]] | None,
+) -> list[CheckOutcome]:
+    """The second gateways a person may have installed beside this one."""
+    outcomes: list[CheckOutcome] = []
+    store = doctor_runtime.check_store_gateway(home_dir, values, system)
+    if store is not None:
+        outcomes.append(store)
+    companion = doctor_runtime.check_companion_gateway(home_dir, values, system, wsl_distributions)
+    if companion is not None:
+        outcomes.append(companion)
+    return outcomes
 
 
 def collect(
@@ -416,6 +358,7 @@ def collect(
     engine_root: Path | None = None,
     vault_data: Path | None = None,
     connect: doctor_runtime.Connect | None = None,
+    node_lister: doctor_runtime.NodeLister | None = None,
     platform: str | None = None,
     wsl_distributions: Callable[[], list[str]] | None = None,
     node_version: Callable[[], str | None] | None = None,
@@ -448,14 +391,9 @@ def collect(
     outcomes.append(_check_config(path, config, error))
     if config is not None:
         outcomes.extend(_config_outcomes(
-            config, snapshot, path, home_dir, vault_data, failover, connect, system,
+            config, snapshot, path, home_dir, vault_data, failover, connect, node_lister, system,
         ))
-    store = doctor_runtime.check_store_gateway(home_dir, values, system)
-    if store is not None:
-        outcomes.append(store)
-    companion = doctor_runtime.check_companion_gateway(home_dir, values, system, wsl_distributions)
-    if companion is not None:
-        outcomes.append(companion)
+    outcomes.extend(_other_gateway_outcomes(home_dir, values, system, wsl_distributions))
     outcomes.extend(_host_outcomes(snapshot, engine_root, values, system, node_version, linger_dir))
     return outcomes
 
