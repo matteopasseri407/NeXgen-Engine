@@ -434,9 +434,6 @@ export function verifyAnswer(answer, receipts = []) {
       ? "claims tests or verification without an execution receipt"
       : "claims work done without a successful receipt");
   }
-  if (hasClaim(low, VERIFY_CLAIM_PHRASES) && !families.has("exec")) {
-    problems.push("claims tests or verification without an execution receipt");
-  }
   // A family is proven by a receipt of that family: the action claims and the passive result
   // patterns ("file aggiornato", "the file was updated") are two ways of saying the same thing, so
   // either one is enough to hold the family open, and a pattern that restates what the turn read
