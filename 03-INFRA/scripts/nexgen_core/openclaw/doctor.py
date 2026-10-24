@@ -377,7 +377,9 @@ def collect(
     if snapshot is None:
         # The app's own gateway is the second reason this machine has something
         # to say about OpenClaw, and it is asked before the expensive snapshot.
-        if not declared and not _has_trace(home_dir, values) and not app_gateway.present:
+        # An app that is installed and has no gateway here says nothing, and a
+        # machine that says nothing pays for no probe.
+        if not declared and not _has_trace(home_dir, values) and app_gateway.situation(False) == companion.NONE:
             return []
         snapshot = detect(
             home=home_dir, env=values, engine_root=engine_root, vault_data=vault_data, platform=system,

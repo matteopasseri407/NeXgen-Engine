@@ -397,6 +397,20 @@ def test_the_companion_gateway_is_a_warning_when_its_wsl_distro_exists(tmp_path)
     assert "Connections" in (companion.action or "")
 
 
+def test_an_installed_app_with_no_gateway_of_its_own_costs_no_probe(tmp_path, monkeypatch):
+    """The app can be pointed at this PC's gateway and own nothing: silence must be free."""
+
+    def refuse(**kwargs):
+        raise AssertionError("a machine with nothing to say must not build a snapshot")
+
+    monkeypatch.setattr("nexgen_core.openclaw.doctor.detect", refuse)
+
+    assert collect(
+        home=tmp_path / "home", vault_data=tmp_path / "vault", engine_root=tmp_path / "engine",
+        env={}, platform="win32", wsl_distributions=lambda: [],
+    ) == []
+
+
 def test_the_app_gateway_alone_is_informative_and_never_a_failure(tmp_path):
     """Case (b): one line, no failure, and no native check judging a gateway that is not there."""
     app_gateway = Companion(
