@@ -399,8 +399,8 @@ not evidence; every line below is read from git or run by the engine.
 | `file vietati` | `VERSION`, `CHANGELOG.md` or `.github/**` changed and the boundary does not name it; both names of a rename count |
 | `integrità dei test` | an existing test was deleted, shrunk, skipped or renamed out of discovery (`nexgen_core/discipline/integrity.py`, reused) |
 | `prova per commit` | a `fix:` commit has no test that fails on its parent (`nexgen_core/discipline/regress.py`, reused) |
-| `verifica indipendente` | the declared command is missing or exits non-zero; it is one command with no shell operator (`&&`, `\|\|`, `\|`, `;`, `&`), its executable must come from outside the unit's copy, and a Python interpreter is started with `-P` and an environment cleaned of `PYTHONPATH`, `PYTHONSTARTUP`, `PYTHONHOME`, `PYTHONUSERBASE`, `PYTEST_ADDOPTS` and `PYTEST_PLUGINS` (the user site directory is left alone: it is outside the copy) |
-| `test raccolti` | pytest collects fewer tests on the head than on the base, or a collection cannot answer: both trees are exported with `git archive` (no `.git` in them), collected with `python -P -m pytest --collect-only -q` under the same cleaned environment, and each collection has a five-minute budget; an increase is normal |
+| `verifica indipendente` | the declared command is missing or exits non-zero; it is one command with no shell operator (`&&`, `\|\|`, `\|`, `;`, `&`), its executable must come from outside the unit's copy, a Python interpreter is started with `-P` and an environment cleaned of `PYTHONPATH`, `PYTHONSTARTUP`, `PYTHONHOME`, `PYTHONUSERBASE`, `PYTEST_ADDOPTS` and `PYTEST_PLUGINS` (the user site directory is left alone: it is outside the copy), and the run has a ceiling of 1800 seconds that `NEXGEN_SUP_VERIFY_TIMEOUT_S` moves for a slower machine (a value that is not a positive number is ignored) |
+| `test raccolti` | the head collects a test the base collected and its file is not in the **base's** `test_removal_ok`, or a collection cannot answer: both trees are exported with `git archive` (no `.git` in them), collected with `python -P -m pytest --collect-only -q` under the same cleaned environment, and the two node-id sets are compared, not the totals; a file the owner authorised is retired and the reason says how many tests and from which files, an increase is normal, and the head's own `.nexgen-discipline.toml` is never read, because a unit does not authorise itself |
 | `lint` | the project has `03-INFRA/scripts/ruff_baseline_check.py` and the copy adds a `(file, code)` finding group its committed baseline did not have; the copy only decides whether the gate exists and what its baseline allows, while the script that runs is the engine's own, so a unit cannot weaken the check |
 | `configurazione git` | either configuration file of the copy (the repository's shared `.git/config`, which every checkout reads, or the worktree's own `config.worktree`) changed since the unit was created, or the effective configuration carries a `url.*.insteadOf` / `url.*.pushInsteadOf` key the creation did not have; the file or the key is named |
 | `remoto intatto` | a remote of the creation is gone, added, points at another fetch URL or push URL, or one of its refs carries a commit of the unit's interval (the unit pushed); a branch that advanced for another reason is not a failure |
@@ -412,6 +412,12 @@ The verdict is PASS only when every line is. The package
 the diff with a declared cap (400 lines) and the cost of the attached session;
 `50-gate-<unit>.txt` carries the raw output, including what the verification
 printed. `sup collect` exits 1 on FAIL, so a script sees it.
+
+Every git command the engine starts carries `-c core.longpaths=true`, from one
+constant in `nexgen_core/discipline/gitutil.py`. On Windows git states an
+argument before resolving it, so a deep unit copy plus a long test path made the
+`prova per commit` gate fail with `fatal: failed to stat '<sha>:<path>': Filename
+too long` (2026-10-24); the switch is inert on POSIX.
 
 The leak line is the same scan CI runs, on the same interval, moved to the point
 where the executor can still fix it: a personal name in a fake path or a
@@ -778,7 +784,11 @@ write is `26-rapporto-ricognizione-<round>.md`, outside the copy. The tab runs
 this same engine in its scout role, which starts the adapter's scout command: by
 default `agy --mode plan --prompt <pointer>`, and another harness supplies its
 own read-only command (`opencode run --agent plan`). Plan mode is read-only, and
-the pointer keeps the brief in one file.
+the pointer keeps the brief in one file. The prompt says the report is the only
+deliverable: no plan, no confirmation, write it at once. Plan mode alone was not
+enough — with a long brief `agy` wrote a plan, asked "Proceed" and exited without
+a report — while the same explorer finished three rounds out of three when the
+prompt said so.
 At the end of the round the engine asks git whether the copy is where it started
 (`git status --porcelain`, unchanged HEAD), then closes the tab it opened. A
 tracked file that changed, or a moved head, ends the round with exit 1 and a
