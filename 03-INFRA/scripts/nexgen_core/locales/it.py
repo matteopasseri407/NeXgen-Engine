@@ -1592,8 +1592,8 @@ MESSAGES: dict[str, str] = {
         "L'app OpenClaw Companion esegue un gateway suo su questo PC ({signals}) e c'è anche il gateway nativo: due gateway in conflitto.",
     "Keep the one you want: in OpenClaw Companion open Connections and point it at this PC's gateway, or stay with the app's one and remove the native gateway with 'npm uninstall -g openclaw'.":
         "Tieni quello che vuoi: in OpenClaw Companion apri Connections e puntalo al gateway di questo PC, oppure resta su quello dell'app e rimuovi il gateway nativo con 'npm uninstall -g openclaw'.",
-    "The OpenClaw Companion app is connected to a gateway elsewhere ({signals}). Nothing here is in conflict: this version of the engine configures the native gateway on this PC only.":
-        "L'app OpenClaw Companion è collegata a un gateway altrove ({signals}). Qui non c'è nessun conflitto: questa versione del motore configura solo il gateway nativo di questo PC.",
+    "The OpenClaw Companion app is connected to a gateway elsewhere. Nothing here is in conflict: this version of the engine configures the native gateway on this PC only.":
+        "L'app OpenClaw Companion è collegata a un gateway altrove. Qui non c'è nessun conflitto: questa versione del motore configura solo il gateway nativo di questo PC.",
     "Nothing to do: the app keeps its own gateway.":
         "Niente da fare: l'app tiene il suo gateway.",
     "The OpenClaw Companion app runs the gateway on this PC ({signals}) and there is no native one.":
@@ -1610,8 +1610,8 @@ MESSAGES: dict[str, str] = {
         "L'app OpenClaw Companion esegue il gateway su questo PC ({signals}): il motore configura il gateway nativo, quindi 'nexgen openclaw setup' si ferma qui invece di installarne un secondo.",
     "The OpenClaw Companion app has a gateway of its own on this PC ({signals}){uses}: the setup below writes the native one.":
         "L'app OpenClaw Companion ha un gateway suo su questo PC ({signals}){uses}: il setup qui sotto scrive quello nativo.",
-    "The OpenClaw Companion app is connected to a gateway elsewhere ({signals}): nothing here is in conflict, and the setup below writes the native gateway on this PC only.":
-        "L'app OpenClaw Companion è collegata a un gateway altrove ({signals}): qui non c'è nessun conflitto, e il setup qui sotto scrive solo il gateway nativo di questo PC.",
+    "The OpenClaw Companion app is connected to a gateway elsewhere: nothing here is in conflict, and the setup below writes the native gateway on this PC only.":
+        "L'app OpenClaw Companion è collegata a un gateway altrove: qui non c'è nessun conflitto, e il setup qui sotto scrive solo il gateway nativo di questo PC.",
     "{passed} passed, {warned} warnings, {failed} failures":
         "{passed} superati, {warned} avvisi, {failed} errori",
     # Il comando

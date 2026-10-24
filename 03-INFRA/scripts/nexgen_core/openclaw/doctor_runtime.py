@@ -378,9 +378,8 @@ def check_companion_gateway(companion: Companion, native_installed: bool, platfo
         return CheckOutcome(
             id="openclaw.companion_gateway",
             severity=Severity.OK,
-            message=t("The OpenClaw Companion app is connected to a gateway elsewhere ({signals}). Nothing here "
-                      "is in conflict: this version of the engine configures the native gateway on this PC only.",
-                      signals=", ".join(companion.signals)),
+            message=t("The OpenClaw Companion app is connected to a gateway elsewhere. Nothing here is in "
+                      "conflict: this version of the engine configures the native gateway on this PC only."),
             action=t("Nothing to do: the app keeps its own gateway."),
         )
     return None

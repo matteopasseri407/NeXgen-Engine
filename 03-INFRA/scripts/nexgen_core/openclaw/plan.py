@@ -237,9 +237,8 @@ def _companion_note(detected: Detection) -> str | None:
                  "below writes the native one.", signals=", ".join(gateway.signals),
                  uses=_app_connection(gateway.port))
     if situation == app_gateway.APP_REMOTE:
-        return t("The OpenClaw Companion app is connected to a gateway elsewhere ({signals}): nothing here is in "
-                 "conflict, and the setup below writes the native gateway on this PC only.",
-                 signals=", ".join(gateway.signals))
+        return t("The OpenClaw Companion app is connected to a gateway elsewhere: nothing here is in conflict, "
+                 "and the setup below writes the native gateway on this PC only.")
     return None
 
 
