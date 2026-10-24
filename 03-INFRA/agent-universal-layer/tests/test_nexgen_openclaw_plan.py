@@ -207,7 +207,7 @@ def test_the_plan_names_the_app_gateway_and_which_one_the_app_uses(tmp_path):
 
 
 def test_the_plan_says_when_the_app_owns_the_only_gateway(tmp_path):
-    """Case (b): the plan says the setup stops, so it never promises a write it will not do."""
+    """Case (b): the plan says the setup stops, and names the road it supports and the app's own step."""
     home = tmp_path / "home"
     path = put_config(home, {})
 
@@ -215,4 +215,6 @@ def test_the_plan_says_when_the_app_owns_the_only_gateway(tmp_path):
         detected=detected(path, installed=False, companion=app_gateway()), home=home, env={},
     ))
 
-    assert "stops here instead of installing a second one" in text
+    assert "the native Node gateway, which is the road it supports" in text
+    assert "open Connections in OpenClaw Companion and choose 'a local Gateway on this PC'" in text
+    assert "--node-gateway" in text

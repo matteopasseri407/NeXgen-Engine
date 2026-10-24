@@ -879,6 +879,16 @@ def test_the_app_gateway_alone_stops_before_installing_or_writing(tmp_path):
     assert f"install -g openclaw@{pinned()}" in machine.output(), "the second road is named with its command"
 
 
+def test_the_app_gateway_alone_names_the_node_road_as_the_one_the_engine_supports(tmp_path):
+    """The stop is also the place where the app learns how to reach the engine's own gateway."""
+    machine = Machine(tmp_path)
+
+    assert machine.run(detected=detection(machine.config, installed=False, companion=app_gateway())) == 1
+    assert "the native Node gateway, which is the road it supports" in machine.output()
+    assert "open Connections in OpenClaw Companion and choose 'a local Gateway on this PC'" in machine.output()
+    assert "--node-gateway" in machine.output(), "the way to go on anyway is named here, where the stop happens"
+
+
 def test_a_dry_run_with_only_the_app_gateway_stops_the_same_way(tmp_path):
     machine = Machine(tmp_path)
 
@@ -1014,3 +1024,48 @@ def test_an_app_that_owns_a_gateway_is_not_asked_to_connect(tmp_path):
     assert machine.run(detected=detection(machine.config, companion=app_gateway(port=52190))) == 0
     assert "a local Gateway on this PC" not in machine.output()
     assert not any("devices" in " ".join(argv) for argv, _ in machine.runner.calls), "nothing is listed either"
+
+
+def test_node_gateway_goes_on_when_the_apps_gateway_let_the_port_go(tmp_path):
+    """`--node-gateway`: the person stopped the app's gateway, so the native one may have the port."""
+
+    class FreeThenListening(FakeService):
+        """Nothing answers at first, then the gateway the setup restarted does."""
+
+        def __init__(self):
+            super().__init__(listening=False)
+            self.probes = 0
+
+        def port_probe(self, port: int, host: str = "127.0.0.1") -> bool:
+            self.probes += 1
+            return self.probes > 1
+
+    machine = a_machine_with_a_config(tmp_path)
+    machine.service = FreeThenListening()
+
+    code = machine.run(
+        detected=detection(machine.config, installed=False, companion=app_gateway()),
+        node_gateway=True, platform="win32",
+    )
+
+    assert code == 0
+    assert "127.0.0.1:18789 is free" in machine.output()
+    assert any("install -g openclaw@" in command for command in machine.runner.commands()), "the pin is installed"
+    assert "a local Gateway on this PC" in machine.output(), "the app is told where to go next"
+
+
+def test_node_gateway_stops_when_the_apps_gateway_still_holds_the_port(tmp_path):
+    """Two gateways cannot share the port, and freeing it is done in the app."""
+    machine = Machine(tmp_path)
+
+    code = machine.run(
+        detected=detection(machine.config, installed=False, companion=app_gateway()),
+        node_gateway=True, platform="win32",
+    )
+
+    assert code == 1
+    assert machine.runner.commands() == [], "no install and no service while the port is taken"
+    assert not machine.config.is_file()
+    assert "127.0.0.1:18789 already" in machine.output()
+    assert "stop the app's gateway in OpenClaw Companion" in machine.output()
+    assert "never starts, stops or writes the app's distribution" in machine.output()

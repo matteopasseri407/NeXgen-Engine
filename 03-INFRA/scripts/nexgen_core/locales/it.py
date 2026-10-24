@@ -1598,16 +1598,28 @@ MESSAGES: dict[str, str] = {
         "Niente da fare: l'app tiene il suo gateway.",
     "The OpenClaw Companion app runs the gateway on this PC ({signals}) and there is no native one.":
         "L'app OpenClaw Companion esegue il gateway su questo PC ({signals}) e non ce n'è uno nativo.",
-    "This version of the engine configures the native gateway, not the app's one, so nothing was installed and nothing was written: a native gateway beside it would fight over the same port.":
-        "Questa versione del motore configura il gateway nativo, non quello dell'app, quindi non è stato installato né scritto niente: un gateway nativo accanto a quello dell'app si batterebbe per la stessa porta.",
+    "This version of the engine configures the native Node gateway, which is the road it supports, not the app's one: nothing was installed and nothing was written, because a native gateway beside it would fight over the same port.":
+        "Questa versione del motore configura il gateway nativo Node, che è la strada che supporta, non quello dell'app: non è stato installato né scritto niente, perché un gateway nativo accanto a quello dell'app si batterebbe per la stessa porta.",
+    "To use the app with the engine, open Connections in OpenClaw Companion and choose 'a local Gateway on this PC'.":
+        "Per usare l'app con il motore, apri Connections in OpenClaw Companion e scegli 'a local Gateway on this PC'.",
     "Two ways forward: use the app as it is, or install the native gateway with {command} and run this setup again.":
         "Due strade: usa l'app così com'è, oppure installa il gateway nativo con {command} e rilancia questo setup.",
+    "To take the second road while the app's gateway is still here, stop it in OpenClaw Companion and run this setup again with --node-gateway.":
+        "Per prendere la seconda strada mentre il gateway dell'app c'è ancora, fermalo in OpenClaw Companion e rilancia questo setup con --node-gateway.",
+    "Something answers on 127.0.0.1:{port} already: stop the app's gateway in OpenClaw Companion and run this setup again.":
+        "Su 127.0.0.1:{port} qualcosa risponde già: ferma il gateway dell'app in OpenClaw Companion e rilancia questo setup.",
+    "Two gateways cannot share the port, and this setup never starts, stops or writes the app's distribution.":
+        "Due gateway non possono dividersi la porta, e questo setup non avvia, non ferma e non scrive mai la distribuzione dell'app.",
+    "Going ahead with the native gateway: 127.0.0.1:{port} is free.":
+        "Vado avanti con il gateway nativo: 127.0.0.1:{port} è libera.",
+    "The app can be pointed at it: in OpenClaw Companion open Connections and choose 'a local Gateway on this PC'.":
+        "L'app può essere puntata lì: in OpenClaw Companion apri Connections e scegli 'a local Gateway on this PC'.",
     ", and it is connected to this PC's gateway on port {port}":
         ", e l'app è collegata al gateway di questo PC sulla porta {port}",
     ", and it is connected to a gateway of its own on port {port}":
         ", e l'app è collegata a un gateway suo sulla porta {port}",
-    "The OpenClaw Companion app runs the gateway on this PC ({signals}): this engine configures the native gateway, so 'nexgen openclaw setup' stops here instead of installing a second one.":
-        "L'app OpenClaw Companion esegue il gateway su questo PC ({signals}): il motore configura il gateway nativo, quindi 'nexgen openclaw setup' si ferma qui invece di installarne un secondo.",
+    "The OpenClaw Companion app runs the gateway on this PC ({signals}): this engine configures the native Node gateway, which is the road it supports, and cannot write the app's one. To use the app with the engine, open Connections in OpenClaw Companion and choose 'a local Gateway on this PC'; the setup stops here until then, and runs beside the app's gateway only with --node-gateway.":
+        "L'app OpenClaw Companion esegue il gateway su questo PC ({signals}): questo motore configura il gateway nativo Node, che è la strada che supporta, e non può scrivere quello dell'app. Per usare l'app con il motore, apri Connections in OpenClaw Companion e scegli 'a local Gateway on this PC'; fino ad allora il setup si ferma qui, e gira accanto al gateway dell'app solo con --node-gateway.",
     "The OpenClaw Companion app has a gateway of its own on this PC ({signals}){uses}: the setup below writes the native one.":
         "L'app OpenClaw Companion ha un gateway suo su questo PC ({signals}){uses}: il setup qui sotto scrive quello nativo.",
     "The OpenClaw Companion app is connected to a gateway elsewhere: nothing here is in conflict, and the setup below writes the native gateway on this PC only.":
@@ -1897,6 +1909,8 @@ MESSAGES: dict[str, str] = {
         "Stampa il piano e i comandi, e non cambia niente",
     "Do not create the agent that runs OpenCode through ACP":
         "Non creare l'agente che fa girare OpenCode via ACP",
+    "Go on with the native gateway even when the Windows app runs its own on this PC":
+        "Procedi con il gateway nativo anche quando l'app Windows ne esegue uno suo su questo PC",
     "Restart the gateway and wait for its port":
         "Riavvia il gateway e aspetta la porta",
     "How long to wait for the port (default: 600)":

@@ -218,6 +218,7 @@ def run_setup(
     lan: bool = False,
     dry_run: bool = False,
     sviluppo: bool = True,
+    node_gateway: bool = False,
     home: Path | None = None,
     env: Mapping[str, str] | None = None,
     detected: Detection | None = None,
@@ -237,7 +238,7 @@ def run_setup(
         dry_run=dry_run, engine_root=engine_root, vault_data=vault_data, stamp=stamp,
         out=out, platform=platform,
     )
-    if app_gateway_stop(setup, snapshot):
+    if app_gateway_stop(setup, snapshot, node_gateway=node_gateway):
         return 1
     installed_phase = _install_phase(setup, snapshot)
     if installed_phase is None:

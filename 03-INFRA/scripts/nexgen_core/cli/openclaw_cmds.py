@@ -48,6 +48,8 @@ def _register_setup(psub) -> None:
                    help=t("Print the plan and the commands, and change nothing"))
     q.add_argument("--no-sviluppo", dest="no_sviluppo", action="store_true",
                    help=t("Do not create the agent that runs OpenCode through ACP"))
+    q.add_argument("--node-gateway", dest="node_gateway", action="store_true",
+                   help=t("Go on with the native gateway even when the Windows app runs its own on this PC"))
     q.set_defaults(func=cmd_setup)
 
     q = psub.add_parser("doctor", help=t("Check OpenClaw's installation and configuration"))
@@ -121,6 +123,7 @@ def cmd_setup(args) -> int:
         lan=bool(args.lan),
         dry_run=bool(args.dry_run),
         sviluppo=not bool(args.no_sviluppo),
+        node_gateway=bool(args.node_gateway),
     )
 
 

@@ -104,26 +104,51 @@ def engine_plugin_path(setup: Setup) -> Path:
     return setup.state_dir / "extensions" / PLUGIN_ID
 
 
-def app_gateway_stop(setup: Setup, snapshot: Detection) -> bool:
+def app_gateway_stop(setup: Setup, snapshot: Detection, *, node_gateway: bool = False) -> bool:
     """Case (b): the app runs the only gateway here, and this engine cannot write it.
 
-    Nothing has been installed and nothing has been written yet. A native
-    gateway beside the app's one would fight over the same port and the same
-    state, so the run stops and names the two ways forward instead of guessing.
+    Without `node_gateway` nothing has been installed and nothing has been
+    written yet: a native gateway beside the app's one would fight over the
+    same port and the same state, so the run stops and names the road this
+    engine supports and the two ways forward. With `node_gateway` the run goes
+    on only if the port is free, because freeing it is the person's job in the
+    app: the app's distribution is never started, stopped or written either way.
     """
     gateway = snapshot.companion
     if gateway.situation(snapshot.openclaw.installed) != APP:
         return False
+    if node_gateway:
+        return _app_gateway_takes_the_port(setup)
     setup.out(t("The OpenClaw Companion app runs the gateway on this PC ({signals}) and there is no native one.",
                 signals=", ".join(gateway.signals)))
-    setup.out(t("This version of the engine configures the native gateway, not the app's one, so nothing was "
-                "installed and nothing was written: a native gateway beside it would fight over the same port."))
+    setup.out(t("This version of the engine configures the native Node gateway, which is the road it supports, not "
+                "the app's one: nothing was installed and nothing was written, because a native gateway beside it "
+                "would fight over the same port."))
+    setup.out(t("To use the app with the engine, open Connections in OpenClaw Companion and choose 'a local Gateway "
+                "on this PC'."))
     setup.out(t("Two ways forward: use the app as it is, or install the native gateway with {command} and run "
                 "this setup again.",
                 command=command_line_text(setup_commands.install_argv(
                     setup.which("npm") or "npm", setup.pinned or "<pin>",
                 ))))
+    setup.out(t("To take the second road while the app's gateway is still here, stop it in OpenClaw Companion and "
+                "run this setup again with --node-gateway."))
     return True
+
+
+def _app_gateway_takes_the_port(setup: Setup) -> bool:
+    """`--node-gateway`: go on only when the app's gateway has let the port go."""
+    port = setup.service.port
+    if setup.service.port_probe(port, "127.0.0.1"):
+        setup.out(t("Something answers on 127.0.0.1:{port} already: stop the app's gateway in OpenClaw Companion "
+                    "and run this setup again.", port=port))
+        setup.out(t("Two gateways cannot share the port, and this setup never starts, stops or writes the app's "
+                    "distribution."))
+        return True
+    setup.out(t("Going ahead with the native gateway: 127.0.0.1:{port} is free.", port=port))
+    setup.out(t("The app can be pointed at it: in OpenClaw Companion open Connections and choose 'a local Gateway "
+                "on this PC'."))
+    return False
 
 
 def ensure_installed(setup: Setup, snapshot: Detection) -> Detection | None:

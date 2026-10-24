@@ -230,7 +230,9 @@ def _companion_note(detected: Detection) -> str | None:
     situation = gateway.situation(detected.openclaw.installed)
     if situation == app_gateway.APP:
         return t("The OpenClaw Companion app runs the gateway on this PC ({signals}): this engine configures the "
-                 "native gateway, so 'nexgen openclaw setup' stops here instead of installing a second one.",
+                 "native Node gateway, which is the road it supports, and cannot write the app's one. To use the "
+                 "app with the engine, open Connections in OpenClaw Companion and choose 'a local Gateway on this "
+                 "PC'; the setup stops here until then, and runs beside the app's gateway only with --node-gateway.",
                  signals=", ".join(gateway.signals))
     if situation == app_gateway.BOTH:
         return t("The OpenClaw Companion app has a gateway of its own on this PC ({signals}){uses}: the setup "
