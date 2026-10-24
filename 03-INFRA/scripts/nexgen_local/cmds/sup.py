@@ -15,6 +15,7 @@ from pathlib import Path
 from .. import supervision_costs as costs
 from .. import supervision_cleanup as cleanup
 from .. import supervision_gates as gates
+from .. import supervision_adapters as adapters
 from .. import supervision_harness as harness
 from .. import supervision_policy as policy
 from .. import supervision_publish as publish_module
@@ -25,6 +26,7 @@ from .. import supervision_stall as stall
 from .. import supervision_state as state
 from ..supervision_status import row_count, task_line, unit_line
 from .. import supervision_windows as windows
+from .. import supervision_workboard as workboard
 from .. import supervision_worktree as worktree
 from ..supervision_state import SupervisionError
 from . import sup_permissions
@@ -300,6 +302,7 @@ def cmd_sup_unit(args: argparse.Namespace) -> int:
     remotes = ", ".join(record["remotes"]) or "nessuno"
     print(f"remoti: {remotes} · push bloccata in questa copia"
           + (f" · non leggibili: {', '.join(broken)}" if broken else ""))
+    _board_card(args.id, record["unit"], record)
     return 0
 
 
@@ -320,15 +323,19 @@ def cmd_sup_run(args: argparse.Namespace) -> int:
         return 0
     if result["mode"] == "run":
         print(f"lavoro inviato alla sessione {result['session']} (pid {result['pid']}), nessuna scheda nuova")
-        row = result["row"]
+        if result.get("reason"):
+            print(f"nota: {result['reason']}")
+        row = result.get("row") or {}
         print(f"costo all'invio: {row['cost_usd']:.4f} $" if isinstance(row.get("cost_usd"), (int, float))
               else "costo all'invio: non disponibile")
+        _board("running", args.id, result["unit"])
         return 0
     handle = result["window"]
     print(f"finestra {handle.get('launcher')} (pid {handle.get('pid')}) · scheda «{handle.get('title')}» "
           f"dell'unità {result['unit']}")
     if result.get("reason"):
         print(f"perché una scheda nuova: {result['reason']}")
+    _board("running", args.id, result["unit"])
     session = result["session"]
     if session is None:
         print("sessione non determinata: agganciala a mano con "
@@ -374,6 +381,7 @@ def cmd_sup_collect(args: argparse.Namespace) -> int:
         print(f"richiesta al proprietario: {_request_line(hit)}")
     if result.get("request_section"):
         print(f"richieste: {result['request_section']}")
+    _board("review", args.id, result["unit"])
     return 0 if result["verdict"] == "PASS" else 1
 
 
@@ -384,11 +392,14 @@ def _close_stopped_tab(task_id: str, unit: str) -> str:
     is alive: Codex on Windows writes the report as a separate sandbox user and
     releases it only when the tab exits. The session's own state says whether the
     turn is over; only then is the tab closed, and a task with another unit still
-    working keeps it open.
+    working keeps it open. A harness with no tab of its own keeps its own session:
+    nothing of the engine holds those files, so there is nothing to close here.
     """
     record = state.unit_record(task_id, unit)
     name = str(record.get("unit") or unit)
     chosen = str(record.get("harness") or "opencode")
+    if _window_less(chosen):
+        return ""
     price = costs.collect_cost(task_id, name, harness=chosen)
     if not price.stopped:
         return ""
@@ -401,6 +412,8 @@ def _collect_tab_line(task_id: str, unit: str, cost: costs.CollectCost) -> str:
     if not cost.stopped:
         why = "non misurata" if cost.note else "ancora al lavoro"
         return f"sessione {why}: la scheda resta aperta"
+    if _window_less(str(state.unit_record(task_id, unit).get("harness") or "opencode")):
+        return "la sessione resta nel Control UI del harness, non in una scheda del motore"
     closed = windows.close_tab(task_id, "esecutore", still_working=(unit,), stopped=True)
     return closed["line"]
 
@@ -430,8 +443,12 @@ def cmd_sup_review(args: argparse.Namespace) -> int:
     if result["verdict"] == state.APPROVED:
         print(f"raccolta {result['collect_verdict']} sulla stessa head: pronta per `sup publish`")
         _print_close(closing)
+        if closing and closing.get("retired"):
+            print(_close_work(args.id, result["unit"]))
+            _board("blocked", args.id, result["unit"], reason="approvata e chiusa senza pubblicazione")
     else:
         print(_delivery_line(result["delivery"]))
+        _board("running", args.id, result["unit"])
     return 0
 
 
@@ -466,10 +483,11 @@ def cmd_sup_publish(args: argparse.Namespace) -> int:
     for commit in result["commits"]:
         print(f"{commit['published'][:12]} <- {commit['source'][:12]} · {commit['subject']}")
     print(result["signing"])
-    print(windows.close_tab(args.id, "esecutore")["line"])
+    print(_close_work(args.id, result["unit"]))
     _print_retirement(result.get("retirement"))
     if result["pushed"]:
         print(f"spinta eseguita: {result['command']}")
+        _board("done", args.id, result["unit"])
         return 0
     if result["command"]:
         print(f"pubblicazione dichiarata non riuscita: `{result['command']}` è fallito")
@@ -478,6 +496,7 @@ def cmd_sup_publish(args: argparse.Namespace) -> int:
     print("nessuna spinta: i commit sono sul ramo locale, il remoto non è stato toccato")
     print(f"resta da fare: `git push {result['remote']} {result['branch']}` dal checkout, oppure "
           "`sup publish ... --push` (o `--push-with \"<comando>\"`)")
+    _board("done", args.id, result["unit"])
     return 0
 
 
@@ -547,6 +566,64 @@ def _emit(lines: list[str], args: argparse.Namespace) -> int:
         print(json.dumps({"lines": lines}, ensure_ascii=False))
         return 0
     print("\n".join(lines))
+    return 0
+
+
+def _board(status: str, task_id: str, unit: str, *, reason: str = "") -> None:
+    """Move the unit's card and print the one line the board has to say, if it has one.
+
+    The journal is the state and the verb has already done its work: a board that
+    is off, missing or refusing costs a line here and nothing else.
+    """
+    try:
+        line = workboard.move(task_id, unit, status, reason=reason)
+    except SupervisionError as exc:
+        line = f"scheda Workboard non spostata: {exc}"
+    if line:
+        print(line)
+
+
+def _board_card(task_id: str, unit: str, record: dict) -> None:
+    """Create the unit's card and print the one line the board has to say, if it has one."""
+    try:
+        line = workboard.create(task_id, unit, record)
+    except SupervisionError as exc:
+        line = f"scheda Workboard non creata: {exc}"
+    if line:
+        print(line)
+
+
+def _window_less(harness_name: str) -> bool:
+    """Whether this harness keeps its own sessions instead of a tab of the engine."""
+    try:
+        return not adapters.get(harness_name).capabilities.window
+    except SupervisionError:  # nexgen: allow reason="un nome che il registro non conosce non ha una finestra da chiudere: la chiusura resta quella delle schede, che è il comportamento di prima"
+        return False
+
+
+def _close_work(task_id: str, unit: str) -> str:
+    """Close what the executor left open: the tab of a window harness, the session of the other.
+
+    Publishing ends the unit's work, so the thing the owner was watching can go:
+    the tab is closed by the window layer, and a harness that shows its own
+    sessions has that session archived instead.
+    """
+    record = state.unit_record(task_id, unit)
+    name = str(record.get("unit") or unit)
+    chosen = str(record.get("harness") or "opencode")
+    if not _window_less(chosen):
+        return windows.close_tab(task_id, "esecutore", still_working=(name,), stopped=True)["line"]
+    session = str(record.get("session") or state.harness_session(task_id, chosen))
+    if not session:
+        return "nessuna sessione da chiudere"
+    line = adapters.get(chosen).close_session(session)
+    state.append_event(task_id, "session_closed", unit=name, harness=chosen, session=session, line=line)
+    return line
+
+
+def _list_tasks() -> int:
+    """Every task folder, one line each: the id is what every other verb wants."""
+    print("\n".join(state.tasks_lines()))
     return 0
 
 
