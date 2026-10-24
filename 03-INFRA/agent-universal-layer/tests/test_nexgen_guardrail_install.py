@@ -286,21 +286,6 @@ def test_antigravity_registers_relative_commands_without_quotes_or_spaces(tmp_pa
     assert guardrail_cmd == "node antigravity-guardrail-adapter.mjs"
     assert rt.install_guardrail(home, _body(tmp_path), HOOKS) is None
 
-    # Event sink: relative command without quotes or absolute paths
-    sink_body = tmp_path / "nexgen-event-sink.mjs"
-    sink_body.write_text("// sink\n", encoding="utf-8")
-    rt.install_event_sink(home, sink_body)
-    hooks = json.loads((home / ".gemini" / "config" / "hooks.json").read_text(encoding="utf-8"))
-    done_cmd = hooks["nexgen-event-sink"]["Stop"][0]["command"]
-    step_cmd = hooks["nexgen-event-sink"]["PreToolUse"][0]["hooks"][0]["command"]
-
-    for cmd in (done_cmd, step_cmd):
-        assert '"' not in cmd
-        assert str(home) not in cmd
-        assert not Path(cmd.split()[1]).is_absolute()
-    assert done_cmd == "node nexgen-event-sink.mjs on_done antigravity"
-    assert step_cmd == "node nexgen-event-sink.mjs on_step antigravity"
-
 
 def test_antigravity_becomes_strict_under_bypass(tmp_path):
     home = tmp_path / "home"

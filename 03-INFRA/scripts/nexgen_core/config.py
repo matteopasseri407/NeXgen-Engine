@@ -20,10 +20,10 @@ from nexgen_core.errors import NexgenError
 
 logger = logging.getLogger("nexgen.config")
 
-#: The four runtimes the layer knows how to configure. Applies to both the
-#: MCP connectors and the skill views: it's the same list, and keeping it in
+#: The runtimes the layer knows how to configure. Applies to both the MCP
+#: connectors and the skill views: it's the same list, and keeping it in
 #: two separate constants is how the two lists end up drifting apart.
-RUNTIME_TARGETS = frozenset({"claude", "codex", "antigravity", "opencode"})
+RUNTIME_TARGETS = frozenset({"claude", "codex", "antigravity", "opencode", "openclaw"})
 SKILL_TARGETS = RUNTIME_TARGETS
 SKILL_ORIGINS = frozenset({"vault", "engine", "github", "installer", "upstream"})
 SKILL_EXPOSURES = frozenset({"lazy", "eager", "manual", "core"})

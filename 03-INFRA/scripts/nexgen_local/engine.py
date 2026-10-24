@@ -2,9 +2,8 @@
 
 This module coordinates the decision pipeline without framework imports.
 Source selection lives in ``source_selection.py`` and claim validation in
-``evidence.py``. LangGraph drives this pipeline through ``graph.py``.
-Both paths call the same functions, so swapping the driver never changes
-behaviour.
+``evidence.py``. ``run_lane`` is the only driver: the lane used to carry a
+LangGraph twin of the same pipeline and it was retired once nothing called it.
 """
 from __future__ import annotations
 

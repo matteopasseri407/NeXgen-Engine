@@ -35,6 +35,8 @@ def unit_line(unit: dict) -> str:
         where = str(unit.get("published_branch") or "")
         pushed = "spinta" if unit.get("published_pushed") else "solo locale"
         parts.append(f"pubblicata {head} su {where} ({pushed})")
+    mcp_assigned = [str(x) for x in unit.get("mcp") or []]
+    parts.append(f"mcp: {', '.join(mcp_assigned)}" if mcp_assigned else "mcp: nessuno")
     parts.append(unit_cost(unit))
     return " · ".join(parts)
 

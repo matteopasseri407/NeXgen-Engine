@@ -231,7 +231,7 @@ def harness_session(task_id: str, harness: str = "opencode") -> str:
     return record["session"] if record else ""
 
 
-def harness_session_record(task_id: str, harness: str = "opencode") -> dict | None:
+def harness_session_record(task_id: str, harness: str = "opencode", unit: str = "") -> dict | None:
     """The session this harness owns and the folder it was born in, or None.
 
     A session the harness no longer has is written as `harness_session_lost`,
@@ -243,6 +243,8 @@ def harness_session_record(task_id: str, harness: str = "opencode") -> dict | No
         if row.get("event") not in (*SESSION_EVENTS, LOST_EVENT):
             continue
         if str(row.get("harness") or "opencode") != harness:
+            continue
+        if unit and str(row.get("unit") or "") != unit:
             continue
         if row.get("event") == LOST_EVENT:
             found = None
@@ -325,6 +327,7 @@ UNIT_EVENTS = {
     "unit_model_refused": "rifiutata",
     "unit_collected": "raccolta",
     "unit_reviewed": "revisione",
+    "unit_publish_failed": "revisione",
     "unit_published": "pubblicata",
     "unit_retired": "ritirata",
 }
@@ -368,7 +371,8 @@ def _blank_unit(unit: str) -> dict:
         "state": "", "verdict": "", "collected_head": "", "review_round": 0,
         "approved": False, "approved_head": "", "published": [], "model": "",
         "stalled_minutes": 0.0, "stall_threshold": 0.0, "repo": "", "base_ref": "",
-        "cost": {}, "folder": "", "retired": False,
+        "cost": {}, "folder": "", "retired": False, "publish_conflicts": [],
+        "mcp": [],
     }
 
 
@@ -383,6 +387,7 @@ def _fold_creation(record: dict, row: dict) -> None:
         "base": str(row.get("base") or ""),
         "allow": [str(item) for item in row.get("allow") or []],
         "verify": str(row.get("verify") or ""),
+        "mcp": [str(item) for item in row.get("mcp") or []],
         "remotes": dict(row.get("remotes") or {}),
         "remote_urls": dict(row.get("remote_urls") or {}),
         "remote_pushurls": dict(row.get("remote_pushurls") or {}),
@@ -432,6 +437,9 @@ def _fold_event(record: dict, row: dict, event: str) -> None:
         record["published_pushed"] = bool(row.get("pushed"))
         if not row.get("pushed"):
             record["state"] = "pubblicata in locale"
+    elif event == "unit_publish_failed":
+        record["publish_conflicts"] = [str(item) for item in row.get("conflicts") or []]
+        record["published"] = []
     elif event == "unit_retired":
         record["retired"] = True
         record["retired_why"] = str(row.get("why") or "")

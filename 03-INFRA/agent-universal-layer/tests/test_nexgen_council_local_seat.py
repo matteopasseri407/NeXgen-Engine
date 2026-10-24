@@ -109,7 +109,7 @@ def test_a_local_seat_is_available_only_while_its_port_listens(opencode_on_path)
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the listen table is Linux-only")
 def test_the_probe_never_connects_on_linux(monkeypatch, opencode_on_path):
-    """A connection to a socket-activated port would start the model (and stop the voice cockpit)."""
+    """A connection to a socket-activated port would start the model unnecessarily."""
 
     def refuse(*args, **kwargs):
         raise AssertionError("the probe opened a connection")

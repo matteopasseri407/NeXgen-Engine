@@ -80,7 +80,7 @@ def _desktop_catalog(tmp_path: Path, source: Path) -> Path:
               shims:
                 demo: "{source.as_posix()}/bin/demo-entry"
               systemd_units: [systemd/demo.service]
-              runtime_hooks: [event_sink]
+              runtime_hooks: [guardrail]
             requires:
               paths: ["{source.as_posix()}"]
         """)
@@ -450,9 +450,11 @@ def test_an_unknown_scope_is_refused(tmp_path: Path) -> None:
 
 def test_the_engine_catalog_stays_shared() -> None:
     """I moduli dell'engine sono servizi di rete: hanno senso ovunque, e il
-    vocabolario nuovo non deve cambiare cosa facevano."""
-    for module in load_catalog(ENGINE).values():
-        assert module.scope == "shared"
+    vocabolario nuovo non deve cambiare cosa facevano. L'unica eccezione
+    dichiarata è OpenClaw: il suo gateway gira su una macchina sola, quindi
+    la dichiarazione resta di quell'host."""
+    host_scoped = {mid for mid, module in load_catalog(ENGINE).items() if module.scope != "shared"}
+    assert host_scoped == {"openclaw"}
 def test_a_host_scoped_declaration_does_not_reach_other_machines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     vault = _state(tmp_path, """
         schema_version: 2

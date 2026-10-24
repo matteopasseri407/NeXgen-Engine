@@ -7,7 +7,9 @@ writes `opencode.json` in the copy, keeps every other key the owner put there,
 and adds the file to the copy's own `info/exclude` so it never reaches a commit
 or the review package. Nothing here auto-approves: edits stay inside the unit's
 copy and the task folder, commands stay allowed, a push is denied, and whatever
-the profile did not decide is not granted by the engine.
+the profile did not decide is not granted by the engine. The same file decides
+which MCP servers the unit may use: one the supervisor did not assign is switched
+off in the copy by name, and the owner's global configuration is only read.
 """
 from __future__ import annotations
 
@@ -17,6 +19,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from nexgen_core.jsonc import parse_jsonc
+from nexgen_core.paths import opencode_config_path
 from nexgen_core.processes import windows_command_argv
 
 from . import supervision_state as state
@@ -67,6 +71,8 @@ def profile_rules(copy: str | Path, task: str | Path) -> list[dict]:
 def write_profile(
     task_id: str, copy: str | Path, *, model: str = "",
     models: dict[str, dict[str, dict]] | None = None,
+    mcp: list[str] | tuple[str, ...] | None = None,
+    global_servers: dict[str, dict] | None = None,
 ) -> Path:
     """Write the executor's profile into the unit's copy and keep it out of git.
 
@@ -76,7 +82,11 @@ def write_profile(
     foreign file in the review. `model` is how a local unit pins the lane's own
     model in the copy it works in, and `models` declares that model under its
     provider: a pin the harness does not know falls back to the provider's first
-    model, which would make the journal name a model that never ran.
+    model, which would make the journal name a model that never ran. `mcp` is what
+    the supervisor assigned to the unit and `global_servers` is the owner's global
+    table, read from OpenCode's own file when it is not passed: every server the
+    unit did not get is switched off in this file, and the global one is never
+    touched.
     """
     folder = Path(copy)
     if not folder.is_dir():
@@ -102,10 +112,155 @@ def write_profile(
                 if isinstance(known, dict):
                     for name, body in entries.items():
                         known.setdefault(name, body)
+    _apply_mcp_isolation(current, mcp=mcp, global_servers=global_servers)
     current.setdefault("$schema", "https://opencode.ai/config.json")
     atomic_json(target, current)
     ignore(folder, target.name)
     return target
+
+
+def global_mcp_servers(
+    config_path: Path | None = None, home: Path | None = None,
+) -> dict[str, dict]:
+    """Every MCP server the owner's global OpenCode configuration declares, by name.
+
+    The global configuration is read-only here: this function never writes it and
+    never changes its permissions. It reads the native `mcp.servers` table and the
+    deprecated flat layout the engine migrated away from, because both can still
+    be in effect on a machine that has not been rendered since. A missing file, or
+    one that does not parse, declares no global server: an environment without one
+    keeps working, and the unit has nothing to turn off.
+    """
+    target = config_path or opencode_config_path(home=home)
+    try:
+        raw = target.read_text(encoding="utf-8-sig")
+    except OSError:  # nexgen: allow reason="una macchina senza config globale o con file mancante semplicemente non ha server MCP globali"
+        return {}
+    try:
+        parsed = parse_jsonc(raw)
+    except (ValueError, TypeError):  # nexgen: allow reason="un file non valido o vuoto non dichiara server MCP"
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    block = parsed.get("mcp")
+    if not isinstance(block, dict):
+        return {}
+    servers: dict[str, dict] = {}
+    native = block.get("servers")
+    if isinstance(native, dict):
+        for name, entry in native.items():
+            if str(name).strip() and isinstance(entry, dict):
+                servers[str(name)] = entry
+    for name, entry in block.items():
+        if name in ("servers", "timeout") or not isinstance(entry, dict):
+            continue
+        if str(name).strip():
+            servers.setdefault(str(name), entry)
+    return servers
+
+
+def _apply_mcp_isolation(
+    current: dict,
+    mcp: list[str] | tuple[str, ...] | None = None,
+    global_servers: dict[str, dict] | None = None,
+) -> None:
+    """Switch off, in the project's config, every global MCP server the unit did not get.
+
+    A unit has no MCP server unless the supervisor named one. The project entry is
+    the native OpenCode 2 shape (`mcp.servers.<name>` with `disabled`, see
+    `opencode.ai/config.json`: `Mcp.LocalConfigEncoded` and `Mcp.RemoteConfigEncoded`),
+    and it repeats the `type` and the `command`/`url` of the global definition, so
+    the entry validates whether OpenCode merges it onto the global one or replaces
+    it. A server the unit asked for and the global file disables is switched back
+    on here, for the same reason. A name nothing declares is refused instead of
+    silently leaving the unit without the server it needs.
+    """
+    servers = global_mcp_servers() if global_servers is None else dict(global_servers)
+    assigned = {str(name).strip() for name in (mcp or []) if str(name).strip()}
+    existing = _project_mcp_servers(current) or {}
+    declared = set(servers) | _declared_mcp_names(current)
+    unknown = sorted(assigned - declared)
+    if unknown:
+        available = ", ".join(sorted(servers)) or "nessuno"
+        raise PermissionProfileError(
+            "server MCP assegnato ma non dichiarato nella configurazione globale di OpenCode "
+            f"né in quella del progetto: {', '.join(unknown)} (globali disponibili: {available})"
+        )
+    overrides = {
+        name: _mcp_switch(name, entry, enabled=name in assigned)
+        for name, entry in servers.items()
+        if (name in assigned and _mcp_disabled(entry)) or name not in assigned
+    }
+    stale = [
+        name for name in assigned
+        if name in servers and isinstance(existing.get(name), dict)
+        and existing[name].get("disabled") is True and name not in overrides
+    ]
+    if not overrides and not stale:
+        return
+    project = _project_mcp_servers(current, create=True)
+    for name in stale:
+        project.pop(name, None)
+    project.update(overrides)
+
+
+def _mcp_switch(name: str, entry: dict, *, enabled: bool) -> dict:
+    """One project entry that reproduces a global server with the switch the unit needs.
+
+    Only what the schema requires is copied: the transport kind and its target.
+    Environment variables, headers and OAuth credentials stay in the owner's
+    global file, which is also why this profile can sit in the copy at all.
+    """
+    kind = str(entry.get("type") or "")
+    if kind == "remote":
+        url = entry.get("url")
+        if isinstance(url, str) and url.strip():
+            return {"type": "remote", "url": url.strip(), "disabled": not enabled}
+    elif kind == "local":
+        command = entry.get("command")
+        if isinstance(command, list) and all(isinstance(part, str) for part in command):
+            return {"type": "local", "command": list(command), "disabled": not enabled}
+    raise PermissionProfileError(
+        f"server MCP globale {name!r}: la definizione non ha `type` con `command` o `url`, "
+        "quindi il profilo dell'unità non sa spegnerla"
+    )
+
+
+def _mcp_disabled(entry: dict) -> bool:
+    """Whether the global definition already says this server stays off."""
+    return entry.get("disabled") is True or entry.get("enabled") is False
+
+
+def _project_mcp_servers(current: dict, *, create: bool = False) -> dict | None:
+    """The project's own `mcp.servers` table, created only when the profile has something to say."""
+    block = current.get("mcp")
+    if not isinstance(block, dict):
+        if not create:
+            return None
+        block = {}
+        current["mcp"] = block
+    servers = block.get("servers")
+    if not isinstance(servers, dict):
+        if not create:
+            return None
+        servers = {}
+        block["servers"] = servers
+    return servers
+
+
+def _declared_mcp_names(current: dict) -> set[str]:
+    """Every server name the project config already declares, native table or flat layout."""
+    block = current.get("mcp")
+    if not isinstance(block, dict):
+        return set()
+    names = {
+        str(name) for name, entry in block.items()
+        if name not in ("servers", "timeout") and isinstance(entry, dict) and str(name).strip()
+    }
+    native = block.get("servers")
+    if isinstance(native, dict):
+        names |= {str(name) for name in native if str(name).strip()}
+    return names
 
 
 def pending(session: str) -> list[dict]:

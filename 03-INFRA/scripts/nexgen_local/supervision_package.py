@@ -2,9 +2,10 @@
 
 `sup collect` judges a unit; this module turns that judgement and the facts
 around it into the two files a supervisor opens: the package (verdict, gate
-lines, skipped tests, requests, diffstat, a capped diff, the cost line) and the
-raw file (every gate with its detail). It reads no git and runs nothing, so the
-text can be tested and rebuilt on its own.
+lines, the removals a unit authorised for itself, skipped tests, requests,
+diffstat, a capped diff, the cost line) and the raw file (every gate with its
+detail). It reads no git and runs nothing, so the text can be tested and
+rebuilt on its own.
 """
 from __future__ import annotations
 
@@ -20,8 +21,9 @@ def package_text(
     *, task_id: str, unit: str, branch: str, base: str, head: str, verdict: str,
     results: list, cost_line: str, diffstat: str, diff: str,
     skipped: list[str], request_scan: dict, pytest_surface: list[str] = (),
+    test_removals: list[str] = (), test_removals_error: str = "",
 ) -> str:
-    """The file a supervisor reads: verdict, gate lines, pytest surface, skips, requests, diffstat, diff, cost."""
+    """The file a supervisor reads: verdict, gate lines, retirements, pytest surface, skips, requests, diffstat, diff, cost."""
     kept, cut = _truncated(diff, DIFF_MAX_LINES)
     lines = [
         f"# Pacchetto di revisione: {unit}",
@@ -39,6 +41,7 @@ def package_text(
         "|---|---|---|",
         *[f"| {result.name} | {'PASS' if result.ok else 'FAIL'} | {_cell(result.reason)} |" for result in results],
         "",
+        *_retirement_section(test_removals, test_removals_error),
         *_pytest_surface_section(pytest_surface),
         *_skipped_section(skipped),
         *_request_section(request_scan),
@@ -90,6 +93,24 @@ def _request_section(result: dict) -> list[str]:
         return lines
     lines += [f"- {hit['kind']} · «{hit['sentence']}»" for hit in result["hits"]]
     lines += ["", f"Lette in `{result['report']}`; una riga già scritta non si ripete.", ""]
+    return lines
+
+
+def _retirement_section(entries: list[str], problem: str) -> list[str]:
+    """The `test_removal_ok` entries the unit added, so the supervisor sees them all before approving."""
+    lines = ["## Voci di test_removal_ok aggiunte dall'unità", ""]
+    if problem:
+        lines += [problem + ".", ""]
+        return lines
+    if not entries:
+        lines += ["nessuna voce aggiunta: le autorizzazioni sono quelle della base.", ""]
+        return lines
+    lines += [f"- `{entry}`" for entry in entries]
+    lines += [
+        "",
+        "I cancelli le accettano solo dove il commit che ritira il test le aveva già ereditate dal suo genitore.",
+        "",
+    ]
     return lines
 
 

@@ -26,7 +26,8 @@ class LocalAdapter(OpenCodeAdapter):
         """The model this lane pins for a local unit; a lane without one is refused."""
         return policy.local_model_id()
 
-    def write_profile(self, task_id: str, folder: Path, *, model: str = "") -> None:
+    def write_profile(self, task_id: str, folder: Path, *, model: str = "",
+                      mcp: list[str] | tuple[str, ...] | None = None) -> None:
         """The OpenCode profile, with `model` set to the local one and declared under its provider.
 
         A model the harness does not find in the provider falls back to the
@@ -46,4 +47,4 @@ class LocalAdapter(OpenCodeAdapter):
             {provider: {name: {"name": f"{name} (locale)", "tool_call": True}}}
             if provider and name else None
         )
-        super().write_profile(task_id, folder, model=pinned, models=declared)
+        super().write_profile(task_id, folder, model=pinned, models=declared, mcp=mcp)

@@ -10,6 +10,34 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.20.0] - 2026-10-24
+
+### Added
+
+- OpenClaw is a first-class harness. `nexgen openclaw plan`, `doctor`, `setup` and `node` detect what the machine already has (Node, the npm prefix, a Go key, local models, the Windows app and its own gateway) without reading a secret, propose the configuration the engine owns as a diff, and install a working gateway. The person's agents, bindings, tool lists and environment variables are kept. See `docs/openclaw.md`.
+- OpenClaw: one native plugin, `nexgen`, deposited beside the state directory, one file per job. The guardrail runs on `before_tool_call` with the same body as the other harnesses and fails closed. The vault briefing runs after a compaction. `/quota` shows the engine's quota lines. `/council` starts the AI Council and reports when it ends. `/sup` and the supervision tools are reserved for the supervisor agent. The governor hands a turn to the fallback model before a plan stops answering. The evidence check holds a local model's answer to its own tool receipts. The Skill Workshop observer logs a learned skill. See `docs/openclaw-sync.md`.
+- OpenClaw parity with Claude Code, layer by layer (MCP, instructions, skills, guardrail, briefing, posture), with one `openclaw.parity.*` doctor line per layer. MCP servers, skills and a managed `AGENTS.md` block in every workspace are rendered for OpenClaw. What the person creates in OpenClaw is vetted, then adopted into the library.
+- OpenClaw for Windows (the Companion app): the doctor, the plan and the setup recognise the app's own gateway in WSL and an app pointed at this PC's gateway, never mistake it for a conflict, and stop before installing beside it. `--node-gateway` installs the native gateway on a free port. The doctor lists the nodes a gateway knows, and the setup shows both pairing stages before anything is approved.
+- OpenClaw: unattended jobs (dreaming and the other background work) run on the main agent's cloud model, never on a local model. On Windows the gateway is told to poll instead of watching the whole home.
+- `nexgen quota` and `/quota`: what is left of each plan, read from what the harnesses already write locally (Codex rate limits, OpenCode Go and Zen spend, Claude Code tokens), one row per window, with the age of each reading and an honest unknown where nothing is readable. The 80% and 95% alerts are raised by the beat that already runs. See `docs/quota.md`.
+- The megaphone sends alerts through OpenClaw first; direct Telegram stays the fallback.
+- Supervision: OpenClaw can drive a unit through its own session, and the Workboard mirrors the units as cards. The supervisor assigns MCP servers per unit, and a unit's copy switches off the global servers it did not receive. Spend is split by the provider that was paid.
+
+### Changed
+
+- `nexgen doctor`: the summary runs independent checks together under a seven-second deadline, and the report can show how long each check took.
+
+### Fixed
+
+- Supervision: a rework sent to a busy or unverifiable session is queued instead of opening a new tab. A publish that conflicts neither publishes nor retires the unit. The stderr of a turn is kept beside the copy. A renamed test is no longer counted as a lost one.
+- The test suite no longer writes its temporary trees inside the home, and child output is decoded as UTF-8 with replacement.
+- OpenClaw: the gateway is launched detached, `stop` waits until the old gateway is gone on Windows and Linux, a stranger's `gateway.cmd` is never taken for ours, and the Windows npm shim is launched as `node` plus the entry, never through `cmd.exe`. Token files are private from the first byte, and a pairing token never reaches the output.
+
+### Known limits
+
+- OpenClaw with the Windows app's gateway inside WSL: the engine recognises it and leaves it alone, but the guardrail, the briefing and the commands do not reach a gateway inside the app's distribution yet.
+- Antigravity's quota is not readable from a file written by its CLI, and Claude Code's plan limit is not stored locally: those rows say so.
+
 ## [2.19.0] - 2026-10-22
 
 ### Added

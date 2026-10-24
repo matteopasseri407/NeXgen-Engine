@@ -1,9 +1,8 @@
 """Pinning dello split runtimes/claude prima del refactor.
 
 Fissa il comportamento attuale (non quello desiderato) con config finte:
-install_guardrail su config finta stabile, install_event_sink idempotente,
-firme pubbliche invariate. Solo config finte in tmp_path, mai config vere,
-mai rete.
+install_guardrail su config finta stabile, firme pubbliche invariate.
+Solo config finte in tmp_path, mai config vere, mai rete.
 """
 from __future__ import annotations
 
@@ -66,30 +65,6 @@ def test_install_guardrail_su_config_finta_stabile(tmp_path: Path) -> None:
     assert len(json.loads(after_first)["hooks"]["PreToolUse"]) == 1
 
 
-def test_install_event_sink_idempotente(tmp_path: Path) -> None:
-    home = tmp_path / "home"
-    settings = home / ".claude" / "settings.json"
-    settings.parent.mkdir(parents=True)
-    settings.write_text("{}", encoding="utf-8")
-    sink_source = tmp_path / "nexgen-event-sink.mjs"
-    sink_source.write_text("// dummy sink\n", encoding="utf-8")
-
-    rt = ClaudeRuntime()
-    action = rt.install_event_sink(home, sink_source)
-    assert action is not None
-    assert "event sink registered" in action
-
-    dst = home / ".claude" / "nexgen-event-sink.mjs"
-    assert dst.is_file()
-    data = json.loads(settings.read_text(encoding="utf-8"))
-    assert "Stop" in data["hooks"]
-    assert "PreToolUse" in data["hooks"]
-
-    after_first = settings.read_text(encoding="utf-8")
-    assert rt.install_event_sink(home, sink_source) is None
-    assert settings.read_text(encoding="utf-8") == after_first
-
-
 def test_firme_pubbliche_invariate() -> None:
     assert list(inspect.signature(ClaudeRuntime.is_installed).parameters) == ["self", "home"]
     assert list(inspect.signature(ClaudeRuntime.read_posture).parameters) == ["self", "home"]
@@ -105,11 +80,6 @@ def test_firme_pubbliche_invariate() -> None:
         "hook_source",
         "engine_hooks_dir",
     ]
-    assert list(inspect.signature(ClaudeRuntime.install_event_sink).parameters) == [
-        "self",
-        "home",
-        "sink_source",
-    ]
     assert list(inspect.signature(ClaudeRuntime.remove_event_sink).parameters) == ["self", "home"]
     public = {
         name
@@ -123,5 +93,4 @@ def test_firme_pubbliche_invariate() -> None:
         "guardrail_sidecar",
         "install_guardrail",
         "remove_event_sink",
-        "install_event_sink",
     }

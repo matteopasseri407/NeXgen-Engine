@@ -2,8 +2,9 @@
 
 One job: list every process with its parent, its name, its command line and, on
 Linux, its environment; build the subtree of a set of roots deepest first; stop
-a list of pids; and recognise the `opencode serve` that every session shares.
-Nothing here decides what may be killed: `supervision_windows` and
+a list of pids; run one command with its output captured through a file so a
+stuck child cannot hang the caller; and recognise the `opencode serve` that every
+session shares. Nothing here decides what may be killed: `supervision_windows` and
 `supervision_cleanup` own that policy and call these primitives.
 
 Windows asks CIM once per question. Linux reads `/proc`, which is the same fact
@@ -17,7 +18,10 @@ import re
 import shutil
 import signal
 import subprocess
+import tempfile
 from pathlib import Path
+
+from nexgen_core.processes import force_stop_process_tree, no_window_kwargs, windows_command_argv
 
 from .supervision_state import SupervisionError
 
@@ -56,6 +60,34 @@ def kill(pids: list[int]) -> None:
         _windows_kill(pids)
     else:
         _posix_kill(pids)
+
+
+def captured(argv: list[str], *, timeout: float) -> subprocess.CompletedProcess:
+    """Run one command and read its output from a file, so a stuck child cannot hang the caller.
+
+    An npm shim starts a Node child. On the timeout the rerun path kills the
+    shim, and the child can outlive it still holding the pipe: a pipe-based
+    reader then waits for ever on a command nobody is writing to. The output goes
+    to a temporary file instead, the timeout stops the whole tree, and the caller
+    gets what was written or the timeout, never a hang.
+    """
+    prepared = windows_command_argv(argv)
+    with tempfile.TemporaryFile("w+b") as out:
+        try:
+            proc = subprocess.Popen(
+                prepared, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+                **no_window_kwargs(),
+            )
+        except OSError as exc:
+            raise ProcessError(f"`{argv[0]}` non eseguibile ({type(exc).__name__})") from exc
+        try:
+            code = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            force_stop_process_tree(proc)
+            raise ProcessError(f"`{argv[0]}` non risponde in {timeout:.0f}s") from exc
+        out.seek(0)
+        text = out.read().decode("utf-8", "replace")
+    return subprocess.CompletedProcess(prepared, code, text, "")
 
 
 def cwd(pid: int) -> Path | None:

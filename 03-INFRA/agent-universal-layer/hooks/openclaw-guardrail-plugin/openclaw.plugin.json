@@ -1,0 +1,34 @@
+{
+  "id": "nexgen",
+  "name": "NeXgen",
+  "description": "The NeXgen engine for OpenClaw: the guardrail before a tool call, the vault briefing after a compaction, the /quota, /council and /sup commands, the supervision tools the supervisor agent drives, the evidence check on local models, and a notice when the Skill Workshop learns a skill. The policy lives in nexgen-guardrail.config.json and nexgen.config.json, read on every call.",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  },
+  "contracts": {
+    "tools": [
+      "nexgen_council",
+      "nexgen_council_result",
+      "nexgen_sup_status",
+      "nexgen_sup_costs",
+      "nexgen_sup_start",
+      "nexgen_sup_unit",
+      "nexgen_sup_run",
+      "nexgen_sup_collect",
+      "nexgen_sup_review",
+      "nexgen_sup_publish"
+    ]
+  },
+  "toolMetadata": {
+    "nexgen_sup_start": { "optional": true, "sideEffecting": true },
+    "nexgen_sup_unit": { "optional": true, "sideEffecting": true },
+    "nexgen_sup_run": { "optional": true, "sideEffecting": true },
+    "nexgen_sup_collect": { "optional": true, "sideEffecting": true },
+    "nexgen_sup_review": { "optional": true, "sideEffecting": true },
+    "nexgen_sup_publish": { "optional": true, "sideEffecting": true }
+  }
+}

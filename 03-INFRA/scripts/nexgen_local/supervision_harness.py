@@ -71,14 +71,14 @@ def run_unit(
         raise HarnessError(f"brief dell'unità sparito: {brief}")
     local_notes = _prepare_local(task_id, name, chosen)
     if adapter.capabilities.has("write_permissions"):
-        adapter.write_profile(task_id, folder)
+        adapter.write_profile(task_id, folder, mcp=record.get("mcp"))
     allowed = policy.allowed_models()
     prompt = prompt_text(task_id, name, brief, harness=chosen)
     previous = state.harness_session_record(task_id, chosen)
     if not previous:
         opened = _open_first_tab(
             task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
-            adapter=adapter, measure=measure, allowed=allowed,
+            adapter=adapter, measure=measure, allowed=allowed, runner=runner,
         )
         opened["harness"] = chosen
         opened["notes"] = local_notes
@@ -91,7 +91,7 @@ def run_unit(
         )
         opened = _open_first_tab(
             task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
-            adapter=adapter, measure=measure, allowed=allowed,
+            adapter=adapter, measure=measure, allowed=allowed, runner=runner,
             reason="sessione nata in un'altra copia: scheda nuova nella copia dell'unità",
         )
         opened["harness"] = chosen
@@ -105,6 +105,65 @@ def run_unit(
     result["harness"] = chosen
     result["notes"] = local_notes
     return result
+
+
+def _resolve_unit_session(task_id: str, unit: str, chosen: str, record: dict, folder: Path) -> dict | None:
+    """The session this unit owns, or a task session that was born in the same folder."""
+    previous = state.harness_session_record(task_id, chosen, unit=unit)
+    if not previous and record.get("session"):
+        return {"session": str(record["session"]), "folder": str(record.get("worktree") or folder)}
+    if not previous:
+        cand = state.harness_session_record(task_id, chosen)
+        if cand and not _foreign_copy(cand.get("folder") or "", folder):
+            return cand
+    return previous
+
+
+def _handle_foreign_session(
+    task_id: str, name: str, folder: Path, prompt: str, previous: dict, chosen: str,
+    round_no: int, *, adapter, opener, lister, wait_s: float, measure, allowed,
+) -> dict:
+    """Rework whose last task session belongs to another copy: queue while it is not known free.
+
+    Only a session the harness itself says is gone earns a new tab. A busy one, and
+    one the engine cannot verify, leave the round in `unit_queued` so `--resend`
+    delivers it later: a tab opened on work that may still be running is the second
+    worker in one copy this engine exists to prevent.
+    """
+    session = previous["session"]
+    try:
+        facts = _measure_or_lost(measure or _measure_for(adapter), session)
+    except SessionLost:
+        facts = None
+    except SupervisionError as exc:
+        return _queue_round(
+            task_id, name, chosen, session, folder, round_no,
+            reason=f"sessione non verificabile: {exc}",
+        )
+    if facts is not None and not facts.stopped:
+        return _queue_round(task_id, name, chosen, session, folder, round_no, reason="sessione occupata")
+    state.append_event(
+        task_id, "harness_session_foreign", unit=name, harness=chosen,
+        session=session, session_folder=previous.get("folder") or "",
+        copy=str(folder), reason="la sessione è nata in un'altra copia",
+    )
+    return _open_first_tab(
+        task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
+        event="unit_reworked", extra={"round": round_no}, adapter=adapter,
+        measure=measure, allowed=allowed,
+        reason="sessione nata in un'altra copia: scheda nuova nella copia dell'unità",
+    )
+
+
+def _queue_round(
+    task_id: str, name: str, chosen: str, session: str, folder: Path, round_no: int, *, reason: str,
+) -> dict:
+    """Leave the round waiting for a free session, without opening anything."""
+    state.append_event(
+        task_id, "unit_queued", unit=name, harness=chosen, session=session,
+        reason=reason, folder=str(folder), round=round_no,
+    )
+    return {"unit": name, "mode": "queued", "session": session, "reason": reason}
 
 
 def send_corrections(
@@ -129,10 +188,10 @@ def send_corrections(
     if not path.is_file():
         raise HarnessError(f"file di revisione sparito: {path}")
     if adapter.capabilities.has("write_permissions"):
-        adapter.write_profile(task_id, folder)
+        adapter.write_profile(task_id, folder, mcp=record.get("mcp"))
     prompt = corrections_text(task_id, name, path, round_no)
     allowed = policy.allowed_models()
-    previous = state.harness_session_record(task_id, chosen)
+    previous = _resolve_unit_session(task_id, name, chosen, record, folder)
     if not previous:
         if not open_without_session:
             raise HarnessError(
@@ -142,19 +201,13 @@ def send_corrections(
         opened = _open_first_tab(
             task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
             event="unit_reworked", extra={"round": round_no}, adapter=adapter,
-            measure=measure, allowed=allowed,
+            measure=measure, allowed=allowed, runner=runner,
         )
     elif _foreign_copy(previous.get("folder") or "", folder):
-        state.append_event(
-            task_id, "harness_session_foreign", unit=name, harness=chosen,
-            session=previous["session"], session_folder=previous.get("folder") or "",
-            copy=str(folder), reason="la sessione è nata in un'altra copia",
-        )
-        opened = _open_first_tab(
-            task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
-            event="unit_reworked", extra={"round": round_no}, adapter=adapter,
+        opened = _handle_foreign_session(
+            task_id, name, folder, prompt, previous, chosen, round_no,
+            adapter=adapter, opener=opener, lister=lister, wait_s=wait_s,
             measure=measure, allowed=allowed,
-            reason="sessione nata in un'altra copia: scheda nuova nella copia dell'unità",
         )
     else:
         opened = _deliver(
@@ -189,7 +242,7 @@ def _deliver(
         )
         opened = _open_first_tab(
             task_id, unit, folder, prompt, opener or windows.open_window, lister, wait_s,
-            event=event, extra=extra, adapter=adapter, measure=measure, allowed=allowed,
+            event=event, extra=extra, adapter=adapter, measure=measure, allowed=allowed, runner=runner,
         )
         if model:
             opened["model_requested"] = model
@@ -330,22 +383,42 @@ def _measure_or_lost(measure, session: str) -> costs.SessionFacts:
     raise HarnessError(f"sessione {session} non verificabile, riprova: {problem}") from problem
 
 
+def _opening(adapter, task_id: str, unit: str) -> tuple:
+    """The adapter, its CLI and the id it will use: resolved and refused before anything opens.
+
+    A harness that is not installed stops here, before a window or a turn, and a
+    harness that chooses its own session id does it here so the attach has
+    something to look for.
+    """
+    chosen = adapter or _adapter("opencode")
+    executable = _executable_for(chosen)
+    identifier = chosen.new_session_id(task_id, unit) if hasattr(chosen, "new_session_id") else ""
+    return chosen, executable, identifier
+
+
 def _open_first_tab(
     task_id: str, unit: str, folder: Path, prompt: str, opener, lister, wait_s: float,
     *, event: str = "unit_started", extra: dict | None = None, adapter=None,
-    measure=None, allowed: tuple[str, ...] = (), reason: str = "",
+    measure=None, allowed: tuple[str, ...] = (), reason: str = "", runner=None,
 ) -> dict:
     """No session for this harness yet: open the tab and bind the session it creates.
 
-    The model of a session the tab has just opened is read back before the
-    session is attached to the task: with a list configured, a tab that came up
-    on a model outside it is named and left unattached, so the next `sup run`
-    does not send work into it. A harness that cannot say which session a tab
-    opened leaves the attach manual and says so; the id is never invented.
+    A harness with its own visible sessions gets a turn instead of a tab: the
+    engine starts the work and attaches the key it chose, because a window of the
+    engine on top of a session OpenClaw already shows would be the copy this
+    engine exists to avoid. The model of a session the tab has just opened is read
+    back before the session is attached to the task: with a list configured, a tab
+    that came up on a model outside it is named and left unattached, so the next
+    `sup run` does not send work into it. A harness that cannot say which session
+    a tab opened leaves the attach manual and says so; the id is never invented.
     """
-    adapter = adapter or _adapter("opencode")
-    executable = _executable_for(adapter)
-    chosen = adapter.new_session_id() if hasattr(adapter, "new_session_id") else ""
+    adapter, executable, chosen = _opening(adapter, task_id, unit)
+    if not adapter.capabilities.window:
+        return _open_turn(
+            task_id, unit, folder, prompt, session=chosen, event=event, extra=extra or {},
+            runner=runner or _runner_for(adapter), adapter=adapter, measure=measure,
+            allowed=allowed, lister=lister, wait_s=wait_s, reason=reason,
+        )
     started_ms = int(time.time() * 1000)
     argv = adapter.tab_argv(executable, folder, prompt, session=chosen)
     handle = opener(
@@ -379,6 +452,55 @@ def _open_first_tab(
         }
     _attach(task_id, unit, session, handle, adapter.name, folder)
     result = {"unit": unit, "mode": "tab", "window": handle, "session": session}
+    if reason:
+        result["reason"] = reason
+    return result
+
+
+def _open_turn(
+    task_id: str, unit: str, folder: Path, prompt: str, *, session: str, event: str,
+    extra: dict, runner, adapter, measure, allowed: tuple[str, ...], lister, wait_s: float,
+    reason: str = "",
+) -> dict:
+    """Start the first turn of a harness that has no window, and attach the key it used.
+
+    The turn is the delivery: the same one-shot runner that carries a correction
+    carries the brief's pointer, and the session is attached under the key the
+    engine chose, so the attach is not a guess made from a clock. A session the
+    harness has not listed yet is reported as such, and the journal still says who
+    the work was given to.
+    """
+    started_ms = int(time.time() * 1000)
+    proc = runner(session, prompt, folder, "")
+    pid = getattr(proc, "pid", None)
+    state.append_event(
+        task_id, event, unit=unit, harness=adapter.name, session=session, mode="turn",
+        pid=pid, folder=str(folder), **dict(extra or {}),
+    )
+    found, note = _session_after(adapter, folder, started_ms, lister, wait_s, session)
+    if found is None:
+        result = {
+            "unit": unit, "mode": "run", "session": session, "pid": pid, "row": None,
+            "reason": reason or note,
+        }
+        return result
+    model = _model_of(found, measure or _measure_for(adapter), allowed)
+    if allowed and not policy.model_allowed(model, allowed):
+        refusal = policy.refusal(model, allowed)
+        state.append_event(
+            task_id, "unit_model_refused", unit=unit, harness=adapter.name,
+            session=str(found.get("id") or session), model=model, allowed=list(allowed),
+            reason=refusal, folder=str(folder), sent=True,
+        )
+        return {
+            "unit": unit, "mode": "refused", "sent": True, "session": found,
+            "model": model, "reason": refusal,
+        }
+    row = _attach(task_id, unit, found, {"title": ""}, adapter.name, folder)
+    result = {
+        "unit": unit, "mode": "run", "session": str(found.get("id") or session),
+        "pid": pid, "row": row, "model": model,
+    }
     if reason:
         result["reason"] = reason
     return result
@@ -483,15 +605,46 @@ def _run_in_session(session: str, prompt: str, folder: Path, model: str = ""):
     return _run_turn(_adapter("opencode"), _opencode_executable(), session, prompt, folder, model)
 
 
+def stderr_log(folder: Path, session: str) -> Path:
+    """The file a turn's own errors go to, beside the copy and inside the task folder.
+
+    A turn that dies before its envelope says why on stderr and nowhere else, and a
+    silent death is the one thing the supervisor cannot read afterwards. The copy is
+    `<task>/23-unita-<unit>/`, so the parent is the task folder the owner opens.
+    """
+    safe = "".join(ch if ch.isalnum() or ch in "-_." else "-" for ch in session)[:80]
+    return folder.parent / f"60-stderr-{safe or 'session'}.log"
+
+
 def _run_turn(adapter, executable: str, session: str, prompt: str, folder: Path, model: str = ""):
-    """One turn through this harness, detached: no window of the engine is left holding it."""
+    """One turn through this harness, detached: no window of the engine is left holding it.
+
+    The copy is checked first, because one harness runs its turn in a workspace
+    the owner configured and a wrong folder would look like work in the unit. A
+    harness whose numbers are only in what the turn prints writes them into its
+    own log, so a turn that ends on its own leaves its cost behind; whatever the
+    turn says on stderr is kept beside the copy instead of being thrown away.
+    """
+    adapter.check_folder(folder)
     argv = windows_command_argv(adapter.send_argv(executable, session, prompt, model=model))
+    log = adapter.turn_log(session)
+    errors = stderr_log(folder, session)
     try:
-        return subprocess.Popen(
-            argv, cwd=folder,
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            **_detach_kwargs(),
-        )
+        errors.parent.mkdir(parents=True, exist_ok=True)
+        with errors.open("a", encoding="utf-8", newline="\n") as err:
+            if log is not None:
+                log.parent.mkdir(parents=True, exist_ok=True)
+                with log.open("a", encoding="utf-8", newline="\n") as handle:
+                    return subprocess.Popen(
+                        argv, cwd=folder,
+                        stdin=subprocess.DEVNULL, stdout=handle, stderr=err,
+                        **_detach_kwargs(),
+                    )
+            return subprocess.Popen(
+                argv, cwd=folder,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err,
+                **_detach_kwargs(),
+            )
     except OSError as exc:
         raise HarnessError(f"sessione {session} non raggiungibile: {exc}") from exc
 
@@ -530,7 +683,7 @@ def _unit_copy(task_id: str, unit: str) -> tuple[dict, Path]:
     return record, folder
 
 
-def _attach(task_id: str, unit: str, session: dict, handle: dict, harness: str, folder: Path) -> None:
+def _attach(task_id: str, unit: str, session: dict, handle: dict, harness: str, folder: Path) -> dict:
     """Write the cost row and the journal event for the session the tab opened."""
     session_id = str(session.get("id") or "")
     row = costs.record(
@@ -542,6 +695,7 @@ def _attach(task_id: str, unit: str, session: dict, handle: dict, harness: str, 
         unit=unit, role="esecutore", harness=harness, session=row["session"],
         folder=str(folder),
     )
+    return row
 
 
 def _list_sessions(folder: str | Path) -> list[dict]:

@@ -40,7 +40,7 @@ try:
 except ImportError:  # pragma: no cover - the waiter imports with a fallback
     NPM_SPEC_RE = __import__("re").compile(r"^(?P<name>(?:@[\w.-]+/)?[\w.-]+)@(?P<version>\d[\w.+-]*)$")
 
-from nexgen_core.files import atomic_write_text
+from nexgen_core.files import atomic_write_text, retry_transient_lock
 from nexgen_core.config import load_mcp_manifest
 from nexgen_core.errors import NexgenError
 from nexgen_core.i18n import t
@@ -325,7 +325,12 @@ def _provision_git(deps: dict[str, Any], state_dir: Path, server: str) -> dict[s
                         t("cannot replace '{path}' for server '{server}': something still holds a file inside it, close it and run again.",
                           path=final, server=server)
                     )
-            os.replace(clone, final)
+            # Windows refuses the swap while any process still holds a handle
+            # inside the fresh clone (an antivirus scanning it, the indexer,
+            # a git child that just exited). That denial clears by itself:
+            # without the retry one transient lock failed a provisioning run
+            # the next attempt would have completed.
+            retry_transient_lock(lambda: os.replace(clone, final))
         return {"DEPS_WORKSPACE": str(_run_workspace(final, deps))}
 
 

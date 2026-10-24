@@ -31,6 +31,10 @@ ROLES_KEY = "roles"
 DEFAULT_ROLES = {"esecutore": "opencode", "ricognitore": "agy"}
 #: The local model a `local` unit runs on, and the server that serves it.
 LOCAL_KEY = "local_model"
+#: The OpenClaw harness: which agent runs a unit, and whether the Workboard mirrors the units.
+OPENCLAW_KEY = "openclaw"
+DEFAULT_OPENCLAW_AGENT = "sviluppo"
+WORKBOARD_KEY = "workboard"
 
 
 class PolicyError(SupervisionError):
@@ -115,6 +119,45 @@ def local_model(path: str | Path | None = None) -> dict:
 def local_model_id(path: str | Path | None = None) -> str:
     """The model a local unit pins, or an empty string when the lane names none."""
     return str(local_model(path).get("model") or "").strip()
+
+
+def openclaw_settings(path: str | Path | None = None) -> dict:
+    """The `openclaw` section as written, or an empty one when the owner wrote nothing."""
+    target, section = _section(path)
+    raw = section.get(OPENCLAW_KEY, {})
+    if not isinstance(raw, dict):
+        raise PolicyError(f"`{SECTION}.{OPENCLAW_KEY}` deve essere un oggetto: {target}")
+    return dict(raw)
+
+
+def openclaw_agent(path: str | Path | None = None) -> str:
+    """The OpenClaw agent a unit's turn runs on, defaulting to `sviluppo`.
+
+    The engine never picks an agent of its own: the owner's roster is his, and an
+    id this file invented would be a session nobody configured.
+    """
+    written = openclaw_settings(path).get("agent", DEFAULT_OPENCLAW_AGENT)
+    name = written.strip() if isinstance(written, str) else ""
+    if not name:
+        raise PolicyError(
+            f"`{SECTION}.{OPENCLAW_KEY}.agent` deve essere l'id di un agente OpenClaw: {written!r}"
+        )
+    return name
+
+
+def workboard_enabled(path: str | Path | None = None) -> bool:
+    """Whether the Workboard mirrors the units: on, unless the owner turns it off.
+
+    The board is a view of the journal, never its source, so an absent plugin
+    costs one line and nothing else; the switch exists for the owner who does not
+    want the cards at all.
+    """
+    written = openclaw_settings(path).get(WORKBOARD_KEY, True)
+    if not isinstance(written, bool):
+        raise PolicyError(
+            f"`{SECTION}.{OPENCLAW_KEY}.{WORKBOARD_KEY}` deve essere true o false: {written!r}"
+        )
+    return written
 
 
 def _section(path: str | Path | None = None) -> tuple[Path, dict]:

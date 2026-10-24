@@ -297,6 +297,22 @@ def test_the_tab_runs_the_explorer_in_plan_mode_on_the_fixed_folder(task, monkey
     assert done["clean"] is True and done["report_written"] is True
 
 
+def test_the_prompt_forbids_a_plan_and_asks_for_the_report_at_once(task, monkeypatch, capsys):
+    """In `--mode plan`, con un brief grande, agy scriveva il piano, chiedeva "Proceed" e finiva
+    senza rapporto. Il prompt deve dire di non pianificare, non chiedere conferma, e scrivere subito."""
+    record = _opened(task)
+    explorer = _install_explorer(monkeypatch, Path(record["report"]))
+
+    assert scout.run_in_tab(task) == 0
+
+    command = explorer.commands[0]
+    prompt = command[command.index("--prompt") + 1].lower()
+    assert "non scrivere un piano" in prompt
+    assert "non chiedere conferma" in prompt
+    assert "esegui" in prompt and "subito" in prompt
+    assert record["report"].lower() in prompt
+
+
 def test_a_missing_explorer_is_said_out_loud_and_journals_nothing(task, monkeypatch, capsys):
     _opened(task)
     monkeypatch.setattr(scout.shutil, "which", lambda name: None)

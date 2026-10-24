@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-CLIS: tuple[str, ...] = ("claude", "codex", "antigravity", "opencode")
+CLIS: tuple[str, ...] = ("claude", "codex", "antigravity", "opencode", "openclaw")
 
 #: The server that stands in front of the lazy ones. It must be mounted directly wherever it is needed.
 GATEWAY = "lazy-mcp"

@@ -320,6 +320,24 @@ def test_a_cherry_pick_conflict_aborts_and_leaves_the_checkout_where_it_was(task
     assert git_in(repo.path, "rev-parse", "--verify", "CHERRY_PICK_HEAD", check=False).returncode != 0
     assert _remote_main(repo) == remote_before, "niente è stato pubblicato"
 
+    events = state.read_events(task)
+    failed = [e for e in events if e.get("event") == "unit_publish_failed"]
+    assert len(failed) == 1, "il diario deve registrare esattamente un unit_publish_failed"
+    assert failed[0]["unit"] == "prova"
+    assert failed[0]["conflicts"] == ["docs/guida.md"]
+    assert not any(e.get("event") in ("unit_published", "unit_retired") for e in events)
+
+    unit = state.status(task)["units"][0]
+    assert unit["approved"] is True, "l'unità deve rimanere approvata"
+    assert unit["published"] == [], "l'unità non deve risultare pubblicata"
+    assert unit["retired"] is False, "l'unità non deve risultare ritirata"
+
+    assert folder.is_dir(), "la copia dell'unità deve rimanere intatta"
+    unit_branch = worktree.unit_branch(task, "prova")
+    assert git_in(repo.path, "rev-parse", "--verify", unit_branch, check=False).returncode == 0, (
+        "il ramo dell'unità deve rimanere intatto"
+    )
+
 
 def test_cherry_pick_and_restore_ask_git_for_long_paths(tmp_path, monkeypatch):
     """Il replay e il ritorno indietro scrivono l'albero: devono reggere MAX_PATH."""

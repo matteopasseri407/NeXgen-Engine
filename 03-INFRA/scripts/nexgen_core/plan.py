@@ -200,6 +200,7 @@ def _build_sync_plan_impl(
     from nexgen_core.checks.instructions_checks import (
         check_claude_pointer,
         check_cli_instruction_pointers,
+        check_openclaw_instructions,
         check_opencode_instructions,
     )
     from nexgen_core.checks.mcp_checks import check_desktop_allowlist, check_mcp_configs_rendered, check_mcp_content_drift, check_mcp_orphans, check_mcp_unresolved_refs
@@ -225,6 +226,7 @@ def _build_sync_plan_impl(
         ("instructions", lambda: check_claude_pointer(vault, home_dir)),
         ("instructions", lambda: check_cli_instruction_pointers(vault, home_dir)),
         ("instructions", lambda: check_opencode_instructions(vault, home_dir)),
+        ("instructions", lambda: check_openclaw_instructions(vault, home_dir)),
     ]
 
     for domain, probe in probes:

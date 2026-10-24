@@ -21,7 +21,7 @@
 
 **Configure your AI coding CLIs from one Git source, then check the result.**
 
-NeXgen Engine generates configuration for Claude Code, Codex, OpenCode, and Antigravity from a private KnowledgeVault.
+NeXgen Engine generates configuration for Claude Code, Codex, OpenCode, Antigravity, and OpenClaw from a private KnowledgeVault.
 The Vault holds shared instructions, MCP and skill manifests, encrypted secrets, and Markdown memory.
 
 Each CLI receives its native format, while machine-specific settings stay local.
@@ -88,15 +88,17 @@ The [sync contract](docs/sync-contract.md) describes what it manages, what it pr
 ## What it does
 
 * **Single Python core (`nexgen_core`):** runs natively on Linux and Windows, no shell twins. Automated suite in CI.
-* **Deterministic modules:** 9-module catalog (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `local-lane`, `sync`) managed with `nexgen modules list` and `nexgen modules set`.
+* **Deterministic modules:** 10-module catalog (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `local-lane`, `openclaw`, `sync`) managed with `nexgen modules list` and `nexgen modules set`.
 * **Local models (optional):** `nexgen-local` builds read-only queries and records the sources used by each answer.
   Its evaluation gate fails on any injection or unsupported answer in the trap suite.
-  Patch proposals require approval through `nexgen-local propose` / `apply`.
-  Research sessions preserve sources, receipts, and staged proposals with `nexgen-local explore --session-id new`.
+  Drive uploads are the only mutation it stages, and they need explicit approval through `nexgen-local drive-propose` / `drive-upload`.
+  Mail, calendar and Drive reads stay available to every agent through the same connectors.
   See [local-lane.md](docs/local-lane.md).
 * **Secrets store:** asymmetric `age` encryption (`99-SECRETS/secrets.yaml.age`) on machine-local keys (`0600`), isolated per-host OAuth slots, materialized `secrets.env` for shells and systemd services. No passphrase to remember or type.
 * **Operator shell:** `nexgen info` status dashboard and `nexgen shell` interactive REPL, so routine management never needs an AI assistant open.
-* **Four runtimes plus the Desktop app:** Claude Code, Codex, OpenCode (native V2: scope-file instructions, `plugins`/`permissions`, skill views) and Antigravity, each rendered in its own dialect, Council seats included. The Claude Desktop app receives only explicitly allowlisted read-only servers (`desktop_allow`), since it has no guardrail hooks.
+* **Plan quota (`nexgen quota`, `/quota` in OpenClaw):** what is left of each subscription, read from what the harnesses already wrote locally, with the age of every reading. A window that cannot be measured from this machine says so instead of guessing. See [quota.md](docs/quota.md).
+* **Five runtimes plus the Desktop app:** Claude Code, Codex, OpenCode (native V2: scope-file instructions, `plugins`/`permissions`, skill views), Antigravity and OpenClaw, each rendered in its own dialect, Council seats included. OpenClaw is technically the fifth CLI the sync writes, but it is the official NeXgen Engine harness: the interface (web panel, phone app) from which the other harnesses and your subscriptions are used. The Claude Desktop app receives only explicitly allowlisted read-only servers (`desktop_allow`), since it has no guardrail hooks.
+  See [openclaw.md](docs/openclaw.md) for what the engine detects, the three agents, the local model cage and the known Windows traps.
 * **Fail-closed diagnostics (`nexgen doctor`):** automated checks over git alignment, manifest reachability, link hygiene, token presence and permission boundaries. A check that cannot verify reports undetermined instead of passing.
 
 ---
@@ -206,7 +208,7 @@ See [LICENSE](LICENSE) for its terms and [COMMERCIAL.md](COMMERCIAL.md) for comm
 NeXgen reads one instruction source and shared MCP and skill manifests, then generates each CLI's native configuration.
 It handles different formats and paths on Linux and Windows, and checks the generated result for drift.
 
-**Do I need all four CLIs?**
+**Do I need all five CLIs?**
 No.
 Install the CLIs you use; `nexgen doctor` reports absent CLIs as warnings.
 After adding a runtime, run `nexgen sync`.

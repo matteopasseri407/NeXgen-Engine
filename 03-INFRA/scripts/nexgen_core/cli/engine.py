@@ -66,7 +66,7 @@ def _register_sync(sub) -> None:
 
     p = sub.add_parser("import", help=t("Generate manifest stubs from a live CLI config (read-only, on stdout)"))
     p.add_argument("--from", dest="source", required=True,
-                   choices=["claude", "claudecode", "claude-desktop", "codex", "antigravity", "opencode"],
+                   choices=["claude", "claudecode", "claude-desktop", "codex", "antigravity", "opencode", "openclaw"],
                    help=t("The CLI whose live config to read"))
     p.add_argument("--dry-run", dest="dry_run", action="store_true",
                    help=t("Print to stdout only (the default; accepted for explicitness)"))
@@ -95,6 +95,8 @@ def _register_doctor(sub) -> None:
     p.add_argument("--summary", action="store_true", help=t("A one-line summary"))
     p.add_argument("--fix", "--remedy", dest="fix", action="store_true",
                    help=t("Apply the available automatic remedies"))
+    p.add_argument("--timings", action="store_true",
+                   help=t("Print how long each check took, slowest first"))
     p.set_defaults(func=cmd_doctor)
 
 
@@ -255,16 +257,17 @@ def cmd_import(args) -> int:
 
 
 def cmd_doctor(args) -> int:
-    from nexgen_core.doctor import Doctor
+    from nexgen_core.doctor import diagnose, render_report
 
-    report = Doctor().run_diagnostics(apply_remedies=args.fix)
-    if args.json:
-        print(report.format_json())
-    elif args.summary:
-        print(f"FAIL={len(report.broken)} OK={report.ok_count} WARN={len(report.warnings)} UNDETERMINED={len(report.undetermined)}")
-    else:
-        print(safe_text(report.format_human(verbose=args.verbose)))
-    return report.exit_code(strict=args.strict)
+    report = diagnose(summary=args.summary, fix=args.fix)
+    return render_report(
+        report,
+        as_json=args.json,
+        summary=args.summary,
+        verbose=args.verbose,
+        timings=getattr(args, "timings", False),
+        strict=args.strict,
+    )
 
 
 def cmd_update(args) -> int:

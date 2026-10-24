@@ -179,6 +179,36 @@ confirmed zero-retention guarantee remains usable, but Council prints a warning
 to stderr before sending the brief. The old `--allow-training-risk` flag has
 been removed outright, not kept as a no-op: passing it is now a CLI error.
 
+## Da OpenClaw
+
+`/council <question>` asks the Council from a chat. A council run takes minutes
+and opens vendor CLIs, so the command does not wait for it: it answers at once
+with an identifier and starts
+
+```bash
+council brainstorm "<question>" --auto --keep-session --notify --tag <id>
+```
+
+detached, so the run outlives the chat turn and the gateway itself. `--auto`
+because there is nobody at a terminal to choose a seat; `--keep-session` so the
+full outcome is still on disk afterwards; `--notify` so the end arrives where
+the person is.
+
+`--notify` is the only thing the engine gained: before the process exits -- on a
+verdict, on a refusal, on any error -- it sends one line through the megaphone,
+the engine's single alert surface, and `--tag` is quoted back so two runs in the
+same hour stay apart. It says the verdict, the identifier, and the session
+directory when the session was kept; a run that stopped says why instead. The
+failure is still raised and still sets the exit code: the notification reports
+it, it never replaces it. The same flag works on every mode, `consult` and
+`relay` included.
+
+`nexgen_council` is the same start, as an agent tool: it returns the identifier.
+`nexgen_council_result` reads back what the run has produced so far -- still
+running, or the end of the log -- and the run's own session directory holds the
+rest. Neither tool is an operator opt-in: asking the Council is not a state
+change.
+
 ## Human-approved routing proposals
 
 Council works without a Governor. With only `seats.yaml`, `council propose`

@@ -91,6 +91,17 @@ def _scout_harness(chosen: str) -> str:
     return adapter.name
 
 
+#: What the tab tells the explorer, word for word. `agy` runs in `--mode plan`, and
+#: with a long brief it wrote a plan, asked "Proceed" and exited without a report
+#: (2026-10-24). A prompt that says the report is the only deliverable ran three
+#: rounds out of three that night, so the refusal to plan is stated, not implied.
+SCOUT_PROMPT = (
+    "Leggi il brief in {brief} e segui solo quello. "
+    "Non scrivere un piano e non chiedere conferma: esegui subito quello che il brief chiede "
+    "e scrivi il rapporto in {report}. Non modificare nessun file di codice."
+)
+
+
 def run_in_tab(task_id: str, round_no: int = 0) -> int:
     """The tab side: run the scout's harness in plan mode, then say whether the copy stayed clean."""
     record = _opened(task_id, round_no)
@@ -111,8 +122,7 @@ def run_in_tab(task_id: str, round_no: int = 0) -> int:
     print("-" * 60, flush=True)
     command = adapter.scout_argv(
         executable,
-        f"Leggi il brief in {record['brief']} e segui solo quello. "
-        f"Scrivi il rapporto in {report}. Non modificare nessun file di codice.",
+        SCOUT_PROMPT.format(brief=record["brief"], report=report),
     )
     try:
         subprocess.run(command, cwd=record["folder"], check=False, timeout=PRINT_TIMEOUT_S)
@@ -234,6 +244,7 @@ def _brief_text(task_id: str, question: str, report: Path, base: str) -> str:
         f"{question}\n\n"
         "## Rapporto\n\n"
         f"Scrivi il rapporto completo in:\n\n{report}\n\n"
+        "Il rapporto è l'unico risultato: non serve un piano, non serve una conferma.\n\n"
         "Rispondi con i fatti che hai letto nel codice, con i percorsi esatti. "
         "Se qualcosa non è verificabile da qui, scrivilo invece di supporlo.\n\n"
         f"## Base\n\nLa copia è al commit {base}, staccata: non appartiene a nessun ramo.\n"

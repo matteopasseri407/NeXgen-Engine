@@ -28,7 +28,7 @@ def _lane_state_dir_impl() -> Path:
 
 
 def lane_state_dir() -> Path:
-    """Where the lane keeps its audit log, proposals, drafts and research sessions.
+    """Where the lane keeps its audit log, proposals and uploads.
 
     Under the engine's home (`NEXGEN_HOME` when set), the same place every other piece of engine state
     follows. These defaults used the process's real home, so a checkout run in a sandbox home beside a
@@ -117,21 +117,9 @@ class LaneConfig:
     max_results: int = 5
     read_chars: int = 3000
     audit_path: Path = field(default_factory=lambda: lane_state_dir() / "audit.jsonl")
-    proposals_dir: Path = field(
-        default_factory=lambda: lane_state_dir() / "proposals"
-    )
-    drafts_dir: Path = field(default_factory=lambda: lane_state_dir() / "drafts")
-    mails_dir: Path = field(default_factory=lambda: lane_state_dir() / "mails")
     uploads_dir: Path = field(default_factory=lambda: lane_state_dir() / "uploads")
-    calendars_dir: Path = field(default_factory=lambda: lane_state_dir() / "calendars")
-    workflows_dir: Path = field(default_factory=lambda: lane_state_dir() / "workflows")
-    #: Persistent research sessions (one sqlite each): sources, chunks read,
-    #: coverage and staged proposals across interactions. Working state only,
-    #: swept by age; never vault memory.
-    research_dir: Path = field(default_factory=lambda: lane_state_dir() / "research")
     firecrawl_cmd: str = "firecrawl-local"
     pdftotext_cmd: str = "pdftotext"
-    max_steps: int = 4
     excluded_parts: frozenset[str] = EXCLUDED_PARTS
     #: Capability tier of the model in use: tutor, guided or assisted. Unknown
     #: models and unknown names resolve to tutor, the strictest tier.

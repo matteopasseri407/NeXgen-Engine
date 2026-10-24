@@ -11,7 +11,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.files import atomic_write_text, backup_file, write_text_if_changed  # noqa: E402
+from nexgen_core.files import atomic_write_text, backup_file, symlink_write_target, write_text_if_changed  # noqa: E402
 
 
 def test_atomic_write_creates_parents_and_replaces(tmp_path: Path):
@@ -226,3 +226,63 @@ def test_backup_of_a_loosely_moded_config_is_private(tmp_path: Path):
     os.chmod(target, 0o644)
     backup = backup_file(target, tag="instructions")
     assert backup is not None and backup.stat().st_mode & 0o777 == 0o600
+
+
+def test_a_transient_denial_is_retried_and_a_persistent_one_surfaces(monkeypatch):
+    """Windows dice "accesso negato" (WinError 5) o "violazione di condivisione"
+    (32) mentre un antivirus, l'indicizzatore o un figlio appena uscito tiene
+    aperta la cartella per un istante. Il primo tentativo non è la risposta: la
+    stessa attesa vale per una rinomina o un replace di cartella, che prima
+    falliva l'intera operazione. Un rifiuto che non è quel caso, o che non si
+    libera, non viene ritentato fino a sparire."""
+    import nexgen_core.files as files_mod
+
+    attempts: list[int] = []
+
+    def flaky():
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise PermissionError(13, "Access is denied")  # WinError 5
+        return "moved"
+
+    assert files_mod.retry_transient_lock(flaky) == "moved"
+    assert len(attempts) == 2
+
+    # Un rifiuto che non è un lock non si ritenta nemmeno una volta.
+    not_a_lock = PermissionError(13, "not a sharing violation")
+    not_a_lock.winerror = 1
+    wrong_kind: list[int] = []
+
+    def refused():
+        wrong_kind.append(1)
+        raise not_a_lock
+
+    with pytest.raises(PermissionError):
+        files_mod.retry_transient_lock(refused)
+    assert len(wrong_kind) == 1
+
+    # Un lock persistente esce, dentro lo stesso tetto di tempo.
+    clock = [0.0]
+    monkeypatch.setattr(files_mod.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(files_mod.time, "sleep", lambda delay: clock.__setitem__(0, clock[0] + delay))
+
+    def still_open():
+        raise PermissionError(13, "still open somewhere")
+
+    with pytest.raises(PermissionError, match="still open somewhere"):
+        files_mod.retry_transient_lock(still_open)
+    assert clock[0] <= files_mod._RETRY_BUDGET_SECONDS
+
+
+def test_a_symlink_is_followed_and_a_link_to_the_source_is_not(tmp_path: Path):
+    """One rule, two callers: ~/CLAUDE.md and each workspace's AGENTS.md."""
+    target = tmp_path / "dotfiles" / "AGENTS.md"
+    target.parent.mkdir()
+    target.write_text("mine\n", encoding="utf-8")
+    link = tmp_path / "workspace" / "AGENTS.md"
+    link.parent.mkdir()
+    link.symlink_to(target)
+
+    assert symlink_write_target(link, keep=tmp_path / "canon.md") == target.resolve()
+    assert symlink_write_target(link, keep=target) == link
+    assert symlink_write_target(link.parent / "plain.md", keep=target) == link.parent / "plain.md"

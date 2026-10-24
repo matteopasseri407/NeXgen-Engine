@@ -1,3 +1,4 @@
+# nexgen: one-job reason="answer where the data, the engine, the state and the scratch space live, in one place, for every component that asks"
 """Path resolution for the layer, in one place.
 
 This environment-variable cascade used to exist as fifteen literal copies
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 #: Name of the data folder under the home directory, when no variable names it.
@@ -60,6 +62,24 @@ def _resolve_home_impl(home: Path | None = None) -> Path:
             )
         return expanded
     return Path.home()
+
+
+def _parts(path: Path) -> tuple[str, ...]:
+    """A path split into the components this filesystem compares."""
+    return tuple(os.path.normcase(str(part)) for part in Path(path).parts)
+
+
+def is_inside(child: Path | None, parent: Path | None) -> bool:
+    """Whether `child` sits at or below `parent`, from their own parts: no filesystem read.
+
+    `os.path.normcase` is the case rule of the platform, so `C:\\work\\Me` and
+    `c:/work/me` are the same place on Windows and two different ones on Linux,
+    without either answer depending on what exists on disk.
+    """
+    if child is None or parent is None:
+        return False
+    kid, root = _parts(child), _parts(parent)
+    return len(kid) >= len(root) and kid[: len(root)] == root
 
 
 def resolve_home(home: Path | None = None) -> Path:
@@ -454,6 +474,48 @@ def antigravity_configs(home: Path | None = None) -> list[Path]:
     return _antigravity_configs_impl(home)
 
 
+def _openclaw_config_impl(home: Path | None = None, env: Mapping[str, str] | None = None) -> Path:
+    """Implementation behind :func:`openclaw_config`."""
+    values = os.environ if env is None else env
+    explicit = values.get("OPENCLAW_CONFIG_PATH")
+    if explicit:
+        return Path(explicit).expanduser()
+    state_dir = values.get("OPENCLAW_STATE_DIR")
+    if state_dir:
+        return Path(state_dir).expanduser() / "openclaw.json"
+    return resolve_home(home) / ".openclaw" / "openclaw.json"
+
+
+def openclaw_config(home: Path | None = None, env: Mapping[str, str] | None = None) -> Path:
+    """OpenClaw's own configuration file, which also carries its MCP servers.
+
+    Precedence follows OpenClaw itself: `$OPENCLAW_CONFIG_PATH` (a file),
+    then `$OPENCLAW_STATE_DIR/openclaw.json`, finally `~/.openclaw/openclaw.json`.
+    The file holds everything OpenClaw knows (models, channels, gateway
+    settings), so the renderer only ever touches the `mcp.servers` table.
+
+    ``env`` is the environment a caller was given: detection and its tests.
+    """
+    return _openclaw_config_impl(home, env)
+
+
+def is_machine_home(home: Path | None = None) -> bool:
+    """Whether this is the home the machine really uses, not a copy beside it.
+
+    `NEXGEN_HOME` exists to run a checkout beside a working installation, and
+    some facts are about the machine rather than about a folder: a gateway on a
+    loopback port is one per machine, and it belongs to the installation that is
+    running. Asked from a copy, such a check would answer about someone else's
+    process and take credit for it, or blame the copy for a port it does not own.
+    """
+    real = Path.home()
+    candidate = real if home is None else Path(home).expanduser()
+    try:
+        return candidate.resolve() == real.resolve()
+    except OSError:  # nexgen: allow reason="a path that cannot be resolved cannot be the machine's own home"
+        return False
+
+
 def _antigravity_settings_impl(home: Path | None = None) -> Path:
     """Implementation behind :func:`antigravity_settings`."""
     return resolve_home(home) / ".gemini" / "antigravity-cli" / "settings.json"
@@ -470,5 +532,5 @@ def _antigravity_hooks_impl(home: Path | None = None) -> Path:
 
 
 def antigravity_hooks(home: Path | None = None) -> Path:
-    """Antigravity's event-sink hook registration file."""
+    """Antigravity's hooks registration file."""
     return _antigravity_hooks_impl(home)

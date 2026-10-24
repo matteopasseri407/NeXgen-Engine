@@ -286,7 +286,9 @@ def test_a_lazy_add_to_a_manifest_without_the_gateway_adds_the_gateway_too(sandb
     assert GATEWAY in message, "the person is told why a second entry appeared"
     servers = load_mcp_manifest(_manifest_path(sandbox))["servers"]
     assert GATEWAY in servers and "demo" in servers
-    assert servers[GATEWAY]["exposure"] == "eager" and servers[GATEWAY]["targets"] == ["claude", "codex", "antigravity", "opencode"]
+    assert servers[GATEWAY]["exposure"] == "eager" and servers[GATEWAY]["targets"] == [
+        "claude", "codex", "antigravity", "opencode", "openclaw",
+    ]
     assert problems(servers) == [], "what was added is reachable, not routed to a gateway nobody mounts"
 
 

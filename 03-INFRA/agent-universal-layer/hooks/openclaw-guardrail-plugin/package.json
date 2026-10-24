@@ -1,0 +1,10 @@
+{
+  "name": "nexgen",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The NeXgen engine for OpenClaw: guardrail, vault briefing, /quota and Workshop notices (mechanism only: the policy is a sidecar).",
+  "openclaw": {
+    "extensions": ["./index.mjs"]
+  }
+}

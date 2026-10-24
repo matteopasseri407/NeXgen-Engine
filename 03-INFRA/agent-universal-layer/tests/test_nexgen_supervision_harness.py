@@ -6,12 +6,15 @@ finisca in una riga di comando, e la ricerca della sessione per cartella e ora.
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from nexgen_local import supervision_harness as harness
+from nexgen_local import supervision_costs as costs
+from nexgen_local import supervision_permissions as permissions
 from nexgen_local import supervision_policy as policy
 from nexgen_local import supervision_state as state
 
@@ -76,6 +79,35 @@ def test_run_opens_the_harness_on_the_unit_and_attaches_its_session(task, unit, 
     assert [row["event"] for row in state.read_events(task)] == [
         "started", "unit_created", "unit_started", "attached",
     ]
+
+
+def test_run_writes_the_profile_with_only_the_mcp_the_unit_was_given(task, lane, tmp_path, monkeypatch):
+    """La copia di un lavoratore nasce senza MCP: il profilo spegne i globali che il supervisore non ha assegnato."""
+    folder = lane / task / "23-unita-mcp"
+    folder.mkdir(parents=True)
+    (lane / task / "20-brief-mcp.md").write_text("# Brief\n", encoding="utf-8")
+    state.append_event(
+        task, "unit_created", unit="mcp", worktree=str(folder), branch=f"sup/{task}/mcp",
+        base="0" * 40, allow=["docs/*.md"], verify="", repo=str(tmp_path), mcp=["vault"],
+    )
+    global_config = tmp_path / "opencode-globale.json"
+    global_config.write_text(json.dumps({"mcp": {"servers": {
+        "vault": {"type": "local", "command": ["node", "v.js"]},
+        "playwright": {"type": "local", "command": ["node", "p.js"]},
+    }}}), encoding="utf-8")
+    monkeypatch.setattr(permissions, "opencode_config_path", lambda home=None: global_config)
+    monkeypatch.setattr(harness, "_opencode_executable", lambda: "opencode-finto")
+    monkeypatch.setattr(harness.costs, "record", lambda *a, **k: {"session": "s"})
+
+    harness.run_unit(
+        task, "mcp",
+        opener=lambda title, argv, *, cwd, marker="": {"title": title, "pid": 1},
+        lister=lambda: [], wait_s=0,
+    )
+
+    servers = json.loads((folder / "opencode.json").read_text(encoding="utf-8"))["mcp"]["servers"]
+    assert "vault" not in servers, "il server assegnato resta quello globale"
+    assert servers["playwright"] == {"type": "local", "command": ["node", "p.js"], "disabled": True}
 
 
 def test_run_says_so_when_no_session_can_be_told_apart(task, unit, monkeypatch):
@@ -576,3 +608,117 @@ def test_a_delivery_with_the_tab_still_open_stays_off_the_screen(task, unit, mon
     )
 
     assert result["mode"] == "run" and sent == ["ses_libera"]
+
+
+def test_rework_to_busy_session_queues_and_never_opens_a_second_tab_in_the_same_copy(task, unit, monkeypatch):
+    """Una sessione occupata al lavoro riceve le correzioni in coda; mai una seconda scheda nella stessa copia."""
+    state.append_event(
+        task, "attached", unit="prova", role="esecutore", harness="opencode",
+        session="ses_occupata", folder=str(unit),
+    )
+    other_folder = unit.parent / "23-unita-seconda"
+    other_folder.mkdir(parents=True, exist_ok=True)
+    state.append_event(
+        task, "unit_created", unit="seconda", worktree=str(other_folder),
+        branch=f"sup/{task}/seconda", base="0" * 40, allow=["docs/*.md"],
+    )
+    state.append_event(
+        task, "attached", unit="seconda", role="esecutore", harness="opencode",
+        session="ses_seconda", folder=str(other_folder),
+    )
+
+    review_file = unit.parent / "45-revisione-prova-1.md"
+    review_file.write_text("# Revisione\n\ncorrezioni da applicare\n", encoding="utf-8")
+
+    opened: list = []
+    sent: list = []
+
+    def fake_measure(session):
+        if session == "ses_occupata":
+            return SimpleNamespace(stopped=False, model="opencode-go/m")
+        return SimpleNamespace(stopped=True, model="opencode-go/m")
+
+    result = harness.send_corrections(
+        task, "prova", review_file, 1,
+        opener=lambda *a, **k: opened.append(a) or {"title": "finto", "pid": 99},
+        runner=lambda *a, **k: sent.append(a) or SimpleNamespace(pid=100),
+        measure=fake_measure, lister=lambda: [], wait_s=0,
+    )
+
+    assert result["mode"] == "queued"
+    assert result["session"] == "ses_occupata"
+    assert opened == [], "non deve mai aprire una scheda nuova nella copia con sessione viva"
+    assert sent == [], "nessun turno inviato con la sessione occupata"
+
+    events = [r for r in state.read_events(task) if r.get("unit") == "prova"]
+    queued = [r for r in events if r.get("event") == "unit_queued"]
+    assert len(queued) == 1
+    assert queued[0]["session"] == "ses_occupata"
+    assert queued[0]["reason"] == "sessione occupata"
+    assert not any(r.get("event") == "harness_session_foreign" for r in events)
+
+
+def test_rework_on_an_unverifiable_session_queues_instead_of_opening_a_tab(task, unit, monkeypatch):
+    """Una sessione che il motore non riesce a leggere non è morta: niente seconda scheda sopra di lei."""
+    other_folder = unit.parent / "23-unita-altra"
+    other_folder.mkdir(parents=True, exist_ok=True)
+    state.append_event(
+        task, "attached", unit="prova", role="esecutore", harness="opencode",
+        session="ses_illeggibile", folder=str(other_folder),
+    )
+    review_file = unit.parent / "45-revisione-prova-1.md"
+    review_file.write_text("# Revisione\n\ncorrezioni\n", encoding="utf-8")
+
+    def unreadable(session):
+        raise costs.CostError("export non leggibile")
+
+    result = harness.send_corrections(
+        task, "prova", review_file, 1,
+        opener=lambda *a, **k: pytest.fail("nessuna scheda su una sessione non verificabile"),
+        runner=lambda *a, **k: pytest.fail("nessun turno su una sessione non verificabile"),
+        measure=unreadable, lister=lambda: [], wait_s=0,
+    )
+
+    assert result["mode"] == "queued"
+    assert "non verificabile" in result["reason"]
+    queued = [r for r in state.read_events(task) if r.get("event") == "unit_queued"]
+    assert len(queued) == 1 and queued[0]["round"] == 1
+
+
+def test_a_turn_that_dies_before_its_envelope_keeps_what_it_said(unit, monkeypatch):
+    """Lo stderr di un turno va in un file della cartella del compito, non in DEVNULL.
+
+    Un turno che muore prima della busta JSON scrive la ragione solo su stderr: con
+    `stderr=DEVNULL` il supervisore trova un log vuoto e nessuna causa.
+    """
+    written: dict = {}
+
+    class FakePopen:
+        def __init__(self, argv, **kwargs):
+            written.update(kwargs)
+            handle = kwargs.get("stderr")
+            if hasattr(handle, "write"):
+                handle.write("Error: provider ha rifiutato il modello\n")
+                handle.flush()
+            self.pid = 4242
+
+    class Adapter:
+        name = "finto"
+
+        def check_folder(self, folder):
+            """La copia esiste: qui la cartella non e' il punto del test."""
+
+        def send_argv(self, executable, session, prompt, model=""):
+            return [executable, "-c", "pass"]
+
+        def turn_log(self, session):
+            return None
+
+    monkeypatch.setattr(harness.subprocess, "Popen", FakePopen)
+
+    harness._run_turn(Adapter(), "eseguibile", "ses_prova", "prompt", unit)
+
+    log = unit.parent / "60-stderr-ses_prova.log"
+    assert written["stderr"] is not subprocess.DEVNULL
+    assert log.is_file(), "nessun file di stderr nella cartella del compito"
+    assert "provider ha rifiutato il modello" in log.read_text(encoding="utf-8")

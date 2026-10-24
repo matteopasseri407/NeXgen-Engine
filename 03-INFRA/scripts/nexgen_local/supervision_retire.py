@@ -13,14 +13,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nexgen_core.discipline.gitutil import GitError, git, is_ancestor
+from nexgen_core.discipline.gitutil import LONG_PATHS, GitError, git, is_ancestor
 
 from . import supervision_adapters as adapters
 from . import supervision_state as state
 from .supervision_state import SupervisionError
 
-#: Windows refuses a path over MAX_PATH unless every command is told to allow it.
-LONG_PATHS = ("-c", "core.longpaths=true")
 #: Where an unpublished unit's history is kept after its branch goes.
 ARCHIVE_PREFIX = "refs/nexgen/archive"
 

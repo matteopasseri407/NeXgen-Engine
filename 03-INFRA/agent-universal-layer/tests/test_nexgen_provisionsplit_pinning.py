@@ -31,7 +31,7 @@ def _git_repo_with_commit(tmp: Path) -> tuple[str, str]:
     subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
     rev = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=repo, check=True,
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     ).stdout.strip()
     return repo.as_uri(), rev
 

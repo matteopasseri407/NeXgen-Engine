@@ -68,3 +68,79 @@ def check_guardrail_consulted(home: Path) -> list[CheckOutcome]:
             ),
         ))
     return outcomes
+
+
+def check_openclaw_guardrail_plugin(home: Path) -> CheckOutcome | None:
+    """OpenClaw's guardrail: is the plugin deposited, and is it enabled?
+
+    Two separate facts, because they are repaired by two different steps. The
+    plugin directory is deposited by the guard cycle (byte for byte, with its
+    sidecar); enabling it is a `plugins.*` change, which the guard never makes
+    because editing that block under a running gateway breaks it.
+    """
+    from nexgen_core.mcp_render import load_json_object
+    from nexgen_core.paths import openclaw_config
+    from nexgen_core.runtimes.openclaw import PLUGIN_ID, OpenClawRuntime
+
+    runtime = OpenClawRuntime()
+    if not runtime.is_installed(home):
+        return None
+    sidecar = runtime.guardrail_sidecar(home)
+    if sidecar is None:  # never for this adapter; the contract allows it
+        return None
+    plugin_dir = sidecar.parent
+    if not sidecar.is_file() or not (plugin_dir / "index.mjs").is_file():
+        return CheckOutcome(
+            id="guardrail.openclaw_plugin",
+            severity=Severity.WARN,
+            message=t("OpenClaw's guardrail plugin is not deposited in {path}.", path=plugin_dir),
+            action=t(
+                "Run 'nexgen sync' to deposit it; enabling it is a separate step, 'nexgen openclaw setup'."
+            ),
+        )
+    try:
+        config = load_json_object(openclaw_config(home))
+    except ValueError as exc:
+        return CheckOutcome(
+            id="guardrail.openclaw_plugin",
+            severity=Severity.UNDETERMINED,
+            message=t("OpenClaw's configuration could not be read, so the plugin's state is unknown: {error}", error=exc),
+            action=t("Fix the JSON in OpenClaw's own configuration file, then run 'nexgen doctor' again."),
+        )
+    reason = openclaw_plugin_disabled_reason(config, PLUGIN_ID)
+    if reason:
+        return CheckOutcome(
+            id="guardrail.openclaw_plugin",
+            severity=Severity.WARN,
+            message=t("OpenClaw's guardrail plugin is deposited but not enabled ({reason}).", reason=reason),
+            action=t(
+                "Run 'nexgen openclaw setup' to enable it with the gateway stopped: a plugins.* change "
+                "on a running gateway breaks it. Until then OpenClaw's shell commands are not checked."
+            ),
+        )
+    return CheckOutcome(
+        id="guardrail.openclaw_plugin",
+        severity=Severity.OK,
+        message=t("OpenClaw's guardrail plugin is deposited and enabled"),
+    )
+
+
+def openclaw_plugin_disabled_reason(config: dict, plugin_id: str) -> str | None:
+    """Why OpenClaw would not load `plugin_id`, or None when it would.
+
+    The three gates are the ones OpenClaw documents: an explicit `deny`, an
+    entry switched off, and a non-empty `allow` list that does not name it. An
+    absent or empty `allow` list is not "disabled": it means no allowlist at all.
+    """
+    plugins = config.get("plugins") if isinstance(config.get("plugins"), dict) else {}
+    deny = plugins.get("deny")
+    if isinstance(deny, list) and plugin_id in {str(name).lower() for name in deny}:
+        return t("it is in plugins.deny")
+    entries = plugins.get("entries") if isinstance(plugins.get("entries"), dict) else {}
+    entry = entries.get(plugin_id) if isinstance(entries.get(plugin_id), dict) else {}
+    if entry.get("enabled") is False:
+        return t("plugins.entries.{id}.enabled is false", id=plugin_id)
+    allow = plugins.get("allow")
+    if isinstance(allow, list) and allow and plugin_id not in {str(name).lower() for name in allow}:
+        return t("plugins.allow names other plugins only")
+    return None

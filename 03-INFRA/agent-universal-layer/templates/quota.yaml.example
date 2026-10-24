@@ -1,0 +1,48 @@
+# The ceilings this machine knows, so `nexgen quota` can show a percentage.
+#
+# Without this file the report still shows what was spent on each paid lane and
+# says the ceiling is missing. It never invents a percentage, because a number
+# divided by a guessed maximum is worse than no number at all.
+#
+# Copy it to 03-INFRA/agent-universal-layer/quota.yaml, keep the lanes you pay
+# for, and set the ceiling you actually have. One entry per provider and window:
+# the window keys are the ones the report prints (5h, 7d, 30d).
+#
+# After a plan change, edit this file: the next `nexgen quota` and the next
+# heartbeat use it, and nothing else needs restarting.
+
+limits:
+  # The flat subscription, billed per window on the provider's own dashboard.
+  opencode-go:
+    5h: 12.0
+    7d: 60.0
+    # 30d: 200.0
+  # OpenCode Zen charges per token; its free models cost zero and need no entry.
+  # opencode:
+  #   7d: 10.0
+
+# What a turn does when a plan runs out. Optional, and empty by default: which
+# providers to pay for and in which order is your rule, not the engine's, so
+# nothing here is filled in for you.
+#
+# `chain` applies to every OpenClaw agent the engine creates; `agents` overrides
+# it for one of them. Write each model the way OpenClaw names it,
+# `provider/model`. `nexgen openclaw setup` copies the chains into the agents,
+# and `nexgen openclaw plan` shows what it would add before it does.
+#
+# A chain you wrote by hand in OpenClaw is never removed: yours stays first and
+# the policy only adds what is missing.
+#
+# failover:
+#   # The percentage above which a turn starts on the fallback instead of the
+#   # plan that is about to stop answering. 95 is the urgent alert band.
+#   block_at: 95
+#   # How old a reading may be before the plugin ignores it. The beat writes one
+#   # every hour, so three hours is three missed beats.
+#   state_max_age_minutes: 180
+#   chain:
+#     - anthropic/claude-opus-5-5
+#     - opencode-go/deepseek-v4-pro
+#   agents:
+#     capo:
+#       - openai/gpt-6-luna

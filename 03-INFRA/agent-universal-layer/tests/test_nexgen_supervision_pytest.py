@@ -103,3 +103,250 @@ def test_a_full_suite_counts_the_base_and_the_head(tmp_path):
     assert (before.ok, before.tests) == (True, 2)
     assert (after.ok, after.tests) == (True, 3)
     assert pytest_runs.check(repo.path, base, head, [_change("tests/test_nuovo.py")], [])[0] is True
+
+
+# --- il ritiro autorizzato dal proprietario ---------------------------------
+
+
+def _authorise(repo, globs: list[str]) -> str:
+    """La base che autorizza il ritiro: la regola vale dal commit, non dal disco dell'unità."""
+    listed = ", ".join(f'"{glob}"' for glob in globs)
+    repo.write(".nexgen-discipline.toml", f"test_removal_ok = [{listed}]\n")
+    return repo.commit("chore: autorizza il ritiro di alcuni test")
+
+
+def _retire(repo, *paths: str) -> str:
+    for path in paths:
+        (repo.path / path).unlink()
+    return repo.commit("test: ritira i test")
+
+
+def test_a_retired_test_is_allowed_when_the_base_authorises_its_file(tmp_path):
+    """Il proprietario ha messo il percorso in `test_removal_ok` sulla base: il ritiro passa e si dice."""
+    repo = build(tmp_path / "sandbox")
+    repo.write("tests/test_via.py", "def test_via():\n    assert True\n")
+    base = _authorise(repo, ["tests/test_via.py"])
+    head = _retire(repo, "tests/test_via.py")
+
+    ok, reason = pytest_runs.check(repo.path, base, head, [_change("tests/test_via.py")], [])
+
+    assert ok, reason
+    assert "1 test ritirato" in reason
+    assert "tests/test_via.py" in reason
+    assert "autorizzati" in reason
+
+
+def test_one_test_lost_outside_the_authorised_files_fails_and_is_named(tmp_path):
+    """Un solo test perso fuori dai file autorizzati tiene il cancello chiuso, e il motivo lo nomina."""
+    repo = build(tmp_path / "sandbox")
+    repo.write("tests/test_via.py", "def test_via():\n    assert True\n")
+    base = _authorise(repo, ["tests/test_via.py"])
+    head = _retire(repo, "tests/test_via.py", "tests/test_sample.py")
+
+    ok, reason = pytest_runs.check(
+        repo.path, base, head,
+        [_change("tests/test_via.py"), _change("tests/test_sample.py")], [],
+    )
+
+    assert not ok
+    assert "fuori dai file autorizzati" in reason
+    assert "tests/test_sample.py::test_value" in reason
+    assert "tests/test_via.py" not in reason, "i test autorizzati non entrano fra i rifiutati"
+
+
+def test_a_unit_cannot_authorise_its_own_retirement(tmp_path):
+    """L'autorizzazione si legge sulla base: un'unità che se la scrive da sola non passa."""
+    repo = build(tmp_path / "sandbox")
+    base = repo.head()
+    repo.write(".nexgen-discipline.toml", 'test_removal_ok = ["tests/test_sample.py"]\n')
+    head = _retire(repo, "tests/test_sample.py")
+
+    ok, reason = pytest_runs.check(
+        repo.path, base, head,
+        [_change(".nexgen-discipline.toml"), _change("tests/test_sample.py")], [],
+    )
+
+    assert not ok
+    assert "test_sample.py::test_value" in reason
+
+
+def test_the_nodes_are_what_pytest_listed():
+    """Gli id elencati e la riga di riepilogo devono concordare: una riga stampata non vale da sola."""
+    output = "tests/test_x.py::test_one\ntests/test_x.py::test_due[a]\n\n2 tests collected in 0.02s\n"
+
+    assert pytest_runs._node_ids(output) == ("tests/test_x.py::test_one", "tests/test_x.py::test_due[a]")
+    assert pytest_runs._node_ids("") is None
+
+
+# --- una rinomina non è un test perso ---------------------------------------
+
+
+def test_a_rename_that_keeps_the_count_passes(tmp_path):
+    """Stanotte una rinomina è stata letta come un test perso: il pavimento è il numero, l'id è l'estensione."""
+    repo = build(tmp_path / "sandbox")
+    base = repo.head()
+    repo.write("tests/test_sample.py", (
+        "from module import value\n"
+        "\n"
+        "def test_ancora():\n"
+        "    assert value() == 1\n"
+        "\n"
+        "def test_nome():\n"
+        "    assert 'prova' != 'prova'\n"
+    ))
+    head = repo.commit("test: rinomina un test e inverte l'aspettativa")
+
+    ok, reason = pytest_runs.check(repo.path, base, head, [_change("tests/test_sample.py")], [])
+
+    assert ok, reason
+    assert "2 test" in reason
+    assert "tests/test_sample.py::test_value" in reason, "il node id sparito si nomina, a titolo informativo"
+    assert "non c'è più" in reason
+
+
+def test_a_rename_plus_an_unauthorised_removal_fails_and_names_both(tmp_path):
+    """Il pavimento non apre la porta: se il conteggio cala, ogni node id perso deve essere autorizzato."""
+    repo = build(tmp_path / "sandbox")
+    base = repo.head()
+    repo.write("tests/test_sample.py", (
+        "from module import value\n"
+        "\n"
+        "def test_ancora():\n"
+        "    assert value() == 1\n"
+    ))
+    head = repo.commit("test: rinomina un test e ne ritira un altro")
+
+    ok, reason = pytest_runs.check(repo.path, base, head, [_change("tests/test_sample.py")], [])
+
+    assert not ok
+    assert "tests/test_sample.py::test_value" in reason
+    assert "tests/test_sample.py::test_nome" in reason
+
+
+# --- il permesso è del supervisore, e vale commit per commit ----------------
+
+
+def _retirable(tmp_path):
+    """Una base con un test in più e nessuna autorizzazione scritta: il permesso lo porta l'unità."""
+    repo = build(tmp_path / "sandbox")
+    repo.write("tests/test_via.py", "def test_via():\n    assert True\n")
+    repo.commit("test: aggiunge un test da ritirare")
+    return repo, repo.head()
+
+
+def test_a_retirement_authorised_by_the_previous_commit_passes_commit_by_commit(tmp_path):
+    """Con il permesso, l'autorizzazione vale se il commit che ritira il test l'ha già ereditata."""
+    repo, base = _retirable(tmp_path)
+    _authorise(repo, ["tests/test_via.py"])
+    head = _retire(repo, "tests/test_via.py")
+
+    ok, reason = pytest_runs.check(
+        repo.path, base, head, [_change(".nexgen-discipline.toml"), _change("tests/test_via.py")], [],
+        by_commit=True,
+    )
+
+    assert ok, reason
+    assert "1 test ritirato" in reason
+    assert "tests/test_via.py" in reason
+    assert "del commit precedente" in reason
+
+
+def test_the_same_retirement_fails_when_the_unit_may_not_carry_the_rules(tmp_path):
+    """Senza il permesso resta la regola di sempre: solo la base autorizza, e questa base non lo fa."""
+    repo, base = _retirable(tmp_path)
+    _authorise(repo, ["tests/test_via.py"])
+    head = _retire(repo, "tests/test_via.py")
+
+    ok, reason = pytest_runs.check(repo.path, base, head, [_change("tests/test_via.py")], [])
+
+    assert not ok
+    assert "fuori dai file autorizzati" in reason
+    assert "tests/test_via.py::test_via" in reason
+
+
+def test_authorising_and_retiring_in_the_same_commit_is_refused(tmp_path):
+    """Un commit che scrive l'autorizzazione e toglie il test insieme non se la concede: FAIL, col commit nominato."""
+    repo, base = _retirable(tmp_path)
+    repo.write(".nexgen-discipline.toml", 'test_removal_ok = ["tests/test_via.py"]\n')
+    (repo.path / "tests" / "test_via.py").unlink()
+    head = repo.commit("test: autorizza e ritira nello stesso commit")
+
+    ok, reason = pytest_runs.check(
+        repo.path, base, head, [_change(".nexgen-discipline.toml"), _change("tests/test_via.py")], [],
+        by_commit=True,
+    )
+
+    assert not ok
+    assert "tests/test_via.py::test_via" in reason
+    assert f"commit {head[:8]}" in reason
+
+
+def test_an_authorisation_that_arrives_after_the_removal_does_not_save_it(tmp_path):
+    """Il genitore del commit che ritira non autorizzava: scriverlo dopo non cambia quel commit."""
+    repo, base = _retirable(tmp_path)
+    _retire(repo, "tests/test_via.py")
+    _authorise(repo, ["tests/test_via.py"])
+
+    ok, reason = pytest_runs.check(
+        repo.path, base, repo.head(),
+        [_change(".nexgen-discipline.toml"), _change("tests/test_via.py")], [],
+        by_commit=True,
+    )
+
+    assert not ok
+    assert "tests/test_via.py::test_via" in reason
+
+
+def test_a_loss_nobody_authorised_still_fails_commit_by_commit(tmp_path):
+    """Il permesso non indebolisce il cancello: un test perso senza autorizzazione resta un FAIL."""
+    repo, base = _retirable(tmp_path)
+    head = _retire(repo, "tests/test_sample.py")
+
+    ok, reason = pytest_runs.check(
+        repo.path, base, head, [_change("tests/test_sample.py")], [], by_commit=True,
+    )
+
+    assert not ok
+    assert "tests/test_sample.py::test_value" in reason
+
+
+def test_a_rename_that_keeps_the_count_passes_commit_by_commit(tmp_path):
+    """Anche commit per commit il pavimento è il numero: una rinomina non chiede autorizzazione."""
+    repo, base = _retirable(tmp_path)
+    repo.write("tests/test_sample.py", (
+        "from module import value\n"
+        "\n"
+        "def test_ancora():\n"
+        "    assert value() == 1\n"
+        "\n"
+        "def test_nome():\n"
+        "    assert 'prova' == 'prova'\n"
+    ))
+    head = repo.commit("test: rinomina un test")
+
+    ok, reason = pytest_runs.check(
+        repo.path, base, head, [_change("tests/test_sample.py")], [], by_commit=True,
+    )
+
+    assert ok, reason
+    assert "tests/test_sample.py::test_value" in reason, "il node id sparito si nomina, a titolo informativo"
+
+
+def test_a_rename_plus_an_unauthorised_removal_fails_commit_by_commit(tmp_path):
+    """Con il conteggio in calo la rinomina non basta: il test perso senza autorizzazione resta un FAIL."""
+    repo, base = _retirable(tmp_path)
+    repo.write("tests/test_sample.py", (
+        "from module import value\n"
+        "\n"
+        "def test_ancora():\n"
+        "    assert value() == 1\n"
+    ))
+    head = repo.commit("test: rinomina un test e ne ritira un altro")
+
+    ok, reason = pytest_runs.check(
+        repo.path, base, head, [_change("tests/test_sample.py")], [], by_commit=True,
+    )
+
+    assert not ok
+    assert "tests/test_sample.py::test_value" in reason
+    assert "tests/test_sample.py::test_nome" in reason

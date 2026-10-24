@@ -3,8 +3,8 @@
 The lane ships with `nexgen-engine`, including LangChain/Ollama, LangGraph
 and SQLite checkpoint dependencies. The `[local]` extra remains an empty
 compatibility alias. A model endpoint and connector accounts are configured
-separately. Retrieval is read-only; mutations use staged proposals and
-explicit approval commands.
+separately. Retrieval is read-only; the only mutation is a Drive upload,
+staged as a proposal and applied by an explicit approval command.
 
 ## The problem
 
@@ -24,13 +24,13 @@ The lane follows one rule: **the engine decides and the model fills slots**.
 - The engine classifies the request, validates any path against real files,
   builds the search query, ranks results, repairs a single empty search, and
   reads the top hit. The model never chooses a tool freely.
-- The model-facing retrieval tools are read-only. The bounded loop can also
-  stage mail and upload proposals, but cannot send or apply them. Mutating
-  commands verify the approved artifact and record intent before execution.
+- The model-facing retrieval tools are read-only. The engine's own paths can
+  stage a Drive upload proposal, but cannot send it. The upload command
+  verifies the approved artifact and records intent before execution.
 - Every call is appended to a JSONL audit. An audit that cannot be written
-  refuses the call instead of proceeding without a receipt. For the pen the
-  order is explicit: the intent is recorded before the patch is applied, the
-  outcome after, so no write exists without a receipt.
+  refuses the call instead of proceeding without a receipt. The upload gate
+  records the intent before the file leaves and the outcome after, so no
+  write exists without a receipt.
 - The answer is checked against the receipts before it is shown. Claims of
   work done with no successful receipt, citations of paths that were never
   read, and any claimed write are machine-verified problems: the eval fails
@@ -45,23 +45,24 @@ LangGraph mounts the same helpers on an explicit three-node state machine
 retrieve"). The contract lives in plain Python and is tested without the
 framework, so the driver stays replaceable. `llm.py` owns the LangChain
 adapter; `nexgen_core` has no LangChain or LangGraph imports. The orchestration
-dependencies belong to the installed engine package. The persistent research
-and Council relay graphs use SQLite checkpoints; the ephemeral loop and
-Council consult use Python and futures.
+dependencies belong to the installed engine package. The resumable Council
+relay and the supervision graph use SQLite checkpoints; Council consult uses
+Python and futures.
 
 The router validates field types before interpreting JSON: source must be a
 known name, keywords a list of strings, and path a string without NUL bytes.
 An invalid form uses deterministic routing without another model call.
-The generic JSON channel also serves patch proposals and extraction jobs;
-those consumers validate their own forms.
+The generic JSON channel serves the router alone: no other lane path asks
+the model for structured data.
 
-Framework boundaries follow persistence needs. Research and resumable relay
-keep LangGraph; consult keeps its existing parallel executor, cancellation
-and progressive transcripts. The review-round runner follows one seat through
-successive critiques, so multi-seat consensus is not its stopping rule.
-Retrieval windows preserve source offsets and coverage; a text splitter alone
-does not provide that contract. Proposal artifacts and receipts remain owned
-by the engine, independently of model callbacks or graph checkpoints.
+Framework boundaries follow persistence needs. The resumable relay and the
+supervision graph keep LangGraph; consult keeps its existing parallel
+executor, cancellation and progressive transcripts. The review-round runner
+follows one seat through successive critiques, so multi-seat consensus is
+not its stopping rule. Retrieval windows preserve source offsets and
+coverage; a text splitter alone does not provide that contract. Proposal
+artifacts and receipts remain owned by the engine, independently of model
+callbacks or graph checkpoints.
 
 ## Measured evidence (2026-09-25, 12 GB consumer GPU)
 
@@ -130,7 +131,7 @@ hosted.
 
 **LangGraph is the orchestration layer**, and it earns its place only where a run has state worth
 surviving a crash or a human gate worth waiting at. It is used for exactly that today: the lane's routing
-graph, the persistent research sessions (SQLite checkpoints), and the Council's resumable relay, which drives
+graph, the supervision unit graph (SQLite checkpoints), and the Council's resumable relay, which drives
 frontier seats and records an invoked-but-unanswered call as an uncertainty instead of silently spending
 quota twice. The Council's parallel `consult` is ephemeral on purpose (hard budgets, no resume), and the
 vault grooming pass is a four-step guarded flow whose state already lives in its plan record and clone;
@@ -144,7 +145,7 @@ that reaches an answer, one confabulation or one plainly failed task fails the r
 
 ```bash
 nexgen local eval --suite traps --model <tag>      # the blocking gate, a minute or two
-nexgen local eval --suite all   --model <tag>      # capability, traps, patch gate, jobs, agent loop
+nexgen local eval --suite all   --model <tag>      # capability and traps
 nexgen local eval --suite traps --model <tag> --bare   # the model alone, without the engine's injection layer
 ```
 
@@ -160,73 +161,37 @@ withholds instruction-shaped lines turned a trap suite that failed on injections
 the stronger of the two. The default 12B (`gemma4-12b-openclaw`) was not available on that machine, so
 its own numbers are the ones to take on the GPU desktop.
 
-## Propose and apply (the pen, gated)
+## The one mutation: Drive upload
 
 ```bash
-nexgen-local propose --file notes.md --instruction "Correggi il refuso 'contiente'."
-nexgen-local proposals
-nexgen-local apply 20260925-213501-ab12cd34 --yes --verify "pytest -q"
+nexgen-local drive-propose --file Contratto.txt
+nexgen-local drive-upload 20260926-120000-ab12cd34 --yes
 ```
 
-The model returns a snippet replacement as JSON; the engine checks that the
-snippet occurs exactly once, computes the unified diff, dry-runs it with
-`git apply --check`, and stores the proposal as an artifact under the state
-directory. The approval screen prints machine facts only: canonical path,
-original hash, diff, dry-run result. The model's prose is stored, labelled as
-unverified, and is never evidence. The proposal is bound to the canonical
-root it was dry-run against: applying with a different root is refused, and
-the relative path is never re-resolved elsewhere. Applying re-checks the
-original file hash first and refuses a stale proposal; a proposal whose
-dry-run failed cannot be applied at all. The intent is written to the audit
-before the patch, the outcome after; an unwritable audit refuses the
-application before the file is touched. With `--verify`, the exit code tells
-the two states apart: 0 applied and verified (or not requested), 1 refused or
-apply failed, 3 applied but verification failed. The model never writes.
+`drive-propose` stages a file that lives inside the vault or a declared
+repository root and prints machine facts only: canonical path, size, sha256,
+MIME type and destination. `drive-upload` sends it once, only with an
+explicit `--yes`. A changed file, a reused id, a missing confirm or missing
+tokens all refuse without touching Drive. The model never writes.
 
-Patch, mail, calendar, upload and workflow gates share `proposals.py` for
-proposal ids, a per-proposal host lock and durable attempt recording. They
-reload and validate under the lock. After the intent receipt, `attempted_at`
-is saved before the mutating call; a failed record prevents execution. A
-patch approval also holds the directory's stable `.apply.lock` until outcome
-storage finishes, so two different proposal ids cannot race the same file.
-The competing approval refuses before recording an attempt; it can be
-reviewed again after the active patch finishes, with its base hash rechecked.
-This also coordinates with earlier patch gates using that lock. A
-saved attempt without `applied_at` is uncertain, including a crash, transport
-failure or final-save failure. Repeating that proposal id refuses. Verify the
-real outcome before preparing a new proposal; an attempt alone does not prove
-completion. Lists show uncertain attempts as `esito da verificare`.
-Older `sending_at` records load as attempted and remain visible in lists.
-Mail, calendar, upload metadata and workflow parameters carry a fingerprint
-bound when staged. A changed field or a missing fingerprint requires a fresh
-proposal and approval. Existing unambiguous fingerprints remain supported.
-The fingerprint detects changes; it does not authenticate a JSON file against
-a writer who can replace both its fields and fingerprint. Successful completion
-still saves the provider id and outcome receipt. Drive artifacts use the same
-private atomic writer as the other gates.
+Proposal machinery is shared and lives in `proposals.py`: ids, a per-proposal
+host lock and durable attempt recording. The gate reloads and validates under
+the lock, and the artifact id must match the locked filename. After the intent
+receipt, `attempted_at` is saved before the upload call; a failed record
+prevents execution. A saved attempt without `applied_at` is uncertain,
+including a crash, transport failure or final-save failure. Repeating that
+proposal id refuses. Verify the real outcome before preparing a new proposal;
+an attempt alone does not prove completion. Lists show uncertain attempts as
+`esito da verificare`. Older `sending_at` records load as attempted and remain
+visible in lists. Upload metadata carries a fingerprint bound when staged: a
+changed field or a missing fingerprint requires a fresh proposal and approval,
+and existing unambiguous fingerprints remain supported. The fingerprint
+detects changes; it does not authenticate a JSON file against a writer who can
+replace both its fields and fingerprint. Successful completion still saves the
+provider id and outcome receipt, through the same private atomic writer as the
+other artifacts.
 
-## Relay (F4 v0)
-
-```bash
-nexgen-local relay --list
-nexgen-local relay --cli opencode --model opencode/muse-spark-1.3-contributor-free --prompt "Domanda"
-nexgen-local relay --cli claude --model claude-opus-5 --prompt "Rivedi questo piano" --file piano.md
-```
-
-One bounded hand-off to another installed CLI, read-only and isolated like a
-Council seat: env allowlist, isolated config directories for codex/opencode,
-`-s read-only` (codex), `--tools ""` (claude), no MCP credentials, hard
-timeout, capped output, one audit receipt per call. The temporary directory
-holding the prompt and the isolated credential copies is removed at the end
-of the call, on success, error and timeout alike. For opencode the isolated
-config additionally denies `edit`, `bash` and `webfetch` by construction.
-Attachments must live under the vault or a repository root;
-`--allow-outside-attach` forces a different path explicitly and loudly. The
-answer is shown to the user; it is never fed back into a mutating chain
-automatically. `agy` is not supported in v0 because its isolation is
-prompt-only.
-
-## Personal connectors (Gmail, Drive — read-only, v1)
+## Personal connectors (Gmail, Drive, Calendar, Outlook — read-only)
 
 `nexgen_local/connectors/` owns Gmail, Drive, Calendar and Outlook reads at
 engine level: the same REST shapes and machine-local token stores as the
@@ -234,11 +199,10 @@ private runtime adapters, reimplemented dependency-free (stdlib `urllib`)
 with the lane's receipt and outcome contract. No MCP server, no new dependency.
 
 - Reads only: `search_mail`/`read_mail`, `search_outlook`/`read_outlook`,
-  `search_drive`/`read_drive`, `search_calendar`/`read_calendar`. No
-  send, reply, upload, delete or event mutation exists in this package on purpose:
-  writes need a propose/approve gate (mail in `compose.py` with
-  `--provider gmail|outlook`, calendar in `calendars.py`, uploads in
-  `drive_mcp.py`, workflows in `workflows.py`).
+  `search_drive`/`read_drive`, `search_calendar`/`read_calendar`. The package
+  keeps the provider write calls but nothing in the lane calls them: the only
+  path that leaves the machine is the Drive upload gate in `drive_mcp.py`,
+  behind propose and approve.
 - Auth reuses `~/.config/nexgen-workspace-mcp/tokens.json` (refresh token,
   silent refresh) with overrides via `WORKSPACE_MCP_TOKEN_DIR`,
   `WORKSPACE_GOOGLE_CLIENT_ID`, `WORKSPACE_GOOGLE_CLIENT_SECRET`. The OAuth client is
@@ -250,8 +214,8 @@ with the lane's receipt and outcome contract. No MCP server, no new dependency.
   code is ready and tested against fakes. No tokens on
   a machine means a fail-closed refusal naming the one-time browser login —
   an unattended run never opens a browser and never hangs waiting for one.
-- Ids come only from the engine's own search lines: in the loop, `read_mail`
-  and `read_drive` accept an id solely from the emitted menu candidates.
+- Ids come only from the engine's own search lines: `read_mail` and
+  `read_drive` accept an id solely from the candidates the engine emitted.
 - Mail reads carry a `Lettura:` coverage line: `text` (plain parts),
   `html` (text extracted from HTML, formatting removed), `snippet` (only a
   short excerpt was extractable — a partial read, never the whole message).
@@ -265,296 +229,92 @@ with the lane's receipt and outcome contract. No MCP server, no new dependency.
 - Proposal ids are unique (timestamp plus randomness) in every gate, and
   creation never overwrites: a colliding id refuses instead of replacing the
   proposal shown for approval.
-- Reads default to 3,000 characters per window. Long bodies and documents
-  carry coverage and an offset for `continue_read`, described under
-  Persistent research. A larger model context does not increase this limit.
+- Reads default to 3,000 characters per window. A larger model context does
+  not increase this limit.
 - `/local` selects the governed profile (agent + model + denies); picking a
   local model with `/model` alone keeps the current agent and does NOT
   activate the profile. The profile is the unit, not the model.
 - `/local4` (Spark-driven lane) is parked: the 4B failed structured
-  obedience 0/3 (empty slots, router misses, wrong candidate args), always
-  fail-closed but useless as a loop driver. The tag and the `/model` entry
-  stay for free use with 212K of context; the mount, agent and command are
-  removed until a 4B obeys (candidates: another 4B, `json_mode` fallback,
-  few-shot decision examples).
+  obedience 0/3 (empty slots, router misses, wrong candidate arguments),
+  always fail-closed and therefore useless as a driver. The tag and the
+  `/model` entry stay for free use with 212K of context; the mount, agent and
+  command are removed until a 4B obeys.
 - Known limits: Drive text comes from Docs export, plain-text download, or
   Drive-hosted PDFs via pdftotext when installed. Outlook works end to end
   against fakes; live use needs the Entra app + login. `nexgen-local doctor`
   reports every connector presence without touching the network.
 
-## Compose (the mail gate, gmail + outlook)
-
-The gate serves both providers (`--provider gmail|outlook`): same screen,
-same receipts, backend chosen per proposal. Old artifacts without a provider
-read as gmail.
-
-```bash
-nexgen-local mail-propose --reply m1 --instruction "Conferma l'invio entro lunedi'."
-nexgen-local mails
-nexgen-local mail-send 20260926-120000-ab12cd34 --yes
-```
-
-Sending is a write, so it follows the pen's contract: the model drafts only
-the body, the engine owns the envelope (a reply answers the sender of an
-engine-retrieved message with threading headers; a new message goes only to
-an address named in the task). The approval screen shows machine facts —
-recipient, subject, in-reply-to — plus the full body as text to approve. Send
-happens only with an explicit `--yes`; the intent is audited before, the
-outcome (provider message id) after. No tokens means a named one-time login
-step, never a browser. Prose claims of sent mail ("ho inviato") are flagged
-by the claim check like any other claimed write: only the gate's receipts
-count.
-
-## Calendar gate
-
-```bash
-nexgen-local cal-propose --summary "Dentista" --start 2026-10-01T10:00:00+02:00 --end 2026-10-01T11:00:00+02:00
-nexgen-local cal-apply 20260926-120000-ab12cd34 --yes
-```
-
-Same contract as mail, without model prose: the human names every field
-(title, ISO start/end, calendar) or the id of the event to delete
-(`--delete`), the gate validates, shows, and applies only with `--yes`.
-Calendar reads (`search_calendar`/`read_calendar`) are wired into the loop
-and research like mail and Drive, with engine-found event ids.
-
 ## Drive as a service (MCP)
-
-```bash
-nexgen-local drive-propose --file Contratto.txt
-nexgen-local drive-upload 20260926-120000-ab12cd34 --yes
-```
 
 `nexgen-local drive-mcp` runs a stdio MCP server so every agent gets Drive:
 `drive_search`/`drive_read` free (same text limits as the lane), upload in
 two calls — `drive_propose_upload` stages a file from inside vault/repo and
 returns a preview plus a proposal id, `drive_confirm_upload` sends it once
-and only on explicit confirm. A changed file, a reused id, a missing confirm
-or missing tokens all refuse without touching Drive; intent goes to the audit
-before, the provider id after. Declared in the engine manifest (`drive`,
-core) and in the live vault manifest behind the waiter confirmation gate.
+and only on explicit confirm. It follows the same gate rules described above;
+a changed file, a reused id, a missing confirm or missing tokens all refuse
+without touching Drive. Declared in the engine manifest (`drive`, core) and
+in the live vault manifest behind the waiter confirmation gate.
 Binary blobs stay out: text, Docs export, and Drive-hosted PDFs via pdftotext
 when installed. The lane reads the same way.
-
-## Gated workflow runs (n8n webhooks)
-
-```bash
-nexgen-local wf-propose --workflow telegram-send --params '{"file": "a.txt"}'
-nexgen-local wf-run 20260926-120000-ab12cd34 --yes
-```
-
-The narrow path to n8n beside the full-power `n8n-mcp` server: only workflows
-named in a machine-local allowlist (`~/.config/nexgen-workflows/allowlist.json`
-or `NEXGEN_WORKFLOWS_ALLOWLIST`, name to webhook URL) can run, only with
-explicit `--yes`, with audit intent before and outcome after. Approval screens
-never print webhook URLs. This is the lane-safe shape for "send me that file
-on Telegram": a named, reviewed workflow — never a generic executor.
-
-## Jobs (engine-scripted multi-step work)
-
-```bash
-nexgen-local research "progetto Airone Blu"
-nexgen-local close --file 04-NOW/sessione.md --save
-```
-
-A job is a procedure the engine owns end to end: it decides the steps, calls
-the read-only tools and asks the model only for the language parts. The model
-never plans and never picks tools. `research` searches the vault, the mail,
-Drive and the web, reads the top sources, sanitises them and produces a short
-synthesis with citations. `close` reads a session text, extracts durable outcomes as structured data and
-renders a Markdown draft saved under the lane's own state directory, never
-into the vault. Both print the machine receipts alongside the text. When every
-source comes back void, no model is consulted: the engine states the empty or
-failed outcome itself.
-
-## Persistent research (multi-interaction work on sources)
-
-```bash
-nexgen-local explore "Trova la mail, confrontala col contratto e prepara la risposta" --session-id new
-# ... later, same session, no re-search ...
-nexgen-local explore "Apri il secondo documento" --session-id 20260928-001122-ab12cd34
-```
-
-The default `explore` forgets everything when it returns. With
-`--session-id` (or `lane_explore`'s `session_id`, same flow through MCP)
-the SAME loop operations (`decide_step` / `_execute` / `finish_answer` —
-one implementation, shared with the ephemeral loop, never a third
-execution cycle) run under a LangGraph that checkpoints to SQLite after
-every node. "Apri il secondo", "continua la lettura" and "riprendi il
-confronto" continue where the previous interaction stopped: sources read,
-chunks consumed with their coverage, staged proposals and receipts persist;
-sessions sweep by age (30 days) and hold working state only, never vault
-memory. Approval gates stay outside: a resumed session stages proposals
-through the same propose paths and never applies — it cannot double-apply,
-and authorization remains the engine's job in the gates. Checkpoints live
-under `research_dir` with directory 700 and sqlite 600, like council
-sessions: mail bodies must not rely on a protective parent directory.
-Each interaction owns a per-session host lock before routing or reading a
-checkpoint, through saver closure and private-permission cleanup. A concurrent
-interaction on the same id refuses before calling a model; other sessions
-remain independent. The age sweep acquires the same lock and rechecks age,
-preserving busy checkpoints. Lock files remain in place to preserve their
-identity for concurrent callers. A newly generated id that already exists
-refuses instead of overwriting its session.
-
-Each interaction gets a fresh step budget (the cap is per instruction, not
-per session lifetime) and fresh continuations; sources, receipts, staged
-proposals and the last read's resume point carry over, while intents
-(reply/upload) and the route follow the NEW instruction — a "confronta col
-contratto" after a mail run pivots the menu's re-search to Drive. The reply
-prescription is state-based, not last-read-based: mail → contract → reply
-offers `draft_mail` because the mail is in session, whatever was read last.
-The draft itself sees every collected source (mail plus contract), not just
-the last mail. Replying "taking the contract into account" needs the
-contract in the model context, not only in the receipts. The
-claim-check verdict travels in the summary too: a confabulating answer
-still answers, but the CLI warns on stderr and exits 1, and MCP appends
-the warning footer. Silence would be a lie the exit code tells.
-An explicit `escalate` decision persists `status=escalate` and
-`escalated=true`, without generating an answer.
-
-Reads are windowed, not silently capped: every source read carries declared
-coverage (`offset/total/truncated`), truncation names the exact resume
-point, and `continue_read` fetches the next window (at most 3 continuations
-per loop, then answer or escalate). The answer's status block lists every
-source with complete/partial coverage, so a resumed "continua" knows what
-is left.
-
-## Explore (the bounded action loop, pilot)
-
-```bash
-nexgen-local explore "Trova e riassumi la nota sul progetto Airone Blu" --max-steps 6
-```
-
-The first model-driven surface: at every step the engine emits a closed menu
-of concrete candidates (actions, and for reads the exact paths just found —
-or, for mail and Drive, the engine-found ids);
-the model chooses one through a forced JSON schema (`with_structured_output`,
-`json_schema`). Arguments are validated against provenance: a path only from
-the emitted candidates and inside the declared roots, a query only from the
-task or a reformulation, never carrying terms that exist only in retrieved
-content, never a near-duplicate of a query already tried. A request that needs
-a source cannot be answered before retrieval: the first menu carries no
-`answer`, only search, read or escalate, and after a successful
-mail/Drive/Outlook/calendar search the menu carries the reads plus escalate —
-still no `answer`, and answering with results still unread is refused, so the
-engine never reports "no results" with results in hand. One repair on an
-invalid output, plus one reasoned repair on an empty query slot (a slip, not
-defiance: policy refusals are never retried, and a still-empty slot is
-compiled by the engine from the task terms as a last resort); a failed validation otherwise
-escalates immediately. Two empty searches
-narrow the menu and then the loop escalates (exit 2, no answer invented). The
-loop is plain Python (a single loop does not need a graph); every action
-leaves a receipt and the final answer passes the claim check. When the
-request asks to reply to a mail just read, or to upload a file just read,
-the menu prescribes the gated propose actions (`draft_mail`, `propose_upload`):
-the model drafts the body as text, the engine owns envelope
-and destination, and nothing leaves the machine without human approval.
-Answering instead of proposing would dodge the request, and so would
-escalating out of caution: on those steps the menu carries only the gated
-propose (plus unread hits for mail). After any read, unread siblings stay on
-the menu (compare two results without re-finding them) and the re-search
-offered matches the route — an Outlook read never offers a Drive search.
-Draft and upload proposals are engine facts in the final prompt (id, preview,
-approval command) and travel on the result itself, not only in prose: the
-engine appends the approval pointer (`[motore: ...]` with id, recipient and
-command) to the answer, so the user always receives what they must approve
-even when the model's prose stays terse. Escalation stays available through real
-failures — a refused read, a failed draft — never as a way out.
-
-Measured on the synthetic bench, Gemma 12B: happy path three steps with
-citation; poisoned note read without the canary reaching the answer; missing
-note escalated instead of invented. Search inside the loop is `require_all`,
-so a generic word cannot drag in the wrong note. A failed claim check gets
-one guided rewrite (the machine reasons are sent back; the correction is kept
-only when it actually removes problems, otherwise the flag stays). The
-`agent` eval suite is the golden set: sixteen synthetic tasks (vault, web,
-mail, Drive, calendar, Outlook, plus a mail-reply draft and a Drive-upload
-proposal scored on their artifacts) scored on the
-expected action sequence, canaries, claim checks, caps and escalation, with
-p95 latency per step and per decision. On all sixteen tasks Gemma 12B
-measures 16/16 with 0 injections and 0 confabulations; the 4B
-scores 3/6 on the read-only decision bench.
 
 ## Tiers
 
 One lane, three steering levels, same cage. The tier is a frozen set of knobs
-the code already reads (router context, thinking, loop step budget, who picks
-the tool), defined in one place (`nexgen_local/tiers.py`).
+the code already reads (router context window, whether the channels may
+think), defined in one place (`nexgen_local/tiers.py`).
 
 | tier | loosens | keeps |
 |---|---|---|
 | `tutor` (default, every unknown model) | nothing: today's behaviour | everything below |
-| `guided` | router sees the configured full context, thinking allowed, more loop steps; the engine still routes and ranks | the closed engine menu |
-| `assisted` | the model picks freely among the read-only retrieval tools and decides when it is done; thinking on; full context | every invariant below |
+| `guided` | router sees the configured full context, thinking allowed; the engine still routes and ranks | the closed engine pipeline |
+| `assisted` | the largest context and thinking on for the prose channels | every invariant below |
 
-What no tier relaxes: model-facing tools stay read-only (mutations only as
-staged proposals applied by a separate explicit command), every call is
-audited and a call the audit cannot record is refused, the answer is checked
-against the receipts, and untrusted content only ever reaches the model
-through the sanitised retrieval path. Answering from zero receipts stays
-refused in every tier: that is fabrication, not autonomy.
+The older `assisted` promise, "the model picks freely among the read-only
+retrieval tools", belonged to the bounded loop. That loop was retired on
+2026-10-24, so no tier grants free tool choice any more: the engine decides
+the path in every tier, and what a tier still moves is the router's context
+window and the `thinking` flag in `llm.py`.
+
+What no tier relaxes: model-facing tools stay read-only (a Drive upload is
+staged and applied by a separate explicit command), every call is audited and
+a call the audit cannot record is refused, the answer is checked against the
+receipts, and untrusted content only ever reaches the model through the
+sanitised retrieval path. Answering from zero receipts stays refused in every
+tier: that is fabrication, not autonomy.
 
 Promotion is by evidence, never by declared size:
 
 ```bash
-nexgen-local tier evaluate <modello> [--tier guided]   # trappole + funzionale + ciclo agente sul tier candidato
+nexgen-local tier evaluate <modello> [--tier guided]   # trappole + funzionale sul tier candidato
 nexgen-local tier set <modello> <tier> --yes           # scrittura esplicita e separata
 ```
 
-`evaluate` runs three suites and recommends promotion only when every one
-passes whole, with 0 injections and 0 confabulations; anything else
-recommends staying and exits non-zero. The agent suite is the one that
-matters most: traps and capability run the fixed graph, identical in every
-tier, while the bounded loop is where a tier actually grants freedom, and it
-carries its own trap tasks. `set` writes the per-model map under the lane's state
-directory and refuses without `--yes`. The map is read at startup
-(`NEXGEN_LOCAL_TIER` overrides it for one run); anything unknown resolves to
-`tutor`.
+`evaluate` runs the two suites and recommends promotion only when both pass
+whole, with 0 injections and 0 confabulations; anything else recommends
+staying and exits non-zero. The third suite, `agent`, measured the bounded
+loop and went away with it; the loop axis is gone, and the two remaining
+suites exercise both knobs a tier still moves. `set` writes the per-model map
+under the lane's state directory and refuses without `--yes`. The map is read
+at startup (`NEXGEN_LOCAL_TIER` overrides it for one run); anything unknown
+resolves to `tutor`.
 
 Measured 2026-10-14, MiniCPM-V 4.7 35B-A3B (Q4_K_M, llama-server, 64k
 context, thinking off because this build returned empty content with it on),
 through the lane's OpenAI-compatible adapter:
 
-| tier | traps | capability | agent loop | injections | confabulations |
-|---|---|---|---|---|---|
-| `tutor` | 4/4 | 5/6 | 14/16 | 0 | 1 |
-| `guided` | 4/4 | 5/6 | 14/16 | 0 | 1 |
-| `assisted` | 4/4 | 5/6 | 14/16 | 0 | 0 |
+| tier | traps | capability | injections | confabulations |
+|---|---|---|---|---|
+| `tutor` | 4/4 | 5/6 | 0 | 1 |
+| `guided` | 4/4 | 5/6 | 0 | 1 |
+| `assisted` | 4/4 | 5/6 | 0 | 0 |
 
 The same model scored 0/4 on the traps called bare, outside the lane: the
-cage is what makes it safe, and freeing tool choice inside the cage added no
-injection. It is not promoted (one capability task, `write-refusal`, and two
-loop tasks fail), which is the gate doing its job. `tutor` and `guided` match
-here because the router-context and thinking knobs act on the Ollama
-adapter, not on this one.
-
-## As a service (MCP)
-
-`nexgen-local mcp` runs a stdio MCP server exposing read-only tools:
-`lane_ask`, `lane_explore`, `lane_research`, `lane_close`, `lane_status`.
-It is declared in the shared connector manifest with `targets: [opencode]`:
-direct-mounted in opencode (the local-inference CLI), not in the frontier
-CLIs, which keep their raw connectors. The bridge runs the other way, from the
-local lane up to a frontier CLI, through `nexgen-local relay`. In opencode
-the `local` agent (pinned 12B, raw `gmail_*`/`calendar_*` denied, upload
-confirm on ask) and the `/local` command (agent + model in one shot) make the
-lane the default path whenever a session runs on local inference; `build`
-and the frontier models are untouched, and the voice cockpit stays out.
-
-```yaml
-# local profile only, mounted read-only through the lazy waiter
-local-lane:
-  transport: stdio
-  command: nexgen-local
-  args: ["mcp", "--jobs-only"]
-```
-
-`--jobs-only` hides `lane_ask` but keeps research, close, status and the
-`lane_explore` loop: inside a
-local session a nested single-question call would just ask the same model
-twice. The command needs the lane's Python dependencies reachable by the
-process the profile spawns.
+cage is what makes it safe. It is not promoted (one capability task,
+`write-refusal`, fails), which is the gate doing its job. `tutor` and `guided`
+match here because the router-context and thinking knobs act on the Ollama
+adapter, not on this one. The `agent` column recorded in the same run (14/16
+in every tier) measured the retired loop and is not part of promotion any
+more.
 
 ## VRAM budget (11-12GB): measured ceilings, not estimates
 
@@ -574,13 +334,13 @@ Past the ceiling layers spill to CPU (documented, slower) and past the
 native max the load fails. The opencode `/model` entries carry these
 ceilings; the lane defaults to 64K (`NEXGEN_LOCAL_NUM_CTX` raises it).
 
-Thinking, measured on the golden set: ON on the forced-schema decision
-node backfires (12/16, decision p95 5s -> 170s) and stays OFF there.
-ON on free prose (drafts, answers) holds 16/16 at ~3x step latency
-(step p95 ~7s -> ~22s, decisions unchanged at ~5s). Every node carries a
-`num_predict` bound (router 512, decisions 256, prose 2048): a runaway
-thought once pinned the GPU 17 minutes with a dead client, now the worst
-case is bounded instead of hanging the loop forever.
+Thinking, measured before the loop was retired: ON on a forced-schema
+decision node backfires (12/16, decision p95 5s -> 170s) and stays OFF there;
+ON on free prose (answers) holds 16/16 at ~3x the latency. The lane keeps
+that split: the router runs with thinking off, prose channels may think.
+Every node carries a `num_predict` bound (router 512, prose 2048): a runaway
+thought once pinned the GPU 17 minutes with a dead client, now the worst case
+is bounded instead of hanging.
 
 ## Supervised tasks
 
@@ -615,19 +375,18 @@ what they deliberately leave to later phases: `docs/supervision.md`.
   and error are stated by the engine itself, never synthesised by the model;
   "no mail found" is never reported when the account is disconnected.
 - Audit: every tool call leaves a line; an unwritable audit refuses the call;
-  the pen records the intent before the write and the outcome after.
-- Pen: the proposal is bound to its approved root; apply refuses another root,
-  a stale file, a failed dry-run, and propagates a failed verification as a
-  distinct state.
+  the upload gate records the intent before the write and the outcome after.
+- Upload: the proposal is bound to its approved path, a changed file or a
+  reused id refuses, and an uncertain attempt cannot be replayed.
 - Confinement: reads and search resolve the destination inside the declared
   roots, symlinks and traversal are refused, `99-SECRETS` is never readable.
 
 ## Non-goals
 
-The model cannot authorize a mutation. Patch application, mail send, calendar
-changes, Drive upload and allowlisted workflow execution stay behind their
-domain approval gates, with proposal validation and intent/outcome receipts.
-Research only stages proposals. A graph suspension does not replace those
-checks or make an external operation safe to replay after a crash.
-The relay hands a bounded question to an isolated CLI and shows the answer
-to the user. It does not feed that answer into a mutating chain automatically.
+The model cannot authorize a mutation. Mail send, calendar changes, patch
+application, Drive upload and allowlisted workflow execution are not reachable
+from a model choice: mail, calendar and workflow writes have no caller at all
+after the 2026-10-24 retirement, and a Drive upload stays behind its approval
+gate with proposal validation and intent/outcome receipts. A graph suspension
+does not replace those checks or make an external operation safe to replay
+after a crash.

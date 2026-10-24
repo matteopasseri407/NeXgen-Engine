@@ -62,7 +62,7 @@ def _save(cfg: LaneConfig, proposal: UploadProposal) -> None:
 
 
 def _create(cfg: LaneConfig, proposal: UploadProposal) -> None:
-    """Store a new proposal without ever overwriting an existing one (see patch._create)."""
+    """Store a new proposal without ever overwriting an existing one (see proposals._save)."""
     target = cfg.uploads_dir / f"{proposal.id}.json"
     try:
         write_private_text(target, json.dumps(asdict(proposal), ensure_ascii=False, indent=1), exclusive=True)

@@ -41,5 +41,24 @@ exactly what each step removes:
    secrets) and any `99-SECRETS/` copy that lived outside the vault clone
    you just removed — exactly as `docs/uninstall.md` describes.
 
+## OpenClaw Removal (when installed)
+
+If OpenClaw was configured or installed on this machine:
+
+1. **Stop and unregister the OpenClaw service**:
+   - On Windows: terminate gateway `node` and `gateway.cmd` processes, remove `OpenClaw Gateway.vbs` from `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`, and delete the scheduled task `OpenClaw Gateway` (`schtasks /Delete /TN "OpenClaw Gateway" /F`).
+   - On Linux: `systemctl --user stop openclaw-gateway.service`, remove `~/.config/systemd/user/openclaw-gateway.service`, and run `systemctl --user daemon-reload`.
+2. **Remove the engine plugin**:
+   - Clean the engine's MCP servers and plugin registrations from `openclaw.json` (or restore from `.bak-*` backup).
+3. **Decide on user state (`~/.openclaw`)**:
+   - **Ask for explicit confirmation**: let the user choose whether to preserve or remove `~/.openclaw` (contains models, channels, and conversation state).
+4. **Uninstall the OpenClaw npm package**:
+   - Run `npm uninstall -g openclaw`.
+5. **Remove OpenClaw Companion from Microsoft Store (if present)**:
+   - On Windows, uninstall the MSIX package:
+     `Get-AppxPackage *OpenClaw* | Remove-AppxPackage`
+   - Remove the companion autostart link if present:
+     `Remove-Item "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\OpenClaw Companion.lnk" -Force`
+
 Finish with a short summary of what was removed, what was left in place,
 and why.

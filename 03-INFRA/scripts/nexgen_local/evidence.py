@@ -25,8 +25,9 @@ CLAIM_PHRASES = (
 )
 
 #: Phrases that claim a write. The lane has no write tool, so these are false
-#: whatever the receipts say. Mail sending lives behind the compose gate, so
-#: prose claims of sent mail are false too: only the gate's receipts count.
+#: whatever the receipts say. Sending mail used to sit behind a compose gate
+#: that wrote its own receipt; that gate is retired, so a prose claim of sent
+#: mail is false by construction.
 WRITE_CLAIM_PHRASES = (
     "ho salvato",
     "ho scritto",

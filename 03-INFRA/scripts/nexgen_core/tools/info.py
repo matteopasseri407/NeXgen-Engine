@@ -483,7 +483,7 @@ def inventory_lines(
 
     lines.append(t(">>> MCP connectors per runtime"))
     renderer = McpRenderer(vault_data=effective_vault, engine_root=effective_engine, home=effective_home)
-    for cli_name in ("claude", "codex", "antigravity", "opencode"):
+    for cli_name in ("claude", "codex", "antigravity", "opencode", "openclaw"):
         servers = renderer.load_resolved_servers(cli_name)
         names = ", ".join(sorted(servers)) if servers else t("none")
         lazy = renderer.list_lazy_servers(cli_name)

@@ -16,7 +16,6 @@ review_paths = [
   "03-INFRA/scripts/nexgen_core/discipline*",
   "03-INFRA/scripts/discipline.py",
   "03-INFRA/scripts/check_engine.py",
-  "03-INFRA/scripts/nexgen_local/patch*",
   "03-INFRA/scripts/nexgen_local/proposals*",
   "03-INFRA/agent-universal-layer/council/proposal*",
   "03-INFRA/agent-universal-layer/trust/*",

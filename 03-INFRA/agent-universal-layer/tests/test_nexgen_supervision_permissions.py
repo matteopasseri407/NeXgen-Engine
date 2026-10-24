@@ -523,3 +523,150 @@ def test_an_answer_the_harness_refuses_writes_no_journal_row(task, monkeypatch, 
 
     assert "richiesta scaduta" in capsys.readouterr().err
     assert not [row for row in state.read_events(task) if row.get("event") == "permission_answered"]
+
+
+# --- isolamento MCP per unità ------------------------------------------------
+#
+# La forma scritta è quella nativa di OpenCode 2 (`mcp.servers.<nome>` con
+# `disabled`), letta dallo schema https://opencode.ai/config.json della versione
+# installata: `Mcp.LocalConfigEncoded` richiede `type` e `command`,
+# `Mcp.RemoteConfigEncoded` richiede `type` e `url`, entrambe accettano `disabled`.
+# Il layout piatto con `enabled` è quello deprecato, che il motore migra; qui si
+# legge per non ignorare una macchina non ancora rigenerata.
+
+
+@pytest.fixture(autouse=True)
+def no_owner_global_mcp(monkeypatch, tmp_path):
+    """Il profilo legge il file globale dell'OpenCode del proprietario: nei test non esiste."""
+    absent = tmp_path / "nessuna-configurazione-globale.json"
+    monkeypatch.setattr(permissions, "opencode_config_path", lambda home=None: absent)
+    return absent
+
+
+def _global_config(path: Path, servers: dict[str, dict]) -> Path:
+    """Un file globale finto con la tabella nativa che OpenCode 2 scrive."""
+    path.write_text(json.dumps({"mcp": {"servers": servers}}, indent=2), encoding="utf-8")
+    return path
+
+
+def test_global_mcp_servers_reads_the_native_and_flat_layouts_without_writing(tmp_path):
+    config = tmp_path / "globale.jsonc"
+    config.write_text(
+        "{\n"
+        "  // un commento: OpenCode legge JSONC e cosi fa il motore\n"
+        '  "mcp": {\n'
+        '    "servers": {"vault": {"type": "local", "command": ["node", "v.js"]}},\n'
+        '    "vecchio": {"type": "remote", "url": "https://example.invalid/mcp"},\n'
+        '    "timeout": {"startup": 1000}\n'
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    before = config.read_bytes()
+    before_mtime = config.stat().st_mtime_ns
+
+    servers = permissions.global_mcp_servers(config_path=config)
+
+    assert sorted(servers) == ["vault", "vecchio"]
+    assert servers["vault"]["command"] == ["node", "v.js"]
+    assert config.read_bytes() == before
+    assert config.stat().st_mtime_ns == before_mtime
+
+
+def test_a_machine_without_a_global_file_declares_no_server(tmp_path):
+    assert permissions.global_mcp_servers(config_path=tmp_path / "manca.json") == {}
+
+
+def test_the_profile_switches_off_every_global_server_by_default(task, copy, no_owner_global_mcp):
+    _global_config(no_owner_global_mcp, {
+        "vault": {
+            "type": "local", "command": ["node", "v.js"],
+            "environment": {"TOKEN": "resta-nel-file-globale"},
+        },
+        "firecrawl": {
+            "type": "remote", "url": "https://example.invalid/mcp",
+            "headers": {"Authorization": "Bearer resta-nel-file-globale"},
+        },
+    })
+    before = no_owner_global_mcp.read_bytes()
+
+    target = permissions.write_profile(task, copy)
+
+    servers = json.loads(target.read_text(encoding="utf-8"))["mcp"]["servers"]
+    assert servers["vault"] == {"type": "local", "command": ["node", "v.js"], "disabled": True}
+    assert servers["firecrawl"] == {
+        "type": "remote", "url": "https://example.invalid/mcp", "disabled": True,
+    }
+    assert no_owner_global_mcp.read_bytes() == before, "il file globale non si tocca"
+
+
+def test_only_the_assigned_servers_stay_on(task, copy, no_owner_global_mcp):
+    _global_config(no_owner_global_mcp, {
+        "vault": {"type": "local", "command": ["node", "v.js"]},
+        "playwright": {"type": "local", "command": ["node", "p.js"]},
+        "n8n": {"type": "remote", "url": "https://example.invalid/n8n"},
+    })
+
+    target = permissions.write_profile(task, copy, mcp=["playwright", "n8n"])
+
+    servers = json.loads(target.read_text(encoding="utf-8"))["mcp"]["servers"]
+    assert "playwright" not in servers
+    assert "n8n" not in servers
+    assert servers["vault"]["disabled"] is True
+
+
+def test_an_assigned_server_the_global_file_disables_is_switched_back_on(task, copy, no_owner_global_mcp):
+    _global_config(no_owner_global_mcp, {
+        "firecrawl": {"type": "local", "command": ["node", "f.js"], "disabled": True},
+    })
+
+    target = permissions.write_profile(task, copy, mcp=["firecrawl"])
+
+    servers = json.loads(target.read_text(encoding="utf-8"))["mcp"]["servers"]
+    assert servers["firecrawl"] == {
+        "type": "local", "command": ["node", "f.js"], "disabled": False,
+    }
+
+
+def test_an_assigned_name_nothing_declares_is_refused(task, copy, no_owner_global_mcp):
+    _global_config(no_owner_global_mcp, {"vault": {"type": "local", "command": ["node", "v.js"]}})
+
+    with pytest.raises(permissions.PermissionProfileError, match="vaultt"):
+        permissions.write_profile(task, copy, mcp=["vaultt"])
+
+
+def test_a_server_the_project_declares_is_left_alone_and_can_be_assigned(task, copy, no_owner_global_mcp):
+    _global_config(no_owner_global_mcp, {"vault": {"type": "local", "command": ["node", "v.js"]}})
+    (copy / permissions.CONFIG_FILE).write_text(json.dumps({
+        "mcp": {"servers": {"locale": {"type": "local", "command": ["node", "locale.js"]}}},
+    }), encoding="utf-8")
+
+    target = permissions.write_profile(task, copy, mcp=["locale"])
+
+    servers = json.loads(target.read_text(encoding="utf-8"))["mcp"]["servers"]
+    assert servers["locale"] == {"type": "local", "command": ["node", "locale.js"]}
+    assert servers["vault"]["disabled"] is True
+
+
+def test_a_previous_switch_off_is_removed_when_the_server_is_assigned_later(task, copy, no_owner_global_mcp):
+    _global_config(no_owner_global_mcp, {"vault": {"type": "local", "command": ["node", "v.js"]}})
+
+    first = json.loads(permissions.write_profile(task, copy).read_text(encoding="utf-8"))
+    assert first["mcp"]["servers"]["vault"]["disabled"] is True
+
+    again = permissions.write_profile(task, copy, mcp=["vault"])
+
+    assert json.loads(again.read_text(encoding="utf-8"))["mcp"]["servers"] == {}
+
+
+def test_nothing_is_written_when_there_is_no_global_server_and_no_assignment(task, copy, no_owner_global_mcp):
+    target = permissions.write_profile(task, copy)
+
+    assert "mcp" not in json.loads(target.read_text(encoding="utf-8"))
+
+
+def test_a_global_server_the_profile_cannot_describe_is_refused(task, copy, no_owner_global_mcp):
+    _global_config(no_owner_global_mcp, {"strano": {"enabled": False}})
+
+    with pytest.raises(permissions.PermissionProfileError, match="strano"):
+        permissions.write_profile(task, copy)

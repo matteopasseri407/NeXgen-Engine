@@ -72,9 +72,12 @@ my-command:
   exposure: core
 ```
 
-- `exposure: core` puts it in `~/.agents/skills`, which only **OpenCode**
-  reads natively (`/my-command`). Codex does not read this shared catalog
+- `exposure: core` puts it in `~/.agents/skills`, which **OpenCode and OpenClaw**
+  read natively (`/my-command`). Codex does not read this shared catalog
   at all — see the `codex` target below.
+- The `openclaw` target is that same shared catalog: OpenClaw discovers
+  `~/.agents/skills` on its own, so an entry that names it lands there even
+  when no other runtime is named.
 - The `claude` target links the native view for **Claude Code**
   (`/my-command`).
 - The `codex` target links the native view into `$CODEX_HOME/skills`

@@ -8,12 +8,14 @@ stays in `supervision_state`, `supervision_windows` and `supervision_costs`.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 from .. import supervision_costs as costs
 from .. import supervision_cleanup as cleanup
 from .. import supervision_gates as gates
+from .. import supervision_adapters as adapters
 from .. import supervision_harness as harness
 from .. import supervision_policy as policy
 from .. import supervision_publish as publish_module
@@ -24,6 +26,7 @@ from .. import supervision_stall as stall
 from .. import supervision_state as state
 from ..supervision_status import row_count, task_line, unit_line
 from .. import supervision_windows as windows
+from .. import supervision_workboard as workboard
 from .. import supervision_worktree as worktree
 from ..supervision_state import SupervisionError
 from . import sup_permissions
@@ -44,6 +47,7 @@ def register_sup(sub) -> None:
 
     status = sup_sub.add_parser("status", help="stato di un compito (senza id: elenco dei compiti)")
     status.add_argument("id", nargs="?", default="")
+    status.add_argument("--json", action="store_true", help="le stesse righe, in JSON, per chi le deve inoltrare")
     status.set_defaults(func=cmd_sup_status)
 
     attach = sup_sub.add_parser("attach", help="aggancia una sessione harness a un'unità e scrive la riga di costo")
@@ -53,6 +57,7 @@ def register_sup(sub) -> None:
         "costi", help="spesa delle sessioni nelle ultime 5 ore, 7 e 30 giorni; con un id, anche i costi del compito",
     )
     costi.add_argument("id", nargs="?", default="", help="id del compito (senza: solo la spesa delle sessioni)")
+    costi.add_argument("--json", action="store_true", help="le stesse righe, in JSON, per chi le deve inoltrare")
     costi.set_defaults(func=cmd_sup_costi)
 
     check = sup_sub.add_parser("window-check", help="apre una finestra visibile che resta aperta")
@@ -66,6 +71,7 @@ def register_sup(sub) -> None:
     unit.add_argument("--brief", required=True, help="file del brief da copiare nella cartella del compito")
     unit.add_argument("--allow", action="append", default=[], help="glob di un percorso consentito (ripetibile)")
     unit.add_argument("--verify", default="", help="comando di verifica che il motore rieseguirà")
+    unit.add_argument("--mcp", action="append", default=[], help="server MCP consentito all'esecutore (ripetibile, default: nessuno)")
     unit.set_defaults(func=cmd_sup_unit)
 
     run = sup_sub.add_parser("run", help="apre l'esecutore nella sua finestra e aggancia la sua sessione")
@@ -155,42 +161,41 @@ def cmd_sup_start(args: argparse.Namespace) -> int:
 def cmd_sup_status(args: argparse.Namespace) -> int:
     """Print one task's state, or the list of tasks when no id is given."""
     if not args.id:
-        return _list_tasks()
+        return _emit(state.tasks_lines(), args)
     try:
         data = state.status(args.id)
     except SupervisionError as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 1
     stalls, stall_problem = _stalls(args.id)
-    data = state.status(args.id)
-    print(f"compito {data['id']}")
-    print(f"obiettivo: {data['objective'] or '(non leggibile)'}")
-    print(f"cartella: {data['path']}")
+    lines = [f"compito {data['id']}"]
+    lines.append(f"obiettivo: {data['objective'] or '(non leggibile)'}")
+    lines.append(f"cartella: {data['path']}")
     roles_line = _roles_line()
     if roles_line:
-        print(roles_line)
+        lines.append(roles_line)
     local_line = _local_line()
     if local_line:
-        print(local_line)
+        lines.append(local_line)
     if data["units"]:
         for unit in data["units"]:
-            print(unit_line(unit))
+            lines.append(unit_line(unit))
             note = review.status_note(args.id, unit.get("unit") or "")
             if note:
-                print(note)
+                lines.append(note)
     else:
-        print("unità: nessuna agganciata")
+        lines.append("unità: nessuna agganciata")
     for item in stalls:
-        print(stall.line(item))
+        lines.append(stall.line(item))
     if stalls:
-        print(f"per rispondere a una richiesta di permesso: `sup permessi {args.id}`")
+        lines.append(f"per rispondere a una richiesta di permesso: `sup permessi {args.id}`")
     if stall_problem:
-        print(f"stallo: non verificabile ({stall_problem})")
-    print("sessioni harness: " + (", ".join(data["sessions"]) or "nessuna"))
+        lines.append(f"stallo: non verificabile ({stall_problem})")
+    lines.append("sessioni harness: " + (", ".join(data["sessions"]) or "nessuna"))
     last = data["last_event"] or {}
-    print("ultimo evento: " + (f"{last.get('event', '')} {last.get('at', '')}".strip() or "nessuno"))
-    print(task_line(data))
-    return 0
+    lines.append("ultimo evento: " + (f"{last.get('event', '')} {last.get('at', '')}".strip() or "nessuno"))
+    lines.append(task_line(data))
+    return _emit(lines, args)
 
 
 def _stalls(task_id: str) -> tuple[list[dict], str]:
@@ -252,15 +257,16 @@ def cmd_sup_attach(args: argparse.Namespace) -> int:
 
 def cmd_sup_costi(args: argparse.Namespace) -> int:
     """Print the spend windows, then the task's cost rows by role and by unit when an id is given."""
+    lines: list[str] = []
     if args.id:
         try:
             data = costs.aggregate(args.id)
         except SupervisionError as exc:
             print(f"nexgen-local: {exc}", file=sys.stderr)
             return 1
-        print(_format_aggregate(data))
-    print("\n".join(_spend_lines(spend.spend_windows())))
-    return 0
+        lines.append(_format_aggregate(data))
+    lines.extend(_spend_lines(spend.spend_windows()))
+    return _emit(lines, args)
 
 
 def cmd_sup_window_check(args: argparse.Namespace) -> int:
@@ -283,7 +289,7 @@ def cmd_sup_unit(args: argparse.Namespace) -> int:
         record = worktree.create(
             args.id, args.unit,
             repo=args.repo, base=args.base, brief=args.brief,
-            allow=args.allow, verify=args.verify,
+            allow=args.allow, verify=args.verify, mcp=args.mcp,
         )
     except SupervisionError as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
@@ -293,10 +299,13 @@ def cmd_sup_unit(args: argparse.Namespace) -> int:
     print(f"base {record['base_ref']} ({record['base'][:12]})")
     print("confine: " + ", ".join(record["allow"]))
     print("verifica: " + (record["verify"] or "nessuna dichiarata"))
+    mcp_assigned = record.get("mcp") or []
+    print("mcp: " + (", ".join(mcp_assigned) if mcp_assigned else "nessuno"))
     broken = [name for name, refs in record["remotes"].items() if isinstance(refs, dict) and refs.get("error")]
     remotes = ", ".join(record["remotes"]) or "nessuno"
     print(f"remoti: {remotes} · push bloccata in questa copia"
           + (f" · non leggibili: {', '.join(broken)}" if broken else ""))
+    _board_card(args.id, record["unit"], record)
     return 0
 
 
@@ -317,15 +326,19 @@ def cmd_sup_run(args: argparse.Namespace) -> int:
         return 0
     if result["mode"] == "run":
         print(f"lavoro inviato alla sessione {result['session']} (pid {result['pid']}), nessuna scheda nuova")
-        row = result["row"]
+        if result.get("reason"):
+            print(f"nota: {result['reason']}")
+        row = result.get("row") or {}
         print(f"costo all'invio: {row['cost_usd']:.4f} $" if isinstance(row.get("cost_usd"), (int, float))
               else "costo all'invio: non disponibile")
+        _board("running", args.id, result["unit"])
         return 0
     handle = result["window"]
     print(f"finestra {handle.get('launcher')} (pid {handle.get('pid')}) · scheda «{handle.get('title')}» "
           f"dell'unità {result['unit']}")
     if result.get("reason"):
         print(f"perché una scheda nuova: {result['reason']}")
+    _board("running", args.id, result["unit"])
     session = result["session"]
     if session is None:
         print("sessione non determinata: agganciala a mano con "
@@ -371,6 +384,7 @@ def cmd_sup_collect(args: argparse.Namespace) -> int:
         print(f"richiesta al proprietario: {_request_line(hit)}")
     if result.get("request_section"):
         print(f"richieste: {result['request_section']}")
+    _board("review", args.id, result["unit"])
     return 0 if result["verdict"] == "PASS" else 1
 
 
@@ -381,11 +395,14 @@ def _close_stopped_tab(task_id: str, unit: str) -> str:
     is alive: Codex on Windows writes the report as a separate sandbox user and
     releases it only when the tab exits. The session's own state says whether the
     turn is over; only then is the tab closed, and a task with another unit still
-    working keeps it open.
+    working keeps it open. A harness with no tab of its own keeps its own session:
+    nothing of the engine holds those files, so there is nothing to close here.
     """
     record = state.unit_record(task_id, unit)
     name = str(record.get("unit") or unit)
     chosen = str(record.get("harness") or "opencode")
+    if _window_less(chosen):
+        return ""
     price = costs.collect_cost(task_id, name, harness=chosen)
     if not price.stopped:
         return ""
@@ -398,6 +415,8 @@ def _collect_tab_line(task_id: str, unit: str, cost: costs.CollectCost) -> str:
     if not cost.stopped:
         why = "non misurata" if cost.note else "ancora al lavoro"
         return f"sessione {why}: la scheda resta aperta"
+    if _window_less(str(state.unit_record(task_id, unit).get("harness") or "opencode")):
+        return "la sessione resta nel Control UI del harness, non in una scheda del motore"
     closed = windows.close_tab(task_id, "esecutore", still_working=(unit,), stopped=True)
     return closed["line"]
 
@@ -427,8 +446,12 @@ def cmd_sup_review(args: argparse.Namespace) -> int:
     if result["verdict"] == state.APPROVED:
         print(f"raccolta {result['collect_verdict']} sulla stessa head: pronta per `sup publish`")
         _print_close(closing)
+        if closing and closing.get("retired"):
+            print(_close_work(args.id, result["unit"]))
+            _board("blocked", args.id, result["unit"], reason="approvata e chiusa senza pubblicazione")
     else:
         print(_delivery_line(result["delivery"]))
+        _board("running", args.id, result["unit"])
     return 0
 
 
@@ -463,10 +486,11 @@ def cmd_sup_publish(args: argparse.Namespace) -> int:
     for commit in result["commits"]:
         print(f"{commit['published'][:12]} <- {commit['source'][:12]} · {commit['subject']}")
     print(result["signing"])
-    print(windows.close_tab(args.id, "esecutore")["line"])
+    print(_close_work(args.id, result["unit"]))
     _print_retirement(result.get("retirement"))
     if result["pushed"]:
         print(f"spinta eseguita: {result['command']}")
+        _board("done", args.id, result["unit"])
         return 0
     if result["command"]:
         print(f"pubblicazione dichiarata non riuscita: `{result['command']}` è fallito")
@@ -475,6 +499,7 @@ def cmd_sup_publish(args: argparse.Namespace) -> int:
     print("nessuna spinta: i commit sono sul ramo locale, il remoto non è stato toccato")
     print(f"resta da fare: `git push {result['remote']} {result['branch']}` dal checkout, oppure "
           "`sup publish ... --push` (o `--push-with \"<comando>\"`)")
+    _board("done", args.id, result["unit"])
     return 0
 
 
@@ -532,6 +557,71 @@ def _request_line(hit: dict) -> str:
 def _tail(text: str, limit: int = 1200) -> str:
     """The end of a command's output, where the reason of a failure lives."""
     return (text or "").strip()[-limit:]
+
+
+def _emit(lines: list[str], args: argparse.Namespace) -> int:
+    """Print the lines the verb built, or the same lines inside the JSON a caller forwards.
+
+    The words are built once: a chat, a tool and a terminal read the same sentence, and
+    `--json` only decides how it travels.
+    """
+    if getattr(args, "json", False):
+        print(json.dumps({"lines": lines}, ensure_ascii=False))
+        return 0
+    print("\n".join(lines))
+    return 0
+
+
+def _board(status: str, task_id: str, unit: str, *, reason: str = "") -> None:
+    """Move the unit's card and print the one line the board has to say, if it has one.
+
+    The journal is the state and the verb has already done its work: a board that
+    is off, missing or refusing costs a line here and nothing else.
+    """
+    try:
+        line = workboard.move(task_id, unit, status, reason=reason)
+    except SupervisionError as exc:
+        line = f"scheda Workboard non spostata: {exc}"
+    if line:
+        print(line)
+
+
+def _board_card(task_id: str, unit: str, record: dict) -> None:
+    """Create the unit's card and print the one line the board has to say, if it has one."""
+    try:
+        line = workboard.create(task_id, unit, record)
+    except SupervisionError as exc:
+        line = f"scheda Workboard non creata: {exc}"
+    if line:
+        print(line)
+
+
+def _window_less(harness_name: str) -> bool:
+    """Whether this harness keeps its own sessions instead of a tab of the engine."""
+    try:
+        return not adapters.get(harness_name).capabilities.window
+    except SupervisionError:  # nexgen: allow reason="un nome che il registro non conosce non ha una finestra da chiudere: la chiusura resta quella delle schede, che è il comportamento di prima"
+        return False
+
+
+def _close_work(task_id: str, unit: str) -> str:
+    """Close what the executor left open: the tab of a window harness, the session of the other.
+
+    Publishing ends the unit's work, so the thing the owner was watching can go:
+    the tab is closed by the window layer, and a harness that shows its own
+    sessions has that session archived instead.
+    """
+    record = state.unit_record(task_id, unit)
+    name = str(record.get("unit") or unit)
+    chosen = str(record.get("harness") or "opencode")
+    if not _window_less(chosen):
+        return windows.close_tab(task_id, "esecutore", still_working=(name,), stopped=True)["line"]
+    session = str(record.get("session") or state.harness_session(task_id, chosen))
+    if not session:
+        return "nessuna sessione da chiudere"
+    line = adapters.get(chosen).close_session(session)
+    state.append_event(task_id, "session_closed", unit=name, harness=chosen, session=session, line=line)
+    return line
 
 
 def _list_tasks() -> int:

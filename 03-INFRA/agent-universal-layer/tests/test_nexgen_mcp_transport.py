@@ -175,6 +175,16 @@ for line in sys.stdin:
 
 
 def test_stdio_timeout_stops_descendant_server(proxy):
+    """When the tool deadline expires the descendant goes with the server.
+
+    Only the tool deadline is meant to expire: 0.2 s is a property of the
+    transport, not a measurement of this machine, because the fake server
+    never answers that call. Learning the descendant's port is a fresh peer
+    starting instead, so it gets the module's own start budget: sharing the
+    tool deadline (1 s) made a loaded machine lose the race to `python -u`,
+    and the KeyError on the missing result said nothing about the timeout
+    this test exists to prove.
+    """
     code = '''
 import sys, json, subprocess
 child = subprocess.Popen([sys.executable, "-u", "-c", "import socket, time; s=socket.socket(); s.bind(('127.0.0.1',0)); s.listen(); print(s.getsockname()[1], flush=True); time.sleep(30)"], stdout=subprocess.PIPE, text=True)
@@ -184,9 +194,11 @@ for line in sys.stdin:
     if req["id"] == 41:
         print(json.dumps({"jsonrpc": "2.0", "id": 41, "result": {"port": port}}), flush=True)
 '''
-    handle = _stdio(proxy, code, timeouts={"startup": 1, "tool": 0.2})
+    handle = _stdio(proxy, code, timeouts={"startup": PEER_START_SECONDS, "tool": 0.2})
     try:
-        port = handle.rpc("tools/list", {}, 41)["result"]["port"]
+        answer = handle.rpc("tools/list", {}, 41)
+        assert "result" in answer, answer
+        port = answer["result"]["port"]
         with socket.create_connection(("127.0.0.1", port), timeout=1):
             pass
         response = _bounded_call(handle)
@@ -333,7 +345,8 @@ time.sleep(30)  # peers may keep serving after their stdin closes
     }}}))
     source = Path(__file__).resolve().parents[1] / "mcp/lazy-mcp.py"
     proc = subprocess.Popen([sys.executable, str(source)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, text=True, start_new_session=True,
+                            stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
+                            start_new_session=True,
                             env={**os.environ, "AGENT_VAULT_DATA": str(tmp_path), "LAZY_MCP_LOG": str(tmp_path / "audit.jsonl")})
     child = None
     try:

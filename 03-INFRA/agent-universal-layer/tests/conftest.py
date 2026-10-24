@@ -25,6 +25,15 @@ FIXTURES = TESTS_DIR / "fixtures"
 REAL_UL = TESTS_DIR.parent                      # .../agent-universal-layer (real source)
 REAL_VAULT = REAL_UL.parent.parent               # KnowledgeVault (real root)
 REAL_SCRIPTS = REAL_VAULT / "03-INFRA" / "scripts"
+if str(REAL_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(REAL_SCRIPTS))
+
+from nexgen_core import scratch  # noqa: E402 - the engine has to be importable before its tests run
+
+#: pytest's temporary trees move outside the home on Windows, before the first
+#: `tmp_path` exists. The gateway watches the home with one recursive handle, and
+#: the thousands of files a suite creates there are the storm it cannot fold.
+scratch.apply_to_pytest()
 
 SENTINEL_NAME = ".b1-sandbox-sentinel"
 
@@ -69,6 +78,7 @@ def isolated_runtime_overrides(monkeypatch, tmp_path_factory):
     """No inherited override may redirect a fixture's writes to the host."""
     for key in (
         "XDG_CONFIG_HOME", "XDG_STATE_HOME", "CODEX_HOME", "NEXGEN_HOME",
+        "OPENCLAW_CONFIG_PATH", "OPENCLAW_STATE_DIR",
         "AGENT_STATE_DIR", "AGENT_VAULT_DATA", "AGENT_ENGINE_ROOT",
         "KNOWLEDGE_VAULT_PATH", "AGENT_SYNC_LOCK_FILE", "APPDATA", "LOCALAPPDATA",
         # A maintainer's own vault remote won over the remotes.yaml a fixture wrote.
@@ -94,6 +104,23 @@ def isolated_runtime_overrides(monkeypatch, tmp_path_factory):
     # instance) reached the real `systemctl --user` of whoever ran the suite. A test
     # that really wants host mutations has to ask for them.
     monkeypatch.setenv("NEXGEN_DISABLE_HOST_MUTATIONS", "1")
+
+
+@pytest.fixture(autouse=True)
+def no_owner_global_mcp_config(monkeypatch, tmp_path_factory):
+    """The executor's profile reads the owner's global OpenCode config: in a test that file does not exist.
+
+    Writing a unit's profile switches off every MCP server the global file
+    declares, so an unguarded test would read the machine it runs on and its
+    result would change with that machine's connectors. A test that needs a
+    global file patches `opencode_config_path` itself, after this fixture.
+    """
+    try:
+        import nexgen_local.supervision_permissions as profiles
+    except ImportError:
+        return
+    absent = tmp_path_factory.getbasetemp() / "nessuna-configurazione-opencode.json"
+    monkeypatch.setattr(profiles, "opencode_config_path", lambda home=None: absent)
 
 
 @dataclass

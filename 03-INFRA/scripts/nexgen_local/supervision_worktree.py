@@ -10,7 +10,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from nexgen_core.discipline.gitutil import GitError, git
+from nexgen_core.discipline.gitutil import LONG_PATHS, GitError, git
 
 from . import supervision_gitconfig as gitconfig
 from . import supervision_state as state
@@ -22,8 +22,6 @@ UNITS_DIR = "23-unita"
 BLOCKED_PUSH_URL = "nexgen-sup-disabled://push-blocked"
 #: A remote that does not answer within this budget is reported as unreadable, never as unchanged.
 REMOTE_TIMEOUT_S = 30.0
-#: Windows refuses a path over MAX_PATH unless each git command is told to allow it.
-LONG_PATHS = ("-c", "core.longpaths=true")
 
 
 class WorktreeError(SupervisionError):
@@ -103,6 +101,7 @@ def create(
     brief: str | Path,
     allow: list[str] | tuple[str, ...],
     verify: str = "",
+    mcp: list[str] | tuple[str, ...] | None = None,
 ) -> dict:
     """Prepare the unit's copy, its branch, its push block and its written environment."""
     folder = worktree_path(task_id, unit)
@@ -125,6 +124,9 @@ def create(
     (Path(folder).parent / f"20-brief-{state.slug(unit)}.md").write_text(brief_text, encoding="utf-8")
     environment = _environment_text(task_id, unit, folder, branch, base, base_sha, scope, verify)
     (Path(folder).parent / f"22-ambiente-{state.slug(unit)}.md").write_text(environment, encoding="utf-8")
+    mcp_assigned = list(dict.fromkeys(
+        str(item).strip() for item in (mcp or []) if str(item).strip()
+    ))
     record = {
         "unit": state.slug(unit),
         "repo": str(root),
@@ -134,6 +136,7 @@ def create(
         "worktree": str(folder),
         "allow": scope,
         "verify": verify,
+        "mcp": mcp_assigned,
         "remotes": snapshot,
         "remote_urls": remote_urls(root),
         "remote_pushurls": push_urls(Path(folder)),

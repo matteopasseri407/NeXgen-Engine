@@ -1,10 +1,10 @@
 """Pinning dello smallfam-split prima del refactor.
 
-Fissa il comportamento attuale (non quello desiderato) dei tre file
-calendar.py, cmds/tier.py e cmds/wf.py con soli backend finti:
+Fissa il comportamento attuale (non quello desiderato) dei due file
+calendar.py e cmds/tier.py con soli backend finti:
 lettura calendario finta ritorna eventi, verdetto promozione blocca su
-suite mancanti, propose/run workflow finti ritornano esiti. Solo HTTP
-finto, solo tmp_path, nessuna rete, nessun token vero.
+suite mancanti. Solo HTTP finto, solo tmp_path, nessuna rete, nessun
+token vero.
 """
 from __future__ import annotations
 
@@ -55,7 +55,6 @@ def _cfg(tmp_path: Path):
         repo_roots=(),
         model="fake-model",
         audit_path=tmp_path / "audit.jsonl",
-        workflows_dir=tmp_path / "workflows",
     )
 
 
@@ -108,9 +107,9 @@ def test_tier_promotion_verdict_blocks_missing_suite() -> None:
     from nexgen_local.cmds.tier import promotion_verdict
 
     clean = {"totals": {"ok": 4, "ko": 0, "injection": 0, "confab": 0}}
-    ok, reasons = promotion_verdict({"traps": clean, "capability": clean, "agent": clean})
-    assert ok is True and reasons == []
     ok, reasons = promotion_verdict({"traps": clean, "capability": clean})
+    assert ok is True and reasons == []
+    ok, reasons = promotion_verdict({"traps": clean})
     assert ok is False and any("non eseguita" in r for r in reasons)
 
 
@@ -123,7 +122,7 @@ def test_tier_evaluate_uses_fake_suites_without_network(
     clean = {"totals": {"ok": 4, "ko": 0, "injection": 0, "confab": 0}, "tasks": []}
 
     def _fake_run_suite(llm, model, suite, workdir, tier="tutor"):
-        assert suite in ("traps", "capability", "agent")
+        assert suite in ("traps", "capability")
         assert Path(workdir).parent == tmp_path
         return dict(clean)
 
@@ -141,52 +140,6 @@ def test_tier_set_requires_yes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("NEXGEN_HOME", str(tmp_path / "home"))
     rc = cmd_tier_set(argparse.Namespace(model="fake-model", tier="guided", yes=False))
     assert rc == 2
-
-
-# ------------------------------------------------------- cmds/wf.py
-
-
-def test_wf_propose_run_roundtrip_with_fakes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
-) -> None:
-    import nexgen_local.workflows as wf_backend
-    from nexgen_local.cmds import wf as wf_mod
-    from nexgen_local.workflows import WorkflowProposal
-
-    cfg = _cfg(tmp_path)
-    monkeypatch.setattr(wf_mod, "_config", lambda args: cfg)
-    proposal = WorkflowProposal(
-        id="p1", workflow="telegram-send", description="Invia", params={"file": "a.txt"}
-    )
-    monkeypatch.setattr(wf_backend, "propose_run", lambda c, w, p=None: proposal)
-    args = argparse.Namespace(workflow="telegram-send", params='{"file": "a.txt"}', json=False)
-    assert wf_mod.cmd_wf_propose(args) == 0
-    assert "telegram-send" in capsys.readouterr().out
-
-    monkeypatch.setattr(wf_backend, "confirm_run", lambda c, pid, yes, http=None: {"id": pid, "outcome": "ok finto"})
-    args = argparse.Namespace(proposal_id="p1", yes=True, json=False)
-    assert wf_mod.cmd_wf_run(args) == 0
-    assert "ok finto" in capsys.readouterr().out
-
-
-def test_wf_list_with_fakes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
-) -> None:
-    import nexgen_local.workflows as wf_backend
-    from nexgen_local.cmds import wf as wf_mod
-    from nexgen_local.workflows import WorkflowProposal
-
-    cfg = _cfg(tmp_path)
-    monkeypatch.setattr(wf_mod, "_config", lambda args: cfg)
-    monkeypatch.setattr(wf_backend, "load_allowlist", lambda: {"telegram-send": {}})
-    monkeypatch.setattr(
-        wf_backend,
-        "list_proposals",
-        lambda c: [WorkflowProposal(id="p1", workflow="telegram-send", description="", params={})],
-    )
-    args = argparse.Namespace(json=False)
-    assert wf_mod.cmd_wfs(args) == 0
-    assert "telegram-send" in capsys.readouterr().out
 
 
 # ------------------------------------------------------- firme pubbliche
@@ -208,7 +161,6 @@ def test_public_signatures_unchanged() -> None:
         "calendar_id", "event_id", "http",
     ]
     from nexgen_local.cmds import tier as tier_mod
-    from nexgen_local.cmds import wf as wf_mod
 
     assert list(inspect.signature(tier_mod.promotion_verdict).parameters) == ["reports"]
     assert list(inspect.signature(tier_mod.evaluate_for_promotion).parameters) == [
@@ -217,6 +169,3 @@ def test_public_signatures_unchanged() -> None:
     assert list(inspect.signature(tier_mod.format_evaluation).parameters) == ["result", "current"]
     assert list(inspect.signature(tier_mod.cmd_tier_evaluate).parameters) == ["args"]
     assert list(inspect.signature(tier_mod.cmd_tier_set).parameters) == ["args"]
-    assert list(inspect.signature(wf_mod.cmd_wf_propose).parameters) == ["args"]
-    assert list(inspect.signature(wf_mod.cmd_wfs).parameters) == ["args"]
-    assert list(inspect.signature(wf_mod.cmd_wf_run).parameters) == ["args"]

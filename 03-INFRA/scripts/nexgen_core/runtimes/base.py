@@ -104,19 +104,8 @@ class Runtime(ABC):
                 return tuple(render)
         return ()
 
-    @abstractmethod
-    def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
-        """Registers the universal event sink hook (IPC emitter for lifecycle events).
-        Default implementation returns None if not supported by the runtime."""
-        del home, sink_source
-        return None
-
     def remove_event_sink(self, home: Path) -> str | None:
-        """Takes back what `install_event_sink` registered, and nothing else.
-
-        The hook starts a Node process on every tool call of every session to emit an event that
-        only a voice cockpit listens for, so a machine without one pays for it on each step. The
-        guard removes it from machines whose declared modules do not need it.
+        """Takes back what older versions registered for the event sink, and nothing else.
         Returns an action line when it changed something."""
         del home
         return None

@@ -23,6 +23,14 @@ from nexgen_core.report import CheckOutcome, Severity
 #: before.
 PROBE_TIMEOUT_SECONDS = 2.5
 
+#: How many servers are probed at the same time. Each probe waits on the
+#: network, so asking them one after another spent the *sum* of their timeouts:
+#: on a manifest with three unreachable core servers that was 7.5s inside a
+#: single check, which is what pushed `doctor --summary` over its budget. Four
+#: at a time keeps the check inside a couple of timeouts, still short of the
+#: per-server one when the wait is a refusal instead of a timeout.
+PROBE_WORKERS = 4
+
 _URL_RE = re.compile(r"https?://[^\s\"']+")
 
 
@@ -96,6 +104,21 @@ def _probe_tcp(url: str, timeout: float) -> tuple[Severity, str]:
         return Severity.UNDETERMINED, f"{host}:{port} unreachable ({exc})"
 
 
+def _probe_many(targets: list[tuple[str, str]], timeout: float) -> dict[str, tuple[Severity, str]]:
+    """Ask every server at once, at most `PROBE_WORKERS` of them at a time.
+
+    The answers come back keyed by server name, so the caller keeps the order
+    it chose instead of the order the network happened to answer in.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    if not targets:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(PROBE_WORKERS, len(targets))) as pool:
+        answers = list(pool.map(lambda target: _probe_tcp(target[1], timeout), targets))
+    return {name: answer for (name, _url), answer in zip(targets, answers)}
+
+
 def check_mcp_reachability(
     vault_data: Path, home: Path, timeout: float = PROBE_TIMEOUT_SECONDS
 ) -> list[CheckOutcome]:
@@ -112,22 +135,25 @@ def check_mcp_reachability(
 
     renderer = McpRenderer(vault_data=vault_data, home=home)
     resolved: dict[str, dict] = {}
-    for cli in ("claude", "codex", "antigravity", "opencode"):
+    for cli in ("claude", "codex", "antigravity", "opencode", "openclaw"):
         try:
             for name, entry in renderer.load_resolved_servers(cli).items():
                 resolved.setdefault(name, entry)
         except (OSError, ValueError):
             continue
 
-    outcomes: list[CheckOutcome] = []
+    targets: list[tuple[str, str]] = []
     for name, entry in sorted(resolved.items()):
         if entry.get("tier") != "core":
             continue
         target = _extract_probe_target(entry)
-        if not target:
-            continue
+        if target:
+            targets.append((name, target))
+    answers = _probe_many(targets, timeout)
 
-        severity, detail = _probe_tcp(target, timeout)
+    outcomes: list[CheckOutcome] = []
+    for name, _target in targets:
+        severity, detail = answers[name]
         id_ = f"mcp.reachable.{name}"
         if severity == Severity.OK:
             outcomes.append(CheckOutcome(

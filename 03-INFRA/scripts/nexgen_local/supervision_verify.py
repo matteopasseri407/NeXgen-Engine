@@ -9,7 +9,9 @@ directory before PATH, so a `pytest.bat` dropped there would answer for the real
 runner. A Python interpreter is started with `-P`, because without it
 `python -m pytest` puts the working directory first on `sys.path` and imports the
 copy's own `pytest.py`, which is the same bypass by another name. `-P` does not
-touch `PYTHONPATH`, so the environment is cleaned as well.
+touch `PYTHONPATH`, so the environment is cleaned as well. The run has a ceiling
+of half an hour, and the engine's own environment can move it
+(`NEXGEN_SUP_VERIFY_TIMEOUT_S`): a real suite on a busy machine is slow, not hung.
 """
 from __future__ import annotations
 
@@ -23,8 +25,12 @@ from nexgen_core.processes import no_window_kwargs, split_command_line, windows_
 
 from . import supervision_pytest as pytest_runs
 
-#: The declared budget for one run of the executor's verification command.
-TIMEOUT_S = 600.0
+#: The declared budget for one run of the executor's verification command. A suite
+#: of this repository takes six to fifteen minutes on a machine other units are
+#: using, so ten minutes called a passing verification a timeout (2026-10-24).
+TIMEOUT_S = 1800.0
+#: The engine's environment variable that moves the ceiling on a slower machine.
+TIMEOUT_ENV = "NEXGEN_SUP_VERIFY_TIMEOUT_S"
 #: Shell operators the verification command may not carry: it is one command, not a script.
 SHELL_OPERATORS = ("&&", "||", "|", ";", "&")
 #: Suffixes Windows tries for a bare name, in the order the loader tries them.
@@ -32,6 +38,21 @@ WINDOWS_EXECUTABLE_SUFFIXES = (".exe", ".cmd", ".bat", ".com")
 #: A Python interpreter by name; its `-m` would put the working directory on `sys.path`.
 PYTHON_EXECUTABLE = re.compile(r"^python(\d+(\.\d+)*)?(\.exe)?$", re.IGNORECASE)
 PYTHON_LAUNCHER = re.compile(r"^py(\.exe)?$", re.IGNORECASE)
+
+
+def budget() -> float:
+    """The ceiling for one run: `TIMEOUT_S`, or the positive number the engine's environment asks for.
+
+    A value that is not a positive number is ignored, not obeyed: a typo in the
+    environment must not remove the ceiling that stops a hung command from
+    holding the gate forever. The environment is the engine's own, which no unit
+    can write.
+    """
+    try:
+        asked = float((os.environ.get(TIMEOUT_ENV) or "").strip())
+    except ValueError:
+        return TIMEOUT_S
+    return asked if asked > 0 else TIMEOUT_S
 
 
 def run(folder: Path, command: str) -> tuple[bool, str, str]:
@@ -55,10 +76,10 @@ def run(folder: Path, command: str) -> tuple[bool, str, str]:
         done = subprocess.run(
             windows_command_argv(launch_argv(argv)), cwd=folder, capture_output=True, text=True,
             encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, env=pytest_runs.cleaned_environment(),
-            timeout=TIMEOUT_S, check=False, **no_window_kwargs(),
+            timeout=budget(), check=False, **no_window_kwargs(),
         )
     except subprocess.TimeoutExpired:
-        return False, f"tempo massimo superato ({TIMEOUT_S:.0f}s)", ""
+        return False, f"tempo massimo superato ({budget():.0f}s)", ""
     except OSError as exc:
         return False, f"comando non avviato ({type(exc).__name__}: {exc})", ""
     output = (done.stdout + done.stderr).strip()

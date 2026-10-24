@@ -11,6 +11,10 @@ holding the guard lock):
    anything and never notifies.
 3. Unattended Self-Upgrader: applies a released patch bump, if there is one,
    without asking. It refuses a minor or major bump on its own.
+4. Quota alerts: raises the 80% and 95% alert for every plan whose percentage
+   is readable from a few kilobytes (Codex, and the paid lanes of the harness).
+   The Claude Code transcripts are never read here: they are hundreds of
+   megabytes (see `quota_watch`).
 """
 from __future__ import annotations
 
@@ -338,8 +342,8 @@ class Heartbeat:
             logger.debug("update alert not sent (%s)", type(exc).__name__)
 
     def run_beat(self) -> dict[str, Any]:
-        """Runs the full heartbeat cycle: the liveness question, then the two
-        maintenance tasks the contract assigns to this spot because it runs
+        """Runs the full heartbeat cycle: the liveness question, then the
+        maintenance duties the contract assigns to this spot because it runs
         regularly without holding the guard lock."""
         liveness_ok, liveness_msg = self.check_liveness()
         self_upgrade = self.run_self_upgrade()
@@ -359,5 +363,24 @@ class Heartbeat:
             "liveness_msg": liveness_msg,
             "dependency_watch": self.run_dependency_watch(),
             "self_upgrade": self_upgrade,
+            "quota": self.run_quota_watch(),
             "timestamp": time.time(),
         }
+
+    def run_quota_watch(self) -> dict[str, Any]:
+        """The 80% and 95% alerts, from the readings that cost nothing to take.
+
+        Codex answers from the tail of its newest session and the paid lanes
+        from one query over the harness archive. The Claude Code transcripts are
+        hundreds of megabytes and stay out of the hourly path: they belong to
+        the command a person types, not to a timer.
+        """
+        try:
+            from nexgen_core import quota_watch
+
+            return quota_watch.check_and_alert(
+                home=self.home, vault=self.vault_data, megaphone=self.megaphone,
+            )
+        except Exception as exc:  # nexgen: allow reason="a quota reading that fails must not cost the beat its liveness answer, which is what the beat exists to give"
+            logger.debug("quota watch skipped (%s)", type(exc).__name__)
+            return {"ok": False, "error": str(exc)}

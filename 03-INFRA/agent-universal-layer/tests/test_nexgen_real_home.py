@@ -21,7 +21,6 @@ ALLOWED = {
     "scripts/nexgen_core/paths.py": "the resolver itself",
     "scripts/nexgen_core/tools/ruff_baseline.py": "looks for a linter in the developer's own tool directories",
     "scripts/nexgen_core/tools/notifier_boot.py": "Windows branch that is handed the home explicitly and falls back to it",
-    "scripts/nexgen_local/relay.py": "the real Codex login: another tool's credentials, read-only",
     "agent-universal-layer/council/routing.py": "the real Codex model cache: another tool's data, read-only",
     "agent-universal-layer/council/seat_process.py": "the real Codex login a seat needs a copy of",
     "agent-universal-layer/mcp/lazy-mcp.py": "a standalone proxy with its own last-resort fallbacks when the engine package is unavailable",
@@ -71,5 +70,5 @@ def test_the_lane_follows_nexgen_home(tmp_path, monkeypatch):
     cfg = LaneConfig.from_env()
     lane = sandbox / ".local/state/nexgen/local-lane"
     assert cfg.audit_path == lane / "audit.jsonl"
-    assert cfg.proposals_dir == lane / "proposals" and cfg.research_dir == lane / "research"
+    assert cfg.uploads_dir == lane / "uploads"
     assert cfg.vault_root == (tmp_path / "vault").resolve(), "KNOWLEDGE_VAULT_PATH was ignored"

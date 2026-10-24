@@ -25,12 +25,32 @@ from nexgen_core.i18n import t
 #: Retry budget per filesystem operation. Locks from antivirus/indexing
 #: usually clear in milliseconds, but a scan of a fresh file on a loaded
 #: Windows box can hold it longer; past this budget the error is real and
-#: must surface, not be retried forever.
+#: must surface, not be retried forever. A directory swap (a provisioned
+#: workspace, a skill cache) waits behind the same lock.
 _RETRY_BUDGET_SECONDS = 2.0
 
+#: What Windows says while another process holds the handle for a moment:
+#: access denied (5), sharing violation (32), lock violation (33). Python
+#: maps all three onto PermissionError, and a denial raised by a test or by
+#: an exotic filesystem carries no winerror at all: that is still the same
+#: "somebody has it open" case, never a policy that will never change.
+_TRANSIENT_LOCK_WINERRORS = frozenset({5, 32, 33})
 
-def _retry_permission_error(operation):
+
+def _is_transient_lock(exc: OSError) -> bool:
+    """A denial that clears by itself, as opposed to a permission that never will."""
+    winerror = getattr(exc, "winerror", None)
+    return winerror is None or winerror in _TRANSIENT_LOCK_WINERRORS
+
+
+def retry_transient_lock(operation):
     """Retry a transient file lock, never conceal a persistent denial.
+
+    One implementation for every path move as well as every write: a rename
+    of a freshly written directory failed the whole operation while an
+    antivirus scan or a just-exited child still held it open, and the fix
+    belonged to the move (provision's workspace swap, a skill cache bump),
+    not only to the byte writers.
 
     The wait is jittered: writers that collided on one target (Windows denies
     a replace while another is in flight) would otherwise retry in lockstep
@@ -41,7 +61,9 @@ def _retry_permission_error(operation):
     while True:
         try:
             return operation()
-        except PermissionError:
+        except PermissionError as exc:
+            if not _is_transient_lock(exc):
+                raise
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise
@@ -85,7 +107,7 @@ def _atomic_publish(
     old_mode = None
     if preserve_mode:
         try:
-            old_mode = _retry_permission_error(path.stat).st_mode & 0o777
+            old_mode = retry_transient_lock(path.stat).st_mode & 0o777
         except FileNotFoundError:
             pass
     # mkstemp creates an exclusive, private file. Only this call's temporary
@@ -104,7 +126,7 @@ def _atomic_publish(
         # accident (the temporary stays writable until it is gone).
         if old_mode is not None and not old_mode & 0o200:
             os.chmod(path, old_mode | 0o200)
-        _retry_permission_error(lambda: os.link(tmp, path) if exclusive else os.replace(tmp, path))
+        retry_transient_lock(lambda: os.link(tmp, path) if exclusive else os.replace(tmp, path))
         if old_mode is not None:
             os.chmod(path, old_mode)
         # Some filesystems (and Windows) do not support directory fsync.
@@ -115,7 +137,7 @@ def _atomic_publish(
             finally:
                 os.close(dir_fd)
     finally:
-        _retry_permission_error(lambda: tmp.unlink(missing_ok=True))
+        retry_transient_lock(lambda: tmp.unlink(missing_ok=True))
 
 
 def publish_symlink(link: Path, target: Path) -> None:
@@ -136,7 +158,7 @@ def publish_symlink(link: Path, target: Path) -> None:
     tmp.unlink()
     try:
         tmp.symlink_to(target)
-        _retry_permission_error(lambda: os.replace(tmp, link))
+        retry_transient_lock(lambda: os.replace(tmp, link))
     finally:
         with contextlib.suppress(OSError):
             tmp.unlink(missing_ok=True)
@@ -159,6 +181,23 @@ def write_private_text(path: Path, text: str, *, exclusive: bool = False) -> Non
     """Publish complete private bytes, optionally refusing an ID collision."""
     secure_artifact(path.parent)
     atomic_write_text(path, text, preserve_mode=False, exclusive=exclusive)
+
+
+def symlink_write_target(path: Path, keep: Path) -> Path:
+    """The file to write so an existing symlink survives the write.
+
+    A dotfiles-managed config is a link into its repository: replacing the link
+    detaches the file from where its owner keeps it, so the resolved file is
+    written instead. A link to `keep` itself is the exception: writing through
+    it would modify the source, so the link is the one to replace.
+    """
+    if not path.is_symlink():
+        return path
+    try:
+        resolved = path.resolve()
+    except RuntimeError:  # symlink loop: there is no target to write through
+        return path
+    return path if resolved == keep.resolve() else resolved
 
 
 def _safe_tag(tag: str | None) -> str | None:
@@ -188,7 +227,11 @@ def _is_clean_vs_head(path: Path) -> bool:
         top = subprocess.run(
             ["git", "-C", str(anchor), "rev-parse", "--show-toplevel"],
             capture_output=True, stdin=subprocess.DEVNULL,
-            encoding="utf-8", timeout=15,
+            # A localized git message is not guaranteed to be valid UTF-8, and
+            # the strict decode raised (in subprocess's own reader thread) with
+            # the output replaced by nothing: the call then failed on a None
+            # instead of taking the backup it was deciding about.
+            encoding="utf-8", errors="replace", timeout=15,
         )
         if top.returncode != 0:
             return False

@@ -46,7 +46,7 @@
 #                  shims:          map of command name -> executable it runs
 #                  systemd_units:  unit files, relative to `source`
 #                  runtime_hooks:  integrations into the CLI runtimes
-#                                  (event_sink, guardrail)
+#                                  (guardrail)
 #                  config_files:   map of source (relative) -> destination.
 #                                  Destinations outside the user's home are
 #                                  refused: nothing writes to /etc on a timer.
@@ -176,6 +176,31 @@ modules:
     mcp_servers: []
     stack: null
     depends_on: [memory]
+
+  openclaw:
+    label: "OpenClaw: the harness with the interface (web panel, phone app)"
+    kind: feature
+    states: [absent, local]
+    # Bound to one machine: the gateway listens on that host's loopback, and
+    # the phone app pairs with it. Nothing about it travels to another host.
+    scope: host
+    env_gates: []
+    mcp_servers: []
+    stack: null
+    depends_on: [memory]
+    health: "nexgen openclaw doctor"
+    requires:
+      binaries: [node, npm]
+    # The version the engine configures against, read from the one file that
+    # holds it so the dependency watch and `nexgen openclaw doctor` cannot
+    # disagree about which version is expected.
+    upstream:
+      - name: openclaw
+        kind: npm
+        package: openclaw
+        pinned_in: agent-universal-layer/openclaw/pin.json
+        pattern: '"version":\s*"([^"]+)"'
+        latest: "npm:openclaw"
 
   sync:
     label: "Cross-machine sync (MULTI profile)"

@@ -1,8 +1,8 @@
 """Pinning dello split salute/servizio di cmds/service prima del refactor.
 
 Fissa il comportamento attuale (non quello desiderato) con comandi finti:
-cmd_doctor finto ritorna esito salute, cmd_mcp finto ritorna esito,
-comando sconosciuto rifiutato con errore chiaro. Solo tmp_path,
+cmd_doctor finto ritorna esito salute, comando sconosciuto
+rifiutato con errore chiaro. Solo tmp_path,
 solo comandi finti, nessuna rete, nessun servizio reale.
 """
 from __future__ import annotations
@@ -40,25 +40,12 @@ def _doctor_args(as_json: bool = False) -> argparse.Namespace:
     )
 
 
-def _mcp_args(jobs_only: bool = False) -> argparse.Namespace:
-    return argparse.Namespace(
-        jobs_only=jobs_only,
-        model=None,
-        router_model=None,
-        answer_model=None,
-        vault=None,
-        repo=None,
-        audit=None,
-    )
-
-
 def _stub_doctor_deps(monkeypatch: pytest.MonkeyPatch, cfg: LaneConfig) -> None:
     """Solo finti in tmp_path: mai servizi reali, mai rete."""
     from nexgen_local.cmds import service as svc_mod
 
     monkeypatch.setattr(svc_mod, "_config", lambda args: cfg)
     monkeypatch.setattr(svc_mod, "audit_writable", lambda _cfg: True)
-    monkeypatch.setattr(svc_mod, "available_clis", lambda: [])
     monkeypatch.setattr(svc_mod.shutil, "which", lambda _cmd: None)
     # Dipendenze locali finte: esito deterministico senza installazioni reali.
     for name in ("langchain_ollama", "langgraph"):
@@ -110,26 +97,6 @@ def test_fake_doctor_json_returns_structured_outcome(
     assert all({"check", "ok", "detail", "required"} <= set(row) for row in rows)
 
 
-def test_fake_mcp_returns_outcome(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from nexgen_local.cmds import service as svc_mod
-    import nexgen_local.mcp_server as mcp_mod
-
-    cfg = _cfg(tmp_path)
-    monkeypatch.setattr(svc_mod, "_config", lambda args: cfg)
-    seen: dict[str, object] = {}
-
-    def _fake_run_server(cfg_arg: LaneConfig, include_ask: bool = True) -> int:
-        assert cfg_arg is cfg
-        seen["include_ask"] = include_ask
-        return 7
-
-    monkeypatch.setattr(mcp_mod, "run_server", _fake_run_server)
-    assert svc_mod.cmd_mcp(_mcp_args(jobs_only=False)) == 7
-    assert seen["include_ask"] is True
-    assert svc_mod.cmd_mcp(_mcp_args(jobs_only=True)) == 7
-    assert seen["include_ask"] is False
-
-
 def test_unknown_command_rejected_with_clear_error(capsys: pytest.CaptureFixture) -> None:
     from nexgen_local import cli as cli_mod
 
@@ -142,5 +109,4 @@ def test_unknown_command_rejected_with_clear_error(capsys: pytest.CaptureFixture
 def test_public_signatures_unchanged() -> None:
     from nexgen_local.cmds import service as svc_mod
 
-    assert list(inspect.signature(svc_mod.cmd_mcp).parameters) == ["args"]
     assert list(inspect.signature(svc_mod.cmd_doctor).parameters) == ["args"]

@@ -7,7 +7,7 @@ Handles the 4 skill origins:
 3. github: third-party, pinned to an immutable commit and cloned/fetched.
 4. installer: third-party with a dedicated installer, pinned to a version.
 
-Maintains the non-discovered library (~/.agents/skill-library/) and the native views for the 4 CLIs.
+Maintains the non-discovered library (~/.agents/skill-library/) and the native views for the 5 CLIs.
 """
 from __future__ import annotations
 
@@ -24,7 +24,6 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.files import atomic_write_text  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.action_notes import ERROR, WARN, is_error  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.config import (  # noqa: E402
     SKILL_EXPOSURES,
@@ -35,6 +34,7 @@ from nexgen_core.config import (  # noqa: E402
 from nexgen_core.i18n import t  # noqa: E402
 from nexgen_core.marks import safe_mark as _safe_mark  # noqa: E402
 from nexgen_core.paths import resolve_engine_root, resolve_home, resolve_vault_data, skills_manifest  # noqa: E402
+from nexgen_core.skill_index import write_index  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.skill_sources import (  # noqa: E402
     COMMIT_SHA_RE,
     SkillEntry,
@@ -98,11 +98,15 @@ class SkillMaterializer:
         #: Le cartelle da cui i runtime scoprono le skill da soli. Un
         #: installer di terze parti ci lascia la propria copia, e da lì viene
         #: caricata sempre: è il contrario di pigra. Il motore la sposta.
+        #: OpenCode e OpenClaw leggono la stessa `~/.agents/skills`: un target
+        #: può quindi condividere la cartella con un altro, e una skill resta
+        #: in vita finché almeno uno dei due la nomina.
         self.dirs_by_target: dict[str, tuple[Path, ...]] = {
             "claude": (self.claude_dir,),
             "antigravity": (self.gemini_dir, self.gemini_config_dir, self.gemini_legacy_dir),
             "codex": (self.codex_dir,),
             "opencode": (self.active_dir, self.opencode_dir, self.opencode_native_dir),
+            "openclaw": (self.active_dir,),
         }
 
         self.discovery_dirs = (
@@ -225,12 +229,18 @@ class SkillMaterializer:
                     problems.append(t("'{name}': missing SKILL.md file under {path}", name=name, path=src))
         return problems
 
-    def _target_of(self, directory: Path) -> str | None:
-        """Which runtime reads this directory."""
-        for target, dirs in self.dirs_by_target.items():
-            if directory in dirs:
-                return target
-        return None
+    def _targets_of(self, directory: Path) -> tuple[str, ...]:
+        """Which runtimes read this directory.
+
+        A tuple, not one name: `~/.agents/skills` is the native view of more than
+        one runtime, so asking "whose view is it" and taking the first answer
+        would delete a skill another runtime still declares.
+        """
+        return tuple(target for target, dirs in self.dirs_by_target.items() if directory in dirs)
+
+    def _view_label(self, directory: Path) -> str:
+        """How a view is named in a message: every runtime that reads it."""
+        return "/".join(self._targets_of(directory)) or directory.name
 
     def _remove_stale_views(self, skills: dict[str, SkillEntry]) -> list[str]:
         """Takes back a view that is no longer declared.
@@ -287,13 +297,17 @@ class SkillMaterializer:
                             except OSError:
                                 continue
                             actions.append(t("Skill '{name}' removed with its library entry for {target}",
-                                             name=name, target=self._target_of(directory) or directory.name))
+                                             name=name, target=self._view_label(directory)))
                     continue
                 entry = skills.get(name)
                 if entry is None:
                     wanted = False
                 else:
-                    wanted = self._target_of(directory) in (entry.targets or [])
+                    # `any`, not "the one runtime this folder belongs to": a
+                    # folder shared by two runtimes stays while either declares
+                    # the skill, and pruning on the first match deleted a view
+                    # the same cycle had just created for the other.
+                    wanted = bool(set(self._targets_of(directory)) & set(entry.targets or []))
                 if wanted:
                     continue
                 try:
@@ -310,7 +324,7 @@ class SkillMaterializer:
                 except OSError:
                     continue
                 actions.append(t("Skill '{name}' is lazy again for {target}",
-                                 name=name, target=self._target_of(directory) or directory.name))
+                                 name=name, target=self._view_label(directory)))
         return actions
 
     def _collect_desired(self, skills: dict[str, SkillEntry]) -> dict[str, SkillEntry]:
@@ -466,30 +480,12 @@ class SkillMaterializer:
         return changes, actions
 
     def generate_index(self, skills: dict[str, SkillEntry] | None = None) -> Path:
-        """Generates the ~/.agents/skills/INDEX.md file with the index of every skill."""
-        if skills is None:
-            skills = self.load_manifest()
+        """Generates the ~/.agents/skills/INDEX.md file with the index of every skill.
 
-        self.active_dir.mkdir(parents=True, exist_ok=True)
-        index_file = self.active_dir / "INDEX.md"
-
-        lines = [
-            "# NeXgen Engine Skill Catalog",
-            "",
-            "Every skill available in the system (loaded on-demand via `agent-skill find` or `agent-skill show`).",
-            "",
-            "| Skill | Origin | Exposure | Description |",
-            "|---|---|---|---|",
-        ]
-
-        for name in sorted(skills.keys()):
-            s = skills[name]
-            desc = s.description or "-"
-            lines.append(f"| `{name}` | `{s.origin}` | `{s.exposure}` | {desc} |")
-
-        lines.append("")
-        atomic_write_text(index_file, "\n".join(lines))
-        return index_file
+        The page itself belongs to `nexgen_core.skill_index`: this method only
+        decides which manifest it is built from.
+        """
+        return write_index(self.active_dir, skills if skills is not None else self.load_manifest())
 
     def migrate_legacy(self, apply: bool = True) -> list[str]:
         """Quarantines legacy eager views outside the discovery roots.

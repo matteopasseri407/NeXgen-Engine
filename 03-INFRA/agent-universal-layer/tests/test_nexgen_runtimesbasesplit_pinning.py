@@ -37,10 +37,6 @@ class _FakeRuntime(Runtime):
         del home, posture
         return None
 
-    def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
-        del home, sink_source
-        return None
-
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
         del home, hook_source, engine_hooks_dir
         return None

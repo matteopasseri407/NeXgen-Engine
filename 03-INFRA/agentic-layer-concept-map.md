@@ -109,6 +109,16 @@ source of truth. Running `agent-sync` without a command is help-only, and the
 old implicit `full` operation no longer exists. Full contract:
 `docs/sync-contract.md`.
 
+## OpenClaw, the harness with the interface
+
+OpenClaw (npm `openclaw`, pinned in `agent-universal-layer/openclaw/pin.json`) is the engine's official harness: the interface (web panel, phone app) from which a person uses their own flat subscriptions and the models on their machine. It is a module of its own (`openclaw`, kind `feature`, scope `host`, depends on `memory`) and, technically, the fifth CLI the sync writes. The engine owns five sections of its file and nothing else: `plugins`, `models`, `agents`, `tools`, `gateway`; the MCP table stays with the renderer, the rest belongs to OpenClaw and to the person.
+
+Unit B1 is read-only: `nexgen_core/openclaw/` detects what the machine has (`detect.py`), derives the configuration as a pure function (`profile.py`), renders the three agent manuals (`templates.py`), diffs the proposal against the file in force (`plan.py`) and checks a live file (`doctor.py`). `nexgen openclaw plan` and `nexgen openclaw doctor` expose it, and `nexgen doctor` runs the same checks through `checks/openclaw_checks.py`. B2 adds `setup` and `restart` on the same functions, so the plan cannot promise something the setup does not write.
+
+Unit C2 gives OpenClaw everything Claude Code receives: one plugin `<state dir>/extensions/nexgen/` with two jobs that know nothing about each other (`guardrail.mjs`, `briefing.mjs`, registered by `index.mjs`), and the engine-owned `nexgen.config.json` beside it that carries the neutral posture and the briefing switch. The guardrail body, the audit file and the strict/autoAllow flags stay in the sidecar; the briefing text is `agent-universal-layer/hooks/vault-briefing.txt`, the same file Claude's checkpoint hook injects. `checks/openclaw_parity_checks.py` compares the six layers against Claude Code (MCP names, instructions, skills, guardrail, briefing, posture) and stays silent unless both CLIs are installed. Details: `docs/openclaw-sync.md`.
+
+Three agents exist: `main` (assistant), `capo` (code, Claude with high reasoning and the embedded runtime when Claude is present) and `automazioni` (only when n8n is active). A model is chosen in a fixed order among the subscriptions and local models the machine actually has; an agent with no model is not created. A local model is always caged in `tools.byProvider`, with writing MCP tools denied by pattern. No Google plan is ever written: its terms allow it only inside Google's own clients. Details: `docs/openclaw.md`.
+
 ## Why one source
 
 Hand-patching per-CLI configs creates drift: one CLI behaves differently from another, one machine falls behind, a fix on one side does not propagate. The single-source + provisioner model means a change is made once and carries everywhere. The cost is the provisioner machinery; the benefit is a system that stays coherent as it grows.

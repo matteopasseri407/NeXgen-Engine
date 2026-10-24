@@ -1,7 +1,7 @@
 """Read and draft Outlook mail over Microsoft Graph, same lane contract as Gmail.
 
-Reads (search/get) feed the loop; send/reply exist here as provider calls
-but only the compose gate invokes them, after human approval. Auth is Entra
+Reads (search/get) feed the lane; send/reply stay as provider calls with no
+caller since the compose gate was retired. Auth is Entra
 loopback against the customer's own app registration: client and tenant come
 from the environment or the machine-local 0600 files, tokens live in their
 own machine-local store. No tokens means NeedsLogin, never a browser.
@@ -263,7 +263,7 @@ def _address(value: str) -> dict[str, Any]:
 
 
 def send_message(to: str, subject: str, body: str, cc: str = "", http: HttpFn | None = None) -> dict[str, Any]:
-    """Send a new message. The caller (compose gate) owns to/subject/body."""
+    """Send a new message. The caller owns to/subject/body; the lane has none."""
     to, subject, body = str(to or "").strip(), str(subject or "").strip(), str(body or "")
     if not to or "@" not in to:
         raise ConnectorError("(outlook: destinatario mancante o non valido)")

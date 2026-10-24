@@ -216,6 +216,106 @@ def check_opencode_instructions(vault_data: Path, home: Path) -> CheckOutcome | 
     return None
 
 
+def _openclaw_workspace_states(
+    workspaces: list[Path], block: str
+) -> tuple[list[str], list[str], tuple[Path, OSError] | None]:
+    """What each workspace's `AGENTS.md` looks like: unaligned, absent folder, unreadable.
+
+    Line endings are read as they are (`newline=""`), which is also how the guard
+    writes them: comparing a CRLF file against a block built with `
+` would make
+    every cycle rewrite a file that is already correct.
+    """
+    from nexgen_core.guard_instructions import openclaw_file_state
+
+    unaligned: list[str] = []
+    absent: list[str] = []
+    for workspace in workspaces:
+        target = workspace / "AGENTS.md"
+        if not workspace.is_dir():
+            absent.append(str(workspace))
+            continue
+        try:
+            text = ""
+            if target.is_file():
+                with target.open("r", encoding="utf-8", newline="") as handle:
+                    text = handle.read()
+        except OSError as exc:
+            return unaligned, absent, (target, exc)
+        state = openclaw_file_state(text, block)
+        if state != "ok":
+            unaligned.append(f"{target} ({state})")
+    return unaligned, absent, None
+
+
+def _openclaw_unaligned_outcome(unaligned: list[str], absent: list[str]) -> CheckOutcome:
+    """The warning for the workspaces whose block is missing, different or half-written."""
+    return CheckOutcome(
+        id="instructions.openclaw_block",
+        severity=Severity.WARN,
+        message=t(
+            "OpenClaw's AGENTS.md is not aligned in {count} workspace(s): {paths}.",
+            count=len(unaligned), paths=", ".join(unaligned),
+        ),
+        action=t(
+            "Run 'nexgen sync' to rewrite the managed block; the text outside it is yours and is never touched."
+        ),
+        detail=t("Workspace folders OpenClaw declares but don't exist yet: {paths}", paths=", ".join(absent))
+        if absent else None,
+    )
+
+
+def check_openclaw_instructions(vault_data: Path, home: Path) -> CheckOutcome | None:
+    """OpenClaw reads the `AGENTS.md` of each agent's workspace: the block must be there.
+
+    There is no pointer file to check, unlike Codex and Antigravity: OpenClaw
+    loads whatever `AGENTS.md` sits in the agent's working directory, truncated,
+    so the engine owns a delimited block at the top of each of those files and
+    nothing else in them. A workspace folder that does not exist yet is not a
+    drift of the block: the setup command creates it.
+    """
+    from nexgen_core.guard_instructions import openclaw_instruction_block, openclaw_workspaces
+    from nexgen_core.paths import openclaw_config
+
+    config = openclaw_config(home)
+    if not config.is_file():
+        return None  # OpenClaw never set up here: nothing to align
+    canon = canonical_instructions(vault_data)
+    if not canon.is_file():
+        return None  # already reported by instructions.canonical_present
+    workspaces = openclaw_workspaces(config, home)
+    unaligned, absent, unreadable = _openclaw_workspace_states(
+        workspaces, openclaw_instruction_block(canon)
+    )
+    if unreadable is not None:
+        path, error = unreadable
+        return CheckOutcome(
+            id="instructions.openclaw_block",
+            severity=Severity.UNDETERMINED,
+            message=t("Could not read OpenClaw's instructions at {path}: {error}", path=path, error=error),
+        )
+    if unaligned:
+        return _openclaw_unaligned_outcome(unaligned, absent)
+    if absent:
+        return CheckOutcome(
+            id="instructions.openclaw_block",
+            severity=Severity.WARN,
+            message=t(
+                "OpenClaw declares workspace folder(s) that don't exist yet: {paths}.",
+                paths=", ".join(absent),
+            ),
+            action=t("Run 'nexgen openclaw setup' to create the agent workspace and its instructions."),
+        )
+    return CheckOutcome(
+        id="instructions.openclaw_block",
+        severity=Severity.OK,
+        message=t(
+            "OpenClaw reads the canonical AGENTS.md from {count} agent workspace(s)",
+            count=len(workspaces),
+        ),
+    )
+
+
 def check_bootstrap_size_budget(vault_data: Path) -> CheckOutcome | None:
     """The AGENTS.md bootstrap must stay within its own size budget. If the
     canonical file is missing, that's already reported elsewhere."""

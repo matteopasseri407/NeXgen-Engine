@@ -55,6 +55,22 @@ def test_unit_prints_the_copy_and_the_branch_it_prepared(lane, repo, brief, caps
     assert "push bloccata" in out
 
 
+def test_unit_prints_the_mcp_servers_the_supervisor_assigned(lane, repo, brief, capsys):
+    """Il supervisore assegna gli MCP alla creazione; senza `--mcp` l'unità non ne ha nessuno."""
+    task = _task(lane)
+
+    assert cli.main([
+        "sup", "unit", task, "prova",
+        "--repo", str(repo.path), "--base", "main", "--brief", brief,
+        "--allow", "docs/*.md", "--mcp", "vault", "--mcp", "firecrawl", "--mcp", "vault",
+    ]) == 0
+
+    out = capsys.readouterr().out
+    assert "mcp: vault, firecrawl" in out
+    units = state.status(task)["units"]
+    assert units[0]["mcp"] == ["vault", "firecrawl"]
+
+
 def test_unit_refuses_a_missing_brief(lane, repo, tmp_path, capsys):
     task = _task(lane)
     capsys.readouterr()

@@ -104,6 +104,8 @@ MESSAGES: dict[str, str] = {
     'Strict mode: treat undetermined states as non-compliant too': 'Modalità rigorosa: tratta come guasto anche ciò che non si può verificare',
     'Print the output in JSON format': "Stampa l'output in formato JSON",
     'Print the summary with FAIL=N OK=N counts': 'Stampa il riepilogo con i conteggi FAIL=N OK=N',
+    'Print how long each check took, slowest first': 'Stampa quanto ha impiegato ogni controllo, dal più lento',
+    'Check timings (slowest first): {count} checks': 'Tempi dei controlli (dal più lento): {count} controlli',
     'Apply automatic remedies for fixable problems': 'Applica i rimedi automatici per i problemi riparabili',
     'Align this machine now': 'Allinea questa macchina adesso',
     'Proceed even without reaching the remote': 'Procedi anche senza raggiungere il remoto',
@@ -353,6 +355,29 @@ MESSAGES: dict[str, str] = {
     'Antigravity configuration updated': 'Configurazione Antigravity aggiornata',
     'OpenCode configuration updated': 'Configurazione OpenCode aggiornata',
     'Codex configuration updated': 'Configurazione Codex aggiornata',
+    'OpenClaw configuration updated': 'Configurazione OpenClaw aggiornata',
+    'OpenClaw configuration not present: nothing rendered for it': 'Configurazione OpenClaw assente: non ho scritto nulla per lei',
+    'OpenClaw instructions at {path} left untouched ({error})': 'Istruzioni OpenClaw in {path} lasciate come sono ({error})',
+    "OpenClaw instructions at {path}: the managed block's markers are incomplete, left untouched": 'Istruzioni OpenClaw in {path}: i marcatori del blocco gestito sono incompleti, ho lasciato tutto come sta',
+    'OpenClaw instructions at {path} left untouched: safety backup failed ({error})': 'Istruzioni OpenClaw in {path} lasciate come sono: la copia di sicurezza non e\' riuscita ({error})',
+    'OpenClaw instructions aligned in {path}': 'Istruzioni OpenClaw allineate in {path}',
+    "Could not read OpenClaw's instructions at {path}: {error}": 'Non ho potuto leggere le istruzioni OpenClaw in {path}: {error}',
+    "OpenClaw's AGENTS.md is not aligned in {count} workspace(s): {paths}.": "L'AGENTS.md di OpenClaw non e' allineato in {count} cartella di lavoro: {paths}.",
+    "Run 'nexgen sync' to rewrite the managed block; the text outside it is yours and is never touched.": "Lancia 'nexgen sync' per riscrivere il blocco gestito; il testo fuori dal blocco e' tuo e non viene mai toccato.",
+    "Workspace folders OpenClaw declares but don't exist yet: {paths}": 'Cartelle di lavoro dichiarate da OpenClaw ma non ancora esistenti: {paths}',
+    "OpenClaw declares workspace folder(s) that don't exist yet: {paths}.": 'OpenClaw dichiara cartelle di lavoro che non esistono ancora: {paths}.',
+    "Run 'nexgen openclaw setup' to create the agent workspace and its instructions.": "Lancia 'nexgen openclaw setup' per creare la cartella di lavoro dell'agente e le sue istruzioni.",
+    'OpenClaw reads the canonical AGENTS.md from {count} agent workspace(s)': "OpenClaw legge l'AGENTS.md canonico da {count} cartella di lavoro",
+    "OpenClaw's guardrail plugin is not deposited in {path}.": "Il plugin del guardrail di OpenClaw non e' depositato in {path}.",
+    "Run 'nexgen sync' to deposit it; enabling it is a separate step, 'nexgen openclaw setup'.": "Lancia 'nexgen sync' per depositarlo; abilitarlo e' un passo a parte, 'nexgen openclaw setup'.",
+    "OpenClaw's configuration could not be read, so the plugin's state is unknown: {error}": "Non ho potuto leggere la configurazione di OpenClaw, quindi lo stato del plugin e' ignoto: {error}",
+    "Fix the JSON in OpenClaw's own configuration file, then run 'nexgen doctor' again.": "Sistema il JSON nel file di configurazione di OpenClaw, poi rilancia 'nexgen doctor'.",
+    "OpenClaw's guardrail plugin is deposited but not enabled ({reason}).": "Il plugin del guardrail di OpenClaw e' depositato ma non abilitato ({reason}).",
+    "Run 'nexgen openclaw setup' to enable it with the gateway stopped: a plugins.* change on a running gateway breaks it. Until then OpenClaw's shell commands are not checked.": "Lancia 'nexgen openclaw setup' per abilitarlo con il gateway fermo: cambiare plugins.* a gateway acceso lo rompe. Fino ad allora i comandi shell di OpenClaw non vengono controllati.",
+    "OpenClaw's guardrail plugin is deposited and enabled": "Il plugin del guardrail di OpenClaw e' depositato e abilitato",
+    'it is in plugins.deny': 'sta in plugins.deny',
+    'plugins.entries.{id}.enabled is false': 'plugins.entries.{id}.enabled e\' false',
+    'plugins.allow names other plugins only': 'plugins.allow elenca solo altri plugin',
     'install Homebrew (https://brew.sh), then: brew install': 'installa Homebrew (https://brew.sh), poi: brew install',
     "your system's package manager": 'il gestore di pacchetti del tuo sistema',
     'needs Python {wanted} or later → {hint} python3': 'serve Python {wanted} o successivo → {hint} python3',
@@ -785,6 +810,20 @@ MESSAGES: dict[str, str] = {
         "Branch di quarantena ({count}):",
     "AI Council orchestrator not found at {path}. Reinstall the engine.":
         "Orchestratore AI Council non trovato in {path}. Reinstalla il motore.",
+    "Council {mode} finished":
+        "Council {mode} concluso",
+    "Council {mode} stopped":
+        "Council {mode} interrotto",
+    "Request: {tag}.":
+        "Richiesta: {tag}.",
+    "It stopped before the end: {reason}":
+        "Si è fermato prima della fine: {reason}",
+    "Outcome: {summary}.":
+        "Esito: {summary}.",
+    "It ended without a verdict to quote.":
+        "È finito senza un verdetto da citare.",
+    "Full outcome: {path}":
+        "Esito completo: {path}",
 
     # --- Secondo giro: sync/guard production grade ---------------------------
     "Refusing to quarantine: HEAD is on '{found}', not '{expected}'":
@@ -1256,4 +1295,842 @@ MESSAGES: dict[str, str] = {
         "Esegui 'agent-sync apply' per far puntare di nuovo ogni cartella al file canonico.",
     "Antigravity's MCP configuration is the same in every folder it reads from":
         'La configurazione MCP di Antigravity è la stessa in ogni cartella da cui legge',
+    # --- OpenClaw: l'harness con l'interfaccia -----------------------------------
+    # Rilevamento
+    "npm is not on PATH, so a global OpenClaw cannot be found or installed":
+        "npm non è nel PATH, quindi un OpenClaw globale non si trova e non si installa",
+    "npm is not on PATH, so the version of {binary} cannot be read":
+        "npm non è nel PATH, quindi non posso leggere la versione di {binary}",
+    "npm did not say where its global packages live":
+        "npm non ha detto dove tiene i pacchetti globali",
+    "no npm package named 'openclaw' under {root}":
+        "nessun pacchetto npm chiamato 'openclaw' sotto {root}",
+    "the 'claude' command is not on PATH":
+        "il comando 'claude' non è nel PATH",
+    "on macOS the login lives in the Keychain: not verifiable from here":
+        "su macOS il login sta nel Keychain: non è verificabile da qui",
+    "no ~/.claude/.credentials.json: Claude Code is not logged in":
+        "manca ~/.claude/.credentials.json: Claude Code non ha fatto il login",
+    "the 'codex' command is not on PATH":
+        "il comando 'codex' non è nel PATH",
+    "no auth.json in {home}: Codex is not logged in":
+        "manca auth.json in {home}: Codex non ha fatto il login",
+    "no local model backend answered":
+        "nessun backend di modelli locali ha risposto",
+    # Il piano
+    "The assistant is not created: no model is available for it.":
+        "L'assistente non viene creato: non c'è nessun modello disponibile per lui.",
+    "The code agent is not created: no model is available for it.":
+        "L'agente del codice non viene creato: non c'è nessun modello disponibile per lui.",
+    "The automation agent is not created: no model is available for it.":
+        "L'agente delle automazioni non viene creato: non c'è nessun modello disponibile per lui.",
+    "The automation agent is not created: the n8n module is not active on this machine.":
+        "L'agente delle automazioni non viene creato: il modulo n8n non è attivo su questa macchina.",
+    "The gateway token is a placeholder: 'nexgen openclaw setup' generates the real one.":
+        "Il token del gateway è un segnaposto: 'nexgen openclaw setup' genera quello vero.",
+    "The code agent runs Claude with high reasoning and the embedded runtime.":
+        "L'agente del codice usa Claude con ragionamento alto e il runtime incorporato.",
+    "The assistant runs on Codex; only the models this account has are configured.":
+        "L'assistente gira su Codex; vengono configurati solo i modelli che questo account ha.",
+    "No local model answered. The engine never downloads one: start it yourself, for example 'ollama serve' or 'llama-server -m <model>.gguf --port 8080', then ask again.":
+        "Nessun modello locale ha risposto. Il motore non ne scarica: avvialo tu, per esempio 'ollama serve' oppure 'llama-server -m <model>.gguf --port 8080', poi richiedi di nuovo.",
+    "The context window is unknown for these models and is not written: {models}":
+        "La finestra di contesto di questi modelli non è nota e non viene scritta: {models}",
+    "OpenClaw {version} ({path})":
+        "OpenClaw {version} ({path})",
+    "OpenClaw not installed{detail}":
+        "OpenClaw non installato{detail}",
+    "Claude: {state}":
+        "Claude: {state}",
+    "Codex: {state}":
+        "Codex: {state}",
+    "OpenCode Go: {state}":
+        "OpenCode Go: {state}",
+    "key present":
+        "chiave presente",
+    "no key":
+        "nessuna chiave",
+    "Local models: Ollama {ollama}, llama.cpp {llamacpp}":
+        "Modelli locali: Ollama {ollama}, llama.cpp {llamacpp}",
+    "Local models: none ({detail})":
+        "Modelli locali: nessuno ({detail})",
+    "no backend answered":
+        "nessun backend ha risposto",
+    "n8n: {state}":
+        "n8n: {state}",
+    "not active":
+        "non attivo",
+    "not found":
+        "non trovato",
+    "logged in":
+        "login presente",
+    "installed, not logged in":
+        "installato, senza login",
+    "installed, login not verifiable":
+        "installato, login non verificabile",
+    "OpenClaw plan for {path}":
+        "Piano OpenClaw per {path}",
+    "Agents:":
+        "Agenti:",
+    "The configuration at {path} cannot be read: {error}":
+        "Non riesco a leggere la configurazione in {path}: {error}",
+    "No configuration at {path} yet: everything below would be created.":
+        "Non c'è ancora una configurazione in {path}: tutto quello che segue verrebbe creato.",
+    "Configuration in force read from {path}.":
+        "Configurazione in vigore letta da {path}.",
+    "Sections this setup would change:":
+        "Sezioni che questo setup cambierebbe:",
+    "  added: {items}":
+        "  da aggiungere: {items}",
+    "  changed: {items}":
+        "  da cambiare: {items}",
+    "  yours, left untouched: {items}":
+        "  tue, lasciate intatte: {items}",
+    "  no longer proposed, left in place: {items}":
+        "  non più proposte, lasciate al loro posto: {items}",
+    "Nothing was written. 'nexgen openclaw setup' (B2) applies this plan.":
+        "Non è stato scritto niente. 'nexgen openclaw setup' (B2) applica questo piano.",
+    # Il doctor di OpenClaw
+    "The OpenClaw module is declared on this machine but OpenClaw is not installed.":
+        "Il modulo OpenClaw è dichiarato su questa macchina ma OpenClaw non è installato.",
+    "Install the pinned release: {command}":
+        "Installa la versione fissata: {command}",
+    "OpenClaw {version} is installed, but the engine cannot read its pin.":
+        "OpenClaw {version} è installato, ma il motore non riesce a leggere la versione fissata.",
+    "Check agent-universal-layer/openclaw/pin.json: it holds the release the engine expects.":
+        "Controlla agent-universal-layer/openclaw/pin.json: contiene la versione che il motore si aspetta.",
+    "OpenClaw {version} is installed, the engine configures {pinned}.":
+        "OpenClaw {version} è installato, il motore configura {pinned}.",
+    "Align it with: {command}":
+        "Allinealo con: {command}",
+    "OpenClaw {version} is the pinned release.":
+        "OpenClaw {version} è la versione fissata.",
+    "OpenClaw is installed but this machine does not declare the module: the engine will not keep it aligned.":
+        "OpenClaw è installato ma questa macchina non dichiara il modulo: il motore non lo terrà allineato.",
+    "Declare 'openclaw: local' under this host in modules.state.yaml, or remove OpenClaw.":
+        "Dichiara 'openclaw: local' sotto questa macchina in modules.state.yaml, oppure rimuovi OpenClaw.",
+    "The configuration at {path} is valid JSON.":
+        "La configurazione in {path} è JSON valido.",
+    "Fix the file or move it aside; 'nexgen openclaw plan' shows what the engine would write.":
+        "Sistema il file o spostalo da parte; 'nexgen openclaw plan' mostra cosa scriverebbe il motore.",
+    "OpenClaw has no configuration at {path} yet.":
+        "OpenClaw non ha ancora una configurazione in {path}.",
+    "Run 'nexgen openclaw plan' to see what the engine would write.":
+        "Lancia 'nexgen openclaw plan' per vedere cosa scriverebbe il motore.",
+    "Ollama model ids carry ':latest', which OpenClaw does not recognise: {ids}":
+        "Gli id dei modelli Ollama hanno ':latest', che OpenClaw non riconosce: {ids}",
+    "Write the id without ':latest' and run 'nexgen openclaw setup' again.":
+        "Scrivi l'id senza ':latest' e rilancia 'nexgen openclaw setup'.",
+    "Every Ollama model id is written without ':latest'.":
+        "Ogni id dei modelli Ollama è scritto senza ':latest'.",
+    "This local model has no cage in tools.byProvider: {models}":
+        "Questo modello locale non ha la gabbia in tools.byProvider: {models}",
+    "Run 'nexgen openclaw plan', then setup: a local model must not write, execute or browse.":
+        "Lancia 'nexgen openclaw plan' e poi setup: un modello locale non deve scrivere, eseguire né navigare.",
+    "Every local model is caged ({count}).":
+        "Ogni modello locale è nella gabbia ({count}).",
+    "The engine plugin is not enabled here, so the evidence check is not installed.":
+        "Qui il plugin del motore non è abilitato, quindi il controllo delle evidenze non c'è.",
+    "The engine plugin is enabled but its evidence switch is missing: the check cannot run.":
+        "Il plugin del motore è abilitato ma manca il suo interruttore delle evidenze: il controllo non può partire.",
+    "Run 'nexgen sync': it deposits the switch beside the plugin.":
+        "Lancia 'nexgen sync': deposita l'interruttore accanto al plugin.",
+    "The evidence check is off: this machine names no local model whose answers it could check.":
+        "Il controllo delle evidenze è spento: questa macchina non nomina nessun modello locale di cui controllare le risposte.",
+    "The evidence check holds each answer of these local models to its own tool receipts: {providers}.":
+        "Il controllo delle evidenze tiene ogni risposta di questi modelli locali alle ricevute dei suoi tool: {providers}.",
+    "The evidence check covers {providers}, but OpenClaw does not let the plugin read the conversation, so no answer is checked.":
+        "Il controllo delle evidenze copre {providers}, ma OpenClaw non lascia che il plugin legga la conversazione: nessuna risposta viene controllata.",
+    "Run 'nexgen openclaw setup' with the gateway stopped: it grants plugins.entries.nexgen.hooks.allowConversationAccess.":
+        "Lancia 'nexgen openclaw setup' con il gateway fermo: concede plugins.entries.nexgen.hooks.allowConversationAccess.",
+    "The heartbeat is off, as the engine configures it.":
+        "Il battito è spento, come lo configura il motore.",
+    "The heartbeat runs every '{every}': it starts system jobs that write to the channels.":
+        "Il battito gira ogni '{every}': avvia job di sistema che scrivono sui canali.",
+    "(not set)":
+        "(non impostato)",
+    "Set agents.defaults.heartbeat.every to '0m'.":
+        "Imposta agents.defaults.heartbeat.every a '0m'.",
+    "The gateway binds to {bind}.":
+        "Il gateway si lega a {bind}.",
+    "The gateway binds to '{bind}', which is neither loopback nor the home network.":
+        "Il gateway si lega a '{bind}', che non è né loopback né la rete di casa.",
+    "The gateway binds to the home network, but its token is missing or still the placeholder.":
+        "Il gateway si lega alla rete di casa, ma il suo token manca o è ancora il segnaposto.",
+    "Run 'nexgen openclaw setup' to generate a real token, or set gateway.bind to 'loopback'.":
+        "Lancia 'nexgen openclaw setup' per generare un token vero, oppure imposta gateway.bind a 'loopback'.",
+    "The gateway uses token authentication, but the token is missing or still the placeholder.":
+        "Il gateway usa l'autenticazione a token, ma il token manca o è ancora il segnaposto.",
+    "Run 'nexgen openclaw setup': it generates the token once and never prints it.":
+        "Lancia 'nexgen openclaw setup': genera il token una volta e non lo stampa mai.",
+    "Node {version} satisfies OpenClaw's requirement ({requirement}).":
+        "Node {version} soddisfa il requisito di OpenClaw ({requirement}).",
+    "Node {version} does not satisfy OpenClaw's requirement ({requirement}).":
+        "Node {version} non soddisfa il requisito di OpenClaw ({requirement}).",
+    "Install a Node release in that range from {url}, then run 'nexgen doctor' again.":
+        "Installa una versione di Node in quell'intervallo da {url}, poi rilancia 'nexgen doctor'.",
+    "The Node version cannot be read, so OpenClaw's requirement ({requirement}) is unverified.":
+        "Non riesco a leggere la versione di Node, quindi il requisito di OpenClaw ({requirement}) resta non verificato.",
+    "Make sure 'node --version' answers in this shell, then run 'nexgen doctor' again.":
+        "Assicurati che 'node --version' risponda in questa shell, poi rilancia 'nexgen doctor'.",
+    "Lingering is enabled for {user}: the gateway survives logout.":
+        "Il lingering è attivo per {user}: il gateway sopravvive al logout.",
+    "Lingering is off for {user}: the gateway stops when the last session closes.":
+        "Il lingering è spento per {user}: il gateway si ferma quando chiudi l'ultima sessione.",
+    "Run 'loginctl enable-linger {user}' once.":
+        "Lancia una volta 'loginctl enable-linger {user}'.",
+    # --- Due PC: i nodi che il gateway conosce -----------------------------------
+    "connected":
+        "connesso",
+    "not connected":
+        "non connesso",
+    "No node is paired with this gateway.":
+        "Nessun nodo è accoppiato a questo gateway.",
+    "Nodes this gateway knows: {items}":
+        "Nodi che questo gateway conosce: {items}",
+    "The gateway listens on the home network: a node on another PC can reach it.":
+        "Il gateway ascolta sulla rete di casa: un nodo su un altro PC lo raggiunge.",
+    "The gateway listens on this machine only ({bind}): a node on another PC cannot reach it.":
+        "Il gateway ascolta solo su questa macchina ({bind}): un nodo su un altro PC non lo raggiunge.",
+    "Run 'nexgen openclaw setup --lan' here and restart the gateway.":
+        "Lancia qui 'nexgen openclaw setup --lan' e riavvia il gateway.",
+    "Run 'nexgen openclaw setup --lan' here and restart the gateway, when a second machine has to reach it.":
+        "Lancia qui 'nexgen openclaw setup --lan' e riavvia il gateway, quando una seconda macchina deve raggiungerlo.",
+    "Also list the nodes the running gateway knows (starts OpenClaw's CLI once)":
+        "Elenca anche i nodi che il gateway in esecuzione conosce (avvia una volta la CLI di OpenClaw)",
+    "Nodes already paired:":
+        "Nodi già accoppiati:",
+    "Set gateway.bind to 'loopback', or 'lan' if you use the phone app on your home network.":
+        "Imposta gateway.bind a 'loopback', oppure 'lan' se usi l'app sul telefono nella rete di casa.",
+    "These configured channels have no agent binding: {names}. With explicit ownership their messages reach no agent.":
+        "Questi canali configurati non hanno un binding verso un agente: {names}. Con l'ownership esplicita i loro messaggi non arrivano a nessuno.",
+    "Run 'nexgen openclaw setup': it binds them to the main agent and leaves your bindings untouched.":
+        "Lancia 'nexgen openclaw setup': li collega all'agente main e non tocca i tuoi binding.",
+    "Every configured channel has an agent binding.":
+        "Ogni canale configurato ha un binding verso un agente.",
+    "The setup adds a binding for these channels: {pairs}.":
+        "Il setup aggiunge un binding per questi canali: {pairs}.",
+    "The gateway asks for a token.":
+        "Il gateway chiede un token.",
+    "The gateway does not use token authentication (mode: {mode}).":
+        "Il gateway non usa l'autenticazione a token (modalità: {mode}).",
+    "Set gateway.auth.mode to 'token' and let 'nexgen openclaw setup' generate the token.":
+        "Imposta gateway.auth.mode a 'token' e lascia che 'nexgen openclaw setup' generi il token.",
+    "OpenClaw is configured with a Google subscription, which its terms do not allow: {names}":
+        "OpenClaw è configurato con un abbonamento Google, che i suoi termini non permettono: {names}",
+    "Remove it: use Claude, Codex, the OpenCode Go key or a local model.":
+        "Rimuovilo: usa Claude, Codex, la chiave OpenCode Go o un modello locale.",
+    "No Google subscription is configured in OpenClaw.":
+        "Nessun abbonamento Google è configurato in OpenClaw.",
+    "The ACP bridge allows the 'gemini' agent; its terms do not allow it outside Google's clients.":
+        "Il bridge ACP permette l'agente 'gemini'; i termini non lo permettono fuori dai client Google.",
+    "Remove 'gemini' from acp.allowedAgents.":
+        "Togli 'gemini' da acp.allowedAgents.",
+    "The ACP bridge does not allow a Google agent.":
+        "Il bridge ACP non permette nessun agente Google.",
+    "These agents use a subscription this machine does not have: {items}":
+        "Questi agenti usano un abbonamento che questa macchina non ha: {items}",
+    "Log in to the subscription, or run 'nexgen openclaw plan' to see the model the engine would choose.":
+        "Fai il login dell'abbonamento, oppure lancia 'nexgen openclaw plan' per vedere il modello che sceglierebbe il motore.",
+    "Every agent uses a model this machine can reach.":
+        "Ogni agente usa un modello che questa macchina raggiunge.",
+    "No background job runs on a local model.":
+        "Nessun lavoro di fondo gira su un modello locale.",
+    "These background jobs would run on the local model {models}: {jobs}.":
+        "Questi lavori di fondo girerebbero sul modello locale {models}: {jobs}.",
+    "Run 'nexgen openclaw setup': it points them at the cloud model an agent already uses.":
+        "Lancia 'nexgen openclaw setup': li sposta sul modello cloud che un agente già usa.",
+    "dreaming":
+        "dreaming",
+    "compaction":
+        "compattazione",
+    "the memory flush":
+        "memory flush",
+    "active memory":
+        "active memory",
+    "The gateway watches the whole of {root} with one recursive handle: every file created under it wakes the configuration reload.":
+        "Il gateway guarda {root} per intero con un solo handle ricorsivo: ogni file creato lì dentro sveglia il ricaricamento della configurazione.",
+    "Run 'nexgen openclaw setup': it adds env.vars.{name} to the configuration. Restart the gateway once afterwards.":
+        "Lancia 'nexgen openclaw setup': aggiunge env.vars.{name} alla configurazione. Poi riavvia il gateway una volta.",
+    "The configuration tells the gateway to poll instead of watching {root} recursively; that applies from the next gateway start.":
+        "La configurazione dice al gateway di interrogare il file invece di guardare {root} in modo ricorsivo; vale dal prossimo avvio del gateway.",
+    "The gateway watches {root}, which does not contain your home.":
+        "Il gateway guarda {root}, che non contiene la tua home.",
+    "The gateway's root is {root}, and on Linux it watches one directory rather than the whole tree.":
+        "La radice del gateway è {root}, e su Linux guarda una cartella invece di tutto l'albero.",
+    "Polling is forced, but the gateway watches {root} and not your home: nothing needs it any more.":
+        "Il polling è forzato, ma il gateway guarda {root} e non la tua home: non serve più a niente.",
+    "Remove env.vars.{name} from {path} and restart the gateway.":
+        "Togli env.vars.{name} da {path} e riavvia il gateway.",
+    "OpenClaw changes how it watches its configuration only when it starts: restart the gateway once for this key to take effect.":
+        "OpenClaw cambia il modo in cui guarda la sua configurazione solo quando parte: riavvia il gateway una volta perché questa chiave abbia effetto.",
+    "The gateway answers on 127.0.0.1:{port}.":
+        "Il gateway risponde su 127.0.0.1:{port}.",
+    "The gateway is not listening on 127.0.0.1:{port} (normal when it is stopped).":
+        "Il gateway non è in ascolto su 127.0.0.1:{port} (è normale quando è fermo).",
+    "A second OpenClaw from the Microsoft Store is installed ({names}): two gateways in conflict.":
+        "È installato un secondo OpenClaw dal Microsoft Store ({names}): due gateway in conflitto.",
+    "Remove the Microsoft Store app: the engine manages the npm one.":
+        "Rimuovi l'app del Microsoft Store: il motore gestisce quello npm.",
+    "Agent {agent}: {count} learned skills created or changed in the last 24 hours.":
+        "Agente {agent}: {count} skill imparate create o cambiate nelle ultime 24 ore.",
+    "Review what {agent} learned: more than ten new procedures in a day is a lot to keep.":
+        "Rivedi cosa ha imparato {agent}: più di dieci procedure nuove in un giorno sono tante da tenere.",
+    "the app-owned WSL distribution {name}":
+        "la distribuzione WSL dell'app {name}",
+    "the app's own WSL storage":
+        "lo spazio WSL dell'app",
+    "its settings name a gateway on this PC":
+        "le sue impostazioni nominano un gateway su questo PC",
+    "its settings name a gateway elsewhere":
+        "le sue impostazioni nominano un gateway altrove",
+    "The OpenClaw Companion app runs the gateway on this PC ({signals}). This version of the engine configures the native gateway, not the app's one: it writes nothing here and starts no second gateway.":
+        "L'app OpenClaw Companion esegue il gateway su questo PC ({signals}). Questa versione del motore configura il gateway nativo, non quello dell'app: qui non scrive niente e non avvia un secondo gateway.",
+    "Use the app as it is, or install the native gateway with {command} and run 'nexgen openclaw setup'.":
+        "Usa l'app così com'è, oppure installa il gateway nativo con {command} e lancia 'nexgen openclaw setup'.",
+    "The OpenClaw Companion app runs a gateway of its own on this PC ({signals}) and the native gateway is here too: two gateways in conflict.":
+        "L'app OpenClaw Companion esegue un gateway suo su questo PC ({signals}) e c'è anche il gateway nativo: due gateway in conflitto.",
+    "Keep the one you want: in OpenClaw Companion open Connections and point it at this PC's gateway, or stay with the app's one and remove the native gateway with 'npm uninstall -g openclaw'.":
+        "Tieni quello che vuoi: in OpenClaw Companion apri Connections e puntalo al gateway di questo PC, oppure resta su quello dell'app e rimuovi il gateway nativo con 'npm uninstall -g openclaw'.",
+    "The OpenClaw Companion app is connected to a gateway elsewhere. Nothing here is in conflict: this version of the engine configures the native gateway on this PC only.":
+        "L'app OpenClaw Companion è collegata a un gateway altrove. Qui non c'è nessun conflitto: questa versione del motore configura solo il gateway nativo di questo PC.",
+    "Nothing to do: the app keeps its own gateway.":
+        "Niente da fare: l'app tiene il suo gateway.",
+    "The OpenClaw Companion app is installed and names no gateway on this PC.":
+        "L'app OpenClaw Companion è installata e non nomina nessun gateway su questo PC.",
+    "In OpenClaw Companion open Connections and choose 'a local Gateway on this PC', then 'nexgen openclaw pair' approves the request it leaves.":
+        "In OpenClaw Companion apri Connections e scegli 'a local Gateway on this PC', poi 'nexgen openclaw pair' approva la richiesta che l'app lascia.",
+    "The OpenClaw Companion app is set to this PC's gateway on port {port}.":
+        "L'app OpenClaw Companion è puntata al gateway di questo PC sulla porta {port}.",
+    "The gateway lists no device for it yet: 'nexgen openclaw pair' shows the request the app leaves and approves it.":
+        "Il gateway non elenca ancora un dispositivo per l'app: 'nexgen openclaw pair' mostra la richiesta che l'app lascia e la approva.",
+    "The gateway lists its device.":
+        "Il gateway elenca il suo dispositivo.",
+    "The gateway lists {count} device(s), none of them naming the app: 'nexgen openclaw pair' shows the request and approves it.":
+        "Il gateway elenca {count} dispositivi, nessuno dei quali nomina l'app: 'nexgen openclaw pair' mostra la richiesta e la approva.",
+    "The OpenClaw Companion app runs the gateway on this PC ({signals}) and there is no native one.":
+        "L'app OpenClaw Companion esegue il gateway su questo PC ({signals}) e non ce n'è uno nativo.",
+    "This version of the engine configures the native Node gateway, which is the road it supports, not the app's one: nothing was installed and nothing was written, because a native gateway beside it would fight over the same port.":
+        "Questa versione del motore configura il gateway nativo Node, che è la strada che supporta, non quello dell'app: non è stato installato né scritto niente, perché un gateway nativo accanto a quello dell'app si batterebbe per la stessa porta.",
+    "To use the app with the engine, open Connections in OpenClaw Companion and choose 'a local Gateway on this PC'.":
+        "Per usare l'app con il motore, apri Connections in OpenClaw Companion e scegli 'a local Gateway on this PC'.",
+    "Two ways forward: use the app as it is, or install the native gateway with {command} and run this setup again.":
+        "Due strade: usa l'app così com'è, oppure installa il gateway nativo con {command} e rilancia questo setup.",
+    "To take the second road while the app's gateway is still here, stop it in OpenClaw Companion and run this setup again with --node-gateway.":
+        "Per prendere la seconda strada mentre il gateway dell'app c'è ancora, fermalo in OpenClaw Companion e rilancia questo setup con --node-gateway.",
+    "Something answers on 127.0.0.1:{port} already: stop the app's gateway in OpenClaw Companion and run this setup again.":
+        "Su 127.0.0.1:{port} qualcosa risponde già: ferma il gateway dell'app in OpenClaw Companion e rilancia questo setup.",
+    "Two gateways cannot share the port, and this setup never starts, stops or writes the app's distribution.":
+        "Due gateway non possono dividersi la porta, e questo setup non avvia, non ferma e non scrive mai la distribuzione dell'app.",
+    "Going ahead with the native gateway: 127.0.0.1:{port} is free.":
+        "Vado avanti con il gateway nativo: 127.0.0.1:{port} è libera.",
+    "The app can be pointed at it: in OpenClaw Companion open Connections and choose 'a local Gateway on this PC'.":
+        "L'app può essere puntata lì: in OpenClaw Companion apri Connections e scegli 'a local Gateway on this PC'.",
+    ", and it is connected to this PC's gateway on port {port}":
+        ", e l'app è collegata al gateway di questo PC sulla porta {port}",
+    ", and it is connected to a gateway of its own on port {port}":
+        ", e l'app è collegata a un gateway suo sulla porta {port}",
+    "The OpenClaw Companion app runs the gateway on this PC ({signals}): this engine configures the native Node gateway, which is the road it supports, and cannot write the app's one. To use the app with the engine, open Connections in OpenClaw Companion and choose 'a local Gateway on this PC'; the setup stops here until then, and runs beside the app's gateway only with --node-gateway.":
+        "L'app OpenClaw Companion esegue il gateway su questo PC ({signals}): questo motore configura il gateway nativo Node, che è la strada che supporta, e non può scrivere quello dell'app. Per usare l'app con il motore, apri Connections in OpenClaw Companion e scegli 'a local Gateway on this PC'; fino ad allora il setup si ferma qui, e gira accanto al gateway dell'app solo con --node-gateway.",
+    "The OpenClaw Companion app has a gateway of its own on this PC ({signals}){uses}: the setup below writes the native one.":
+        "L'app OpenClaw Companion ha un gateway suo su questo PC ({signals}){uses}: il setup qui sotto scrive quello nativo.",
+    "The OpenClaw Companion app is connected to a gateway elsewhere: nothing here is in conflict, and the setup below writes the native gateway on this PC only.":
+        "L'app OpenClaw Companion è collegata a un gateway altrove: qui non c'è nessun conflitto, e il setup qui sotto scrive solo il gateway nativo di questo PC.",
+    "The OpenClaw Companion app is installed and names no gateway on this PC: once the setup below has configured this PC's gateway, open Connections in OpenClaw Companion and choose 'a local Gateway on this PC'.":
+        "L'app OpenClaw Companion è installata e non nomina nessun gateway su questo PC: quando il setup qui sotto ha configurato il gateway di questo PC, apri Connections in OpenClaw Companion e scegli 'a local Gateway on this PC'.",
+    "{passed} passed, {warned} warnings, {failed} failures":
+        "{passed} superati, {warned} avvisi, {failed} errori",
+    # Il comando
+    "OpenClaw, the harness with the interface (plan and doctor)":
+        "OpenClaw, l'harness con l'interfaccia (plan e doctor)",
+    "Read-only: what the engine would configure, and what stays yours":
+        "Sola lettura: cosa configurerebbe il motore e cosa resta tuo",
+    "Also reachable from the home network (the phone app)":
+        "Raggiungibile anche dalla rete di casa (l'app sul telefono)",
+    "Allow the acpx plugin too":
+        "Permetti anche il plugin acpx",
+    "Check OpenClaw's installation and configuration":
+        "Controlla installazione e configurazione di OpenClaw",
+    "OpenClaw is not installed here and this machine does not declare the module: nothing to check.":
+        "OpenClaw non è installato qui e questa macchina non dichiara il modulo: non c'è niente da controllare.",
+    # L'installazione con un comando (unità B2)
+    "Installation":
+        "Installazione",
+    "Initial configuration":
+        "Configurazione iniziale",
+    "Plan and confirmation":
+        "Piano e conferma",
+    "Safe write":
+        "Scrittura sicura",
+    "Agent workspaces":
+        "Cartelle degli agenti",
+    "Gateway service":
+        "Servizio del gateway",
+    "Module":
+        "Modulo",
+    "Phone":
+        "Telefono",
+    "Setup complete.":
+        "Installazione completata.",
+    "OpenClaw {version} is already the pinned release.":
+        "OpenClaw {version} è già la versione fissata.",
+    "Node is not installed and OpenClaw needs it. Install it from {url}, then run the setup again.":
+        "Node non è installato e OpenClaw ne ha bisogno. Installalo da {url}, poi rilancia il setup.",
+    "Node {version} does not satisfy what OpenClaw {pinned} needs ({requirement}).":
+        "Node {version} non soddisfa quello che OpenClaw {pinned} richiede ({requirement}).",
+    "Install a Node release in that range from {url}, then run the setup again.":
+        "Installa una versione di Node in quell'intervallo da {url}, poi rilancia il setup.",
+    "The systemd user bus is not available in this session, so the gateway service cannot be managed.":
+        "Il bus utente di systemd non è disponibile in questa sessione, quindi il servizio del gateway non si può gestire.",
+    "Log in to a normal user session with systemd, or start one, then run the setup again.":
+        "Entra in una normale sessione utente con systemd, o avviane una, poi rilancia il setup.",
+    "npm installs global packages under {prefix}, which this user cannot write.":
+        "npm installa i pacchetti globali in {prefix}, dove questo utente non può scrivere.",
+    "Run 'npm config set prefix ~/.local' once, or use a version manager for Node, then run the setup again.":
+        "Lancia una volta 'npm config set prefix ~/.local', oppure usa un version manager per Node, poi rilancia il setup.",
+    "Lingering is off for {user}: the gateway stops when your last session closes.":
+        "Il lingering è spento per {user}: il gateway si ferma quando chiudi l'ultima sessione.",
+    "Run 'loginctl enable-linger {user}' once, then run the setup again.":
+        "Lancia una volta 'loginctl enable-linger {user}', poi rilancia il setup.",
+    "npm is not beside Node. Install Node from {url}: it brings npm with it.":
+        "npm non è accanto a Node. Installa Node da {url}: porta npm con sé.",
+    "The engine cannot read its OpenClaw pin, so it will not install an unknown release. Check agent-universal-layer/openclaw/pin.json and run the setup again.":
+        "Il motore non riesce a leggere il pin di OpenClaw, quindi non installa una versione sconosciuta. Controlla agent-universal-layer/openclaw/pin.json e rilancia il setup.",
+    "OpenClaw {version} is not the pinned {pinned}: installing the pin.":
+        "OpenClaw {version} non è la versione fissata {pinned}: installo quella.",
+    "OpenClaw is not installed: installing {pinned}.":
+        "OpenClaw non è installato: installo {pinned}.",
+    "The install failed (exit {code}).":
+        "L'installazione è fallita (uscita {code}).",
+    "OpenClaw {pinned} is installed.":
+        "OpenClaw {pinned} è installato.",
+    "Note: 'openclaw' is still not on PATH; a new terminal may be needed.":
+        "Nota: 'openclaw' non è ancora nel PATH; può servire un terminale nuovo.",
+    "The configuration at {path} already exists.":
+        "La configurazione in {path} esiste già.",
+    "No configuration yet: letting OpenClaw create the baseline, with no questions.":
+        "Non c'è ancora una configurazione: lascio che OpenClaw crei la base, senza domande.",
+    "Onboarding failed (exit {code}); nothing was written.":
+        "L'onboarding è fallito (uscita {code}); non è stato scritto niente.",
+    "Onboarding finished but {path} was not created.":
+        "L'onboarding è finito ma {path} non è stato creato.",
+    "OpenClaw created {path}.":
+        "OpenClaw ha creato {path}.",
+    "Write this configuration and start the gateway?":
+        "Scrivo questa configurazione e avvio il gateway?",
+    "Nothing written: the plan above was not applied.":
+        "Non ho scritto niente: il piano qui sopra non è stato applicato.",
+    "Commands this run would execute:":
+        "Comandi che questa esecuzione lancerebbe:",
+    "the gateway service, only if it is not installed yet":
+        "il servizio del gateway, solo se non è ancora installato",
+    "Dry run: nothing was written and nothing was executed.":
+        "Prova a vuoto: non ho scritto e non ho eseguito niente.",
+    "The engine plugin {plugin} is deposited and enabled.":
+        "Il plugin del motore {plugin} è depositato e abilitato.",
+    "The engine plugin {plugin} is not deposited on this machine: not enabled.":
+        "Il plugin del motore {plugin} non è depositato su questa macchina: non lo abilito.",
+    "The file in force cannot be read ({error}); it is backed up before it is replaced.":
+        "Il file in vigore non è leggibile ({error}); ne faccio una copia prima di sostituirlo.",
+    "The configuration is already what the engine would write: nothing to write.":
+        "La configurazione è già quella che scriverebbe il motore: non c'è niente da scrivere.",
+    "The gateway did not stop ({pids}); its file was left alone.":
+        "Il gateway non si è fermato ({pids}); il suo file è rimasto com'era.",
+    "The previous configuration is saved as {name}.":
+        "La configurazione precedente è salvata come {name}.",
+    "Configuration written to {path}.":
+        "Configurazione scritta in {path}.",
+    "The gateway token was generated for this machine and is not shown.":
+        "Il token del gateway è stato generato per questa macchina e non viene mostrato.",
+    "OpenClaw accepts the configuration.":
+        "OpenClaw accetta la configurazione.",
+    "The gateway starts again now, so it reads the new configuration.":
+        "Il gateway riparte adesso, così legge la nuova configurazione.",
+    "Starting the gateway: a cold start takes about five minutes.":
+        "Avvio il gateway: un avvio a freddo dura circa cinque minuti.",
+    "Waiting for the gateway the write step restarted: a cold start takes about five minutes.":
+        "Aspetto il gateway riavviato dalla scrittura: un avvio a freddo dura circa cinque minuti.",
+    "Waiting for the gateway the install started: a cold start takes about five minutes.":
+        "Aspetto il gateway avviato dall'installazione: un avvio a freddo dura circa cinque minuti.",
+    "OpenClaw rejected the configuration (exit {code}): the previous file was put back.":
+        "OpenClaw ha rifiutato la configurazione (uscita {code}): ho rimesso il file precedente.",
+    "The gateway is already installed as a service ({mechanism}).":
+        "Il gateway è già installato come servizio ({mechanism}).",
+    "Gateway service install: {state}":
+        "Installazione del servizio del gateway: {state}",
+    "done":
+        "fatto",
+    "failed":
+        "fallito",
+    "The gateway already answers on 127.0.0.1:{port}.":
+        "Il gateway risponde già su 127.0.0.1:{port}.",
+    "Waiting for the gateway on 127.0.0.1:{port}: {seconds} seconds so far.":
+        "Aspetto il gateway su 127.0.0.1:{port}: {seconds} secondi finora.",
+    "The gateway answers on 127.0.0.1:{port} after {seconds} seconds.":
+        "Il gateway risponde su 127.0.0.1:{port} dopo {seconds} secondi.",
+    "The gateway did not answer on 127.0.0.1:{port} within {seconds} seconds.":
+        "Il gateway non ha risposto su 127.0.0.1:{port} entro {seconds} secondi.",
+    "This machine declares 'openclaw: local' for host {host}.":
+        "Questa macchina dichiara 'openclaw: local' per l'host {host}.",
+    "The module declaration did not land: {error}":
+        "La dichiarazione del modulo non è andata a buon fine: {error}",
+    "Then approve the request from here: 'nexgen openclaw pair' lists it, 'nexgen openclaw pair --approve <id>' approves it.":
+        "Poi approva la richiesta da qui: 'nexgen openclaw pair' la elenca, 'nexgen openclaw pair --approve <id>' la approva.",
+    "To connect the phone, run this in a terminal of yours: {command}":
+        "Per collegare il telefono, lancia questo in un tuo terminale: {command}",
+    "Restarting the gateway: a cold start takes about five minutes.":
+        "Riavvio il gateway: un avvio a freddo dura circa cinque minuti.",
+    "Stop the gateway before editing its file by hand":
+        "Ferma il gateway prima di modificare a mano il suo file",
+    "The gateway is stopped.":
+        "Il gateway è fermo.",
+    "The gateway did not stop: these processes are still alive ({pids}).":
+        "Il gateway non si è fermato: questi processi sono ancora vivi ({pids}).",
+    "The gateway did not answer: {error}":
+        "Il gateway non ha risposto: {error}",
+    "no answer from the port":
+        "nessuna risposta dalla porta",
+    "Waited {seconds} seconds.":
+        "Ho aspettato {seconds} secondi.",
+    "Requests waiting for approval:":
+        "Richieste in attesa di approvazione:",
+    "No device is waiting to be paired.":
+        "Nessun dispositivo è in attesa di accoppiamento.",
+    "Approve one with 'nexgen openclaw pair --approve <id>'.":
+        "Approva una con 'nexgen openclaw pair --approve <id>'.",
+    "Approve device {id}?":
+        "Approvo il dispositivo {id}?",
+    "Nothing approved.":
+        "Non ho approvato niente.",
+    "Device {id} approved.":
+        "Dispositivo {id} approvato.",
+    "No node is waiting for approval.":
+        "Nessun nodo è in attesa di approvazione.",
+    "Node requests waiting for approval, with the commands they would expose:":
+        "Richieste dei nodi in attesa di approvazione, con i comandi che esporrebbero:",
+    "{node}, commands: {commands}":
+        "{node}, comandi: {commands}",
+    "Approve node {node}?":
+        "Approvo il nodo {node}?",
+    "No node request {id} is waiting: nothing was approved.":
+        "Nessuna richiesta di nodo {id} è in attesa: non ho approvato niente.",
+    "Node {node} approved.":
+        "Nodo {node} approvato.",
+    "Approve a node with 'nexgen openclaw pair --approve-node <id>'.":
+        "Approva un nodo con 'nexgen openclaw pair --approve-node <id>'.",
+    # --- Due PC: un gateway e un nodo -------------------------------------------
+    "Connect this machine as a node of a gateway on another PC":
+        "Collega questa macchina come nodo di un gateway su un altro PC",
+    "The gateway machine's address on the home network":
+        "L'indirizzo della macchina del gateway sulla rete di casa",
+    "The gateway's port (default: 18789)":
+        "La porta del gateway (predefinita: 18789)",
+    "The name the gateway shows for this machine":
+        "Il nome che il gateway mostra per questa macchina",
+    "Cannot propose the node connection: {error}":
+        "Non riesco a proporre il collegamento del nodo: {error}",
+    "OpenClaw node for the gateway at {host}:{port}":
+        "Nodo OpenClaw per il gateway su {host}:{port}",
+    "Nothing has been changed: these are OpenClaw's own commands, in the order they work.":
+        "Non ho cambiato niente: questi sono i comandi di OpenClaw, nell'ordine in cui funzionano.",
+    "on the gateway machine":
+        "sulla macchina del gateway",
+    "on this machine":
+        "su questa macchina",
+    "check: {command}":
+        "controllo: {command}",
+    "What stays yours:":
+        "Cosa resta a te:",
+    "One paste, with a join code the gateway mints":
+        "Un solo incollaggio, con un codice di ingresso che crea il gateway",
+    "OpenClaw approves the device and its first command surface in the same step.":
+        "OpenClaw approva il dispositivo e la sua prima superficie di comandi nello stesso passaggio.",
+    "Single use, ten minutes, administrator access: treat the printed URL like a password.":
+        "Monouso, dieci minuti, accesso da amministratore: tratta l'URL stampato come una password.",
+    "the command it prints, to be pasted as it is on this machine":
+        "il comando che stampa, da incollare così com'è su questa macchina",
+    "This is the one paste that enrols the device and its first commands together.":
+        "È l'unico incollaggio che registra insieme il dispositivo e i suoi primi comandi.",
+    "One approval at a time, without a join code":
+        "Un'approvazione alla volta, senza codice di ingresso",
+    "Two requests with different ids: the device admits the connection, the node request allows commands.":
+        "Due richieste con id diversi: il dispositivo ammette la connessione, la richiesta del nodo permette i comandi.",
+    "This writes a user service on this machine; nothing else on the machine changes.":
+        "Questo scrive un servizio utente su questa macchina; nient'altro sulla macchina cambia.",
+    "the request created by this machine, with the id the next step needs":
+        "la richiesta creata da questa macchina, con l'id che serve al passo successivo",
+    "Read the request before approving it: the id is this machine's, not another device's.":
+        "Leggi la richiesta prima di approvarla: l'id è di questa macchina, non di un altro dispositivo.",
+    "Only when the node's log says it paused waiting for pairing: otherwise it reconnects on its own.":
+        "Solo quando il log del nodo dice che si è fermato in attesa dell'accoppiamento: altrimenti si ricollega da solo.",
+    "The approval lists the commands this node would expose, and those are what you are allowing.":
+        "L'approvazione elenca i comandi che questo nodo esporrebbe, e sono quelli che stai permettendo.",
+    "Without lingering, the systemd user service stops when your last session closes.":
+        "Senza il lingering, il servizio utente systemd si ferma quando chiudi l'ultima sessione.",
+    "The gateway on the other PC has to answer on the home network: 'nexgen openclaw setup --lan' writes gateway.bind 'lan', and 'nexgen openclaw doctor' there says whether it is reachable.":
+        "Il gateway dell'altro PC deve rispondere sulla rete di casa: 'nexgen openclaw setup --lan' scrive gateway.bind 'lan', e 'nexgen openclaw doctor' lì dice se è raggiungibile.",
+    "The address {host} is yours to supply: the engine does not guess another machine's address.":
+        "L'indirizzo {host} lo fornisci tu: il motore non indovina l'indirizzo di un'altra macchina.",
+    "Your own gateway is left as it is: the node host is a separate process, so a machine that already serves OpenClaw in loopback keeps serving it.":
+        "Il tuo gateway resta com'è: il nodo è un processo separato, quindi una macchina che già serve OpenClaw in loopback continua a servirlo.",
+    "Away from home only a local gateway in loopback is reachable, and a channel such as Telegram lives on one gateway at a time: it belongs to the machine that stays on.":
+        "Fuori casa è raggiungibile solo un gateway locale in loopback, e un canale come Telegram vive su un gateway alla volta: appartiene alla macchina che resta accesa.",
+    "Every approval is yours: nothing is approved automatically, and each request names the machine and the commands it would run.":
+        "Ogni approvazione è tua: niente viene approvato da solo, e ogni richiesta dice quale macchina e quali comandi eseguirebbe.",
+    "Port {port} is the one the gateway listens on; a different one there means passing it here too.":
+        "La porta {port} è quella su cui ascolta il gateway; se lì è diversa, va passata anche qui.",
+    "The approval failed: {error}":
+        "L'approvazione è fallita: {error}",
+    "In OpenClaw Companion open Connections and choose 'a local Gateway on this PC': the gateway this setup configured answers on 127.0.0.1:{port}.":
+        "In OpenClaw Companion apri Connections e scegli 'a local Gateway on this PC': il gateway che questo setup ha configurato risponde su 127.0.0.1:{port}.",
+    "The gateway cannot list its devices now: 'nexgen openclaw pair' shows the request and approves it when the gateway answers.":
+        "Il gateway ora non riesce a elencare i suoi dispositivi: 'nexgen openclaw pair' mostra la richiesta e la approva quando il gateway risponde.",
+    "No request from the app is waiting yet: when the app asks, 'nexgen openclaw pair' lists the request and 'nexgen openclaw pair --approve <id>' approves it.":
+        "Nessuna richiesta dall'app è ancora in attesa: quando l'app la lascia, 'nexgen openclaw pair' la elenca e 'nexgen openclaw pair --approve <id>' la approva.",
+    "More than one request is waiting: 'nexgen openclaw pair' lists them, and 'nexgen openclaw pair --approve <id>' approves the one you choose.":
+        "C'è più di una richiesta in attesa: 'nexgen openclaw pair' le elenca, e 'nexgen openclaw pair --approve <id>' approva quella che scegli.",
+    "A request is waiting but its id cannot be read: 'nexgen openclaw pair' shows it.":
+        "Una richiesta è in attesa ma il suo id non si legge: 'nexgen openclaw pair' la mostra.",
+    "Approve this device?":
+        "Approvo questo dispositivo?",
+    "Nothing approved: 'nexgen openclaw pair --approve {id}' approves it later.":
+        "Non ho approvato niente: 'nexgen openclaw pair --approve {id}' lo approva più tardi.",
+    "The approval failed ({reason}): 'nexgen openclaw pair --approve {id}' retries it.":
+        "L'approvazione è fallita ({reason}): 'nexgen openclaw pair --approve {id}' la riprova.",
+    "{agent}: {path} ({written} manuals written, {bootstrap})":
+        "{agent}: {path} ({written} manuali scritti, {bootstrap})",
+    "first-run file removed":
+        "file del primo avvio rimosso",
+    "first-run file not present":
+        "file del primo avvio non presente",
+    "Would prepare the workspace for {agent}: {path}":
+        "Preparerei la cartella per {agent}: {path}",
+    "Skipping the manual for {agent}: {error}":
+        "Salto il manuale di {agent}: {error}",
+    "The OpenCode agent is not created: setup was asked to leave it out.":
+        "L'agente OpenCode non viene creato: il setup è stato chiesto di lasciarlo fuori.",
+    "The OpenCode agent is not created: the 'opencode' command is not on PATH.":
+        "L'agente OpenCode non viene creato: il comando 'opencode' non è nel PATH.",
+    "The OpenCode agent is not created: no OpenCode Go key was detected.":
+        "L'agente OpenCode non viene creato: non ho rilevato la chiave OpenCode Go.",
+    "OpenClaw, the harness with the interface":
+        "OpenClaw, l'harness con l'interfaccia",
+    "Install, configure, write the agent manuals and start the gateway":
+        "Installa, configura, scrive i manuali degli agenti e avvia il gateway",
+    "Do not ask for confirmation":
+        "Non chiedere conferma",
+    "Print the plan and the commands, and change nothing":
+        "Stampa il piano e i comandi, e non cambia niente",
+    "Do not create the agent that runs OpenCode through ACP":
+        "Non creare l'agente che fa girare OpenCode via ACP",
+    "Go on with the native gateway even when the Windows app runs its own on this PC":
+        "Procedi con il gateway nativo anche quando l'app Windows ne esegue uno suo su questo PC",
+    "Restart the gateway and wait for its port":
+        "Riavvia il gateway e aspetta la porta",
+    "How long to wait for the port (default: 600)":
+        "Quanto aspettare la porta (predefinito: 600)",
+    "List the phones and the nodes waiting to be paired, and approve one":
+        "Elenca i telefoni e i nodi in attesa di accoppiamento e ne approva uno",
+    "Approve the device request with this id":
+        "Approva la richiesta del dispositivo con questo id",
+    "Approve the node request with this id, showing the commands it exposes":
+        "Approva la richiesta del nodo con questo id, mostrando i comandi che espone",
+    # --- Quota: quanto resta di ogni abbonamento --------------------------------
+    "No Codex session on this machine: {path} does not exist.":
+        "Nessuna sessione Codex su questa macchina: {path} non esiste.",
+    "No Codex session on this machine: {path} holds no rollout.":
+        "Nessuna sessione Codex su questa macchina: {path} non contiene nessun rollout.",
+    "No rate-limit reading in the Codex sessions examined ({count}).":
+        "Nessuna lettura del limite nelle sessioni Codex esaminate ({count}).",
+    "No Claude Code transcript on this machine: {path} does not exist.":
+        "Nessun transcript di Claude Code su questa macchina: {path} non esiste.",
+    "No Claude Code message in the last {days} days.":
+        "Nessun messaggio di Claude Code negli ultimi {days} giorni.",
+    "{provider}: not measured":
+        "{provider}: non misurato",
+    "{provider}: the {window} reading is {age} old, older than the window itself":
+        "{provider}: la lettura della finestra {window} ha {age}, più della finestra stessa",
+    "{provider}: {percent} of the {window} window used ({age})":
+        "{provider}: {percent} della finestra {window} usato ({age})",
+    "read {age} ago":
+        "letto {age} fa",
+    "resets in {age}":
+        "si azzera fra {age}",
+    "{provider}: {amount} spent in the last {window}, no declared ceiling ({age})":
+        "{provider}: {amount} spesi nelle ultime {window}, nessun tetto dichiarato ({age})",
+    "{provider}: {amount} of {ceiling} in the last {window} ({percent}, {age})":
+        "{provider}: {amount} di {ceiling} nelle ultime {window} ({percent}, {age})",
+    "{provider}: {tokens} tokens in the last {window} ({age}), the limit is not readable on this machine":
+        "{provider}: {tokens} token nelle ultime {window} ({age}), il limite non è leggibile in locale",
+    "The declared limits in {path} cannot be read: {error}":
+        "I limiti dichiarati in {path} non si leggono: {error}",
+    "The declared limit for {entry} is not a positive number: ignored.":
+        "Il limite dichiarato per {entry} non è un numero positivo: lo ignoro.",
+    "OpenCode: spend is unknown, the harness archive could not be read.":
+        "OpenCode: la spesa non si sa, l'archivio del harness non si è potuto leggere.",
+    "OpenCode: the harness lane is not installed in this engine.":
+        "OpenCode: la corsia del harness non è installata in questo motore.",
+    "What is left of each subscription, and how old the reading is":
+        "Quanto resta di ogni abbonamento, e quanto è vecchia la lettura",
+    "Quota at {percent}%: {provider}":
+        "Quota al {percent}%: {provider}",
+    "{provider} has used {percent}% of its {window} window; it resets in {age}.":
+        "{provider} ha usato il {percent}% della finestra {window}; si azzera fra {age}.",
+    "{provider} has used {percent}% of its {window} window.":
+        "{provider} ha usato il {percent}% della finestra {window}.",
+    "Run 'nexgen quota' to see every window.":
+        "Lancia 'nexgen quota' per vedere tutte le finestre.",
+    "No provider's percentage is readable on this machine.":
+        "Su questa macchina non è leggibile la percentuale di nessun fornitore.",
+    "Known quotas: {known}":
+        "Quote note: {known}",
+    # L'adozione: ciò che nasce in OpenClaw diventa canonico
+    "Adopt what OpenClaw created into the canonical library":
+        "Adotta nella libreria canonica ciò che ha creato OpenClaw",
+    "Only the skills the Skill Workshop learned":
+        "Solo le skill imparate dallo Skill Workshop",
+    "Only the MCP servers added in OpenClaw":
+        "Solo i server MCP aggiunti in OpenClaw",
+    "Show the plan and the checks, and change nothing":
+        "Mostra il piano e i controlli, e non cambia niente",
+    "Do not ask: adopt what is safe, and leave what needs a person":
+        "Non chiedere: adotta ciò che è sicuro e lascia stare ciò che richiede una persona",
+    "the {kind} manifest cannot be read ({path}): nothing of that kind can be listed":
+        "il manifest {kind} non si riesce a leggere ({path}): niente di quel tipo può essere elencato",
+    "cannot be adopted ({reasons})":
+        "non adottabile ({reasons})",
+    "Adopt the skill '{name}' too? It {reasons}":
+        "Adotto anche la skill '{name}'? {reasons}",
+    "safe to adopt":
+        "adottabile senza domande",
+    "needs a person first ({reasons})":
+        "serve una persona prima ({reasons})",
+    "needs a person first":
+        "serve una persona prima",
+    "cannot be adopted":
+        "non adottabile",
+    "Nothing to adopt: everything OpenClaw created is already in the canonical library.":
+        "Niente da adottare: tutto ciò che OpenClaw ha creato è già nella libreria canonica.",
+    "{count} resources created in OpenClaw are not in the canonical library yet:":
+        "{count} risorse create in OpenClaw non sono ancora nella libreria canonica:",
+    "  note: {note}":
+        "  nota: {note}",
+    "Dry run: nothing was written.":
+        "Prova a vuoto: non è stato scritto niente.",
+    "Nothing adopted.":
+        "Non ho adottato niente.",
+    "Left alone: {items}. A person decides; run 'nexgen openclaw adopt' to be asked.":
+        "Lasciate stare: {items}. Decide una persona; lancia 'nexgen openclaw adopt' per farti chiedere.",
+    "Adopt the resources above into the canonical library now?":
+        "Adotto adesso nella libreria canonica le risorse qui sopra?",
+    "the manifest would no longer validate ({problems}); put back as it was":
+        "il manifest non sarebbe più valido ({problems}); l'ho rimesso com'era",
+    "a skill named '{name}' is already in the Vault: nothing was overwritten":
+        "una skill chiamata '{name}' è già nel Vault: non ho sovrascritto niente",
+    "a skill named '{name}' is already declared in the manifest":
+        "una skill chiamata '{name}' è già dichiarata nel manifest",
+    "the manifest cannot be backed up: nothing was written":
+        "non riesco a fare il backup del manifest: non ho scritto niente",
+    "archived in the Workshop, so OpenClaw loads the canonical copy":
+        "archiviata nel Workshop, così OpenClaw carica la copia canonica",
+    "in the Vault and in the manifest ({changes} views written). OpenClaw: {note}":
+        "nel Vault e nel manifest ({changes} viste scritte). OpenClaw: {note}",
+    "`openclaw` is not on PATH: archive the learned copy by hand when it is":
+        "`openclaw` non è nel PATH: archivia a mano la copia imparata quando c'è",
+    "OpenClaw refused the archive: {reason}":
+        "OpenClaw ha rifiutato l'archiviazione: {reason}",
+    "there is no skills manifest here: the Vault is not this machine's library":
+        "qui non c'è il manifest delle skill: questo Vault non è la libreria di questa macchina",
+    "the copy failed ({error}); nothing was written":
+        "la copia è fallita ({error}); non ho scritto niente",
+    "'{name}' carries a credential in its headers: replace it with ${{VARIABLE}} and store the value with `nexgen-secrets set`":
+        "'{name}' porta una credenziale negli header: sostituiscila con ${{VARIABLE}} e metti il valore in `nexgen-secrets set`",
+    "'{name}' has no usable URL to adopt":
+        "'{name}' non ha un URL utilizzabile da adottare",
+    "'{name}' passes environment variables to a remote server, and the manifest has no place for them: nothing was adopted and nothing was dropped":
+        "'{name}' passa variabili d'ambiente a un server remoto, e il manifest non ha un posto per loro: non ho adottato niente e non ho perso niente",
+    "openclaw.json is not readable ({error}): no server can be listed":
+        "openclaw.json non si riesce a leggere ({error}): nessun server può essere elencato",
+    "{count} files: a skill is a handful, this is a tree":
+        "{count} file: una skill è una manciata, questa è un albero",
+    "the whole skill weighs {size} bytes (limit {limit})":
+        "la skill intera pesa {size} byte (limite {limit})",
+    "holds files a person should read first: {files}":
+        "contiene file che una persona deve leggere prima: {files}",
+    "carries what looks like a credential in {files}: move it into a secret reference first":
+        "porta quello che sembra una credenziale in {files}: spostala prima in un riferimento a un segreto",
+    "the frontmatter declares no name":
+        "il frontmatter non dichiara un nome",
+    "the frontmatter declares no description":
+        "il frontmatter non dichiara una descrizione",
+    "its folder is '{folder}' but its frontmatter says '{name}'":
+        "la sua cartella è '{folder}' ma il frontmatter dice '{name}'",
+    "{keys}: this entry carries a credential in plain text. Store it with `nexgen-secrets set` and reference it as ${{VARIABLE}} instead":
+        "{keys}: questa voce porta una credenziale in chiaro. Mettila in `nexgen-secrets set` e referenziala come ${{VARIABLE}}",
+    "{name} weighs {size} bytes (limit {limit})":
+        "{name} pesa {size} byte (limite {limit})",
+    "{name} is a link: the copy would hold bytes that are not in the skill":
+        "{name} è un collegamento: la copia conterrebbe byte che non sono nella skill",
+    "SKILL.md has no readable frontmatter: OpenClaw needs a name and a description":
+        "SKILL.md non ha un frontmatter leggibile: OpenClaw vuole un nome e una descrizione",
+    "the description is longer than {limit} bytes":
+        "la descrizione supera {limit} byte",
+    "'{name}' cannot become a folder name":
+        "'{name}' non può diventare il nome di una cartella",
+    "the skill folder is a link or is gone: nothing to copy":
+        "la cartella della skill è un collegamento o non c'è più: niente da copiare",
+    "no SKILL.md in the folder: OpenClaw would not load it either":
+        "nella cartella non c'è SKILL.md: nemmeno OpenClaw la caricherebbe",
+    "its URL is not http(s)":
+        "il suo URL non è http(s)",
+    "it has neither a URL nor a command":
+        "non ha né un URL né un comando",
+    "'{name}' is not a safe manifest key":
+        "'{name}' non è una chiave sicura per il manifest",
+    "its command carries a newline":
+        "il suo comando contiene un a capo",
+    "{count} resources created in OpenClaw are not adopted yet.":
+        "{count} risorse create in OpenClaw non sono ancora adottate.",
+    "Run 'nexgen openclaw adopt': it shows each one and asks before writing.":
+        "Lancia 'nexgen openclaw adopt': te le mostra una per una e chiede prima di scrivere.",
+    "Every skill and server OpenClaw created is in the canonical library.":
+        "Ogni skill e ogni server creati da OpenClaw sono nella libreria canonica.",
+
+    # --- Ripiego: quando un piano finisce, il lavoro passa al successivo ------------
+    # La politica la scrive il proprietario in quota.yaml: il motore non ne ha una
+    # propria, e queste frasi servono a dire cosa ha letto e cosa non ha potuto usare.
+    "{row}, then {model}":
+        "{row}, poi {model}",
+    "The fallback policy in {path} cannot be read: {error}":
+        "La politica di ripiego in {path} non si legge: {error}",
+    "The fallback 'agents' entry is not a mapping of agent to chain: ignored.":
+        "La voce 'agents' della politica di ripiego non è una mappa agente → catena: la ignoro.",
+    "The fallback model {entry} is not written as 'provider/model': ignored.":
+        "Il modello di ripiego {entry} non è scritto come 'fornitore/modello': lo ignoro.",
+    "The fallback line {value} is not a percentage between 0 and 100: {default} is used.":
+        "La soglia di ripiego {value} non è una percentuale fra 0 e 100: uso {default}.",
+    "The fallback reading age {value} is not a positive number of minutes: {default} hours are used.":
+        "L'età della lettura di ripiego {value} non è un numero positivo di minuti: uso {default} ore.",
+    "No OpenClaw agent is configured yet: there is no fallback chain to judge.":
+        "Nessun agente OpenClaw è ancora configurato: non c'è nessuna catena di ripiego da giudicare.",
+    "The fallback policy names these agents, and their chain is not in the configuration: {names}":
+        "La politica di ripiego nomina questi agenti, e la loro catena non è nella configurazione: {names}",
+    "Run 'nexgen openclaw setup', and only for an agent the engine creates: it writes no agent it does not own.":
+        "Lancia 'nexgen openclaw setup', e solo per un agente che il motore crea: non scrive agenti che non sono suoi.",
+    "The fallback policy is declared: {covered} agents have a chain, {missing} have none ({names}).":
+        "La politica di ripiego è dichiarata: {covered} agenti hanno una catena, {missing} nessuna ({names}).",
+    "No fallback policy is declared: {covered} agents have a chain of their own, {missing} have none ({names}).":
+        "Nessuna politica di ripiego dichiarata: {covered} agenti hanno una catena propria, {missing} nessuna ({names}).",
+    "The fallback policy is declared: every one of the {count} agents has a chain.":
+        "La politica di ripiego è dichiarata: tutti e {count} gli agenti hanno una catena.",
+    "No fallback policy is declared; the {count} agents have a chain of their own.":
+        "Nessuna politica di ripiego dichiarata; i {count} agenti hanno una catena propria.",
+    "No fallback policy is declared, and no OpenClaw agent has a fallback chain.":
+        "Nessuna politica di ripiego dichiarata, e nessun agente OpenClaw ha una catena di ripiego.",
+    "No fallback policy names an agent of this setup: no chain was written.":
+        "Nessuna politica di ripiego nomina un agente di questo setup: non ho scritto nessuna catena.",
+    "The engine plugin is not deposited: its fallback chains were not written.":
+        "Il plugin del motore non è depositato: le sue catene di ripiego non sono state scritte.",
+    "The fallback chains reach {count} agents; the plugin reads them on every turn.":
+        "Le catene di ripiego arrivano a {count} agenti; il plugin le legge a ogni turno.",
 }

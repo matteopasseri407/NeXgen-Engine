@@ -7,7 +7,8 @@ This document covers **phases 1, 2, 3a, 3b and 3c**: the task folder, the visibl
 windows, the cost register, the unit's working copy, the permissions the
 executor runs under, the gates the engine runs before anybody reviews a diff,
 the review round, publication, the resume graph, the scout, the rebase, the
-harness adapters, the local executor and the retirement of a finished unit.
+harness adapters, the local executor, OpenClaw as a harness with its Workboard
+mirror, and the retirement of a finished unit.
 
 **Status: preview.** The verbs work and are covered by tests, but the
 supervisor still drives every step. See "What the gates guarantee, and what they
@@ -37,9 +38,9 @@ The journal is the machine truth: `started`, `unit_created`, `unit_started`,
 `unit_queued`, `attached`, `harness_session_lost`, `harness_session_foreign`,
 `unit_reworked`, `unit_model_refused`, `unit_stalled`, `unit_resumed`,
 `unit_rebased`, `unit_collected`, `report_relocated`, `unit_reviewed`,
-`unit_published`, `unit_retired`, `unit_retire_failed`,
-`local_server_started`, `local_server_stopped`, and for the scout
-`scout_opened` and `scout_finished`. The Markdown files are what a person reads
+`unit_published`, `unit_publish_failed`, `unit_retired`, `unit_retire_failed`, `session_closed`,
+`workboard_card`, `workboard_moved`, `local_server_started`, `local_server_stopped`,
+and for the scout `scout_opened` and `scout_finished`. The Markdown files are what a person reads
 and writes; the engine never rewrites them, so an edit is not lost.
 
 
@@ -50,7 +51,7 @@ nexgen-local sup start "porta la fase 2 dentro il motore"   # id and folder
 nexgen-local sup status                                     # every task, one line each
 nexgen-local sup status <id>                                # units, states, verdicts, costs
 nexgen-local sup unit <id> <unit> --repo <checkout> --base <ref> --brief <file> \
-    --allow 'docs/*.md' [--allow ...] [--verify "<command>"]
+    --allow 'docs/*.md' [--allow ...] [--verify "<command>"] [--mcp <server>]
 nexgen-local sup run <id> <unit> [--harness <name>]         # the executor's window
 nexgen-local sup collect <id> <unit>                        # the tab closes when the turn is over, then the gates and the cost
 nexgen-local sup review <id> <unit> --approve "<why>" [--close]  # one review round, APPROVA
@@ -74,6 +75,30 @@ nexgen-local sup window-check                               # opens a visible wi
 `sup attach` writes the journal event **and** one row in `05-costi.jsonl`.
 `sup status` and `sup costi` never compute a price of their own: they read what
 the harness reported.
+
+### Da OpenClaw
+
+The plugin command `/sup` answers with the same lines a terminal prints: no
+argument gives every task with its units and the spend of the sessions, an id
+gives that one task. It is read-only, and it runs
+`nexgen-local sup status --json` and `sup costi --json`, so the phone and the
+desk cannot disagree.
+
+The verbs that change something are tools, one per verb: `nexgen_sup_start`,
+`nexgen_sup_unit`, `nexgen_sup_run`, `nexgen_sup_collect`, `nexgen_sup_review`
+and `nexgen_sup_publish`. Each one is a thin wrapper of the verb above and
+returns the lines the engine printed. They are registered `optional` in the
+plugin, which in OpenClaw means "not offered to any model until an operator
+allowlists the exact name": `nexgen openclaw setup` writes that allowlist on the
+supervisor agent (`capo`) and on no other, as
+`agents.entries.capo.tools.alsoAllow`. If that agent already has its own
+`tools.allow`, the engine leaves it alone -- OpenClaw refuses `allow` and
+`alsoAllow` in the same scope -- and `nexgen openclaw plan` names the tools to
+add there.
+
+Two read-only tools are available to any agent: `nexgen_sup_status` and
+`nexgen_sup_costs`. The engine's guardrail sees every one of these calls on
+`before_tool_call`, like any other tool call.
 
 ## Chi fa cosa
 
@@ -104,21 +129,113 @@ are. `sup run --harness <name>` and `sup scout --harness <name>` use that harnes
 for that run only; the journal records which one actually ran the unit, so the
 review delivery goes back to the same session.
 
-| harness | opens a tab | finds the session | sends a turn | state | cost | tokens | writes permissions | resume | scout | frees a folder | stops a push |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| `opencode` | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | project profile + blocked pushurl |
-| `local` (OpenCode + local provider) | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | project profile + blocked pushurl |
-| `claude` | yes | yes | yes | yes | yes | yes | yes (`.claude/settings.json`) | yes | yes | no | project profile + blocked pushurl |
-| `codex` | yes | yes | yes | yes | no (said unreadable) | yes | no (launch sandbox) | yes | yes | no | `workspace-write` without network + blocked pushurl |
-| `agy` | yes | no | no | no | no | no | no | yes | yes | no | blocked pushurl only |
+| harness | opens a tab | finds the session | sends a turn | state | cost | tokens | writes permissions | resume | scout | frees a folder | stops a push | mcp |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `opencode` | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | project profile + blocked pushurl | yes |
+| `local` (OpenCode + local provider) | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | project profile + blocked pushurl | yes |
+| `claude` | yes | yes | yes | yes | yes | yes | yes (`.claude/settings.json`) | yes | yes | no | project profile + blocked pushurl | no |
+| `codex` | yes | yes | yes | yes | no (said unreadable) | yes | no (launch sandbox) | yes | yes | no | `workspace-write` without network + blocked pushurl | no |
+| `openclaw` | yes (a session, not a window) | yes | yes | yes | yes (the turn's own envelope) | yes | no | yes | no | no | blocked pushurl only | no |
+| `agy` | yes | no | no | no | no | no | no | yes | yes | no | blocked pushurl only | no |
 
 The table is the answer to "can this harness do it", not a promise that every
 operation is useful. `agy` opens a tab and writes its report, but it cannot be
 asked for its session later, so it is a scout and not an executor; Codex can
 execute and resume, but its cost is not exposed in a form the engine reads, and
-the package says so instead of writing zero. The last column is the real stop
-behind the others: a harness with no project profile is still running in a copy
-whose `pushurl` points at a blocked URL.
+the package says so instead of writing zero. `openclaw` opens no window of its
+own: its session is the work surface, and the section below says how it is driven.
+The `stops a push` column is the real stop behind the others: a harness with no
+project profile is still running in a copy whose `pushurl` points at a blocked URL.
+
+The `mcp` column says whether the profile in the copy can choose the MCP servers.
+A unit starts with none: the supervisor names the ones it needs with
+`sup unit ... --mcp <name>`, repeatable, and the journal keeps the list, which
+`sup status` shows. For an OpenCode worker the profile is the copy's
+`opencode.json`, and it switches off every server the owner's global
+configuration declares and the unit did not get. The entry uses the native
+OpenCode 2 shape (`mcp.servers.<name>` with `disabled`, `type` plus `command` or
+`url`: the fields `opencode.ai/config.json` requires of `Mcp.LocalConfigEncoded`
+and `Mcp.RemoteConfigEncoded`), and it repeats the transport of the global
+definition so it stays valid whether OpenCode merges the two configurations or
+lets the project entry replace the global one. Environment variables, headers and
+OAuth credentials are not copied: they stay in the global file, which is only
+read and never written. A server the unit asked for and the global file disables
+is switched back on in the same place, and a name no configuration declares stops
+the run with a message listing the servers that exist, instead of leaving the unit
+without the server it asked for. Claude Code is `no` because its only switch,
+`--strict-mcp-config`, is a launch flag and not a project file; Codex and
+Antigravity write no project profile at all.
+
+
+## OpenClaw come harness e il Workboard
+
+OpenClaw is the owner's own harness: agents, sessions shown in its Control UI and
+on his phone, and a Workboard of cards. Supervision can drive it instead of
+opening a terminal tab, and `--harness openclaw` (or `supervision.roles`) is all
+it takes to put a unit there.
+
+**One turn, one session key the engine chose.** The adapter runs the documented
+CLI turn:
+
+```bash
+openclaw agent --agent <id> --session-key sup-<task>-<unit> --message "<pointer>" --json
+```
+
+The key is built from the task and the unit, so the attach is a lookup and not a
+race, and the Control UI shows exactly the name the journal records. The engine
+opens no window: the session is the surface, the owner watches it where he
+already watches his agents, and a correction is the same command again on the
+same key. The agent is `sviluppo` unless the lane names another one:
+
+```json
+{
+  "supervision": {
+    "roles": {"esecutore": "openclaw"},
+    "openclaw": {"agent": "sviluppo", "workboard": true}
+  }
+}
+```
+
+**The folder is the honest limit.** A gateway-backed turn runs in the workspace
+the owner configured for that agent, and the documented CLI has no flag for
+another folder; a host path outside the configured workspaces needs
+`operator.admin`. So the engine checks, before anything starts, that the unit's
+copy is inside that workspace, and refuses with the clean way when it is not:
+point `agents.entries.<agent>.workspace` at the task folder, or let the Workboard
+card start the turn (`openclaw workboard dispatch`, `--admin` for a folder
+outside the configured workspaces). A turn that looks like work in the unit and
+is not is the failure this refusal exists to prevent.
+
+**Where the numbers come from.** `openclaw sessions --json` carries the tokens,
+the model and the clock. The money of a run is not in that list: it is in the
+`--json` envelope the turn prints, so each turn's envelope is appended as one
+line of `<lane>/openclaw/<key>.jsonl` and the lines are added up. A turn that
+printed no cost leaves the cost absent and the tokens stand in, with the note
+saying so; nothing is ever written as zero. A process still carrying the key
+means the turn is working; when it exits, the session is idle. Publishing a unit,
+or retiring it, archives its OpenClaw session (`openclaw sessions archive`), and
+a refusal there is one line, not a failed verb.
+
+**The Workboard is a mirror, never the truth.** With `openclaw` on the machine
+and the mirror on, `sup unit` creates one card for the unit (title `unità <unit> ·
+<task>`, notes with the copy, the branch and the brief in short, labels with the
+task and the unit, assigned to the harness agent), and the verbs move it:
+
+| engine step | card status |
+|---|---|
+| `sup unit` | `todo` |
+| `sup run` | `running` |
+| `sup collect` | `review` |
+| `sup review --rework` | `running` |
+| `sup publish` | `done` |
+| `sup review --approve --close` (retired) | `blocked`, with the reason in the line |
+
+The journal stays the state: the card is a view, the moves are best effort, and a
+board that is absent, switched off (`supervision.openclaw.workboard: false`) or
+refusing costs one printed line and nothing else. The CLI has no archive verb, so
+a retired unit is `blocked` with its reason rather than archived. Every call is
+`... --json`, and the engine's test switch (`NEXGEN_DISABLE_HOST_MUTATIONS=1`)
+stops the mirror before anything is looked up: no test writes into a real board.
 
 
 ## The unit's working copy
@@ -137,6 +254,11 @@ own `config.worktree`. A push from the copy fails with
 `remote helper 'nexgen-sup-disabled' aborted session`; the owner's checkout
 keeps its real remote. Shared git hooks are never touched: they live in the
 common directory and stay exactly as the owner installed them.
+
+`--mcp <name>` is how the supervisor gives the unit a connector it actually
+needs. Without it the copy's profile has no MCP server at all, and every global
+one is switched off in the copy by name (see the `mcp` column above): the
+connectors the owner uses in their own sessions are not the executor's budget.
 
 The fetch URL and the blocked push URL of every remote are written into the
 journal when the unit is created, and its refs are read with `git ls-remote` on
@@ -190,16 +312,29 @@ says so and the attach stays a manual `sup attach`: the engine never guesses
 which session belongs to which unit. The cost of the attached session lands in
 `05-costi.jsonl` like any other attach. The adapter owns the lookup: OpenCode
 lists its session store, Claude Code reads its transcript directory, Codex reads
-its thread store, and `agy` declares that it cannot be asked.
+its thread store, `openclaw` looks for the key the engine chose in
+`openclaw sessions --json`, and `agy` declares that it cannot be asked.
+
+A harness that shows its own sessions opens none of the engine's windows
+(`window=False` in its capability table): `sup run` starts the turn itself,
+detached, and attaches the session under the key it chose, so the attach is not a
+guess made from a clock. OpenClaw is that harness today; the section "OpenClaw
+come harness e il Workboard" above says what it does and where it stops.
 
 The journal records the folder with the session (`attached`, `unit_started`,
-`unit_queued`, `unit_reworked`). `sup run` reuses a session only when that folder
-is the unit's own copy; when it is another unit's copy, the engine writes
-`harness_session_foreign` with both paths, opens a new tab in the right copy and
-says `sessione nata in un'altra copia`. This is the 2026-10-21 failure: the h5
-run inherited h4's idle session, whose folder had already been removed, and the
-executor saw "working directory no longer exists". A journal row written before
-the folder was recorded has no folder, and stays reusable as before.
+`unit_queued`, `unit_reworked`). A unit looks first for the session recorded for
+that unit; the task's last session for the same harness is a fallback only for a
+unit that never had one. The engine reuses a session only when that folder is the
+unit's own copy; when it is another unit's copy it writes
+`harness_session_foreign` with both paths, and it opens a new tab in the right
+copy only when the harness says that session is free. While it works, or while
+the harness cannot read it, a review round goes to `unit_queued` with its reason
+and `--resend` delivers it later: the 2026-10-24 failure was four `sup review
+--rework` calls to busy sessions, each opening a tab in the same copy and
+re-pointing the unit at the new one. The 2026-10-21 failure is the other half:
+the h5 run inherited h4's idle session, whose folder had already been removed,
+and the executor saw "working directory no longer exists". A journal row written
+before the folder was recorded has no folder, and stays reusable as before.
 
 A session the harness reports as gone (the export says it does not exist) is
 not a busy session: queueing on it would wait on nothing for ever. The journal
@@ -397,10 +532,10 @@ not evidence; every line below is read from git or run by the engine.
 |---|---|
 | `confine` | a touched file (both names of a rename) is outside every `--allow` glob |
 | `file vietati` | `VERSION`, `CHANGELOG.md` or `.github/**` changed and the boundary does not name it; both names of a rename count |
-| `integrità dei test` | an existing test was deleted, shrunk, skipped or renamed out of discovery (`nexgen_core/discipline/integrity.py`, reused) |
+| `integrità dei test` | an existing test was deleted, shrunk, skipped or renamed out of discovery (`nexgen_core/discipline/integrity.py`, reused); a unit whose boundary holds `.nexgen-discipline.toml` is judged commit by commit with the configuration of each commit's parent, so a commit that adds the authorisation and removes the test at once fails, and the PASS reason names the files it retired and how many cases each gave up |
 | `prova per commit` | a `fix:` commit has no test that fails on its parent (`nexgen_core/discipline/regress.py`, reused) |
-| `verifica indipendente` | the declared command is missing or exits non-zero; it is one command with no shell operator (`&&`, `\|\|`, `\|`, `;`, `&`), its executable must come from outside the unit's copy, and a Python interpreter is started with `-P` and an environment cleaned of `PYTHONPATH`, `PYTHONSTARTUP`, `PYTHONHOME`, `PYTHONUSERBASE`, `PYTEST_ADDOPTS` and `PYTEST_PLUGINS` (the user site directory is left alone: it is outside the copy) |
-| `test raccolti` | pytest collects fewer tests on the head than on the base, or a collection cannot answer: both trees are exported with `git archive` (no `.git` in them), collected with `python -P -m pytest --collect-only -q` under the same cleaned environment, and each collection has a five-minute budget; an increase is normal |
+| `verifica indipendente` | the declared command is missing or exits non-zero; it is one command with no shell operator (`&&`, `\|\|`, `\|`, `;`, `&`), its executable must come from outside the unit's copy, a Python interpreter is started with `-P` and an environment cleaned of `PYTHONPATH`, `PYTHONSTARTUP`, `PYTHONHOME`, `PYTHONUSERBASE`, `PYTEST_ADDOPTS` and `PYTEST_PLUGINS` (the user site directory is left alone: it is outside the copy), and the run has a ceiling of 1800 seconds that `NEXGEN_SUP_VERIFY_TIMEOUT_S` moves for a slower machine (a value that is not a positive number is ignored) |
+| `test raccolti` | the head collects fewer tests than the base and a lost node id's file is not in the **base's** `test_removal_ok`, or a collection cannot answer: both trees are exported with `git archive` (no `.git` in them), collected with `python -P -m pytest --collect-only -q` under the same cleaned environment, and the two node-id sets are compared against a floor that is the base's own count, so a head that collects at least as many tests passes and a renamed or re-parametrised test is named as information only; a file the owner authorised is retired and the reason says how many tests and from which files, an increase is normal, and the head's own `.nexgen-discipline.toml` is never read, because a unit does not authorise itself; a unit whose boundary holds that file is judged commit by commit instead, so a lost node id is accepted only where a commit that lowered its own count inherited its file's authorisation from the parent, and a loss no commit accounts for stays a FAIL that names it |
 | `lint` | the project has `03-INFRA/scripts/ruff_baseline_check.py` and the copy adds a `(file, code)` finding group its committed baseline did not have; the copy only decides whether the gate exists and what its baseline allows, while the script that runs is the engine's own, so a unit cannot weaken the check |
 | `configurazione git` | either configuration file of the copy (the repository's shared `.git/config`, which every checkout reads, or the worktree's own `config.worktree`) changed since the unit was created, or the effective configuration carries a `url.*.insteadOf` / `url.*.pushInsteadOf` key the creation did not have; the file or the key is named |
 | `remoto intatto` | a remote of the creation is gone, added, points at another fetch URL or push URL, or one of its refs carries a commit of the unit's interval (the unit pushed); a branch that advanced for another reason is not a failure |
@@ -408,15 +543,40 @@ not evidence; every line below is read from git or run by the engine.
 | `scansione fughe` | the project declares CI's anti-leak scan (a workflow names `leak_scan.py`) and the scan exits non-zero on the unit's `base..head`, or the script and its patterns are not where the workflow says; a project that declares no scan adds no line |
 
 The verdict is PASS only when every line is. The package
-(`40-pacchetto-<unit>.md`) carries the verdict, the gate lines, the diffstat,
-the diff with a declared cap (400 lines) and the cost of the attached session;
-`50-gate-<unit>.txt` carries the raw output, including what the verification
-printed. `sup collect` exits 1 on FAIL, so a script sees it.
+(`40-pacchetto-<unit>.md`) carries the verdict, the gate lines, the
+`test_removal_ok` entries the unit added, the diffstat, the diff with a declared
+cap (400 lines) and the cost of the attached session; `50-gate-<unit>.txt`
+carries the raw output, including what the verification printed. `sup collect`
+exits 1 on FAIL, so a script sees it.
+
+The owner authorises a retirement by naming the file in `test_removal_ok` in
+`.nexgen-discipline.toml` on the base, the path `integrity.py` documents in
+`HOW_TO_ALLOW`. A unit may carry that file itself only when the supervisor wrote
+its path inside the unit's boundary at creation (`--allow .nexgen-discipline.toml`,
+or a glob that covers it): the boundary is the journal's `allow`, so a unit
+cannot hand itself the permission. With it, both test gates walk the unit's
+commits the way the project's own hook does, with the configuration of each
+commit's parent, and a commit that adds the authorisation and removes the test
+at once fails. Without it, the base's copy is the only one read and `confine`
+fails the file. The package lists the entries the unit added in a section of its
+own, because the gates say whether an authorised removal happened, not that
+someone agreed to it.
+
+Every git command the engine starts carries `-c core.longpaths=true`, from one
+constant in `nexgen_core/discipline/gitutil.py`. On Windows git states an
+argument before resolving it, so a deep unit copy plus a long test path made the
+`prova per commit` gate fail with `fatal: failed to stat '<sha>:<path>': Filename
+too long` (2026-10-24); the switch is inert on POSIX.
 
 The leak line is the same scan CI runs, on the same interval, moved to the point
 where the executor can still fix it: a personal name in a fake path or a
 seven-digit number in a test used to stop the push, after the review had already
 said yes.
+
+The brief model tells the executor what to run while it works: the tests of the
+files it touched, `discipline.py check`, `ruff_baseline_check.py` and the leak
+scan. Not the whole suite: `sup collect` runs that independently, and asking the
+executor for it twice doubled the wait without adding a fact the engine trusts.
 
 Before judging, `sup collect` looks for a `30-resoconto-<unit>.md` left **inside
 the copy**. An untracked report is moved to the task folder and the move is said
@@ -553,9 +713,10 @@ way out when the provider refuses the configured one. A resend that has to open
 a new tab says the model was not applied: the tab takes the model from the
 owner's configuration.
 
-`sup status` shows, per unit, the review round, whether it is approved, and the
-published head with its branch. It also shows the cost of the unit and of the
-task in one form, the same sentence `sup collect` prints:
+`sup status` shows, per unit, the review round, whether it is approved, the
+published head with its branch, and the MCP servers the supervisor assigned
+(`mcp: nessuno` when there are none). It also shows the cost of the unit and of
+the task in one form, the same sentence `sup collect` prints:
 
 ```
 costo: giro 0.0047 $, unità 0.0047 $, compito 0.0047 $ (modello opencode-go/…)
@@ -631,7 +792,7 @@ happens after every refusal that can be decided without touching anything:
 | `bump di versione` | a commit touches `VERSION` or `CHANGELOG.md`, a rename included, **even inside the unit's boundary** |
 | `servirebbe un force-push: il motore non lo fa mai` | the fetched remote branch is not an ancestor of the owner's head |
 | `i cancelli del motore, rieseguiti ora, danno FAIL` | the gates fail on the interval, named line by line |
-| `conflitto` | a cherry-pick conflicts; the files are named and the checkout goes back |
+| `conflitto` | a cherry-pick conflicts; the files are named, the checkout goes back, and the unit stays approved and unpublished |
 
 The order is deliberate: the cheap and decisive refusals come first, and the
 gates re-run on the interval before the first cherry-pick, so a failing gate
@@ -649,7 +810,10 @@ No tag is ever created, and no option of force exists in any code path.
 
 A conflict runs `git cherry-pick --abort` and, if the head still moved, resets
 the checkout to the commit publish found there; the refusal names the files in
-conflict and says the checkout went back. A unit already pushed at the same
+conflict and says the checkout went back. The journal records
+`unit_publish_failed` with those files, and nothing records the unit as
+published or retired: its copy and its branch stay, so the head a review
+approved is still there to fix. A unit already pushed at the same
 head is refused rather than replayed, because a second replay would double its
 commits. A unit applied locally but never pushed (`pushed: false`) is the
 exception: `--push` or `--push-with` checks that the branch still contains the
@@ -778,7 +942,11 @@ write is `26-rapporto-ricognizione-<round>.md`, outside the copy. The tab runs
 this same engine in its scout role, which starts the adapter's scout command: by
 default `agy --mode plan --prompt <pointer>`, and another harness supplies its
 own read-only command (`opencode run --agent plan`). Plan mode is read-only, and
-the pointer keeps the brief in one file.
+the pointer keeps the brief in one file. The prompt says the report is the only
+deliverable: no plan, no confirmation, write it at once. Plan mode alone was not
+enough — with a long brief `agy` wrote a plan, asked "Proceed" and exited without
+a report — while the same explorer finished three rounds out of three when the
+prompt said so.
 At the end of the round the engine asks git whether the copy is where it started
 (`git status --porcelain`, unchanged HEAD), then closes the tab it opened. A
 tracked file that changed, or a moved head, ends the round with exit 1 and a

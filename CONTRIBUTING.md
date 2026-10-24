@@ -35,6 +35,23 @@ full pytest suite. It stops on the first failing gate and never invokes sync or 
 For a bounded change, pass the relevant test file first; run the full command
 before integration. Fix new lint findings rather than regenerating the baseline.
 
+### Where the suite puts its temporary files
+
+On Windows `%TEMP%` is `C:\Users\<you>\AppData\Local\Temp`, inside your home, and
+OpenClaw's gateway watches the home with one recursive handle: the thousands of
+files a suite creates and deletes there are the event storm it cannot fold.
+`tests/conftest.py` therefore sets `PYTEST_DEBUG_TEMPROOT` before the first
+`tmp_path` exists, and pytest keeps its numbered trees in
+`%SystemDrive%\Temp\nexgen-<user>`, or in `%PUBLIC%\nexgen-<user>` when that one
+cannot be written.
+Set `NEXGEN_SCRATCH_ROOT` to choose the folder yourself; a `PYTEST_DEBUG_TEMPROOT`
+already set by the caller is never overruled, which is what a CI job pointing at a
+fast disk relies on.
+pytest rotates the last three numbered trees and deletes the rest, so nothing
+accumulates without a policy.
+On Linux the system temporary directory is already outside the home and nothing is
+changed.
+
 ### Finding the right module
 
 | Behavior | Owner | Closest tests in `03-INFRA/agent-universal-layer/tests/` |
@@ -43,22 +60,20 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | Third-party pin updates and rollback | `nexgen_core/thirdparty_bump.py` | `test_nexgen_bump.py`, `test_nexgen_bump_file_contract.py` |
 | Sync phase ordering and failure status | `nexgen_core/guard.py` | `test_nexgen_phase3.py`, `test_nexgen_quality_regressions.py` |
 | Skill fetch, replacement and pins | `nexgen_core/skill_sources.py` | `test_nexgen_skill_fetch.py`, `test_nexgen_skill_versions.py`, `test_nexgen_lazy_skills.py`, `test_nexgen_quality_regressions.py` |
+| Skill catalog page (`~/.agents/skills/INDEX.md`) | `nexgen_core/skill_index.py` | `test_nexgen_skill_deps.py`, `test_nexgen_openclaw_sync_skills.py` |
+| OpenClaw's unattended jobs and its configuration watcher | `nexgen_core/openclaw/background.py`, `nexgen_core/openclaw/observation.py` | `test_nexgen_openclaw_background.py`, `test_nexgen_openclaw_observation.py` |
+| Where a process puts its scratch files | `nexgen_core/scratch.py`; the callers are `tests/conftest.py` and `nexgen_local/supervision_pytest.py` | `test_nexgen_pytest_scratch_root.py` |
 | Host locking | `nexgen_core/lock.py` | `test_nexgen_lock.py` |
-| Source checkout version fallback | `nexgen_local/version.py` | `test_nexgen_command_surface.py`, `test_nexgen_local_mcp.py` |
-| Local CLI dispatch and shared config/LLM adapters | `nexgen_local/cli.py`, `nexgen_local/cmds/base.py`; domain commands in `cmds/` | `test_nexgen_command_surface.py`, `test_nexgen_local_steps.py` |
-| OAuth token persistence and refresh payloads | `nexgen_local/connectors/token_store.py`; provider requests in `auth.py` and `outlook.py` | `test_nexgen_stabilization_contracts.py`, `test_nexgen_local_mcp.py` |
+| Source checkout version fallback | `nexgen_local/version.py` | `test_nexgen_command_surface.py` |
+| Local CLI dispatch and shared config/LLM adapters | `nexgen_local/cli.py`, `nexgen_local/cmds/base.py`; domain commands in `cmds/` | `test_nexgen_command_surface.py`, `test_nexgen_local_help_surface.py`, `test_nexgen_cmdsservicesplit_pinning.py` |
+| OAuth token persistence and refresh payloads | `nexgen_local/connectors/token_store.py`; provider requests in `auth.py` and `outlook.py` | `test_nexgen_stabilization_contracts.py`, `test_nexgen_smallfamsplit_pinning.py` |
 | Update cache, skill notices, prompts and shell/boot hooks | `nexgen_core/tools/notifier_state.py`, `notifier_skills.py`, `notifier_prompt.py`, `notifier_boot.py` | `test_nexgen_update_notifier.py`, `test_nexgen_stabilization_contracts.py` |
-| Source paths, text sanitization, search terms | `nexgen_local/source_selection.py` | `test_nexgen_local.py`, `test_nexgen_local_steps.py` |
-| Tool outcomes, audit receipts and resume compatibility | `nexgen_local/tools.py` | `test_nexgen_tool_outcomes.py`, `test_nexgen_local_research.py` |
-| Response claims and successful read receipts | `nexgen_local/evidence.py` | `test_nexgen_local_steps.py`, `test_nexgen_local_research.py` |
-| Routing and answer pipeline | `nexgen_local/engine.py` | `test_nexgen_local.py` |
-| Loop state, budgets and checkpoint fields | `nexgen_local/step_state.py` | `test_nexgen_local_step_boundaries.py`, `test_nexgen_local_research.py` |
-| Closed menus, argument provenance and decision prompt | `nexgen_local/step_policy.py` | `test_nexgen_local_steps.py`, `test_nexgen_local_step_boundaries.py` |
-| Audited loop actions and staged proposals | `nexgen_local/step_actions.py` | `test_nexgen_local_steps.py`, `test_nexgen_local_step_boundaries.py` |
-| Model decisions, bounded repairs and final loop answer | `nexgen_local/steps.py` | `test_nexgen_local_steps.py`, `test_nexgen_tool_outcomes.py` |
+| Source paths, text sanitization, search terms | `nexgen_local/source_selection.py` | `test_nexgen_local.py` |
+| Tool outcomes and audit receipts | `nexgen_local/tools.py` | `test_nexgen_tool_outcomes.py`, `test_nexgen_toolssplit_pinning.py` |
+| Response claims and successful read receipts | `nexgen_local/evidence.py` | `test_nexgen_local.py`, `test_nexgen_quality_regressions.py` |
+| Routing and answer pipeline, claim check | `nexgen_local/engine.py` | `test_nexgen_local.py`, `test_nexgen_local_tiers.py` |
 | Model requests and deadlines | `nexgen_local/llm.py` | `test_nexgen_llm_deadlines.py` |
-| Persistent research ownership, continuation and expiry | `nexgen_local/research_graph.py`; locking in `nexgen_core/lock.py` | `test_nexgen_local_research.py` |
-| Proposal ids, exclusive approval and durable attempts | `nexgen_local/proposals.py`; domain checks in patch/mail/calendar/upload/workflow gates | `test_nexgen_proposal_execution.py`, `test_nexgen_local_patch.py`, `test_nexgen_local_compose.py`, `test_nexgen_local_calendars.py`, `test_nexgen_local_drive_mcp.py`, `test_nexgen_local_workflows.py` |
+| Proposal ids, exclusive approval and durable attempts | `nexgen_local/proposals.py`; the upload gate in `drive_mcp.py` | `test_nexgen_proposal_execution.py`, `test_nexgen_local_drive_mcp.py`, `test_nexgen_gatefamssplit_pinning.py` |
 | Council process lifecycle and relay checkpoints | `03-INFRA/agent-universal-layer/council/` | `test_nexgen_council_*.py` |
 | Third-party components inside modules (`upstream:` in the module catalog) | `nexgen_core/modules.py` (the declaration), `nexgen_core/depwatch.py` (reading the pin, asking upstream) | `test_nexgen_module_upstream.py`, `test_nexgen_depwatch_abandoned.py`, `test_nexgen_playwright_pin.py` |
 | Council seat flags against the installed vendor CLIs (`nexgen council contract`) | `council/cli_contract.py`; the flags come from `_build_seat_command` in `council/seat_process.py` | `test_nexgen_council_cli_contract.py` |
@@ -118,41 +133,27 @@ budget and a 600-second command budget. Failures after mutation begins retain
 the previous commit and manual recovery instructions. Do not infer rollback
 from a failed command; verify the actual ref before describing the outcome.
 
-The plain loop and persistent research import the same state, policy and
-actions. `step_policy.py` chooses admissible actions without model or tool
-execution. `step_actions.py` executes admitted actions and stages proposals;
-send/upload approval remains in the existing gates. `steps.py` coordinates
-model decisions and answers. Its older imports remain aliases for compatibility;
-new consumers import state, policy and actions directly from their owners.
-Changing state fields requires checking persisted research compatibility.
-Research holds its per-session lock across routing, checkpoint inspection,
-execution and saver closure. Expiry uses the same lock and rechecks age;
-never delete a lock file to clean up a session. A busy session refuses before
-model or tool calls. An explicit escalation must persist its terminal status.
 Router JSON field types are validated before paths or keywords are used;
 malformed forms use deterministic routing without another model request.
-Every mutating proposal gate holds `proposals.proposal_lock` before loading
-the artifact through final storage. Patch apply additionally holds the stable
-directory `.apply.lock`: distinct proposal ids can target the same file, so
-their validation, mutation and outcome storage must not overlap. A refusal
-to acquire either lock releases any earlier acquisition without consuming
-the proposal. After validation and the intent receipt,
-`record_attempt` persists `attempted_at` before calling the provider or Git.
+The upload gate holds `proposals.proposal_lock` before loading the artifact
+through final storage. A refusal to acquire the lock releases any earlier
+acquisition without consuming the proposal. After validation and the intent
+receipt, `record_attempt` persists `attempted_at` before calling the provider.
 A prior attempt with no saved completion is uncertain and cannot be replayed,
 including after an exception or interruption. Check its real outcome before
 preparing a new proposal; never clear the attempt field to retry.
 `applied_at` remains evidence of a returned and saved completion; an attempt
 alone must not be described as success or as ready for approval.
 Older artifacts omit `attempted_at` and load with its empty default. Proposal
-ids belong to `proposals.py`; the imports in `patch.py` remain compatibility
-aliases. Drive proposal creation and updates use the private atomic writer.
-The older `sending_at` marker is read as `attempted_at`, including in lists.
-Mail, calendar, upload metadata and workflow parameters are bound at staging
-with a versioned fingerprint. Missing fingerprints require a fresh proposal;
-old unambiguous fingerprints remain readable. Fingerprints detect changed
-fields; they are not signatures against a writer controlling the whole JSON.
-The artifact id must match the locked filename before loading any gate.
-Changing an id must never redirect the durable attempt into a different file.
+ids belong to `proposals.py`, which `drive_mcp.py` imports for ids, hashes and
+attempt records. Drive proposal creation and updates use the private atomic
+writer. The older `sending_at` marker is read as `attempted_at`, including in
+lists. Upload metadata is bound at staging with a versioned fingerprint.
+Missing fingerprints require a fresh proposal; old unambiguous fingerprints
+remain readable. Fingerprints detect changed fields; they are not signatures
+against a writer controlling the whole JSON. The artifact id must match the
+locked filename before loading the gate. Changing an id must never redirect
+the durable attempt into a different file.
 Council relay execution and cleanup share `session.session_run_lock`, held
 through removal. Its lock file lives outside the deletable session tree and
 is never removed. Older in-tree locks are also honored. Windows may preserve

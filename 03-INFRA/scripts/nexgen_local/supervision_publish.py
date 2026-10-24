@@ -15,7 +15,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from nexgen_core.discipline.gitutil import git, is_ancestor
+from nexgen_core.discipline.gitutil import LONG_PATHS, git, is_ancestor
 from nexgen_core.processes import no_window_kwargs, split_command_line, windows_command_argv
 
 from . import supervision_gates as gates
@@ -43,8 +43,6 @@ PUSH_BRANCHES = "il comando di pubblicazione ha toccato altri rami del remoto"
 FETCH_TIMEOUT_S = 120.0
 PUSH_TIMEOUT_S = 600.0
 PUBLISH_TIMEOUT_S = 1800.0
-#: Windows refuses a path over MAX_PATH unless each git command is told to allow it.
-LONG_PATHS = ("-c", "core.longpaths=true")
 
 
 class PublishError(SupervisionError):
@@ -82,7 +80,7 @@ def publish(
             "i cancelli del motore, rieseguiti ora, danno FAIL e nulla è stato pubblicato: "
             + " | ".join(failed)
         )
-    applied = _cherry_pick(root, commits, start)
+    applied = _cherry_pick(root, commits, start, task_id=task_id, unit=name, head=unit_head, branch=branch)
     published_head = git(root, "rev-parse", "HEAD").strip()
     result = {
         "unit": name, "repo": str(root), "branch": branch, "remote": remote,
@@ -309,7 +307,10 @@ def _require_forward(root: Path, remote: str, branch: str) -> str:
     return theirs
 
 
-def _cherry_pick(root: Path, commits: list[dict], start: str) -> list[dict]:
+def _cherry_pick(
+    root: Path, commits: list[dict], start: str, *,
+    task_id: str = "", unit: str = "", head: str = "", branch: str = "",
+) -> list[dict]:
     """Replay each commit in order; a conflict puts the checkout back and publishes nothing."""
     applied: list[dict] = []
     for commit in commits:
@@ -322,11 +323,17 @@ def _cherry_pick(root: Path, commits: list[dict], start: str) -> list[dict]:
             _restore(root, start)
             left = git(root, "rev-parse", "HEAD", check=False).strip()
             stuck = "" if left == start else f" ATTENZIONE: il checkout è rimasto a {left[:12]}"
-            raise PublishError(
+            reason = (
                 f"cherry-pick di {commit['sha'][:12]} in conflitto su: "
                 f"{', '.join(files) or _last_line(done.stderr or done.stdout)}. "
                 f"Annullato: il checkout è tornato a {start[:12]} e niente è stato pubblicato.{stuck}"
             )
+            if task_id and unit:
+                state.append_event(
+                    task_id, "unit_publish_failed", unit=unit, head=head, branch=branch,
+                    repo=str(root), conflicts=files, reason=reason, commit=commit["sha"],
+                )
+            raise PublishError(reason)
         applied.append({
             "source": commit["sha"],
             "published": git(root, "rev-parse", "HEAD").strip(),
