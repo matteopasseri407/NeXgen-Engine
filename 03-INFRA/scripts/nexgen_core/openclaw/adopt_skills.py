@@ -77,19 +77,45 @@ def collision(manifest_text: str, name: str, destination: Path) -> str | None:
     return None
 
 
-def append_entry(text: str, name: str, description: str, targets: list[str]) -> str:
+def append_entry(
+    text: str,
+    name: str,
+    description: str,
+    targets: list[str],
+    *,
+    origin: str = "vault",
+    openclaw_id: str | None = None,
+) -> str:
     """The manifest text with one new entry, appended and leaving every other byte alone."""
     lines = [
         f"  {name}:",
-        "    origin: vault",
+        f"    origin: {origin}",
+    ]
+    if openclaw_id:
+        lines.append(f"    openclaw_id: {openclaw_id}")
+    lines.extend([
         f"    exposure: {ADOPTED_EXPOSURE}",
         f"    targets: [{', '.join(targets)}]",
-    ]
+    ])
     if description:
         quoted = description.replace("\\", "\\\\").replace('"', '\\"')
         lines.append(f'    description: "{quoted}"')
     body = EMPTY_SKILLS.sub("skills:", text.rstrip("\n"))
     return body + "\n\n" + "\n".join(lines) + "\n"
+
+
+def _tag_skill_frontmatter(path: Path, name: str) -> None:
+    """Ensure SKILL.md records its OpenClaw provenance."""
+    if not path.is_file():
+        return
+    text = path.read_text(encoding="utf-8")
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) >= 3:
+            fm = parts[1]
+            tag = f"\norigin: openclaw\nopenclaw_id: {name}"
+            if "openclaw" not in fm:
+                path.write_text(f"---{tag}{fm}---{parts[2]}", encoding="utf-8")
 
 
 def _copy_into_vault(source: Path, destination: Path) -> None:
@@ -104,6 +130,7 @@ def _copy_into_vault(source: Path, destination: Path) -> None:
         shutil.rmtree(incoming, ignore_errors=True)
     try:
         shutil.copytree(source, incoming, symlinks=False)
+        _tag_skill_frontmatter(incoming / "SKILL.md", destination.name)
         os.replace(incoming, destination)
     finally:
         if incoming.exists():
@@ -186,7 +213,7 @@ def adopt_skill(
             return SkillAdoption(skill.name, False, t("the copy failed ({error}); nothing was written", error=exc))
         problem = _publish(
             manifest, before,
-            append_entry(before, skill.name, description, ADOPTED_TARGETS),
+            append_entry(before, skill.name, description, ADOPTED_TARGETS, openclaw_id=skill.name),
             materializer.validate_manifest,
         )
         if problem:

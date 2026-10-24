@@ -12,6 +12,11 @@
 #  - transport: "stdio" (local process) | "http" (remote server with bearer).
 #  - targets: which CLIs mount this server.
 #  - schema_version: keep this at 1 until a documented migration says otherwise.
+#  - origin: where the connector was created ("openclaw" when adopted from
+#    OpenClaw, accompanied by openclaw_id; omitted for canonical library items).
+#    Connectors with origin: openclaw are subject to auto-retirement if absent
+#    from OpenClaw for two consecutive passes; all other connectors belong to
+#    the canonical library and are never removed automatically.
 #  - Conditionality: servers marked `require_env` are included only if the
 #    user has set the matching environment variable. This way, a Local-Only
 #    install doesn't load MCP servers pointing at absent backends. The user
