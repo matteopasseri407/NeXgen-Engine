@@ -57,6 +57,15 @@ def test_the_brief_template_carries_every_field_the_plan_asks_for(lane):
         assert field in brief
 
 
+def test_brief_template_does_not_ask_for_full_suite(lane):
+    started = state.start("prova verifica brief")
+    brief = (_folder(lane, started["id"]) / state.BRIEF_TEMPLATE).read_text(encoding="utf-8")
+    assert "mai la suite intera" in brief
+    assert "discipline.py" in brief
+    assert "leak_scan.py" in brief
+    assert "ruff_baseline_check.py" in brief
+
+
 def test_the_report_template_carries_every_field_the_plan_asks_for(lane):
     started = state.start("prova modelli")
     report = (_folder(lane, started["id"]) / state.REPORT_TEMPLATE).read_text(encoding="utf-8")

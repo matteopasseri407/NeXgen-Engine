@@ -35,8 +35,12 @@ Il file o il commit che deve esistere alla fine.
 - File vietati: ...
 
 ## Verifica
+Durante il lavoro lancia solo i test dei file toccati e dei moduli vicini, mai la suite intera (che riesegue `sup collect` in modo indipendente):
 ```
-<comando esatto>
+pytest <file dei test toccati>
+python 03-INFRA/scripts/discipline.py check --base <base>
+python 03-INFRA/scripts/ruff_baseline_check.py
+python 03-INFRA/agent-universal-layer/leak-scan/leak_scan.py --patterns 03-INFRA/agent-universal-layer/leak-scan/leak_patterns.yaml --repo . --commit-range <base>..HEAD
 ```
 
 ## Fatto quando
