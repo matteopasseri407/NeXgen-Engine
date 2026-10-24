@@ -20,11 +20,17 @@ from nexgen_core.tools import chrome  # noqa: E402
 
 SANDBOX_DESKTOP = "WinSta0\\exebox-TBP2VOTBHK2WVWJC2XIZANDBBQ"
 
+#: The Win32 flags a detached launch passes (DETACHED_PROCESS 0x8, CREATE_NEW_PROCESS_GROUP 0x200).
+#: `subprocess` defines them only on Windows, so the fake Windows below carries them too: the test
+#: fakes `win32` on every host, and a host without them died on `AttributeError` before asserting.
+DETACHED_PROCESS = 0x00000008
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+
 
 @pytest.fixture
 def windows_launch(monkeypatch, tmp_path: Path):
     """A Windows launch with every host call recorded instead of made."""
-    calls: dict[str, list] = {"run": [], "popen": [], "xml": []}
+    calls: dict[str, list] = {"run": [], "popen": [], "xml": [], "flags": []}
     state = {"desktop": SANDBOX_DESKTOP, "cdp": [False, True], "run_rc": [0, 0]}
 
     def fake_run(cmd, **kwargs):
@@ -42,7 +48,12 @@ def windows_launch(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(chrome, "windows_desktop", lambda: state["desktop"])
     monkeypatch.setattr(chrome, "is_cdp_up", fake_cdp)
     monkeypatch.setattr(chrome.subprocess, "run", fake_run)
-    monkeypatch.setattr(chrome.subprocess, "Popen", lambda cmd, **kw: calls["popen"].append(cmd))
+    monkeypatch.setattr(chrome.subprocess, "DETACHED_PROCESS", DETACHED_PROCESS, raising=False)
+    monkeypatch.setattr(chrome.subprocess, "CREATE_NEW_PROCESS_GROUP", CREATE_NEW_PROCESS_GROUP, raising=False)
+    monkeypatch.setattr(
+        chrome.subprocess, "Popen",
+        lambda cmd, **kw: calls["popen"].append(cmd) or calls["flags"].append(kw.get("creationflags")),
+    )
     monkeypatch.setattr(chrome.time, "sleep", lambda s: None)
     return calls, state
 
@@ -76,6 +87,7 @@ def test_user_desktop_keeps_the_plain_launch(windows_launch):
 
     assert calls["run"] == []
     assert len(calls["popen"]) == 1
+    assert calls["flags"] == [DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP]
 
 
 def test_running_browser_keeps_the_plain_handoff(windows_launch):
