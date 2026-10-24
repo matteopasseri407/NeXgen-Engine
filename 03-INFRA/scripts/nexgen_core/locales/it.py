@@ -587,6 +587,9 @@ MESSAGES: dict[str, str] = {
     "agent-chrome: error launching Chrome ({error})": "agent-chrome: errore nell'avvio di Chrome ({error})",
     "agent-chrome: Chrome is holding the debug profile (process {pid}) but isn't responding on port 9222. Restarting it.": "agent-chrome: Chrome sta tenendo il profilo di debug (processo {pid}) ma non risponde sulla porta 9222. Lo riavvio.",
     "Usage: agent-chrome [--ensure|--heal] [args...]\n\nManages Chrome with a shared local CDP port.": "Uso: agent-chrome [--ensure|--heal] [args...]\n\nGestisce Chrome con una porta CDP locale condivisa.",
+    "agent-chrome: this shell runs on the desktop {desktop}, which the user cannot see. Starting Chrome on the user's desktop through Task Scheduler.": "agent-chrome: questa shell gira sul desktop {desktop}, che l'utente non vede. Avvio Chrome sul desktop dell'utente tramite l'Utilità di pianificazione.",
+    "agent-chrome: Task Scheduler could not start Chrome ({error}). Not starting it from here: on {desktop} it would be invisible.": "agent-chrome: l'Utilità di pianificazione non è riuscita ad avviare Chrome ({error}). Non lo avvio da qui: su {desktop} sarebbe invisibile.",
+    "agent-chrome: Chrome was started through Task Scheduler but port 9222 did not answer within {seconds} seconds.": "agent-chrome: Chrome è stato avviato tramite l'Utilità di pianificazione ma la porta 9222 non ha risposto entro {seconds} secondi.",
 
     # --- tools/now.py ---
     "Deterministic current date/time source for agents": "Sorgente deterministica di data/ora corrente per gli assistenti",
