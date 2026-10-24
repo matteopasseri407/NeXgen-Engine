@@ -104,7 +104,7 @@ def test_the_command_the_hooks_run_can_print_the_timings_too(tmp_path, monkeypat
             "PYTHONIOENCODING": "utf-8",
         }
         return subprocess.run([sys.executable, str(entry), "doctor", *args], env=env, capture_output=True,
-                              text=True, encoding="utf-8", errors="replace", timeout=180)
+                              text=True, encoding="utf-8", errors="replace", timeout=180, check=False)
 
     timed = run("--summary", "--timings")
     plain = run("--summary")

@@ -184,7 +184,7 @@ class Doctor:
         return schedule.run(checks, deadline_seconds=self.deadline_seconds)
 
 
-def _environment_checks(run, doc: "Doctor") -> None:
+def _environment_checks(run, doc: Doctor) -> None:
     """The machine itself: its folders, its launchers, its last cycle."""
     vault, home, state = doc.vault_data, doc.home, doc.state_dir
     run("env.state_dir", lambda: check_state_dir(state))
@@ -200,7 +200,7 @@ def _environment_checks(run, doc: "Doctor") -> None:
     run("guard.last_cycle", lambda: check_last_cycle_phases(state))
 
 
-def _git_checks(run, doc: "Doctor") -> None:
+def _git_checks(run, doc: Doctor) -> None:
     """The vault's own repository, and the engine checkout's lane."""
     vault = doc.vault_data
     # The two that fetch share one repository lock: run together they contend
@@ -213,7 +213,7 @@ def _git_checks(run, doc: "Doctor") -> None:
     run("git.mirror_alignment", lambda: check_mirror_alignment(vault), "vault-git-remote")
 
 
-def _mcp_and_module_checks(run, doc: "Doctor") -> None:
+def _mcp_and_module_checks(run, doc: Doctor) -> None:
     """The connectors, the modules, and the harness with the interface."""
     vault, home, state, engine_root = doc.vault_data, doc.home, doc.state_dir, doc.engine_root
     manifest_mcp = vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
@@ -239,7 +239,7 @@ def _mcp_and_module_checks(run, doc: "Doctor") -> None:
     run("openclaw.parity", lambda: check_openclaw_parity(home, vault))
 
 
-def _skill_checks(run, doc: "Doctor") -> None:
+def _skill_checks(run, doc: Doctor) -> None:
     """The skills: declared, installed, materialized, and on the pinned commit."""
     vault, home, state, engine_root = doc.vault_data, doc.home, doc.state_dir, doc.engine_root
     manifest_skills = vault / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml"
@@ -255,7 +255,7 @@ def _skill_checks(run, doc: "Doctor") -> None:
     run("skills.manifest_semantics", lambda: check_skills_manifest_semantics(vault, home))
 
 
-def _identity_and_secret_checks(run, doc: "Doctor") -> None:
+def _identity_and_secret_checks(run, doc: Doctor) -> None:
     """Who the machine is, what it keeps secret, and the apps beside it."""
     vault, home, engine_root = doc.vault_data, doc.home, doc.engine_root
     run("identity.agent_self", lambda: check_agent_self(vault))

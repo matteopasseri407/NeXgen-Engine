@@ -30,8 +30,8 @@ def test_the_commands_are_asked_together_and_reported_in_order(monkeypatch, caps
 
     def slow(argv):
         time.sleep(0.2)
-        expected = dict((tuple(a), e) for a, e in smoke.CASES)[tuple(argv[2:])]
-        return subprocess.CompletedProcess(argv, sorted(expected)[0], "answered\n", "")
+        expected = {tuple(args): codes for args, codes in smoke.CASES}[tuple(argv[2:])]
+        return subprocess.CompletedProcess(argv, min(expected), "answered\n", "")
 
     monkeypatch.setattr(smoke, "run", slow)
 
@@ -55,8 +55,8 @@ def test_a_failing_command_still_reports_its_own_reason(monkeypatch, capsys):
         if "plan" in argv:
             return subprocess.CompletedProcess(argv, 7, "", "boom")
         time.sleep(0.05)
-        expected = dict((tuple(a), e) for a, e in smoke.CASES)[tuple(argv[2:])]
-        return subprocess.CompletedProcess(argv, sorted(expected)[0], "fine", "")
+        expected = {tuple(args): codes for args, codes in smoke.CASES}[tuple(argv[2:])]
+        return subprocess.CompletedProcess(argv, min(expected), "fine", "")
 
     monkeypatch.setattr(smoke, "run", refuse)
 
