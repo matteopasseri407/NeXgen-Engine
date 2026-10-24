@@ -13,6 +13,19 @@ import urllib.request
 _config = _base.command_config
 
 
+def _add_web_search(add) -> None:
+    """Web search is the vendor's cloud API: what decides it works here is its key.
+
+    Presence alone is read: the value is never compared, printed or written.
+    """
+    import os
+
+    key = bool(os.environ.get("FIRECRAWL_API_KEY", "").strip())
+    add("firecrawl cloud (web)", key,
+        "chiave presente" if key else "manca FIRECRAWL_API_KEY ('nexgen-secrets set FIRECRAWL_API_KEY')",
+        required=False)
+
+
 def _health_doctor(args: argparse.Namespace) -> int:
     """Modulo salute dedicato: esiti doctor, nessun servizio reale qui dentro."""
     checks: list[tuple[str, bool, str, bool]] = []
@@ -48,7 +61,7 @@ def _health_doctor(args: argparse.Namespace) -> int:
         add("ollama raggiungibile", False, str(exc))
 
     add("pdftotext (PDF)", bool(shutil.which(cfg.pdftotext_cmd)), "opzionale", required=False)
-    add("firecrawl-local (web)", bool(shutil.which(cfg.firecrawl_cmd)), "opzionale", required=False)
+    _add_web_search(add)
     from ..connectors.auth import status as _connector_status
 
     _gmail_ok, _gmail_detail = _connector_status()

@@ -391,7 +391,7 @@ def test_refusal_kind_separates_empty_from_error() -> None:
     assert refusal_kind("(nessun risultato)") == "empty"
     assert refusal_kind("(nessun testo estraibile)") == "empty"
     assert refusal_kind("(ricerca web fallita: boom)") == "error"
-    assert refusal_kind("(firecrawl-local non disponibile)") == "error"
+    assert refusal_kind("(ricerca web non configurata: manca FIRECRAWL_API_KEY)") == "error"
     assert refusal_kind("(query vuota)") == "error"
 
 
@@ -399,25 +399,24 @@ def test_run_lane_reports_backend_failure_distinct_from_absence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Backend down is ENGINE_ERROR, never a "no results" absence."""
-    import shutil
+    import urllib.error
 
     from nexgen_local.engine import ENGINE_ABSENCE, ENGINE_ERROR
-    from nexgen_local.tools import RunResult
 
     cfg = LaneConfig(
         vault_root=tmp_path / "vault",
         repo_roots=(),
         model="fake-model",
         audit_path=tmp_path / "audit.jsonl",
-        firecrawl_cmd="fake-firecrawl",
     )
     cfg.vault_root.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(shutil, "which", lambda cmd: "/fake/bin")
-    monkeypatch.setattr(
-        ToolRegistry, "_run", staticmethod(lambda cmd, timeout: RunResult(1, "", "conn refused"))
-    )
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "fake-key")
+
+    def refused(request, timeout):
+        raise urllib.error.URLError("conn refused")
+
     llm = FakeLLM(route={"source": "web", "keywords": ["muse"]}, answers=["INVENTATO"])
-    result = run_lane(llm, ToolRegistry(cfg), cfg, "Cerca sul web muse e riassumi.")
+    result = run_lane(llm, ToolRegistry(cfg, http=refused), cfg, "Cerca sul web muse e riassumi.")
     assert result.answer == ENGINE_ERROR
     assert result.answer != ENGINE_ABSENCE
     assert llm.seen_users == [], "il modello non deve riferire il guasto"
@@ -527,7 +526,9 @@ def test_failed_subprocess_leaves_a_failed_receipt(tmp_path: Path, monkeypatch: 
         ToolRegistry, "_run", staticmethod(lambda cmd, timeout: RunResult(2, "ERROR: backend unavailable", "boom"))
     )
     tools = ToolRegistry(cfg)
-    output = tools.web_search("muse spark")
+    pdf = tmp_path / "doc.pdf"
+    pdf.write_bytes(b"%PDF-1.4" + bytes([10]))
+    output = tools.read_pdf(str(pdf))
     assert output.startswith("(")
     assert tools.calls[-1].ok is False
 

@@ -118,7 +118,10 @@ class LaneConfig:
     read_chars: int = 3000
     audit_path: Path = field(default_factory=lambda: lane_state_dir() / "audit.jsonl")
     uploads_dir: Path = field(default_factory=lambda: lane_state_dir() / "uploads")
-    firecrawl_cmd: str = "firecrawl-local"
+    #: Web search is the vendor's cloud API, never a local binary: the key comes
+    #: from `FIRECRAWL_API_KEY` in the environment on every call, so it is not a
+    #: field here and cannot end up in a config dump.
+    firecrawl_timeout: float = 30.0
     pdftotext_cmd: str = "pdftotext"
     excluded_parts: frozenset[str] = EXCLUDED_PARTS
     #: Capability tier of the model in use: tutor, guided or assisted. Unknown

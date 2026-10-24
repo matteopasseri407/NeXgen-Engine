@@ -26,7 +26,9 @@ if str(SCRIPTS_DIR) not in sys.path:
 RETIRED_MODULES = ("nexgen_core.tools.firecrawl", "nexgen_core.tools.firecrawl_health")
 
 #: I nomi che solo quel backend conosceva: un client che li nomina è tornato.
-RETIRED_MARKERS = ("FIRECRAWL_API_URL", "FIRECRAWL_TUNNEL_PORT", "33002", "/v2/scrape", "/v2/search")
+#: `/v2/search` non è più uno di loro: è il percorso che anche l'API cloud espone, e la lane
+#: locale lo chiama con la chiave dell'utente invece di un backend da ospitare.
+RETIRED_MARKERS = ("FIRECRAWL_API_URL", "FIRECRAWL_TUNNEL_PORT", "33002", "/v2/scrape")
 
 #: Gli script che il wrapper installava come comandi.
 RETIRED_SCRIPTS = ("firecrawl-search-health.py", "firecrawl-local.sh", "firecrawl-local.ps1")
