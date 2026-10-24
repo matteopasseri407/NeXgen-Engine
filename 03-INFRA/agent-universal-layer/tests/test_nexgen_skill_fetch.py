@@ -34,6 +34,34 @@ def source_and_cache(tmp_path):
     return repo, cache, entry, SkillFetcher(home=tmp_path / "home")
 
 
+def test_a_transient_lock_on_the_swap_is_retried_instead_of_postponed(tmp_path, monkeypatch):
+    """Un lock che si libera in millisecondi non deve rimandare il pin al ciclo
+    successivo: la prima rinomina del checkout fallisce (WinError 5 / EACCES),
+    la seconda porta i byte nuovi e il pin registrato è quello giusto."""
+    repo, cache, entry, fetcher = source_and_cache(tmp_path)
+    (repo / "SKILL.md").write_text("verified second version\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-m", "second")
+    entry.commit = git(repo, "rev-parse", "HEAD")
+    real_rename = os.rename
+    attempts: list[str] = []
+
+    def flaky_rename(src, dst):
+        if Path(src).name == "checkout":
+            attempts.append(str(src))
+            if len(attempts) == 1:
+                raise PermissionError(errno.EACCES, "locked for a moment")
+        return real_rename(src, dst)
+
+    monkeypatch.setattr(os, "rename", flaky_rename)
+    ok, error = fetcher.ensure_github_checkout(cache, entry)
+
+    assert ok, error
+    assert len(attempts) == 2, attempts
+    assert git(cache, "rev-parse", "HEAD") == entry.commit
+    assert (cache / "SKILL.md").read_text() == "verified second version\n"
+
+
 def test_unreachable_pin_keeps_previous_skill_bytes(tmp_path):
     repo, cache, entry, fetcher = source_and_cache(tmp_path)
     previous = git(cache, "rev-parse", "HEAD")

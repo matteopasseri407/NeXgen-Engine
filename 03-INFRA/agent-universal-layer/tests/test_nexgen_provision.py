@@ -111,6 +111,34 @@ def test_git_rev_change_provisions_fresh(tmp_path):
     assert ctx["DEPS_WORKSPACE"] != workspace_path({"kind": "git", "repo": repo_uri, "rev": rev1}, state)
 
 
+def test_a_transient_denial_of_the_workspace_swap_is_retried(tmp_path, monkeypatch):
+    """Windows nega lo spostamento della cartella appena clonata (WinError 5)
+    finché un antivirus, l'indicizzatore o un figlio di git tiene un handle
+    dentro. Il secondo tentativo riesce: un lock che si libera da solo non deve
+    far fallire un provisioning che il tentativo dopo avrebbe completato."""
+    repo_uri, rev = _git_repo_with_commit(tmp_path)
+    deps = {"kind": "git", "repo": repo_uri, "rev": rev}
+    state = tmp_path / "state"
+    final = workspace_path(deps, state)
+    real_replace = provision.os.replace
+    attempts: list[str] = []
+
+    def flaky_replace(src_path, dst_path, *args, **kwargs):
+        if Path(dst_path) == final:
+            attempts.append(str(src_path))
+            if len(attempts) == 1:
+                raise PermissionError(13, "Access is denied")  # WinError 5
+        return real_replace(src_path, dst_path, *args, **kwargs)
+
+    monkeypatch.setattr(provision.os, "replace", flaky_replace)
+
+    ctx, err = ensure_deps(deps, state, install=True, server="srv")
+
+    assert err is None, err
+    assert len(attempts) == 2, attempts
+    assert (Path(ctx["DEPS_WORKSPACE"]) / "hello.txt").read_text(encoding="utf-8") == "v1"
+
+
 def test_a_workspace_that_cannot_be_removed_is_a_clear_failure(tmp_path, monkeypatch):
     """Su Windows un file tenuto aperto lascia la cartella al suo posto.
 

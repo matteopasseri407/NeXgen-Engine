@@ -226,3 +226,49 @@ def test_backup_of_a_loosely_moded_config_is_private(tmp_path: Path):
     os.chmod(target, 0o644)
     backup = backup_file(target, tag="instructions")
     assert backup is not None and backup.stat().st_mode & 0o777 == 0o600
+
+
+def test_a_transient_denial_is_retried_and_a_persistent_one_surfaces(monkeypatch):
+    """Windows dice "accesso negato" (WinError 5) o "violazione di condivisione"
+    (32) mentre un antivirus, l'indicizzatore o un figlio appena uscito tiene
+    aperta la cartella per un istante. Il primo tentativo non è la risposta: la
+    stessa attesa vale per una rinomina o un replace di cartella, che prima
+    falliva l'intera operazione. Un rifiuto che non è quel caso, o che non si
+    libera, non viene ritentato fino a sparire."""
+    import nexgen_core.files as files_mod
+
+    attempts: list[int] = []
+
+    def flaky():
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise PermissionError(13, "Access is denied")  # WinError 5
+        return "moved"
+
+    assert files_mod.retry_transient_lock(flaky) == "moved"
+    assert len(attempts) == 2
+
+    # Un rifiuto che non è un lock non si ritenta nemmeno una volta.
+    not_a_lock = PermissionError(13, "not a sharing violation")
+    not_a_lock.winerror = 1
+    wrong_kind: list[int] = []
+
+    def refused():
+        wrong_kind.append(1)
+        raise not_a_lock
+
+    with pytest.raises(PermissionError):
+        files_mod.retry_transient_lock(refused)
+    assert len(wrong_kind) == 1
+
+    # Un lock persistente esce, dentro lo stesso tetto di tempo.
+    clock = [0.0]
+    monkeypatch.setattr(files_mod.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(files_mod.time, "sleep", lambda delay: clock.__setitem__(0, clock[0] + delay))
+
+    def still_open():
+        raise PermissionError(13, "still open somewhere")
+
+    with pytest.raises(PermissionError, match="still open somewhere"):
+        files_mod.retry_transient_lock(still_open)
+    assert clock[0] <= files_mod._RETRY_BUDGET_SECONDS

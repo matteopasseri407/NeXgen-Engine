@@ -26,7 +26,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from nexgen_core.action_notes import ERROR, WARN  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import t  # noqa: E402
-from nexgen_core.files import atomic_write_text  # noqa: E402
+from nexgen_core.files import atomic_write_text, retry_transient_lock  # noqa: E402
 from nexgen_core.lock import HostLock  # noqa: E402
 from nexgen_core.paths import resolve_home, resolve_state_dir  # noqa: E402
 from nexgen_core.processes import windows_command_argv  # noqa: E402 - one place knows the Windows shims
@@ -156,7 +156,7 @@ def _link_or_copy_body(src: Path, dst: Path) -> bool:
     elif dst.is_dir():
         if same_tree_content(src, dst):
             return False
-        dst.rename(next_backup_path(dst))
+        retry_transient_lock(lambda: dst.rename(next_backup_path(dst)))
         _prune_skill_backups(dst)
     elif os.path.lexists(dst):
         # Dangling junction or link (Windows): not a symlink, file, or
@@ -293,7 +293,7 @@ class SkillFetcher:
                 backup = next_backup_path(cache_dir) if cache_dir.exists() else None
                 if backup is not None:
                     try:
-                        cache_dir.rename(backup)
+                        retry_transient_lock(lambda: cache_dir.rename(backup))
                     except OSError as exc:
                         # Transient lock (a CLI holding the skill open, a
                         # scanner, a concurrent cycle): nothing was touched,
@@ -308,10 +308,10 @@ class SkillFetcher:
                             )
                         raise
                 try:
-                    incoming.rename(cache_dir)
+                    retry_transient_lock(lambda: incoming.rename(cache_dir))
                 except OSError:
                     if backup is not None:
-                        backup.rename(cache_dir)
+                        retry_transient_lock(lambda: backup.rename(cache_dir))
                     raise
                 # Clean Git caches are reproducible from their pin. Preserve
                 # an unknown/corrupt directory instead of deleting user bytes.
@@ -392,7 +392,7 @@ class SkillFetcher:
                     backup = next_backup_path(lib_dest)
                     # Rename the link itself, never its target. It is recoverable
                     # exactly like a directory if publishing the replacement fails.
-                    lib_dest.rename(backup)
+                    retry_transient_lock(lambda: lib_dest.rename(backup))
                 except OSError:
                     return False
                 try:
@@ -402,7 +402,7 @@ class SkillFetcher:
                         lib_dest.unlink()
                     elif lib_dest.is_dir():
                         shutil.rmtree(lib_dest)
-                    backup.rename(lib_dest)
+                    retry_transient_lock(lambda: backup.rename(lib_dest))
                     return False
                 return True
             lib_dest.parent.mkdir(parents=True, exist_ok=True)
