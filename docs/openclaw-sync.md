@@ -21,7 +21,7 @@ it.
 | Instructions | an `AGENTS.md` block in each agent workspace | the guard's instructions phase |
 | Skills | `~/.agents/skills/` (the shared catalog) | the skills phase |
 | The plugin | `<state dir>/extensions/nexgen/` | the guard's permissions phase |
-| Briefing, posture, engine | `<state dir>/extensions/nexgen/nexgen.config.json` | the permissions phase and the module state |
+| Briefing, checkpoint, posture, engine | `<state dir>/extensions/nexgen/nexgen.config.json` | the permissions phase and the module state |
 
 ## MCP connectors
 
@@ -114,6 +114,7 @@ extensions/nexgen/
   index.mjs                     registers the jobs; the guardrail comes first
   guardrail.mjs                 the gate on before_tool_call
   briefing.mjs                  the vault briefing after a compaction
+  checkpoint.mjs                session continuity: a pointer to this session, in machine state
   quota.mjs                     `/quota`: the lines the engine already rendered
   workshop.mjs                  a log line when the Skill Workshop learned a skill
   governor.mjs                  the fallback handover on before_model_resolve
@@ -128,7 +129,8 @@ extensions/nexgen/
   openclaw.plugin.json          id: nexgen, onStartup, the tool names it owns
   nexgen-guardrail-core.mjs     the shared core every adapter imports
   nexgen-guardrail.config.json  which guardrail body, with what timeout, the audit file
-  nexgen.config.json            the engine's switches: briefing, posture, engine, governor, evidence
+  nexgen.config.json            the engine's switches: briefing, checkpoint, posture, engine,
+                                governor, evidence
   nexgen-quota-state.json       what the beat last read, for the governor
   vault-briefing.txt            the briefing text, shared with Claude Code
   hooks/<body>.mjs              the guardrail body (the private policy)
@@ -250,6 +252,15 @@ annotated in its place. The phrase tables are long and bilingual, not exhaustive
 claim worded in a way neither list carries is still checked where the rule does not
 depend on a phrase (a cited source, an invented result, facts with nothing retrieved).
 
+### Session continuity
+
+Session continuity across CLIs operates through machine-local state and MCP:
+- **OpenClaw -> State**: on `after_compaction` and `session_end`, the `checkpoint.mjs` plugin job writes a session pointer to `openclaw-checkpoint.json` in the machine-local state directory (`~/.local/state/nexgen/`, never into the KnowledgeVault). The record captures origin (`openclaw`), agent, the `session_key` formatted for `openclaw mcp serve`, event, reason, and an ISO timestamp.
+- **Claude Code -> Context**: on `SessionStart` (resume or compact), `claude-vault-checkpoint.mjs` remains strictly read-only ("never writes"). If a recent checkpoint exists (< 12 hours), it appends a guidance note referencing the agent, time, and session key, directing the operator to inspect conversation history through the `openclaw` MCP server (`openclaw mcp serve`, made available across harnesses via the MCP bridge).
+- If the checkpoint is missing, older than 12 hours, or unreadable, the hook falls back silently to the briefing text alone.
+
+The checkpoint job is controlled by `checkpoint.enabled` in `nexgen.config.json` (enabled by default like the briefing). Any error during write is swallowed safely and never breaks OpenClaw sessions.
+
 ### Posture
 
 The private permission manifest's posture travels into `nexgen.config.json` in the
@@ -306,6 +317,7 @@ matches shell patterns, where it would match by accident rather than by meaning.
 | `guardrail.consulted.openclaw` | the guardrail has been called at least once since it was installed |
 | `guardrail.openclaw_plugin` | the plugin is deposited, and whether OpenClaw will load it (`plugins.allow`, `plugins.deny`, an entry switched off) |
 | `instructions.openclaw` | every agent workspace's `AGENTS.md` carries the managed block, and which workspace folders do not exist yet |
+| `openclaw.checkpoint` | session continuity is on: the plugin writes its session pointer on compaction and at session end |
 | `openclaw.evidence` | whether the evidence check is on, and for which local models; a WARN when the plugin is enabled but the switch or the conversation access is missing |
 | `openclaw.parity.*` | one line per layer above: PASS when both hosts hold it, WARN with the action when one does not |
 | `openclaw.unadopted` | how many skills and servers OpenClaw created and the canonical library does not declare yet, with `nexgen openclaw adopt` as the action; silent when either manifest cannot be read |
