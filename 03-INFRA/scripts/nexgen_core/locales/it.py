@@ -1869,4 +1869,42 @@ MESSAGES: dict[str, str] = {
         "Lancia 'nexgen openclaw adopt': te le mostra una per una e chiede prima di scrivere.",
     "Every skill and server OpenClaw created is in the canonical library.":
         "Ogni skill e ogni server creati da OpenClaw sono nella libreria canonica.",
+
+    # --- Ripiego: quando un piano finisce, il lavoro passa al successivo ------------
+    # La politica la scrive il proprietario in quota.yaml: il motore non ne ha una
+    # propria, e queste frasi servono a dire cosa ha letto e cosa non ha potuto usare.
+    "{row}, then {model}":
+        "{row}, poi {model}",
+    "The fallback policy in {path} cannot be read: {error}":
+        "La politica di ripiego in {path} non si legge: {error}",
+    "The fallback 'agents' entry is not a mapping of agent to chain: ignored.":
+        "La voce 'agents' della politica di ripiego non è una mappa agente → catena: la ignoro.",
+    "The fallback model {entry} is not written as 'provider/model': ignored.":
+        "Il modello di ripiego {entry} non è scritto come 'fornitore/modello': lo ignoro.",
+    "The fallback line {value} is not a percentage between 0 and 100: {default} is used.":
+        "La soglia di ripiego {value} non è una percentuale fra 0 e 100: uso {default}.",
+    "The fallback reading age {value} is not a positive number of minutes: {default} hours are used.":
+        "L'età della lettura di ripiego {value} non è un numero positivo di minuti: uso {default} ore.",
+    "No OpenClaw agent is configured yet: there is no fallback chain to judge.":
+        "Nessun agente OpenClaw è ancora configurato: non c'è nessuna catena di ripiego da giudicare.",
+    "The fallback policy names these agents, and their chain is not in the configuration: {names}":
+        "La politica di ripiego nomina questi agenti, e la loro catena non è nella configurazione: {names}",
+    "Run 'nexgen openclaw setup', and only for an agent the engine creates: it writes no agent it does not own.":
+        "Lancia 'nexgen openclaw setup', e solo per un agente che il motore crea: non scrive agenti che non sono suoi.",
+    "Fallback chains: {covered} agents have one, {missing} have none ({names}).":
+        "Catene di ripiego: {covered} agenti ne hanno una, {missing} nessuna ({names}).",
+    "No fallback policy is declared: {covered} agents have a chain of their own, {missing} have none ({names}).":
+        "Nessuna politica di ripiego dichiarata: {covered} agenti hanno una catena propria, {missing} nessuna ({names}).",
+    "The fallback policy is declared: every one of the {count} agents has a chain.":
+        "La politica di ripiego è dichiarata: tutti e {count} gli agenti hanno una catena.",
+    "No fallback policy is declared; the {count} agents have a chain of their own.":
+        "Nessuna politica di ripiego dichiarata; i {count} agenti hanno una catena propria.",
+    "No fallback policy is declared, and no OpenClaw agent has a fallback chain.":
+        "Nessuna politica di ripiego dichiarata, e nessun agente OpenClaw ha una catena di ripiego.",
+    "No fallback policy names an agent of this setup: no chain was written.":
+        "Nessuna politica di ripiego nomina un agente di questo setup: non ho scritto nessuna catena.",
+    "The engine plugin is not deposited: its fallback chains were not written.":
+        "Il plugin del motore non è depositato: le sue catene di ripiego non sono state scritte.",
+    "The fallback chains reach {count} agents; the plugin reads them on every turn.":
+        "Le catene di ripiego arrivano a {count} agenti; il plugin le legge a ogni turno.",
 }

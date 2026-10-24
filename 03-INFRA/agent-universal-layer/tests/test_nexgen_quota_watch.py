@@ -171,7 +171,9 @@ def test_an_unreadable_machine_is_silence_and_not_a_crash(tmp_path):
 
     answer = quota_watch.check_and_alert(home=tmp_path / "nowhere", megaphone=phone, now=NOW)
 
-    assert answer == {"ok": True, "judged": []}
+    # No plugin was ever deposited there, so the readings have nowhere to go: that is
+    # a skipped state, not a failure, and it never costs the silence above.
+    assert answer == {"ok": True, "judged": [], "state": "skipped"}
     assert phone.sent == []
 
 

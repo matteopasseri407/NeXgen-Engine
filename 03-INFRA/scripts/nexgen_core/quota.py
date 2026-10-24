@@ -11,6 +11,11 @@ for that window was declared in `quota.yaml`; without one it shows what was
 spent and says the ceiling is missing. A percentage older than the window it
 describes is dropped, because that window has already reset.
 
+Each row also carries the model that lane hands over to, when the owner declared
+a fallback policy in the same file: the report is where a person looks to know
+what happens when a plan stops answering, and the answer belongs next to the
+number that raises the question.
+
 The report is also the answer `/quota` gives inside OpenClaw, so it carries its
 own rendered lines: the plugin forwards text and never formats a number.
 """
@@ -18,13 +23,13 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
 import yaml
 
-from nexgen_core import quota_claude, quota_codex
+from nexgen_core import quota_claude, quota_codex, quota_policy
 from nexgen_core.i18n import t
 from nexgen_core.paths import codex_home, resolve_home, resolve_vault_data
 
@@ -50,10 +55,13 @@ class QuotaRow:
 
     `percent` is set only when it is a real percentage of a real ceiling, so a
     consumer may treat it as "this provider can be judged". `used` is always
-    the provider's own number, in `unit`.
+    the provider's own number, in `unit`. `provider_id` is the id the provider has
+    in the models a harness names (`opencode-go`, `openai`, `anthropic`), which is
+    what a fallback chain speaks; `provider` is only what a person reads.
     """
 
     provider: str
+    provider_id: str = ""
     window: str = ""
     used: float | None = None
     unit: str = ""
@@ -63,11 +71,13 @@ class QuotaRow:
     read_at: float | None = None
     state: str = "unknown"
     note: str = ""
+    fallback: str = ""
 
     def to_dict(self, now: float | None = None) -> dict:
         """The row as JSON: times in ISO, plus the age a consumer would compute."""
         return {
             "provider": self.provider,
+            "provider_id": self.provider_id,
             "window": self.window,
             "unit": self.unit,
             "used": self.used,
@@ -78,6 +88,7 @@ class QuotaRow:
             "age_seconds": _age_seconds(self.read_at, now),
             "state": self.state,
             "note": self.note,
+            "fallback": self.fallback,
         }
 
 
@@ -121,7 +132,22 @@ def build_report(*, home: Path | None = None, vault: Path | None = None,
         provider="Antigravity", state="unknown",
         note=t("not measured"),
     ))
-    return QuotaReport(read_at=moment, rows=tuple(rows), notes=tuple(notes))
+    return QuotaReport(read_at=moment, rows=tuple(with_handovers(rows, home=home, vault=vault)),
+                       notes=tuple(notes))
+
+
+def with_handovers(rows: list[QuotaRow], *, home: Path | None = None,
+                   vault: Path | None = None) -> list[QuotaRow]:
+    """Each row with the model it hands over to, when the policy names one.
+
+    The chain read here is the assistant's: it is the agent a person talks to, and
+    the shared chain applies to it unless the policy overrides that one agent.
+    """
+    policy, _notes = quota_policy.load(home, vault=vault)
+    chain = policy.for_agent("main")
+    if not chain:
+        return rows
+    return [replace(row, fallback=quota_policy.handover_to(chain, row.provider_id)) for row in rows]
 
 
 def percentage_rows(*, home: Path | None = None, vault: Path | None = None,
@@ -142,6 +168,14 @@ def percentage_rows(*, home: Path | None = None, vault: Path | None = None,
 
 def render_row(row: QuotaRow, now: float) -> str:
     """One row as the sentence a person reads, in the language they read."""
+    base = _row_text(row, now)
+    if not row.fallback:
+        return base
+    return t("{row}, then {model}", row=base, model=row.fallback)
+
+
+def _row_text(row: QuotaRow, now: float) -> str:
+    """The row without its handover: what was used, how much is left, how old it is."""
     if row.state == "unknown":
         return t("{provider}: not measured", provider=row.provider)
     age = age_text(_age_seconds(row.read_at, now) or 0.0)
@@ -248,6 +282,9 @@ def _codex_rows(home: Path | None, now: float, notes: list[str]) -> list[QuotaRo
         stale = _expired(usage.read_at, limit.window_minutes, now)
         rows.append(QuotaRow(
             provider=provider,
+            # Codex is reached in OpenClaw through the `openai` provider, whatever the
+            # plan behind the login is called; a chain names `openai/<model>`.
+            provider_id="openai",
             window=window,
             used=limit.used_percent,
             unit="percent",
@@ -292,6 +329,7 @@ def _opencode_rows(home: Path | None, vault: Path | None, now: float, notes: lis
             percent = round(100.0 * cost / ceiling, 1) if ceiling else None
             rows.append(QuotaRow(
                 provider=name,
+                provider_id=provider,
                 window=window,
                 used=round(cost, 2),
                 unit="usd",
@@ -310,6 +348,7 @@ def _claude_rows(usage: quota_claude.ClaudeUsage, now: float) -> list[QuotaRow]:
     return [
         QuotaRow(
             provider="Claude Code",
+            provider_id="anthropic",
             window=window,
             used=float(usage.windows.get(window, {}).get("tokens") or 0),
             unit="tokens",

@@ -98,6 +98,38 @@ The megaphone's own four-hour debounce applies on top: one missed repeat is chea
 Only the cheap readings are consulted.
 The Claude Code transcripts are never opened by a timer.
 
+## What a plan hands over to
+
+The `failover:` section of the same `quota.yaml` is where you declare what a turn should use when a plan runs out, and in which order.
+It is empty by default: which providers to pay for, and in which order, is your rule and not the engine's.
+
+```yaml
+failover:
+  block_at: 95
+  state_max_age_minutes: 180
+  chain:
+    - anthropic/claude-opus-5-5
+    - opencode-go/deepseek-v4-pro
+  agents:
+    capo:
+      - openai/gpt-6-luna
+```
+
+`chain` applies to every OpenClaw agent the engine creates, `agents` overrides it for one of them, and every entry is a model written the way OpenClaw names it, `provider/model`.
+A malformed entry is ignored and named in one line at the bottom, like a declared limit that cannot be used.
+
+With that section in place, each row of `nexgen quota` ends with the model that window hands over to:
+
+```
+Codex (free): 96% of the 30d window used (read 2m ago), resets in 3h 12m, then anthropic/claude-opus-5-5
+```
+
+The model shown is the first entry of the assistant's chain that runs on a different provider: a spent plan takes its own sibling models with it.
+A provider with no chain declared prints its row as it always did, and no handover is invented.
+
+`nexgen openclaw setup` is what carries the chains to OpenClaw: see [the OpenClaw page](openclaw.md#the-fallback-chain).
+`nexgen doctor` prints one line, `openclaw.fallbacks`, with how many agents carry a chain and which ones carry none.
+
 ## The doctor line
 
 `nexgen doctor` prints one line, `quota.known`, listing every percentage that is a real number.

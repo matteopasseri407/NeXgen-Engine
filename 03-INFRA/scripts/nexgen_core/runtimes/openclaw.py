@@ -2,11 +2,14 @@
 
 OpenClaw runs native plugins inside its gateway process, so everything the engine gives
 Claude Code reaches OpenClaw through a single plugin, split into jobs that know nothing
-about each other (`guardrail.mjs`, `briefing.mjs`, `quota.mjs`, registered by `index.mjs`):
+about each other (`guardrail.mjs`, `briefing.mjs`, `quota.mjs`, `workshop.mjs`,
+`governor.mjs`, registered by `index.mjs`):
 
 - the **guardrail** on `before_tool_call`, the same private body the other CLIs run;
 - the **vault briefing** after a compaction, the same text Claude's checkpoint hook injects;
-- **`/quota`**, which runs the engine and forwards the lines it already rendered.
+- **`/quota`**, which runs the engine and forwards the lines it already rendered;
+- the **governor** on `before_model_resolve`, which starts a turn on the fallback when the
+  plan the turn would use is spent, from the readings the beat leaves beside it.
 
 What this adapter deliberately does NOT do: write `openclaw.json`. Changing the `plugins.*`
 block while the gateway runs breaks it, so enabling the plugin is a separate step
@@ -25,7 +28,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from nexgen_core.paths import openclaw_config
+from nexgen_core.paths import openclaw_config, resolve_home
 from nexgen_core.runtimes.base import EVENT_SINK_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
 
 #: The engine's plugin directory (package.json + manifest + index.mjs + the job files),
@@ -38,10 +41,30 @@ _PLUGIN_SOURCE_DIRNAME = "openclaw-guardrail-plugin"
 PLUGIN_ID = "nexgen"
 #: The name unit C deposited it under. It is removed on sight: one plugin, one id.
 LEGACY_PLUGIN_ID = "nexgen-guardrail"
-#: The engine-owned switches beside the plugin: briefing, posture. Never `openclaw.json`.
+#: The engine-owned switches beside the plugin: briefing, posture, governor. Never `openclaw.json`.
 PLUGIN_CONFIG_NAME = "nexgen.config.json"
 #: The briefing text, shared with Claude's checkpoint hook (`hooks/vault-briefing.txt`).
 BRIEFING_NAME = "vault-briefing.txt"
+#: The sidecar key the governor job reads: the block line, the age limit, the chains.
+GOVERNOR_SECTION = "governor"
+#: The readings the beat leaves for that job, in the plugin's own folder so the plugin
+#: finds them without knowing anything about the engine's paths.
+GOVERNOR_STATE_NAME = "nexgen-quota-state.json"
+
+
+def state_dir(home: Path | None = None) -> Path:
+    """OpenClaw's state directory: the folder its own configuration file lives in."""
+    return openclaw_config(resolve_home(home)).parent
+
+
+def plugin_dir(home: Path | None = None) -> Path:
+    """Where OpenClaw loads this plugin from: `<state dir>/extensions/<PLUGIN_ID>`."""
+    return state_dir(home) / "extensions" / PLUGIN_ID
+
+
+def governor_state_path(home: Path | None = None) -> Path:
+    """Where the beat publishes the readings the plugin judges a turn against."""
+    return plugin_dir(home) / GOVERNOR_STATE_NAME
 
 
 def engine_deposit() -> dict[str, str]:
@@ -82,11 +105,10 @@ class OpenClawRuntime(Runtime):
         return openclaw_config(home).is_file()
 
     def _state_dir(self, home: Path) -> Path:
-        """OpenClaw's state directory: the folder its own config file lives in."""
-        return openclaw_config(home).parent
+        return state_dir(home)
 
     def _plugin_dir(self, home: Path) -> Path:
-        return self._state_dir(home) / "extensions" / PLUGIN_ID
+        return plugin_dir(home)
 
     def _plugin_config_path(self, home: Path) -> Path:
         return self._plugin_dir(home) / PLUGIN_CONFIG_NAME
@@ -191,6 +213,34 @@ class OpenClawRuntime(Runtime):
         from nexgen_core.runtimes.claude import checkpoint_registered
 
         return checkpoint_registered(home)
+
+    # ---- governor -------------------------------------------------------
+
+    def replace_governor(self, home: Path, section: dict[str, Any] | None) -> bool:
+        """Replaces the fallback chains the plugin reads; True when the file changed.
+
+        The section is replaced whole, unlike every other key in this file: a chain the
+        owner deleted from the policy has to stop being offered, and a merge would keep
+        the old agent entries forever. An empty policy removes the section, so taking
+        the policy away stops the early handover on the next turn instead of leaving the
+        last one running. The plugin reads the file on every call, so the gateway is
+        never restarted for this and a change lands on the next turn.
+        """
+        folder = self._plugin_dir(home)
+        if not folder.is_dir():
+            return False  # no plugin, no reader: a section nobody reads is not written
+        current = self._read_plugin_config(home)
+        if not section:
+            if GOVERNOR_SECTION not in current:
+                return False
+            current.pop(GOVERNOR_SECTION, None)
+        else:
+            if current.get(GOVERNOR_SECTION) == section:
+                return False
+            current = {**current, GOVERNOR_SECTION: section}
+        path = self._plugin_config_path(home)
+        self.atomic_write(path, json.dumps(current, indent=2, sort_keys=True) + "\n")
+        return True
 
     # ---- event sink -----------------------------------------------------
 
