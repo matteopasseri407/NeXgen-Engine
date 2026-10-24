@@ -821,6 +821,29 @@ def test_a_unit_that_touches_no_test_has_nothing_to_compare(task, repo, tmp_path
     assert "niente da confrontare" in gate.reason
 
 
+def test_a_retirement_the_owner_authorised_on_the_base_passes(task, repo, tmp_path):
+    """Il proprietario autorizza il file sulla base: il cancello della raccolta lo accetta e lo nomina.
+
+    È la strada documentata da `nexgen_core/discipline/integrity.py`, e il cancello
+    "test raccolti" la rispettava solo a metà: contava i test raccolti, non quali.
+    """
+    repo.write(".nexgen-discipline.toml", 'test_removal_ok = ["tests/test_sample.py"]\n')
+    repo.commit("chore: autorizza il ritiro del campione")
+    repo.git("push", "-q", "origin", "main")
+    folder = _unit(task, repo, tmp_path, allow=["**"])
+    (folder / "tests" / "test_sample.py").unlink()
+    git_in(folder, "add", "-A")
+    git_in(folder, "commit", "-q", "-m", "test: ritira il campione")
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "test raccolti")
+    assert gate.ok, gate.reason
+    assert "2 test ritirati" in gate.reason
+    assert "tests/test_sample.py" in gate.reason
+    assert result["verdict"] == "PASS", [str(item) for item in result["gates"] if not item.ok]
+
+
 # --- il cancello lint -------------------------------------------------------
 
 #: Le codice che la baseline del progetto finto già conosce.
