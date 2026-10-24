@@ -10,15 +10,16 @@
 // job file's own business -- nothing here has to be rewritten when one arrives. The guardrail goes
 // first: it is the one that can stop a call.
 //
-// Two engine-owned files travel beside the jobs, both read fresh on every call:
+// Engine-owned files travel beside the jobs, both read fresh on every call:
 //   nexgen-guardrail.config.json  the guardrail bodies, timeout, strict/autoAllow, audit file
-//   nexgen.config.json            the engine's switches: briefing, posture, engine, governor
+//   nexgen.config.json            the engine's switches: briefing, checkpoint, posture, engine, governor
 // `engine-run.mjs` is the one way a job starts the engine: no shell, a deadline, a sentence.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { registerBriefing } from "./briefing.mjs";
+import { registerCheckpoint } from "./checkpoint.mjs";
 import { registerCouncil } from "./council.mjs";
 import { registerGovernor } from "./governor.mjs";
 import { registerGuardrail } from "./guardrail.mjs";
@@ -49,6 +50,7 @@ export default {
   register(api) {
     registerGuardrail(api);
     registerBriefing(api);
+    registerCheckpoint(api);
     registerQuota(api);
     registerWorkshop(api);
     registerGovernor(api);

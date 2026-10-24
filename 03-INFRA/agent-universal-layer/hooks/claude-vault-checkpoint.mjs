@@ -20,6 +20,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const BRIEFING_NAME = "vault-briefing.txt";
+const CHECKPOINT_FILENAME = "openclaw-checkpoint.json";
+const MAX_CHECKPOINT_AGE_MS = 12 * 60 * 60 * 1000; // 12 hours
 
 // Where the text can be, nearest first. A deployer that copies only this script (the old
 // vault agent-sync did) must not silence the briefing: the installed engine ships the text too.
@@ -45,6 +47,43 @@ function briefingText() {
   return "";
 }
 
+function checkpointPaths() {
+  const paths = [];
+  if (process.env.AGENT_STATE_DIR) {
+    paths.push(join(process.env.AGENT_STATE_DIR, "nexgen", CHECKPOINT_FILENAME));
+    paths.push(join(process.env.AGENT_STATE_DIR, CHECKPOINT_FILENAME));
+  }
+  if (process.env.XDG_STATE_HOME) {
+    paths.push(join(process.env.XDG_STATE_HOME, "nexgen", CHECKPOINT_FILENAME));
+    paths.push(join(process.env.XDG_STATE_HOME, CHECKPOINT_FILENAME));
+  }
+  const home = process.env.NEXGEN_HOME || homedir();
+  paths.push(join(home, ".local", "state", "nexgen", CHECKPOINT_FILENAME));
+  paths.push(join(home, ".local", "state", CHECKPOINT_FILENAME));
+  return paths;
+}
+
+function recentCheckpointNote(maxAgeMs = MAX_CHECKPOINT_AGE_MS) {
+  for (const path of checkpointPaths()) {
+    try {
+      const parsed = JSON.parse(readFileSync(path, "utf8"));
+      if (!parsed || typeof parsed !== "object") continue;
+      const ts = parsed.timestamp ? new Date(parsed.timestamp).getTime() : 0;
+      if (!ts || isNaN(ts)) continue;
+      const age = Date.now() - ts;
+      if (age < 0 || age > maxAgeMs) continue;
+      const agent = parsed.agent || "default";
+      const sessionKey = parsed.session_key || parsed.session || "";
+      const timeStr = parsed.timestamp;
+      const sessionSuffix = sessionKey ? ` (session_key: ${sessionKey})` : "";
+      return `L'ultima sessione OpenClaw è dell'agente ${agent} alle ${timeStr}${sessionSuffix}; se la persona continua da lì, leggila con il server MCP openclaw.`;
+    } catch {
+      // try next
+    }
+  }
+  return "";
+}
+
 process.stdin.on("error", () => process.exit(0));
 process.stdout.on("error", () => process.exit(0));
 
@@ -65,7 +104,12 @@ process.stdin.on("end", () => {
   if (name === "SessionStart") {
     // Brief only when context was actually lost (resume/after-compact), not on fresh manual starts.
     if (source === "resume" || source === "compact") {
-      context = briefingText();
+      const parts = [];
+      const briefing = briefingText();
+      if (briefing) parts.push(briefing);
+      const note = recentCheckpointNote();
+      if (note) parts.push(note);
+      context = parts.join("\n\n");
     }
   }
 
