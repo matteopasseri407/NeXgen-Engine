@@ -1581,6 +1581,14 @@ MESSAGES: dict[str, str] = {
         "le sue impostazioni nominano un gateway su questo PC",
     "its settings name a gateway elsewhere":
         "le sue impostazioni nominano un gateway altrove",
+    "the app's isolated native gateway":
+        "il gateway nativo isolato dell'app",
+    "The OpenClaw Companion app points to its own isolated native gateway ({signals}) and the engine gateway is here too.":
+        "L'app OpenClaw Companion punta al proprio gateway nativo isolato ({signals}) e c'è anche il gateway del motore.",
+    "In OpenClaw Companion choose 'a local Gateway on this PC' with the engine gateway address, and turn off autostart for the native gateway (or uninstall the OpenClaw Gateway package; the app remains).":
+        "Nell'app scegliere 'gateway su questo PC' con l'indirizzo del gateway del motore, e spegnere l'avvio automatico del gateway nativo (o disinstallare il pacchetto OpenClaw Gateway, l'app resta).",
+    "The OpenClaw Companion app points to its own isolated native gateway ({signals}). This version of the engine configures the native Node gateway, not the isolated one: it writes nothing here and starts no second gateway.":
+        "L'app OpenClaw Companion punta al proprio gateway nativo isolato ({signals}). Questa versione del motore configura il gateway Node nativo, non quello isolato: non scrive nulla qui e non avvia un secondo gateway.",
     "The OpenClaw Companion app runs the gateway on this PC ({signals}). This version of the engine configures the native gateway, not the app's one: it writes nothing here and starts no second gateway.":
         "L'app OpenClaw Companion esegue il gateway su questo PC ({signals}). Questa versione del motore configura il gateway nativo, non quello dell'app: qui non scrive niente e non avvia un secondo gateway.",
     "Use the app as it is, or install the native gateway with {command} and run 'nexgen openclaw setup'.":

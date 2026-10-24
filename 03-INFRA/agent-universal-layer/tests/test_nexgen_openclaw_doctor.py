@@ -17,7 +17,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.openclaw.companion import Companion  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.companion import Companion, probe  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.detect import Detection, Installation, LocalModelInfo, LocalModels, Login, detect  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.doctor import collect, exit_code  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.profile import PENDING_TOKEN  # noqa: E402 - sys.path shim for cloned checkout
@@ -494,6 +494,36 @@ def test_a_second_gateway_from_the_microsoft_store_is_a_warning(tmp_path):
     store = by_id(outcomes)["openclaw.store_gateway"]
     assert store.severity == Severity.WARN
     assert "OpenClaw_abc123" in store.message
+
+
+def test_isolated_native_gateway_package_is_not_treated_as_store_conflict_in_doctor(tmp_path):
+    package = tmp_path / "localappdata" / "Packages" / "OpenClawFoundation.OpenClawGateway_rfcbke2p71se2"
+    (package / "LocalState" / "OpenClawGatewayMSIX").mkdir(parents=True)
+    gateways = tmp_path / "appdata" / "OpenClawTray" / "gateways.json"
+    gateways.parent.mkdir(parents=True)
+    gateways.write_text(json.dumps({
+        "gateways": [
+            {
+                "id": "native-gw",
+                "url": "ws://127.0.0.1:52190",
+                "friendlyName": "Native Gateway",
+                "isLocal": True,
+                "nativePackageFamilyName": "OpenClawFoundation.OpenClawGateway_rfcbke2p71se2",
+                "nativeRuntimeContract": "isolated-session-v1",
+            }
+        ],
+        "activeId": "native-gw",
+    }), encoding="utf-8")
+
+    values = {"LOCALAPPDATA": str(tmp_path / "localappdata"), "APPDATA": str(tmp_path / "appdata")}
+    comp = probe(tmp_path / "home", values, "win32")
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()), platform="win32", companion=comp)
+    assert "openclaw.store_gateway" not in by_id(outcomes)
+    app_line = by_id(outcomes)["openclaw.companion_gateway"]
+    assert app_line.severity == Severity.WARN
+    assert "isolated native gateway" in app_line.message
+    assert "turn off autostart for the native gateway" in (app_line.action or "")
+
 
 
 def test_installed_but_undeclared_is_named_without_the_module(tmp_path):

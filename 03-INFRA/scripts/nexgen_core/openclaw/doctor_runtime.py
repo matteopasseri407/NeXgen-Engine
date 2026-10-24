@@ -192,6 +192,14 @@ def check_bindings(config: dict[str, Any]) -> CheckOutcome | None:
     )
 
 
+def _is_isolated_gateway_package(child: Path) -> bool:
+    """Whether this package folder is the Companion's isolated native gateway."""
+    lowered = child.name.casefold()
+    if "openclawfoundation.openclawgateway" in lowered:
+        return True
+    return (child / "LocalState" / "OpenClawGatewayMSIX").is_dir()
+
+
 def store_packages(home: Path, env: Mapping[str, str], platform: str) -> list[str]:
     """The Microsoft Store package of OpenClaw, when Windows installed one."""
     if not platform.startswith("win"):
@@ -202,7 +210,7 @@ def store_packages(home: Path, env: Mapping[str, str], platform: str) -> list[st
         return []
     return sorted(
         child.name for child in packages.iterdir()
-        if child.is_dir() and "openclaw" in child.name.lower()
+        if child.is_dir() and "openclaw" in child.name.lower() and not _is_isolated_gateway_package(child)
     )
 
 
@@ -346,6 +354,31 @@ def check_unadopted(
 # ------------------------------------------------------------- the Companion app
 
 
+def _isolated_companion_outcome(companion: Companion, situation: str) -> CheckOutcome | None:
+    """Outcome when the app points to its own isolated native gateway."""
+    if situation == app.BOTH:
+        return CheckOutcome(
+            id="openclaw.companion_gateway",
+            severity=Severity.WARN,
+            message=t("The OpenClaw Companion app points to its own isolated native gateway ({signals}) and the engine "
+                      "gateway is here too.", signals=", ".join(companion.signals)),
+            action=t("In OpenClaw Companion choose 'a local Gateway on this PC' with the engine gateway address, "
+                     "and turn off autostart for the native gateway (or uninstall the OpenClaw Gateway package; "
+                     "the app remains)."),
+        )
+    if situation == app.APP:
+        return CheckOutcome(
+            id="openclaw.companion_gateway",
+            severity=Severity.OK,
+            message=t("The OpenClaw Companion app points to its own isolated native gateway ({signals}). This version "
+                      "of the engine configures the native Node gateway, not the isolated one: it writes nothing here "
+                      "and starts no second gateway.", signals=", ".join(companion.signals)),
+            action=t("Use the app as it is, or install the native gateway with {command} and run "
+                     "'nexgen openclaw setup'.", command="npm install -g openclaw"),
+        )
+    return None
+
+
 def check_companion_gateway(
     companion: Companion,
     native_installed: bool,
@@ -368,6 +401,10 @@ def check_companion_gateway(
     if not platform.startswith("win"):
         return None
     situation = companion.situation(native_installed)
+    if companion.is_isolated:
+        isolated_outcome = _isolated_companion_outcome(companion, situation)
+        if isolated_outcome is not None:
+            return isolated_outcome
     if situation == app.APP:
         return CheckOutcome(
             id="openclaw.companion_gateway",
