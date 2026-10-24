@@ -325,6 +325,7 @@ UNIT_EVENTS = {
     "unit_model_refused": "rifiutata",
     "unit_collected": "raccolta",
     "unit_reviewed": "revisione",
+    "unit_publish_failed": "revisione",
     "unit_published": "pubblicata",
     "unit_retired": "ritirata",
 }
@@ -368,7 +369,7 @@ def _blank_unit(unit: str) -> dict:
         "state": "", "verdict": "", "collected_head": "", "review_round": 0,
         "approved": False, "approved_head": "", "published": [], "model": "",
         "stalled_minutes": 0.0, "stall_threshold": 0.0, "repo": "", "base_ref": "",
-        "cost": {}, "folder": "", "retired": False,
+        "cost": {}, "folder": "", "retired": False, "publish_conflicts": [],
     }
 
 
@@ -432,6 +433,9 @@ def _fold_event(record: dict, row: dict, event: str) -> None:
         record["published_pushed"] = bool(row.get("pushed"))
         if not row.get("pushed"):
             record["state"] = "pubblicata in locale"
+    elif event == "unit_publish_failed":
+        record["publish_conflicts"] = [str(item) for item in row.get("conflicts") or []]
+        record["published"] = []
     elif event == "unit_retired":
         record["retired"] = True
         record["retired_why"] = str(row.get("why") or "")
