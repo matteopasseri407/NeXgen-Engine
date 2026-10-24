@@ -322,7 +322,12 @@ def test_atomic_write_propagates_permanent_chmod_error(tmp_path: Path, monkeypat
     target.write_text("old", encoding="utf-8")
 
     calls = 0
-    permanent_err = PermissionError(13, "Access is permanently denied", str(target), 1)
+    # `winerror` is the fourth constructor argument only on Windows: on POSIX the
+    # same denial reaches the retry policy with no winerror at all, which it reads
+    # as a lock that clears and retries for two seconds. Set on the instance, the
+    # test states the same permanent denial on every host.
+    permanent_err = PermissionError(13, "Access is permanently denied", str(target))
+    permanent_err.winerror = 1
 
     def refusing_chmod(path, mode, *args, **kwargs):
         nonlocal calls
