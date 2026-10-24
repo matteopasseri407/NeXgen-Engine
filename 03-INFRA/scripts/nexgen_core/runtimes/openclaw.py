@@ -35,7 +35,13 @@ from typing import Any
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.evidence import evidence_section
 from nexgen_core.paths import openclaw_config, resolve_home
-from nexgen_core.runtimes.base import EVENT_SINK_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
+from nexgen_core.runtimes.base import (
+    EVENT_SINK_NAME,
+    GUARDRAIL_CORE_NAME,
+    GUARDRAIL_SIDECAR_NAME,
+    GuardrailError,
+    Runtime,
+)
 
 #: The engine's plugin directory (package.json + manifest + index.mjs + the jobs),
 #: deployed as a whole into `<state dir>/extensions/<PLUGIN_ID>/`. The folder keeps the name it
@@ -100,6 +106,50 @@ def engine_deposit() -> dict[str, str]:
 _POSTURE_RENDER = {"bypass": "bypass", "accept-edits": "accept-edits", "ask": "ask"}
 
 
+#: Files that stay beside the plugin folder in the engine and land inside it once deposited:
+#: the guardrail core every adapter imports, and the briefing text the plugin reads.
+_ADJACENT_PLUGIN_FILES = (GUARDRAIL_CORE_NAME, BRIEFING_NAME)
+
+#: The sidecar and the switches sit in the plugin's folder but are the engine's own files,
+#: written after the copy, and the event sink is a hook this version no longer ships: none of
+#: them is a plugin source, so copying the folder can never pick one up as if it were.
+_NOT_PLUGIN_SOURCES = (
+    PLUGIN_CONFIG_NAME,
+    GUARDRAIL_SIDECAR_NAME,
+    EVENT_SINK_NAME,
+    "events.mjs",
+)
+
+
+def plugin_files(engine_hooks_dir: Path) -> dict[str, Path]:
+    """The plugin's public files, by the name they land under in its own folder.
+
+    One list with two readers, on purpose: the deposit copies exactly these files into
+    OpenClaw's `extensions/` folder and `nexgen_core.openclaw.plugin_package` packs exactly
+    these files into the installable tarball. A job added to the plugin therefore reaches
+    both destinations, or neither, and the private policy body is never on the list because
+    the deposit writes it itself from the Vault.
+
+    Raises `GuardrailError` when the plugin folder, its core or its briefing is missing: a
+    plugin without them fails at the first tool call, and a package built from half a plugin
+    would fail the same way on a machine the engine cannot inspect first.
+    """
+    source_dir = engine_hooks_dir / _PLUGIN_SOURCE_DIRNAME
+    if not source_dir.is_dir():
+        raise GuardrailError(f"openclaw: missing engine plugin ({source_dir})")
+    files = {
+        source.name: source
+        for source in sorted(source_dir.iterdir())
+        if source.is_file() and source.name not in _NOT_PLUGIN_SOURCES
+    }
+    for name in _ADJACENT_PLUGIN_FILES:
+        source = engine_hooks_dir / name
+        if not source.is_file():
+            raise GuardrailError(f"openclaw: missing {name} beside the engine plugin ({source})")
+        files[name] = source
+    return files
+
+
 class OpenClawRuntime(Runtime):
     name = "openclaw"
 
@@ -156,38 +206,32 @@ class OpenClawRuntime(Runtime):
             raise GuardrailError(f"openclaw: unsafe guardrail filename {hook_name!r}")
         if not openclaw_config(home).is_file():
             return None  # OpenClaw never set up here: no state directory to deposit into
-        source_dir = engine_hooks_dir / _PLUGIN_SOURCE_DIRNAME
-        if not source_dir.is_dir():
-            raise GuardrailError(f"openclaw: missing engine plugin ({source_dir})")
+        # 0) The plugin's public files, read before anything on disk moves: a broken engine
+        #    install is reported while the folder it replaces is still there. This is the one
+        #    list the package builder reads too, so an added job cannot be deployed on one
+        #    machine and missing from the tarball built for the next.
+        files = plugin_files(engine_hooks_dir)
         plugin_dir = self._plugin_dir(home)
 
-        # 0) One plugin, one id: the folder unit C left behind is this engine's own deposit,
+        # 1) One plugin, one id: the folder unit C left behind is this engine's own deposit,
         #    never a folder to ask about. A folder that is not provably ours stays.
         migrated = self._remove_legacy_plugin(home)
 
-        # 1) The plugin itself: every file of the engine's directory, byte for byte.
-        #    Copying the folder instead of a list of names is what keeps an added
-        #    job or manifest field from being silently deployed on one machine and not
-        #    the next.
-        changed = self._deploy_plugin(source_dir, plugin_dir)
+        # 2) The plugin itself, byte for byte: its own files, the shared core every adapter
+        #    imports and the briefing text Claude's checkpoint hook also injects.
+        changed = self._deploy_plugin(plugin_dir, files)
 
-        # 2) The shared core every adapter imports, beside the plugin.
-        changed |= self.deploy_guardrail_core(plugin_dir, engine_hooks_dir)
-
-        # 3) The briefing text, the same file Claude's checkpoint hook injects.
-        changed |= self._deploy_briefing(plugin_dir, engine_hooks_dir)
-
-        # 4) The guardrail body (the policy, private to the Vault), under hooks/.
+        # 3) The guardrail body (the policy, private to the Vault), under hooks/.
         body_dst = plugin_dir / "hooks" / hook_name
         changed |= self.deploy_bytes(body_dst, hook_source.read_bytes())
 
-        # 5) The sidecar: which body to run and with what timeout, read fresh on
+        # 4) The sidecar: which body to run and with what timeout, read fresh on
         #    every call, so a changed manifest takes effect without a restart.
         changed |= self.write_guardrail_sidecar(
             plugin_dir / GUARDRAIL_SIDECAR_NAME, body=body_dst, home=home,
         )
 
-        # 6) The engine's switches. The briefing follows the same fact Claude follows: the
+        # 5) The engine's switches. The briefing follows the same fact Claude follows: the
         #    checkpoint hook registered on SessionStart. Without it, OpenClaw would brief a
         #    session Claude does not brief, which is exactly the divergence to avoid. The
         #    `engine` section is how `/quota` reaches this very interpreter without a shell.
@@ -206,12 +250,6 @@ class OpenClawRuntime(Runtime):
         if migrated and not changed:
             return f"openclaw: the old {LEGACY_PLUGIN_ID} plugin was removed from {plugin_dir.parent}"
         return f"openclaw: plugin deposited in {plugin_dir}"
-
-    def _deploy_briefing(self, plugin_dir: Path, engine_hooks_dir: Path) -> bool:
-        source = engine_hooks_dir / BRIEFING_NAME
-        if not source.is_file():
-            raise GuardrailError(f"openclaw: missing the shared briefing text ({source})")
-        return self.deploy_bytes(plugin_dir / BRIEFING_NAME, source.read_bytes())
 
     @staticmethod
     def _briefing_installed(home: Path) -> bool:
@@ -275,21 +313,13 @@ class OpenClawRuntime(Runtime):
     # ---- plugin deposit and its config ----------------------------------
 
     @staticmethod
-    def _deploy_plugin(source_dir: Path, plugin_dir: Path) -> bool:
-        """Copies the plugin's own files and removes obsolete plugin files; True if any of them changed on disk."""
+    def _deploy_plugin(plugin_dir: Path, files: dict[str, Path]) -> bool:
+        """Writes the plugin's public files and purges the obsolete ones; True if anything changed."""
         changed = False
-        source_names = set()
-        for source in sorted(source_dir.iterdir()):
-            if not source.is_file():
-                continue
-            source_names.add(source.name)
-            changed |= Runtime.deploy_bytes(plugin_dir / source.name, source.read_bytes())
+        for name, source in files.items():
+            changed |= Runtime.deploy_bytes(plugin_dir / name, source.read_bytes())
         for obsolete in (EVENT_SINK_NAME, "events.mjs"):
-            if obsolete not in source_names:
-                target = plugin_dir / obsolete
-                if target.is_file():
-                    target.unlink()
-                    changed = True
+            changed |= Runtime.remove_deployed(plugin_dir / obsolete)
         return changed
 
     def _remove_legacy_plugin(self, home: Path) -> bool:
