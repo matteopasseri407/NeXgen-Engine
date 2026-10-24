@@ -19,6 +19,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.companion import Companion  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.detect import Detection, Installation, LocalModelInfo, LocalModels, Login  # noqa: E402
 from nexgen_core.openclaw.setup import run_setup  # noqa: E402
 from nexgen_core.openclaw_service import ProcessInfo, RunResult  # noqa: E402
@@ -160,6 +161,7 @@ def detection(config_path: Path, **overrides) -> Detection:
     opencode = overrides.pop("opencode", True)
     n8n = overrides.pop("n8n", True)
     ollama = overrides.pop("ollama", ())
+    companion = overrides.pop("companion", Companion())
     assert not overrides, f"unexpected overrides: {sorted(overrides)}"
     return Detection(
         openclaw=Installation(
@@ -172,6 +174,7 @@ def detection(config_path: Path, **overrides) -> Detection:
         local=LocalModels(ollama=tuple(LocalModelInfo(name=name) for name in ollama)),
         n8n=n8n,
         opencode=opencode,
+        companion=companion,
     )
 
 
@@ -848,3 +851,63 @@ def test_a_gateway_that_never_answers_is_a_failed_setup(tmp_path):
     assert "Waiting for the gateway the write step restarted" in machine.output()
     assert "seconds so far" in machine.output()
     assert machine.service.events.count("start") == 1
+
+
+# ------------------------------------------------------------- the Windows app
+
+
+def app_gateway(port: int | None = None) -> Companion:
+    """The app's own gateway, as detection finds it on a Windows machine."""
+    return Companion(
+        present=True, owns_local_gateway=True, port=port,
+        signals=("the app-owned WSL distribution OpenClawGateway",),
+    )
+
+
+def test_the_app_gateway_alone_stops_before_installing_or_writing(tmp_path):
+    """Case (b): a native gateway beside the app's one would fight over the same port."""
+    machine = Machine(tmp_path)
+
+    code = machine.run(detected=detection(machine.config, installed=False, companion=app_gateway()))
+
+    assert code == 1
+    assert machine.runner.commands() == [], "no install, no onboarding, no service"
+    assert not machine.config.is_file()
+    assert "app-owned WSL distribution OpenClawGateway" in machine.output()
+    assert "nothing was installed and nothing was written" in machine.output()
+    assert "use the app as it is" in machine.output()
+    assert f"install -g openclaw@{pinned()}" in machine.output(), "the second road is named with its command"
+
+
+def test_a_dry_run_with_only_the_app_gateway_stops_the_same_way(tmp_path):
+    machine = Machine(tmp_path)
+
+    code = machine.run(
+        detected=detection(machine.config, installed=False, companion=app_gateway()), dry_run=True,
+    )
+
+    assert code == 1
+    assert "use the app as it is" in machine.output()
+    assert not machine.config.is_file()
+
+
+def test_both_gateways_proceed_and_the_plan_names_the_one_the_app_uses(tmp_path):
+    """Case (c): the native setup runs as today, and the plan says the app is here too."""
+    machine = Machine(tmp_path)
+    machine.config.parent.mkdir(parents=True)
+    machine.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
+
+    code = machine.run(detected=detection(machine.config, companion=app_gateway(port=18789)))
+
+    assert code == 0
+    assert "has a gateway of its own on this PC" in machine.output()
+    assert "connected to this PC's gateway on port 18789" in machine.output()
+
+
+def test_an_app_gateway_on_its_own_port_is_named_as_that_one(tmp_path):
+    machine = Machine(tmp_path)
+    machine.config.parent.mkdir(parents=True)
+    machine.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
+
+    assert machine.run(detected=detection(machine.config, companion=app_gateway(port=52190))) == 0
+    assert "a gateway of its own on port 52190" in machine.output()

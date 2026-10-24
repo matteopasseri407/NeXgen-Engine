@@ -35,6 +35,7 @@ from nexgen_core.openclaw.setup_steps import (
     Setup,
     Which,
     default_run,
+    app_gateway_stop,
     ensure_installed,
     ensure_onboarded,
     governor_step,
@@ -233,6 +234,8 @@ def run_setup(
         dry_run=dry_run, engine_root=engine_root, vault_data=vault_data, stamp=stamp,
         out=out, platform=platform,
     )
+    if app_gateway_stop(setup, snapshot):
+        return 1
     installed_phase = _install_phase(setup, snapshot)
     if installed_phase is None:
         return 1

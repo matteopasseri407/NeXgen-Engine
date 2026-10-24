@@ -20,6 +20,7 @@ from pathlib import Path
 from nexgen_core.i18n import t
 from nexgen_core.modules import current_host, write_state_file
 from nexgen_core.openclaw import host_preflight, setup_commands, setup_write
+from nexgen_core.openclaw.companion import APP
 from nexgen_core.openclaw.detect import Detection
 from nexgen_core.openclaw.governor import governor_section
 from nexgen_core.openclaw.pin import node_satisfies, required_node_version
@@ -97,6 +98,28 @@ def openclaw_bin(setup: Setup) -> str:
 def engine_plugin_path(setup: Setup) -> Path:
     """Where the guardrail plugin has to be for OpenClaw to load it."""
     return setup.state_dir / "extensions" / PLUGIN_ID
+
+
+def app_gateway_stop(setup: Setup, snapshot: Detection) -> bool:
+    """Case (b): the app runs the only gateway here, and this engine cannot write it.
+
+    Nothing has been installed and nothing has been written yet. A native
+    gateway beside the app's one would fight over the same port and the same
+    state, so the run stops and names the two ways forward instead of guessing.
+    """
+    gateway = snapshot.companion
+    if gateway.situation(snapshot.openclaw.installed) != APP:
+        return False
+    setup.out(t("The OpenClaw Companion app runs the gateway on this PC ({signals}) and there is no native one.",
+                signals=", ".join(gateway.signals)))
+    setup.out(t("This version of the engine configures the native gateway, not the app's one, so nothing was "
+                "installed and nothing was written: a native gateway beside it would fight over the same port."))
+    setup.out(t("Two ways forward: use the app as it is, or install the native gateway with {command} and run "
+                "this setup again.",
+                command=command_line_text(setup_commands.install_argv(
+                    setup.which("npm") or "npm", setup.pinned or "<pin>",
+                ))))
+    return True
 
 
 def ensure_installed(setup: Setup, snapshot: Detection) -> Detection | None:
