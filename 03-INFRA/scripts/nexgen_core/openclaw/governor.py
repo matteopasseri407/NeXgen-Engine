@@ -128,7 +128,7 @@ def check_fallbacks(config: Mapping[str, Any], policy: Failover) -> CheckOutcome
                 message=t("No fallback policy is declared, and no OpenClaw agent has a fallback chain."),
             )
         if policy.declared:
-            message = t("Fallback chains: {covered} agents have one, {missing} have none ({names}).",
+            message = t("The fallback policy is declared: {covered} agents have a chain, {missing} have none ({names}).",
                         covered=len(covered), missing=len(missing), names=", ".join(missing))
         else:
             message = t("No fallback policy is declared: {covered} agents have a chain of their own, "

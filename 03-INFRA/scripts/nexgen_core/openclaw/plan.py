@@ -218,7 +218,7 @@ def build_plan(
     chosen = choices or Choices(lang=detect_language())
     path = openclaw_config(home, env)
     current, error = read_config(path)
-    failover, _notes = quota_policy.load(home, vault=vault_data)
+    failover, failover_notes = quota_policy.load(home, vault=vault_data)
     config = with_chains(build_config(snapshot, chosen, current), failover)
     deposited = plugin_deposited if plugin_deposited is not None else (path.parent / "extensions" / PLUGIN_ID).is_dir()
     config = _with_engine_plugin(config, deposited)
@@ -237,6 +237,9 @@ def build_plan(
         if key.split(".", 1)[0] in owned and key not in proposed_flat
     ))
     notes = list(_build_notes(config, snapshot, chosen))
+    # A fallback line the engine cannot use is named here too: the plan is what a person
+    # reads before the setup writes anything, so a typo in the policy must not be silent.
+    notes.extend(failover_notes)
     binding_note = _binding_note(config)
     if binding_note:
         notes.append(binding_note)

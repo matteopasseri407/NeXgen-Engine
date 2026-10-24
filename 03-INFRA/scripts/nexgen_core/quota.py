@@ -132,18 +132,17 @@ def build_report(*, home: Path | None = None, vault: Path | None = None,
         provider="Antigravity", state="unknown",
         note=t("not measured"),
     ))
-    return QuotaReport(read_at=moment, rows=tuple(with_handovers(rows, home=home, vault=vault)),
-                       notes=tuple(notes))
+    policy, unusable = quota_policy.load(home, vault=vault)
+    return QuotaReport(read_at=moment, rows=tuple(with_handovers(rows, policy)),
+                       notes=tuple(notes + unusable))
 
 
-def with_handovers(rows: list[QuotaRow], *, home: Path | None = None,
-                   vault: Path | None = None) -> list[QuotaRow]:
+def with_handovers(rows: list[QuotaRow], policy: quota_policy.Failover) -> list[QuotaRow]:
     """Each row with the model it hands over to, when the policy names one.
 
     The chain read here is the assistant's: it is the agent a person talks to, and
     the shared chain applies to it unless the policy overrides that one agent.
     """
-    policy, _notes = quota_policy.load(home, vault=vault)
     chain = policy.for_agent("main")
     if not chain:
         return rows

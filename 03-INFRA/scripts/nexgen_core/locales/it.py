@@ -1891,8 +1891,8 @@ MESSAGES: dict[str, str] = {
         "La politica di ripiego nomina questi agenti, e la loro catena non è nella configurazione: {names}",
     "Run 'nexgen openclaw setup', and only for an agent the engine creates: it writes no agent it does not own.":
         "Lancia 'nexgen openclaw setup', e solo per un agente che il motore crea: non scrive agenti che non sono suoi.",
-    "Fallback chains: {covered} agents have one, {missing} have none ({names}).":
-        "Catene di ripiego: {covered} agenti ne hanno una, {missing} nessuna ({names}).",
+    "The fallback policy is declared: {covered} agents have a chain, {missing} have none ({names}).":
+        "La politica di ripiego è dichiarata: {covered} agenti hanno una catena, {missing} nessuna ({names}).",
     "No fallback policy is declared: {covered} agents have a chain of their own, {missing} have none ({names}).":
         "Nessuna politica di ripiego dichiarata: {covered} agenti hanno una catena propria, {missing} nessuna ({names}).",
     "The fallback policy is declared: every one of the {count} agents has a chain.":

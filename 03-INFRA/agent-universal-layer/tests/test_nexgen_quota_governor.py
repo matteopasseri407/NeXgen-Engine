@@ -499,3 +499,36 @@ def test_the_json_carries_the_provider_id_and_the_handover(tmp_path):
     codex_row = next(row for row in data["rows"] if row["provider_id"] == "openai")
     assert codex_row["fallback"] == "anthropic/claude-opus-5-5"
     assert data["lines"][0].endswith(codex_row["fallback"])
+
+
+def test_a_fallback_line_that_cannot_be_used_is_named_in_the_report(tmp_path):
+    """A typo in the policy must reach the person, not vanish into a silent default."""
+    codex_reading(tmp_path, 59.0)
+    quota_file(tmp_path, "failover:\n  chain:\n    - claude-opus\n    - anthropic/claude-opus-5-5\n")
+
+    report = quota.build_report(home=tmp_path, now=NOW)
+
+    assert any("is not written as 'provider/model'" in note for note in report.notes)
+    assert report.lines[-1] == next(note for note in report.notes if "provider/model" in note)
+
+
+def test_the_plan_names_a_fallback_line_it_cannot_use(tmp_path):
+    """The plan is what a person reads before the setup writes: a typo cannot be silent there."""
+    from nexgen_core.openclaw.detect import Detection, Installation, LocalModels, Login
+    from nexgen_core.openclaw.plan import build_plan
+
+    quota_file(tmp_path, "failover:\n  chain:\n    - claude-opus\n")
+    config_path = tmp_path / ".openclaw" / "openclaw.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(json.dumps(agent_config("main")), encoding="utf-8")
+    snapshot = Detection(
+        openclaw=Installation(installed=True, version="2026.10.6", config_path=str(config_path),
+                              config_present=True),
+        claude=Login(binary=True, login=True), codex=Login(binary=False), opencode_go=True,
+        local=LocalModels(), n8n=False,
+    )
+
+    plan = build_plan(detected=snapshot, home=tmp_path, env={}, vault_data=tmp_path / "KnowledgeVault")
+
+    assert any("is not written as 'provider/model'" in note for note in plan.notes)
+    assert "agents.entries.main.model" not in "".join(plan.added)
