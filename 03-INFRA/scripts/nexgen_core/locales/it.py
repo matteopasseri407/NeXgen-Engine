@@ -1522,6 +1522,10 @@ MESSAGES: dict[str, str] = {
         "Il gateway ascolta su tutte le interfacce ({bind}): la rete in cui si trova decide chi lo raggiunge.",
     "Set gateway.bind to 'loopback', or to 'lan' when only the devices at home have to reach it.":
         "Imposta gateway.bind a 'loopback', oppure a 'lan' quando solo i dispositivi di casa devono raggiungerlo.",
+    "The gateway is published through Tailscale Serve: a node on another PC reaches it by the gateway's MagicDNS name, and no port is opened here.":
+        "Il gateway è pubblicato con Tailscale Serve: un nodo su un altro PC lo raggiunge con il nome MagicDNS del gateway, e qui nessuna porta viene aperta.",
+    "Run 'nexgen openclaw node --host <host>.<tailnet>.ts.net' on the other machine.":
+        "Lancia 'nexgen openclaw node --host <host>.<tailnet>.ts.net' sull'altra macchina.",
     "These configured channels have no agent binding: {names}. With explicit ownership their messages reach no agent.":
         "Questi canali configurati non hanno un binding verso un agente: {names}. Con l'ownership esplicita i loro messaggi non arrivano a nessuno.",
     "Run 'nexgen openclaw setup': it binds them to the main agent and leaves your bindings untouched.":

@@ -72,7 +72,7 @@ def _nodes_outcome(nodes: list[dict[str, Any]]) -> CheckOutcome:
     )
 
 
-def _lan_outcome(bind: Any, *, node_known: bool) -> CheckOutcome:
+def _lan_outcome(bind: Any, *, node_known: bool, served: bool = False) -> CheckOutcome:
     """A node on another PC needs the gateway to answer past this machine.
 
     The fact is in the configuration, so the line is always there: a person who is
@@ -80,7 +80,19 @@ def _lan_outcome(bind: Any, *, node_known: bool) -> CheckOutcome:
     It is a warning only when a node is actually known to exist and is therefore
     unable to connect; on a single-PC install the same sentence is information, and
     on a laptop outside the house loopback is the only thing that works.
+
+    A gateway published through Tailscale Serve is the one case where loopback is
+    not an obstacle: the node reaches it by the gateway's MagicDNS name, and
+    telling the person to open the LAN would reopen exactly the port Serve avoids.
     """
+    if served:
+        return CheckOutcome(
+            id="openclaw.gateway.lan",
+            severity=Severity.OK,
+            message=t("The gateway is published through Tailscale Serve: a node on another PC reaches it by the "
+                      "gateway's MagicDNS name, and no port is opened here."),
+            action=t("Run 'nexgen openclaw node --host <host>.<tailnet>.ts.net' on the other machine."),
+        )
     if bind == "lan":
         return CheckOutcome(
             id="openclaw.gateway.lan",
@@ -109,11 +121,13 @@ def check_nodes(
     """
     gateway = config.get("gateway") if isinstance(config.get("gateway"), dict) else {}
     port = gateway.get("port") if isinstance(gateway.get("port"), int) else DEFAULT_GATEWAY_PORT
+    tailscale = gateway.get("tailscale") if isinstance(gateway.get("tailscale"), dict) else {}
+    served = tailscale.get("mode") == "serve"
     nodes: list[dict[str, Any]] | None = None
     if lister is not None and connect("127.0.0.1", int(port), LISTEN_TIMEOUT_SECONDS):
         nodes = lister()
     outcomes: list[CheckOutcome] = []
     if nodes is not None:
         outcomes.append(_nodes_outcome(nodes))
-    outcomes.append(_lan_outcome(gateway.get("bind"), node_known=bool(nodes)))
+    outcomes.append(_lan_outcome(gateway.get("bind"), node_known=bool(nodes), served=served))
     return outcomes
