@@ -56,17 +56,54 @@ def test_installer_cannot_report_success_when_pin_write_fails(tmp_path, monkeypa
 
 
 def test_an_installer_that_is_a_cmd_shim_runs_through_cmd_exe(tmp_path, monkeypatch, pretend_os):
-    """Su Windows `npx` è `npx.cmd`, e CreateProcess non lo esegue da solo.
+    """Su Windows un `.cmd` che non e' di npm non lo esegue CreateProcess da solo.
 
     L'installer di terze parti veniva lanciato per nome: falliva sempre (errore
-    riportato, nessun crash), quindi la skill non si installava mai.
+    riportato, nessun crash), quindi la skill non si installava mai. Gli shim di
+    npm hanno la loro strada (`test_an_npx_installer_...`): node piu' la voce.
     """
     import subprocess
 
     fetcher = SkillFetcher(home=tmp_path / "home")
     library = tmp_path / "library" / "demo"
-    shim = r"C:\nodejs\npx.cmd"
-    monkeypatch.setattr(skill_sources.shutil, "which", lambda name: shim if name == "npx" else None)
+    shim = r"C:\nodejs\codex.cmd"
+    monkeypatch.setattr(skill_sources.shutil, "which", lambda name: shim if name == "codex" else None)
+    from nexgen_core import processes
+
+    pretend_os(processes, "nt")
+    seen: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        seen.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(skill_sources.subprocess, "run", fake_run)
+    entry = SkillEntry("demo", origin="installer", version="2", install=["codex", "--yes", "someone/skill@1.0.0"])
+
+    fetcher.install_third_party(entry, library, ())
+
+    assert seen == [["cmd.exe", "/d", "/s", "/c", shim, "--yes", "someone/skill@1.0.0"]]
+
+
+def test_an_npx_installer_runs_as_node_and_the_npm_entry(tmp_path, monkeypatch, pretend_os):
+    """`npx` su Windows sta in `Program Files`: cmd.exe spezza il percorso sullo spazio.
+
+    npm mette la voce che lo shim avvolge accanto allo shim, e node la esegue.
+    """
+    import subprocess
+
+    fetcher = SkillFetcher(home=tmp_path / "home")
+    library = tmp_path / "library" / "demo"
+    prefix = tmp_path / "Program Files" / "nodejs"
+    shim = prefix / "npx.cmd"
+    entry_js = prefix / "node_modules" / "npm" / "bin" / "npx-cli.js"
+    entry_js.parent.mkdir(parents=True)
+    entry_js.write_text("// synthetic npm entry\n", encoding="utf-8")
+    shim.write_text("@echo off\r\n", encoding="utf-8")
+    node = prefix / "node.exe"
+    node.write_text("", encoding="utf-8")
+    monkeypatch.setattr(skill_sources.shutil, "which",
+                        lambda name: {"npx": str(shim), "node": str(node)}.get(name))
     from nexgen_core import processes
 
     pretend_os(processes, "nt")
@@ -81,7 +118,29 @@ def test_an_installer_that_is_a_cmd_shim_runs_through_cmd_exe(tmp_path, monkeypa
 
     fetcher.install_third_party(entry, library, ())
 
-    assert seen == [["cmd.exe", "/d", "/s", "/c", shim, "--yes", "someone/skill@1.0.0"]]
+    assert seen == [[str(node), str(entry_js), "--yes", "someone/skill@1.0.0"]]
+
+
+def test_an_npm_shim_that_cannot_start_is_an_error_line_not_a_crash(tmp_path, monkeypatch, pretend_os):
+    """Uno shim senza voce accanto non si lancia: la skill dice perche', non esplode."""
+    fetcher = SkillFetcher(home=tmp_path / "home")
+    library = tmp_path / "library" / "demo"
+    prefix = tmp_path / "Program Files" / "nodejs"
+    shim = prefix / "npx.cmd"
+    shim.parent.mkdir(parents=True)
+    shim.write_text("@echo off\r\n", encoding="utf-8")
+    monkeypatch.setattr(skill_sources.shutil, "which", lambda name: str(shim) if name == "npx" else None)
+    from nexgen_core import processes
+
+    pretend_os(processes, "nt")
+    entry = SkillEntry("demo", origin="installer", version="2", install=["npx", "--yes", "someone/skill@1.0.0"])
+
+    ok, message = fetcher.install_third_party(entry, library, ())
+
+    assert not ok
+    assert message.startswith("[ERROR]")
+    assert str(shim) in message
+    assert "cannot be started" in message
 
 
 def test_github_materialization_reports_pin_write_failure(tmp_path, monkeypatch):

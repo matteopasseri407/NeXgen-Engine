@@ -248,15 +248,46 @@ def test_run_build_handles_quoted_arguments(tmp_path: Path):
 
 
 def test_a_build_step_that_is_a_cmd_shim_goes_through_cmd_exe(tmp_path: Path, monkeypatch, pretend_os):
-    """`shutil.which("npm")` trova `npm.cmd`, che CreateProcess non esegue da solo.
+    """`shutil.which("make")` trova `make.cmd`, che CreateProcess non esegue da solo.
 
     `_run` lo lanciava per nome: su Windows il passo di build moriva con
-    FileNotFoundError, quindi i build NPM non partivano mai.
+    FileNotFoundError, quindi i build NPM non partivano mai. Gli shim di npm
+    hanno la loro strada (`test_a_build_step_that_is_npms_...`): node piu' la voce.
     """
     from nexgen_core.provision import _run_build
 
-    shim = r"C:\nodejs\npm.cmd"
-    monkeypatch.setattr(provision.shutil, "which", lambda name: shim if name == "npm" else None)
+    shim = r"C:\tools\make.cmd"
+    monkeypatch.setattr(provision.shutil, "which", lambda name: shim if name == "make" else None)
+    from nexgen_core import processes
+
+    pretend_os(processes, "nt")
+    seen: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        seen.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(provision.subprocess, "run", fake_run)
+
+    _run_build([["make", "build"]], tmp_path, "test-server")
+
+    assert seen == [["cmd.exe", "/d", "/s", "/c", shim, "build"]]
+
+
+def test_a_build_step_that_is_npms_shim_runs_as_node_and_the_npm_entry(tmp_path: Path, monkeypatch, pretend_os):
+    """`npm` su Windows sta in `Program Files`: cmd.exe spezza il percorso sullo spazio."""
+    from nexgen_core.provision import _run_build
+
+    prefix = tmp_path / "Program Files" / "nodejs"
+    shim = prefix / "npm.cmd"
+    entry_js = prefix / "node_modules" / "npm" / "bin" / "npm-cli.js"
+    entry_js.parent.mkdir(parents=True)
+    entry_js.write_text("// synthetic npm entry\n", encoding="utf-8")
+    shim.write_text("@echo off\r\n", encoding="utf-8")
+    node = prefix / "node.exe"
+    node.write_text("", encoding="utf-8")
+    monkeypatch.setattr(provision.shutil, "which",
+                        lambda name: {"npm": str(shim), "node": str(node)}.get(name))
     from nexgen_core import processes
 
     pretend_os(processes, "nt")
@@ -270,7 +301,22 @@ def test_a_build_step_that_is_a_cmd_shim_goes_through_cmd_exe(tmp_path: Path, mo
 
     _run_build([["npm", "run", "build"]], tmp_path, "test-server")
 
-    assert seen == [["cmd.exe", "/d", "/s", "/c", shim, "run", "build"]]
+    assert seen == [[str(node), str(entry_js), "run", "build"]]
+
+
+def test_a_refused_npm_shim_is_a_provisioning_error(tmp_path: Path, monkeypatch):
+    """Uno shim senza voce accanto non si lancia: il provisioning dice perche', non esplode."""
+    from nexgen_core.processes import ShimEntryError
+
+    def refuse(_argv):
+        raise ShimEntryError("npx: the npm shim C:\\nodejs\\npx.CMD cannot be started")
+
+    monkeypatch.setattr(provision, "windows_command_argv", refuse)
+
+    with pytest.raises(provision.ProvisionError) as refused:
+        provision._run(["npx", "install"], tmp_path, 10)
+
+    assert "cannot be started" in str(refused.value)
 
 
 def test_a_helper_process_never_inherits_the_callers_stdin():
