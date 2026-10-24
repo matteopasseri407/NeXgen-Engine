@@ -2230,4 +2230,8 @@ MESSAGES: dict[str, str] = {
         "il plugin '{id}' non è un wrapper MCP ({kind}): non adottabile",
     "Build the reproducible plugin tarball for OpenClaw gateways":
         "Costruisce il pacchetto riproducibile del plugin per i gateway OpenClaw",
+    "Notice: shell is retired in favor of OpenClaw TUI":
+        "Avviso: la shell è ritirata a favore di OpenClaw TUI",
+    "The interactive shell has been retired: use 'openclaw tui' or the OpenClaw Dashboard instead.":
+        "La shell interattiva è stata ritirata: usa 'openclaw tui' o la Dashboard di OpenClaw.",
 }

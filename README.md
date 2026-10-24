@@ -35,7 +35,6 @@ Inspect the environment and manage it from the terminal:
 
 ```bash
 nexgen info    # visual dashboard: engine version, runtimes, modules, installed MCP servers and skills (core / yours / third-party, what moved upstream), secrets
-nexgen shell   # interactive REPL [1-7] — manage everything without opening an AI assistant
 nexgen doctor  # fail-closed checks: git alignment, MCP reachability, link hygiene, permissions
 ```
 
@@ -95,7 +94,7 @@ The [sync contract](docs/sync-contract.md) describes what it manages, what it pr
   Mail, calendar and Drive reads stay available to every agent through the same connectors.
   See [local-lane.md](docs/local-lane.md).
 * **Secrets store:** asymmetric `age` encryption (`99-SECRETS/secrets.yaml.age`) on machine-local keys (`0600`), isolated per-host OAuth slots, materialized `secrets.env` for shells and systemd services. No passphrase to remember or type.
-* **Operator shell:** `nexgen info` status dashboard and `nexgen shell` interactive REPL, so routine management never needs an AI assistant open.
+* **Operator dashboard:** `nexgen info` status dashboard, so routine inspection never needs an AI assistant open.
 * **Plan quota (`nexgen quota`, `/quota` in OpenClaw):** what is left of each subscription, read from what the harnesses already wrote locally, with the age of every reading. A window that cannot be measured from this machine says so instead of guessing. See [quota.md](docs/quota.md).
 * **Five runtimes plus the Desktop app:** Claude Code, Codex, OpenCode (native V2: scope-file instructions, `plugins`/`permissions`, skill views), Antigravity and OpenClaw, each rendered in its own dialect, Council seats included. OpenClaw is technically the fifth CLI the sync writes, but it is the official NeXgen Engine harness: the interface (web panel, phone app) from which the other harnesses and your subscriptions are used. The Claude Desktop app receives only explicitly allowlisted read-only servers (`desktop_allow`), since it has no guardrail hooks.
   See [openclaw.md](docs/openclaw.md) for what the engine detects, the three agents, the local model cage and the known Windows traps.
@@ -157,11 +156,10 @@ nexgen sync
 nexgen doctor
 ```
 
-### 4. Interactive operator shell
+### 4. Interactive operator dashboard
 
 ```bash
 nexgen info
-nexgen shell
 ```
 
 ---

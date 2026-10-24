@@ -99,7 +99,6 @@ Engine core: single Python package, native Linux+Windows.
 - `03-INFRA/scripts/nexgen_core/tools/open_folder.py` — `open_folder` (function, 14), `main` (function, 60)
 - `03-INFRA/scripts/nexgen_core/tools/required_rules.py` — `load_signatures` (function, 27), `missing_signatures` (function, 36), `main` (function, 41)
 - `03-INFRA/scripts/nexgen_core/tools/ruff_baseline.py` — `_script_dir` (function, 41), `run_ruff` (function, 68), `to_counts` (function, 122), `load_baseline` (function, 143), `save_baseline` (function, 150), `main` (function, 155)
-- `03-INFRA/scripts/nexgen_core/tools/shell.py` — `_setup_readline` (function, 32), `render_menu` (function, 68), `NeXgenShell` (class, 80), `run_shell` (function, 275)
 - `03-INFRA/scripts/nexgen_core/tools/update_notifier.py` — `main` (function, 96)
 - `03-INFRA/scripts/nexgen_core/tools/vault_groom.py` — `main` (function, 20)
 - `03-INFRA/scripts/nexgen_core/tools/vault_lifecycle_audit.py` — `Note` (class, 55), `parse_note` (function, 67), `iter_notes` (function, 87), `parse_note_date` (function, 104), `dir_size` (function, 114), `human_size` (function, 124), `normalize_prefix` (function, 134), `normalize_relpath` (function, 144), `load_relaxed_prefixes` (function, 152), `load_generated_dirs` (function, 177), `is_relaxed` (function, 196), `print_section` (function, 200), `main` (function, 212)

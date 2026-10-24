@@ -16,7 +16,6 @@ from nexgen_core.cli import build_parser
 from nexgen_core.cli.engine import cmd_info  # noqa: E402
 from nexgen_core.marks import safe_text  # noqa: E402
 from nexgen_core.tools.info import get_engine_info, render_info
-from nexgen_core.tools.shell import NeXgenShell
 
 
 def test_get_engine_info_structure():
@@ -44,22 +43,24 @@ def test_render_info_text_and_json():
     assert "vault_path" in data
 
 
-def test_shell_help_and_info(capsys):
-    shell = NeXgenShell()
-    shell.do_help("")
+def test_retired_shell_prints_openclaw_guidance(capsys):
+    from nexgen_core.cli.engine import cmd_shell
+
+    assert cmd_shell(SimpleNamespace()) == 0
     out = capsys.readouterr().out
-    assert "SELECTABLE ACTIONS" in out
-    assert "doctor" in out
-    assert "sync" in out
+    assert "openclaw tui" in out or "OpenClaw" in out
+    assert "retired" in out.lower() or "ritirata" in out.lower()
+    assert len(out.strip()) > 0
 
-    shell.do_info("")
-    info_out = capsys.readouterr().out
-    assert "neXgen Engine" in info_out
 
-    # Test numeric shortcuts
-    assert shell.default("1") is False
-    assert shell.default("7") is False
-    assert shell.default("0") is True
+def test_info_interactive_prints_openclaw_guidance(capsys):
+    from nexgen_core.cli.engine import cmd_info
+
+    assert cmd_info(SimpleNamespace(json=False, interactive=True, all=False)) == 0
+    out = capsys.readouterr().out
+    assert "openclaw tui" in out or "OpenClaw" in out
+    assert "Dashboard" in out or "dashboard" in out
+    assert len(out.strip()) > 0
 
 
 def test_cli_parser_has_info_and_shell():
