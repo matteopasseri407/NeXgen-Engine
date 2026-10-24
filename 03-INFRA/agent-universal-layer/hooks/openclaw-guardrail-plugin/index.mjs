@@ -1,16 +1,14 @@
-// NeXgen Engine -- the `nexgen` OpenClaw plugin: one plugin, four separate jobs.
+// NeXgen Engine -- the `nexgen` OpenClaw plugin.
 //
 // Deployed byte-for-byte by the guard's permissions phase into
 // `<state dir>/extensions/nexgen/`. OpenClaw discovers every plugin directory under its state
 // `extensions/`; ENABLING it is a `plugins.*` change and happens with the gateway stopped
 // (`nexgen openclaw setup`), because editing that block under a running gateway breaks it.
 //
-// The four jobs live in their own files and know nothing about each other:
-//   guardrail.mjs  the gate: the same private body Claude Code runs, on before_tool_call
-//   briefing.mjs   the same vault briefing Claude's checkpoint hook injects, one prompt later
-//   quota.mjs      `/quota`: what is left of each plan, printed by the engine
-//   workshop.mjs   a line in the gateway log when the Skill Workshop learns a new skill
-// This file only registers them. The guardrail goes first: it is the one that can stop a call.
+// One job per file beside this one, and this file only registers them: a new job costs an import
+// and one line in `register`. The jobs know nothing about each other, and documenting them is the
+// job file's own business -- nothing here has to be rewritten when one arrives. The guardrail goes
+// first: it is the one that can stop a call.
 //
 // Two engine-owned files travel beside the jobs, both read fresh on every call:
 //   nexgen-guardrail.config.json  the guardrail bodies, timeout, strict/autoAllow, audit file
@@ -41,7 +39,7 @@ function pluginId() {
 export default {
   id: pluginId(),
   name: "NeXgen",
-  description: "The NeXgen engine for OpenClaw: guardrail, vault briefing, /quota and Workshop notices.",
+  description: "The NeXgen engine for OpenClaw.",
   register(api) {
     registerGuardrail(api);
     registerBriefing(api);

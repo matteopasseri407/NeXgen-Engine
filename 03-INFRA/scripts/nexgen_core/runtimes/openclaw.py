@@ -1,7 +1,7 @@
 """OpenClaw adapter: one `nexgen` plugin, deposited next to its state directory.
 
 OpenClaw runs native plugins inside its gateway process, so everything the engine gives
-Claude Code reaches OpenClaw through a single plugin, split into four jobs that know nothing
+Claude Code reaches OpenClaw through a single plugin, split into jobs that know nothing
 about each other (`guardrail.mjs`, `briefing.mjs`, `quota.mjs`, registered by `index.mjs`):
 
 - the **guardrail** on `before_tool_call`, the same private body the other CLIs run;
@@ -28,7 +28,7 @@ from typing import Any
 from nexgen_core.paths import openclaw_config
 from nexgen_core.runtimes.base import EVENT_SINK_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
 
-#: The engine's plugin directory (package.json + manifest + index.mjs + the four jobs),
+#: The engine's plugin directory (package.json + manifest + index.mjs + the job files),
 #: deployed as a whole into `<state dir>/extensions/<PLUGIN_ID>/`. The folder keeps the name it
 #: had when it held only the guardrail: it is the source of a byte-for-byte copy, never a path
 #: anyone configures.

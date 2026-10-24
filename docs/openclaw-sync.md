@@ -75,7 +75,7 @@ that names another runtime only is not. `~/.agents/skills/INDEX.md` lists each
 skill with its targets, so "does this skill reach OpenClaw?" is readable without
 opening the manifest.
 
-## The plugin: one plugin, four jobs
+## The plugin: one plugin, one file per job
 
 OpenClaw's hooks are JavaScript callbacks inside the gateway process, so the engine
 ships one native plugin and deposits it, byte for byte, in
@@ -83,7 +83,7 @@ ships one native plugin and deposits it, byte for byte, in
 
 ```
 extensions/nexgen/
-  index.mjs                     registers the four jobs; the guardrail comes first
+  index.mjs                     registers the jobs; the guardrail comes first
   guardrail.mjs                 the gate on before_tool_call
   briefing.mjs                  the vault briefing after a compaction
   quota.mjs                     `/quota`: the lines the engine already rendered

@@ -1,6 +1,6 @@
 // NeXgen Engine -- OpenClaw guardrail job (mechanism only, no policy).
 //
-// One of the four jobs of the `nexgen` plugin, registered by `index.mjs`. Deployed by the
+// One of the jobs of the `nexgen` plugin, registered by `index.mjs`. Deployed by the
 // guard's permissions phase into `<state dir>/extensions/nexgen/`, next to the shared core
 // `nexgen-guardrail-core.mjs` and the sidecar `nexgen-guardrail.config.json`. OpenClaw discovers
 // every plugin directory under its state `extensions/`; ENABLING it is a `plugins.*` change and

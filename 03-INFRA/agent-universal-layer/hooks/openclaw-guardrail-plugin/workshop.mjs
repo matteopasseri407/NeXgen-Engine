@@ -1,6 +1,6 @@
 // NeXgen Engine -- OpenClaw's Skill Workshop observer job.
 //
-// One of the four jobs of the `nexgen` plugin, registered by `index.mjs`. OpenClaw is where the
+// One of the jobs of the `nexgen` plugin, registered by `index.mjs`. OpenClaw is where the
 // owner creates: the Skill Workshop learns a skill into one agent's own state folder, which no
 // other CLI reads, so until it is adopted the other four runtimes have never heard of it and a
 // lost state folder takes it with it.

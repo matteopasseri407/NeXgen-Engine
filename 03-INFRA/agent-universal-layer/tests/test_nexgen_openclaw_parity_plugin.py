@@ -1,4 +1,4 @@
-"""The four jobs of the `nexgen` plugin, run the way OpenClaw runs them.
+"""The jobs of the `nexgen` plugin, run the way OpenClaw runs them.
 
 These tests load the real plugin with node, register it against a fake `api.on` and fire the
 hooks OpenClaw documents: `after_compaction`, `session_start`, `before_prompt_build`,
@@ -106,11 +106,11 @@ def drive(target: Path, script: str, env: dict | None = None):
     return json.loads(done.stdout)
 
 
-# ------------------------------------------------------------- one plugin, four jobs
+# --------------------------------------------------------------- one plugin, every job
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_the_plugin_registers_the_four_jobs_with_the_guardrail_first(tmp_path):
+def test_the_plugin_registers_the_jobs_with_the_guardrail_first(tmp_path):
     fired = drive(deployed(tmp_path), "console.log(JSON.stringify({id: plugin.id, order: [...handlers.keys()]}));\n")
 
     assert fired["id"] == "nexgen"

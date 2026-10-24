@@ -1,7 +1,7 @@
 """Does OpenClaw receive from the engine exactly what Claude Code receives?
 
-One plugin, two hosts, seven layers: MCP servers, instructions, skills, the guardrail, the vault
-briefing, lifecycle events and the permission posture. Each layer is compared as a fact the
+One plugin, two hosts, the same layers on both: MCP servers, instructions, skills, the guardrail,
+the vault briefing and the permission posture. Each layer is compared as a fact the
 engine can read back from disk -- what is registered, deposited or switched on -- never as an
 intention. An aligned layer is a PASS; a layer one host has and the other lacks is a WARN that
 names the gap and the one command that closes it.

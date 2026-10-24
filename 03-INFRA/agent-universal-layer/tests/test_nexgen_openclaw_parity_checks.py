@@ -80,7 +80,7 @@ def a_workspace(home: Path, canon: Path) -> Path:
 
 
 def aligned_machine(tmp_path: Path) -> tuple[Path, Path]:
-    """Both CLIs hold the same seven layers: the check must say PASS on every one."""
+    """Both CLIs hold the same layers: the check must say PASS on every one."""
     home = a_home(tmp_path)
     vault = a_vault(tmp_path)
     workspace = a_workspace(home, vault.joinpath(*CANON_RELATIVE))
