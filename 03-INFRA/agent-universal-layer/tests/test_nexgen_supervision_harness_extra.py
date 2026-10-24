@@ -159,10 +159,16 @@ def test_the_scout_parser_offers_the_harness_flag(lane, capsys):
     assert "--in-scheda" not in out and "--round" not in out
 
 
-def test_agy_as_executor_opens_a_tab_and_says_the_session_stays_manual(task, lane, monkeypatch):
+def test_agy_as_executor_opens_a_tab_and_says_the_session_stays_manual(task, lane, monkeypatch, tmp_path):
+    """agy can be followed now, so the note says what happened, not that it is blind.
+
+    The store is a fake folder of this test's own: the engine reads agy's
+    conversations read-only, and no test may reach the one this machine has.
+    """
     _unit(lane, task, "prova")
     opener = Opener()
     monkeypatch.setattr(harness.shutil, "which", lambda name: f"{name}-finto")
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path / "antigravity"))
 
     result = harness.run_unit(task, "prova", harness="agy", opener=opener, wait_s=0)
 
@@ -171,8 +177,8 @@ def test_agy_as_executor_opens_a_tab_and_says_the_session_stays_manual(task, lan
     assert argv[1:4] == ["--mode", "accept-edits", "--prompt-interactive"]
     assert result["session"] is None
     assert result["harness"] == "agy"
-    assert "non sa elencare le sessioni" in result["reason"]
-    assert "agganciare a mano" in result["reason"]
+    assert "nessuna sessione di agy è comparsa" in result["reason"]
+    assert "aggancio a mano" in result["reason"]
 
 
 def test_claude_opens_a_tab_with_the_id_the_engine_itself_chose(task, lane, monkeypatch, tmp_path):
