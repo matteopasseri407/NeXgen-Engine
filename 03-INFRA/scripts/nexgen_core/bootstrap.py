@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# nexgen: one-job reason="preflight prerequisites, interactive configuration, and role bootstrap"
 """First run: what's missing, what's there, and what's the next step.
 
 This logic used to exist twice, in `install.sh` and `install.ps1`, kept in
@@ -618,6 +619,14 @@ def _main_impl(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--check", action="store_true",
                         help=t("Checks only: no questions and no writes"))
+    parser.add_argument("--role", choices=["server", "node", "standalone"], default=None,
+                        help=t("Role for this machine: server, node, or standalone"))
+    parser.add_argument("--gateway-url", default=None,
+                        help=t("Gateway WebSocket URL (for node role)"))
+    parser.add_argument("--gateway-token", default=None,
+                        help=t("Gateway authentication token (for node role)"))
+    parser.add_argument("--node-name", default=None,
+                        help=t("Display name for this node (for node role)"))
     parser.add_argument("--local", action="store_true",
                         help=t("Single machine: no questions, no secrets, no remote required. "
                                "Profile MINIMAL, services LOCAL-ONLY, then alignment and doctor"))
@@ -676,6 +685,22 @@ def _main_impl(argv: list[str] | None = None) -> int:
         print(f"\n{c['bold']}{c['cyan']}4 · " + t("Next step") + c['reset'])
         print("  " + t("Everything required is in place. Run the installer without --check."))
         return 0
+
+    if args.role:
+        from nexgen_core import roles
+
+        if args.role == "server":
+            return roles.run_server_role(root, out=print)
+        if args.role == "node":
+            return roles.run_node_role(
+                root,
+                gateway_url=args.gateway_url,
+                gateway_token=args.gateway_token,
+                node_name=args.node_name,
+                out=print,
+            )
+        if args.role == "standalone":
+            return roles.run_standalone_role(root, out=print)
 
     if args.local:
         # The no-conversation install: one machine, no remote, no secrets,
