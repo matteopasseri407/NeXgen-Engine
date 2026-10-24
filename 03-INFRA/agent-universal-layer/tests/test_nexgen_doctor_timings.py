@@ -50,7 +50,7 @@ def test_the_summary_can_print_how_long_each_check_took(tmp_path, monkeypatch, c
     code = doctor_mod.main(["--summary", "--timings"])
 
     printed = capsys.readouterr().out
-    assert f"FAIL=" in printed, printed
+    assert "FAIL=" in printed, printed
     measured = _timings(printed)
     assert measured, f"nessuna durata stampata:\n{printed}"
     ids = {check for check, _ in measured}
