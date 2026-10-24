@@ -416,9 +416,9 @@ in a stale state file can belong to somebody else by the time it is used.
 
 ## Installazione con un comando
 
-`nexgen openclaw setup [--yes] [--lan] [--dry-run] [--no-sviluppo] [--node-gateway]` runs nine steps, in this
-order, printing what each one did. It stops at the first step that cannot succeed, and the machine keeps the
-state it had before that step.
+`nexgen openclaw setup [--yes] [--lan | --server] [--yes-i-know] [--dry-run] [--no-sviluppo] [--node-gateway]`
+runs nine steps, in this order, printing what each one did. It stops at the first step that cannot succeed,
+and the machine keeps the state it had before that step.
 
 1. **Installation.** If OpenClaw is missing, or is not on the release `openclaw/pin.json` names:
    `npm install -g openclaw@<pin> --allow-scripts=@google/genai,esbuild,koffi,protobufjs,openclaw`, with npm
@@ -468,6 +468,33 @@ plan, never a device approval, and a run with no terminal approves nothing and p
 Several requests are listed and none is chosen for the person.
 
 Everything is idempotent: a second `setup` with nothing to change writes no file and restarts no gateway.
+
+### A machine that is always on, with no screen: `--server`
+
+`nexgen openclaw setup --server` is the same nine steps for a Linux machine with no desktop: a VPS, a mini
+PC in a cupboard. The gateway stays on `gateway.bind: "loopback"` and OpenClaw publishes it with
+`gateway.tailscale.mode: "serve"`, the pair its own manual recommends (`gateway/tailscale.md`,
+`gateway/stable-https-url.md`): HTTPS with a real certificate on `https://<host>.<tailnet>.ts.net`, and no
+port opened on the machine. The `tailscale` section already in `openclaw.json` is kept; only its `mode`
+changes.
+
+Before anything is installed, four questions decide whether this host may carry a gateway:
+
+1. Is it Linux? A desktop is configured without `--server`; `--server` on another system stops and says so.
+2. Is Tailscale installed? If not, the run names the download page and stops: the engine never installs a
+   system program on its own.
+3. Is Tailscale logged in? `tailscale status --json` must report `BackendState: "Running"`; any other state
+   stops the run with `tailscale up` as the action.
+4. Does the account hold root power? Root itself, `sudo -n true` succeeding, or membership of the `docker`
+   group each stop the run, because a gateway that runs agents must not be able to become root through the
+   process it supervises. `--yes-i-know` is the explicit way past it, and the run prints what it accepted.
+
+`--server` and `--lan` are opposites and are refused together: `--lan` opens the gateway to the network it
+sits on, `--server` keeps it on loopback and lets Tailscale Serve do the publishing.
+
+The service is the systemd user service OpenClaw installs (`openclaw gateway install`), and the lingering
+check a Linux host already gets applies here as well: without `loginctl enable-linger <user>` the gateway
+stops when the last session closes.
 
 ## OpenClaw as an MCP server for other harnesses
 
@@ -540,9 +567,10 @@ On the laptop, once:
    check after each command. It runs none of them.
    Check: the printed commands are the ones below.
 3. Either the one-paste route: `openclaw devices join-code` on the fixed PC, then the command it prints,
-   `openclaw connect <url> --service`, on the laptop. OpenClaw approves the device and its first command surface
-   in the same step. The URL is single use, lasts about ten minutes and carries administrator access: treat it
-   like a password and paste it nowhere else.
+   `openclaw connect <url> --service --session-host`, on the laptop. OpenClaw approves the device and its
+   first command surface in the same step; `--session-host` also lets the node run agent sessions, so keep it
+   to a machine you trust as shared infrastructure. The URL is single use, lasts about ten minutes and
+   carries administrator access: treat it like a password and paste it nowhere else.
    Or the explicit route: `openclaw node install --host <address> --port 18789` and `openclaw node start` on the
    laptop, then `nexgen openclaw pair` on the fixed PC to read the device request, `nexgen openclaw pair
    --approve <device id>` to admit it, a reconnect that asks for the commands, and `nexgen openclaw pair
@@ -553,6 +581,22 @@ On the laptop, once:
 
 On the fixed PC, to see the result: `nexgen openclaw doctor --nodes` adds the paired nodes to the report, and
 `nexgen openclaw pair` lists them with their state. Neither approves anything on its own.
+
+### A gateway behind Tailscale Serve, and a laptop on the same tailnet
+
+On the always-on machine: `nexgen openclaw setup --server`, then `nexgen openclaw restart` if the gateway was
+already running.
+Check: `nexgen openclaw doctor` says the gateway listens on loopback and Tailscale Serve publishes it over
+HTTPS on the tailnet.
+
+On the laptop: `nexgen openclaw node --host <host>.<tailnet>.ts.net` prints the same two routes and
+recognises the MagicDNS name.
+The join code carries the HTTPS address the gateway mints, so `openclaw connect <url> --service
+--session-host` needs no port and no token of its own; the explicit route is printed as `--port 443 --tls`,
+because that port belongs to Serve.
+Both machines have to be on the same tailnet and logged in to Tailscale.
+Check: `openclaw node status --json` on the laptop, and `nexgen openclaw pair` on the gateway for the
+approval.
 
 ### Outside the house
 
@@ -578,7 +622,9 @@ are the person's and stay. It writes nothing.
 
 `nexgen openclaw doctor [--json] [--nodes]` checks installation, version against the pin, the configuration's
 validity, `:latest` ids, caged local models, whether the evidence check runs and for which local models, the
-heartbeat, the gateway's bind and authentication, Google entries, ACP seats, agents on subscriptions this
+heartbeat, the gateway's bind and authentication, how the gateway is exposed (loopback, the home network,
+every interface, a direct tailnet listener, Tailscale Serve or Funnel, with a failure when a gateway published
+through Serve also listens on a network address), Google entries, ACP seats, agents on subscriptions this
 machine does not have, which background job would wake a local model, whether the gateway watches the whole
 home recursively, whether the gateway is listening, whether every agent has a fallback chain, a second
 gateway from the Microsoft Store, the OpenClaw Companion's own gateway, which it reports without configuring
@@ -595,8 +641,9 @@ gateway.
 
 `nexgen openclaw node --host <address> [--port 18789] [--name <label>]` prints the commands that make this
 machine a node of a gateway elsewhere: OpenClaw's one-paste route with a join code, and the explicit route with
-its two approvals. It writes nothing and runs nothing, because `openclaw node install` already writes the
-service on each platform.
+its two approvals. The address may be a name on the home network or a Tailscale MagicDNS name; the second
+needs no port in the one-paste route and `--port 443 --tls` in the explicit one. It writes nothing and runs
+nothing, because `openclaw node install` already writes the service on each platform.
 
 `nexgen openclaw setup` applies that same plan: it installs the pinned release, onboards when there is no
 file, merges the owned sections with a backup beside them, writes the agent manuals, installs and starts the
