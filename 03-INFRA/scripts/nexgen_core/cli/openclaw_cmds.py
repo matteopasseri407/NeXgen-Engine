@@ -97,6 +97,18 @@ def _register_upkeep(psub) -> None:
     q = psub.add_parser("stop", help=t("Stop the gateway before editing its file by hand"))
     q.set_defaults(func=cmd_stop)
 
+    q = psub.add_parser("rpc", help=t("Interact with OpenClaw Gateway via WebSocket RPC"))
+    rpc_sub = q.add_subparsers(dest="rpc_command", metavar="action")
+
+    r = rpc_sub.add_parser("health", help=t("Check OpenClaw Gateway health snapshot via WebSocket RPC"))
+    r.add_argument("--json", action="store_true", help=t("Output in JSON format"))
+    r.add_argument("--url", default=None, metavar="URL", help=t("Override gateway WebSocket URL"))
+    r.add_argument("--token", default=None, metavar="TOKEN", help=t("Override gateway authentication token"))
+    r.add_argument("--timeout", type=float, default=10.0, metavar="SECONDS",
+                   help=t("How long to wait for response (default: 10)"))
+    r.set_defaults(func=cmd_rpc_health)
+    q.set_defaults(func=lambda args: _usage(q))
+
 
 def register(sub) -> None:
     """Declares the OpenClaw verbs on the dispatcher."""
@@ -190,3 +202,31 @@ def cmd_node(args) -> int:
         return 2
     print(render_node_link(link))
     return 0
+
+
+def cmd_rpc_health(args) -> int:
+    import sys
+    from nexgen_core.openclaw.gateway_rpc import GatewayRpcError, health
+
+    url = getattr(args, "url", None)
+    token = getattr(args, "token", None)
+    timeout = float(getattr(args, "timeout", 10.0) or 10.0)
+    as_json = bool(getattr(args, "json", False))
+
+    try:
+        res = health(url=url, token=token, timeout=timeout)
+        if as_json:
+            print(json.dumps(res, indent=2, ensure_ascii=False))
+        else:
+            print(t("OpenClaw Gateway RPC: healthy"))
+            if isinstance(res, dict):
+                uptime = res.get("uptimeMs")
+                if uptime is not None:
+                    print(f"  Uptime: {uptime} ms")
+                plugins = res.get("plugins")
+                if isinstance(plugins, dict) and "loaded" in plugins:
+                    print(f"  Plugins loaded: {len(plugins['loaded'])}")
+        return 0
+    except GatewayRpcError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
