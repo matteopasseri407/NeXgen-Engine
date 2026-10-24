@@ -365,7 +365,7 @@ def _add_machine_rules(
     defaults = block.get("agents", {}).get("defaults", {})
     if defaults:
         config["agents"]["defaults"].update(defaults)
-    env = observation.env_block(_state_dir(detected), home, platform)
+    env = observation.env_block(_state_dir(detected), home, platform, current)
     if env is not None:
         config["env"] = env
 

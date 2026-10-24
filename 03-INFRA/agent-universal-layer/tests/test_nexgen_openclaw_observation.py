@@ -101,6 +101,31 @@ def test_the_person_s_own_environment_variables_are_kept(tmp_path):
     assert merged["env"]["vars"]["OPENROUTER_API_KEY"] == "not-a-real-key"
 
 
+def test_a_value_the_person_wrote_is_never_overwritten_even_when_it_says_zero():
+    """`0` is a choice: the gateway keeps its event watch, and the engine stays out of it."""
+    current = {"env": {"vars": {"CHOKIDAR_USEPOLLING": "0"}}}
+
+    proposed = build_config(machine(DEFAULT_STATE / "openclaw.json"), current=current, home=HOME, platform="win32")
+    merged = merged_document(current, proposed)
+
+    assert "env" not in proposed
+    assert merged["env"]["vars"]["CHOKIDAR_USEPOLLING"] == "0"
+
+
+def test_a_person_who_turned_polling_off_gets_no_restart_note(tmp_path):
+    home = tmp_path / "home"
+    config_path = home / ".openclaw" / "openclaw.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text('{"env": {"vars": {"CHOKIDAR_USEPOLLING": "0"}}}', encoding="utf-8")
+
+    plan = build_plan(
+        detected=machine(config_path), home=home, env={}, platform="win32", plugin_deposited=False,
+    )
+
+    assert "env.vars.CHOKIDAR_USEPOLLING" not in plan.added
+    assert not any("restart" in note.lower() for note in plan.notes)
+
+
 def test_the_plan_says_that_a_restart_is_what_makes_the_key_take_effect(tmp_path):
     """The setup does not cycle the gateway for this key alone; the plan says what does."""
     home = tmp_path / "home"

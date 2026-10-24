@@ -83,11 +83,27 @@ def forces_polling(config: dict[str, Any] | None) -> bool:
     return _polling_value(value)
 
 
+def declares_polling(config: dict[str, Any] | None) -> bool:
+    """Whether the configuration in force says anything at all about the polling variable."""
+    env = config.get("env") if isinstance(config, dict) else None
+    block = env.get("vars") if isinstance(env, dict) else None
+    return isinstance(block, dict) and POLLING_VAR in block
+
+
 def env_block(
     state_dir: Path | None, home: Path | None, platform: str | None,
+    current: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """The `env` section that keeps the gateway off the home, or None when it is not needed."""
+    """The `env` section that keeps the gateway off the home, or None when it is not needed.
+
+    A value the person wrote is their decision, whatever it says, and it is never
+    overwritten: someone who set the variable to `0` on purpose chose the watch that
+    costs events, and a proposal that silently turned it back on would undo a choice
+    the engine cannot see the reason for.
+    """
     if not is_windows(platform) or not watches_the_home(state_dir, home):
+        return None
+    if declares_polling(current):
         return None
     return {"vars": {POLLING_VAR: POLLING_VALUE}}
 
