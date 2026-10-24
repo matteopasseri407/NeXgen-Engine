@@ -363,7 +363,8 @@ class ToolRegistry:
         query = str(query).strip()
         if not query:
             return self._refuse("web_search", {"query": query}, "(query vuota)")
-        from .connectors import ConnectorError, web as web_conn
+        from .connectors import ConnectorError
+        from .connectors import web as web_conn
 
         try:
             hits = web_conn.search(
