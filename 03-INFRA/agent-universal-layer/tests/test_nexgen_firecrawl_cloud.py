@@ -7,6 +7,7 @@ declaration and what each CLI is handed, with no network call and a fake home.
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -20,6 +21,13 @@ if str(SCRIPTS_DIR) not in sys.path:
 from nexgen_core.checks import reachability_checks  # noqa: E402
 from nexgen_core.config import load_mcp_manifest  # noqa: E402
 from nexgen_core.mcp_render import openclaw as openclaw_mod  # noqa: E402
+from nexgen_core.paths import (  # noqa: E402
+    antigravity_configs,
+    claude_config,
+    codex_config,
+    openclaw_config,
+    opencode_config_path,
+)
 from nexgen_core.renderer import McpRenderer  # noqa: E402
 from nexgen_core.report import Severity  # noqa: E402
 
@@ -86,11 +94,46 @@ def test_the_declaration_keys_the_secret_store_and_nothing_else() -> None:
 
 @pytest.mark.parametrize("cli", CLIS)
 def test_a_machine_with_the_key_mounts_the_connector(machine, monkeypatch, cli: str) -> None:
+    """Mounted with a reference, never with the key.
+
+    A credential is not written into a harness's config: the value stays
+    `${FIRECRAWL_API_KEY}` and the process that starts the server resolves it
+    from the environment, or the engine's own launcher does.
+    """
     vault, home = machine
     monkeypatch.setenv("FIRECRAWL_API_KEY", FAKE_KEY)
     servers = McpRenderer(vault_data=vault, home=home).load_resolved_servers(cli)
     assert servers["firecrawl"]["command"]
-    assert servers["firecrawl"]["env"] == {"FIRECRAWL_API_KEY": FAKE_KEY}
+    assert servers["firecrawl"]["env"] == {"FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}"}
+    assert FAKE_KEY not in json.dumps(servers["firecrawl"])
+
+
+def test_no_rendered_harness_file_holds_the_key(machine, monkeypatch) -> None:
+    """The same fact on disk: every CLI's own file carries the reference, none the value.
+
+    Rendered for real into a fake home, then read back as text. A file that is
+    missing would make this test vacuous, so every one of them must exist.
+    """
+    vault, home = machine
+    monkeypatch.setenv("FIRECRAWL_API_KEY", FAKE_KEY)
+    openclaw_json = openclaw_config(home)
+    openclaw_json.parent.mkdir(parents=True)
+    openclaw_json.write_text('{"mcp": {"servers": {}}}', encoding="utf-8")
+    renderer = McpRenderer(vault_data=vault, home=home)
+
+    rendered = renderer.render_all(write=True)
+
+    assert all(rendered.values()), rendered
+    files = [
+        claude_config(home), codex_config(home), opencode_config_path(home),
+        *antigravity_configs(home), openclaw_config(home),
+    ]
+    missing = [str(path) for path in files if not path.is_file()]
+    assert missing == [], missing
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        assert FAKE_KEY not in text, path
+        assert "${FIRECRAWL_API_KEY}" in text, path
 
 
 @pytest.mark.parametrize("cli", CLIS)
