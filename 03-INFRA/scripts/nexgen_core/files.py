@@ -210,7 +210,11 @@ def _is_clean_vs_head(path: Path) -> bool:
         top = subprocess.run(
             ["git", "-C", str(anchor), "rev-parse", "--show-toplevel"],
             capture_output=True, stdin=subprocess.DEVNULL,
-            encoding="utf-8", timeout=15,
+            # A localized git message is not guaranteed to be valid UTF-8, and
+            # the strict decode raised (in subprocess's own reader thread) with
+            # the output replaced by nothing: the call then failed on a None
+            # instead of taking the backup it was deciding about.
+            encoding="utf-8", errors="replace", timeout=15,
         )
         if top.returncode != 0:
             return False

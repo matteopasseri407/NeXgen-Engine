@@ -35,7 +35,7 @@ def _git_repo_with_commit(tmp: Path, filename: str = "hello.txt", content: str =
     (repo / filename).write_text(content, encoding="utf-8")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
-    rev = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+    rev = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
     return repo.as_uri(), rev
 
 
@@ -103,7 +103,7 @@ def test_git_rev_change_provisions_fresh(tmp_path):
     subprocess.run(["git", "config", "user.name", "t"], cwd=src, check=True)
     (src / "hello.txt").write_text("v2", encoding="utf-8")
     subprocess.run(["git", "commit", "-qam", "v2"], cwd=src, check=True)
-    rev2 = subprocess.run(["git", "rev-parse", "HEAD"], cwd=src, check=True, capture_output=True, text=True).stdout.strip()
+    rev2 = subprocess.run(["git", "rev-parse", "HEAD"], cwd=src, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
 
     ctx, err = ensure_deps({"kind": "git", "repo": repo_uri, "rev": rev2}, state, install=True, server="srv")
     assert err is None
@@ -183,7 +183,7 @@ def test_git_subdir_and_build(tmp_path):
     (pkg / "tool.txt").write_text("base", encoding="utf-8")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
-    rev = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+    rev = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
 
     deps = {
         "kind": "git", "repo": repo.as_uri(), "rev": rev,
@@ -289,6 +289,7 @@ def test_a_helper_process_never_inherits_the_callers_stdin():
     caller = subprocess.Popen(
         [sys.executable, "-c", code, _scripts],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        encoding="utf-8", errors="replace",
     )
     try:
         caller.wait(timeout=60)  # stdin stays open: an inheriting child would block here

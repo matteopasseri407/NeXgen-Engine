@@ -13,7 +13,14 @@ from nexgen_core.skills import SkillMaterializer
 
 
 def git(repo, *args):
-    return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=True).stdout.strip()
+    # `text=True` alone decodes with the locale codec, and on Windows that
+    # decode runs in subprocess's own reader thread: one byte it does not
+    # define turns a passing test into an error in a thread. The engine reads
+    # every child as UTF-8 with replacement; the tests do the same.
+    return subprocess.run(
+        ["git", *args], cwd=repo, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", check=True,
+    ).stdout.strip()
 
 
 def source_and_cache(tmp_path):

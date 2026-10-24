@@ -283,7 +283,7 @@ def _is_safe_branch(branch: str) -> bool:
     try:
         probe = subprocess.run(
             ["git", "check-ref-format", "--branch", branch],
-            capture_output=True, text=True, encoding="utf-8", timeout=5, check=False,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, check=False,
         )
         return probe.returncode == 0
     except (OSError, subprocess.SubprocessError):

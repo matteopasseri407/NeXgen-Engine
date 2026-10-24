@@ -333,7 +333,8 @@ time.sleep(30)  # peers may keep serving after their stdin closes
     }}}))
     source = Path(__file__).resolve().parents[1] / "mcp/lazy-mcp.py"
     proc = subprocess.Popen([sys.executable, str(source)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, text=True, start_new_session=True,
+                            stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
+                            start_new_session=True,
                             env={**os.environ, "AGENT_VAULT_DATA": str(tmp_path), "LAZY_MCP_LOG": str(tmp_path / "audit.jsonl")})
     child = None
     try:
