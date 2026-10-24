@@ -6,6 +6,7 @@ finisca in una riga di comando, e la ricerca della sessione per cartella e ora.
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -682,3 +683,42 @@ def test_rework_on_an_unverifiable_session_queues_instead_of_opening_a_tab(task,
     assert "non verificabile" in result["reason"]
     queued = [r for r in state.read_events(task) if r.get("event") == "unit_queued"]
     assert len(queued) == 1 and queued[0]["round"] == 1
+
+
+def test_a_turn_that_dies_before_its_envelope_keeps_what_it_said(unit, monkeypatch):
+    """Lo stderr di un turno va in un file della cartella del compito, non in DEVNULL.
+
+    Un turno che muore prima della busta JSON scrive la ragione solo su stderr: con
+    `stderr=DEVNULL` il supervisore trova un log vuoto e nessuna causa.
+    """
+    written: dict = {}
+
+    class FakePopen:
+        def __init__(self, argv, **kwargs):
+            written.update(kwargs)
+            handle = kwargs.get("stderr")
+            if hasattr(handle, "write"):
+                handle.write("Error: provider ha rifiutato il modello\n")
+                handle.flush()
+            self.pid = 4242
+
+    class Adapter:
+        name = "finto"
+
+        def check_folder(self, folder):
+            """La copia esiste: qui la cartella non e' il punto del test."""
+
+        def send_argv(self, executable, session, prompt, model=""):
+            return [executable, "-c", "pass"]
+
+        def turn_log(self, session):
+            return None
+
+    monkeypatch.setattr(harness.subprocess, "Popen", FakePopen)
+
+    harness._run_turn(Adapter(), "eseguibile", "ses_prova", "prompt", unit)
+
+    log = unit.parent / "60-stderr-ses_prova.log"
+    assert written["stderr"] is not subprocess.DEVNULL
+    assert log.is_file(), "nessun file di stderr nella cartella del compito"
+    assert "provider ha rifiutato il modello" in log.read_text(encoding="utf-8")

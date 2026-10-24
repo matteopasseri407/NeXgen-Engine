@@ -605,31 +605,46 @@ def _run_in_session(session: str, prompt: str, folder: Path, model: str = ""):
     return _run_turn(_adapter("opencode"), _opencode_executable(), session, prompt, folder, model)
 
 
+def stderr_log(folder: Path, session: str) -> Path:
+    """The file a turn's own errors go to, beside the copy and inside the task folder.
+
+    A turn that dies before its envelope says why on stderr and nowhere else, and a
+    silent death is the one thing the supervisor cannot read afterwards. The copy is
+    `<task>/23-unita-<unit>/`, so the parent is the task folder the owner opens.
+    """
+    safe = "".join(ch if ch.isalnum() or ch in "-_." else "-" for ch in session)[:80]
+    return folder.parent / f"60-stderr-{safe or 'session'}.log"
+
+
 def _run_turn(adapter, executable: str, session: str, prompt: str, folder: Path, model: str = ""):
     """One turn through this harness, detached: no window of the engine is left holding it.
 
     The copy is checked first, because one harness runs its turn in a workspace
     the owner configured and a wrong folder would look like work in the unit. A
     harness whose numbers are only in what the turn prints writes them into its
-    own log, so a turn that ends on its own leaves its cost behind.
+    own log, so a turn that ends on its own leaves its cost behind; whatever the
+    turn says on stderr is kept beside the copy instead of being thrown away.
     """
     adapter.check_folder(folder)
     argv = windows_command_argv(adapter.send_argv(executable, session, prompt, model=model))
     log = adapter.turn_log(session)
+    errors = stderr_log(folder, session)
     try:
-        if log is not None:
-            log.parent.mkdir(parents=True, exist_ok=True)
-            with log.open("a", encoding="utf-8", newline="\n") as handle:
-                return subprocess.Popen(
-                    argv, cwd=folder,
-                    stdin=subprocess.DEVNULL, stdout=handle, stderr=subprocess.DEVNULL,
-                    **_detach_kwargs(),
-                )
-        return subprocess.Popen(
-            argv, cwd=folder,
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            **_detach_kwargs(),
-        )
+        errors.parent.mkdir(parents=True, exist_ok=True)
+        with errors.open("a", encoding="utf-8", newline="\n") as err:
+            if log is not None:
+                log.parent.mkdir(parents=True, exist_ok=True)
+                with log.open("a", encoding="utf-8", newline="\n") as handle:
+                    return subprocess.Popen(
+                        argv, cwd=folder,
+                        stdin=subprocess.DEVNULL, stdout=handle, stderr=err,
+                        **_detach_kwargs(),
+                    )
+            return subprocess.Popen(
+                argv, cwd=folder,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err,
+                **_detach_kwargs(),
+            )
     except OSError as exc:
         raise HarnessError(f"sessione {session} non raggiungibile: {exc}") from exc
 
