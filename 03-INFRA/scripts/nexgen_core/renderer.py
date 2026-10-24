@@ -63,6 +63,11 @@ class McpRenderer:
         #: Error text per target from the last :meth:`render_all`, for the
         #: callers that must say why a target failed (the guard does).
         self.last_errors: dict[str, str] = {}
+        #: OpenClaw only: connectors the caller wants reached over the local MCP
+        #: bridge instead of launched on this machine (`{name: {url, token_env}}`,
+        #: see `nexgen_core.mcp_bridge.bridged_http_servers`). None, the default,
+        #: renders every connector as before.
+        self.openclaw_http_servers: dict[str, Any] | None = None
         self.path_placeholders = {
             "AGENT_ENGINE_ROOT": str(self.engine_root),
             "AGENT_VAULT_DATA": str(self.vault_data),

@@ -409,4 +409,24 @@ def test_render_with_renderer_attribute_http_servers(renderer) -> None:
     servers = _servers(renderer)
     assert servers["py-tool"]["url"] == "http://127.0.0.1:8765/mcp"
     assert servers["py-tool"]["transport"] == "streamable-http"
+    assert servers["py-tool"]["headers"] == {"Authorization": "Bearer ${NEXGEN_MCP_BRIDGE_TOKEN}"}
+
+
+def test_a_bridged_entry_keeps_its_timeouts_and_takes_the_bridge_token(renderer) -> None:
+    """Only the transport changes: what the engine promised that connector still travels with it."""
+    _install_openclaw(renderer)
+    bridge_map = {"remote": {"url": "http://127.0.0.1:8765/mcp/remote", "token_env": "BRIDGE_TOKEN"}}
+    assert renderer.render_openclaw(write=True, http_servers=bridge_map)[0]
+    remote = _servers(renderer)["remote"]
+    assert remote["url"] == "http://127.0.0.1:8765/mcp/remote"
+    assert remote["headers"] == {"Authorization": "Bearer ${BRIDGE_TOKEN}"}
+    assert remote["connectionTimeoutMs"] == 12000
+    assert remote["requestTimeoutMs"] == 90000
+
+
+def test_a_bridge_entry_with_no_url_is_refused_instead_of_written_empty(renderer) -> None:
+    """`"url": ""` would be a connector that exists in the file and nowhere else."""
+    _install_openclaw(renderer)
+    with pytest.raises(ValueError):
+        renderer.render_openclaw(write=True, http_servers={"py-tool": {"token_env": "X"}})
 

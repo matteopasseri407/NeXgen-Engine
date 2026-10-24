@@ -38,6 +38,11 @@ _PYTHON_COMMAND = re.compile(r"^(python[0-9.]*|py)(\.exe)?$", re.I)
 #: OpenClaw's own name for the transport behind an http MCP endpoint.
 STREAMABLE_HTTP = "streamable-http"
 
+#: The variable the local bridge's bearer token lives in, as its owner names it
+#: (`nexgen_core.mcp_bridge.TOKEN_ENV`). A bridge entry the engine builds always
+#: says which variable to use; this is the fallback for a hand-written map.
+_BRIDGE_TOKEN_ENV = "NEXGEN_MCP_BRIDGE_TOKEN"
+
 
 def _is_python(command: str) -> bool:
     """Whether this command line starts a Python interpreter."""
@@ -146,30 +151,29 @@ def _mcp_block(existing: dict[str, Any], cfg_file: Path) -> dict[str, Any]:
     return block
 
 
-def _bridged_http_entry(srv: dict[str, Any], bridge_spec: Any) -> dict[str, Any]:
-    """Render a server in OpenClaw's Streamable HTTP shape when requested by the engine."""
+def _bridge_target(name: str, bridge_spec: Any) -> tuple[str, str]:
+    """`(url, token variable)` from what the engine asked for: a plain URL or `{url, token_env}`."""
     if isinstance(bridge_spec, dict):
-        url = str(bridge_spec.get("url") or "")
-        token_env = bridge_spec.get("token_env") or bridge_spec.get("auth_env") or "NEXGEN_MCP_BRIDGE_TOKEN"
-        custom_headers = bridge_spec.get("headers")
+        url = str(bridge_spec.get("url") or "").strip()
+        token_env = str(bridge_spec.get("token_env") or _BRIDGE_TOKEN_ENV)
     else:
-        url = str(bridge_spec)
-        token_env = "NEXGEN_MCP_BRIDGE_TOKEN"
-        custom_headers = None
+        url = str(bridge_spec or "").strip()
+        token_env = _BRIDGE_TOKEN_ENV
+    if not url:
+        raise ValueError(f"Could not render {name}: the bridge entry has no url")
+    return url, token_env
 
-    headers = dict(custom_headers) if isinstance(custom_headers, dict) else {"Authorization": f"Bearer ${{{token_env}}}"}
-    entry: dict[str, Any] = {"url": url, "transport": STREAMABLE_HTTP, "headers": headers}
-    deny = srv.get("tools_deny")
-    if isinstance(deny, list) and deny:
-        entry["toolFilter"] = {"exclude": [str(tool) for tool in deny]}
-    timeouts = srv.get("timeouts")
-    connection = _millis(timeouts, "startup")
-    request = _millis(timeouts, "tool")
-    if connection is not None:
-        entry["connectionTimeoutMs"] = connection
-    if request is not None:
-        entry["requestTimeoutMs"] = request
-    return entry
+
+def _bridged_entry(name: str, srv: dict[str, Any], bridge_spec: Any) -> dict[str, Any]:
+    """One connector reached over the local bridge: the same http shape, aimed at the bridge.
+
+    Nothing else about the server changes: its timeouts and its tool filter travel
+    with it, because they are the engine's contract with that connector and the
+    transport it is reached over is an implementation detail.
+    """
+    url, token_env = _bridge_target(name, bridge_spec)
+    bridged = {**srv, "url": url, "transport": "http", "auth": {"type": "bearer", "env": token_env}}
+    return _build_entry(bridged)
 
 
 def _apply_servers(
@@ -189,7 +193,7 @@ def _apply_servers(
             continue
         bridge_spec = (http_servers or {}).get(name) if http_servers else None
         if bridge_spec is not None:
-            servers_table[name] = _bridged_http_entry(srv, bridge_spec)
+            servers_table[name] = _bridged_entry(name, srv, bridge_spec)
             continue
         is_http = srv.get("transport") == "http" or bool(srv.get("url"))
         if is_http and _resolved_url(srv) is None:
