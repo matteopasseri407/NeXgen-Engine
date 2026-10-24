@@ -1,3 +1,4 @@
+# nexgen: one-job reason="the live state around an installed OpenClaw: what runs, what else listens, and what the plugin reads"
 """The live state around an installed OpenClaw: ports, other gateways, learned skills.
 
 One job: the checks that read machine state rather than configuration, so
