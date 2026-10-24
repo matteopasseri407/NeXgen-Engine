@@ -273,8 +273,48 @@ because it is allowed by the protocol and not by the terms.
   use `nexgen openclaw restart`, which does both and waits for the port.
 - Plugins are not changed hot. After a change to `plugins`, restart, and expect the first start to be slow.
 - A cold start takes about five minutes. The panel looks dead while it waits; it is not.
-- The Companion app from the Microsoft Store installs a second gateway. Two gateways fight over the same port
-  and the same state, and `nexgen openclaw doctor` names the Store package when it finds it.
+- An OpenClaw package from the Microsoft Store installs a second gateway. Two gateways fight over the same port
+  and the same state, and `nexgen openclaw doctor` names the Store package when it finds it. The Windows Hub app
+  described below is a different thing, and the engine recognises it on its own.
+
+## OpenClaw Companion (l'app Windows)
+
+On Windows, OpenClaw's own advice is the **Windows Hub / OpenClaw Companion** app. Its first run can provision a
+WSL distribution of its own, `OpenClawGateway`, with the gateway inside it and its state in that distribution's
+home directory, under `.openclaw`; the app talks to that gateway on `ws://127.0.0.1:18789`.
+
+### What this engine does today
+
+It tells four situations apart, from evidence that starts nothing:
+
+| Situation | The evidence it reads | What the engine does |
+| --- | --- | --- |
+| the native gateway only | the npm package and `~/.openclaw/openclaw.json` | configures it, as always |
+| the app's gateway only | the `OpenClawGateway` distribution, or the app's own WSL storage, or a gateway its settings name on this PC | says what it found and stops before installing or writing anything |
+| both | one of those, plus the native package | configures the native one, and names the app's gateway as a second gateway in conflict |
+| the app connected elsewhere | an `sshTunnel`, or a gateway URL that is not loopback | says so; nothing is in conflict |
+
+- The distribution list comes from `HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss`, which answers without
+  starting WSL, and the app's files are read as JSON: `settings.json` for a gateway-named URL, `gateways.json` for
+  `url`, `isLocal`, `sshTunnel` and `setupManagedDistroName`. Every field is optional and a file that does not parse
+  says nothing, because the app's schema is not documented field by field.
+- A gateway URL can carry a token in its query string, so it is parsed for its host and its port and then dropped:
+  no URL, no token and no device key is ever printed, and a `device-key*` file is never opened.
+- The engine never starts the app, WSL or the distribution, and never writes under `%APPDATA%\OpenClawTray`,
+  `%LOCALAPPDATA%\OpenClawTray` or `\\wsl.localhost`.
+
+### What it does not do yet
+
+- It does not configure the app's gateway: no configuration written through `\\wsl.localhost`, no service, no
+  plugin deposited inside the distribution, no pairing.
+- It does not install its guardrail plugin there as a package.
+- `nexgen openclaw setup` on a machine where the app owns the only gateway stops and names the two ways forward:
+  use the app as it is, or install the native gateway and run the setup again. It never installs a second gateway
+  beside the app's one of its own accord.
+
+Full support, which means talking to the gateway through its own protocol and installing the plugin as a package,
+comes in a later release. Until then the two gateways stay two separate things, and the engine only ever writes the
+native one.
 
 ## Installazione con un comando
 
@@ -414,11 +454,12 @@ validity, `:latest` ids, caged local models, whether the evidence check runs and
 heartbeat, the gateway's bind and authentication, Google entries, ACP seats, agents on subscriptions this
 machine does not have, which background job would wake a local model, whether the gateway watches the whole
 home recursively, whether the gateway is listening, whether every agent has a fallback chain, a second
-gateway from the Microsoft Store, and how many skills and servers OpenClaw created that the canonical library
-does not declare yet. `--nodes` adds the nodes the running gateway knows, which costs one run of OpenClaw's
-CLI and is therefore never done unless asked; the line about the network needs no query, so it is always
-there. `nexgen doctor` runs the same checks as part of its own report, without `--nodes`, and says nothing at
-all on a machine that never installed OpenClaw and never declared the module.
+gateway from the Microsoft Store, the OpenClaw Companion's own gateway, which it reports without configuring
+it, and how many skills and servers OpenClaw created that the canonical library does not declare yet.
+`--nodes` adds the nodes the running gateway knows, which costs one run of OpenClaw's CLI and is therefore
+never done unless asked; the line about the network needs no query, so it is always there. `nexgen doctor`
+runs the same checks as part of its own report, without `--nodes`, and says nothing at all on a machine that
+never installed OpenClaw, never declared the module and has no Companion gateway.
 
 `nexgen openclaw node --host <address> [--port 18789] [--name <label>]` prints the commands that make this
 machine a node of a gateway elsewhere: OpenClaw's one-paste route with a join code, and the explicit route with
