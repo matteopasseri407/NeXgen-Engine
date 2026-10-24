@@ -101,6 +101,7 @@ def create(
     brief: str | Path,
     allow: list[str] | tuple[str, ...],
     verify: str = "",
+    mcp: list[str] | tuple[str, ...] | None = None,
 ) -> dict:
     """Prepare the unit's copy, its branch, its push block and its written environment."""
     folder = worktree_path(task_id, unit)
@@ -123,6 +124,9 @@ def create(
     (Path(folder).parent / f"20-brief-{state.slug(unit)}.md").write_text(brief_text, encoding="utf-8")
     environment = _environment_text(task_id, unit, folder, branch, base, base_sha, scope, verify)
     (Path(folder).parent / f"22-ambiente-{state.slug(unit)}.md").write_text(environment, encoding="utf-8")
+    mcp_assigned = list(dict.fromkeys(
+        str(item).strip() for item in (mcp or []) if str(item).strip()
+    ))
     record = {
         "unit": state.slug(unit),
         "repo": str(root),
@@ -132,6 +136,7 @@ def create(
         "worktree": str(folder),
         "allow": scope,
         "verify": verify,
+        "mcp": mcp_assigned,
         "remotes": snapshot,
         "remote_urls": remote_urls(root),
         "remote_pushurls": push_urls(Path(folder)),

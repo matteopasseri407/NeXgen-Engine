@@ -372,6 +372,7 @@ def _blank_unit(unit: str) -> dict:
         "approved": False, "approved_head": "", "published": [], "model": "",
         "stalled_minutes": 0.0, "stall_threshold": 0.0, "repo": "", "base_ref": "",
         "cost": {}, "folder": "", "retired": False, "publish_conflicts": [],
+        "mcp": [],
     }
 
 
@@ -386,6 +387,7 @@ def _fold_creation(record: dict, row: dict) -> None:
         "base": str(row.get("base") or ""),
         "allow": [str(item) for item in row.get("allow") or []],
         "verify": str(row.get("verify") or ""),
+        "mcp": [str(item) for item in row.get("mcp") or []],
         "remotes": dict(row.get("remotes") or {}),
         "remote_urls": dict(row.get("remote_urls") or {}),
         "remote_pushurls": dict(row.get("remote_pushurls") or {}),

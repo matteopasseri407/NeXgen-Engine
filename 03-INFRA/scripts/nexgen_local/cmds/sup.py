@@ -71,6 +71,7 @@ def register_sup(sub) -> None:
     unit.add_argument("--brief", required=True, help="file del brief da copiare nella cartella del compito")
     unit.add_argument("--allow", action="append", default=[], help="glob di un percorso consentito (ripetibile)")
     unit.add_argument("--verify", default="", help="comando di verifica che il motore rieseguirà")
+    unit.add_argument("--mcp", action="append", default=[], help="server MCP consentito all'esecutore (ripetibile, default: nessuno)")
     unit.set_defaults(func=cmd_sup_unit)
 
     run = sup_sub.add_parser("run", help="apre l'esecutore nella sua finestra e aggancia la sua sessione")
@@ -288,7 +289,7 @@ def cmd_sup_unit(args: argparse.Namespace) -> int:
         record = worktree.create(
             args.id, args.unit,
             repo=args.repo, base=args.base, brief=args.brief,
-            allow=args.allow, verify=args.verify,
+            allow=args.allow, verify=args.verify, mcp=args.mcp,
         )
     except SupervisionError as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
@@ -298,6 +299,8 @@ def cmd_sup_unit(args: argparse.Namespace) -> int:
     print(f"base {record['base_ref']} ({record['base'][:12]})")
     print("confine: " + ", ".join(record["allow"]))
     print("verifica: " + (record["verify"] or "nessuna dichiarata"))
+    mcp_assigned = record.get("mcp") or []
+    print("mcp: " + (", ".join(mcp_assigned) if mcp_assigned else "nessuno"))
     broken = [name for name, refs in record["remotes"].items() if isinstance(refs, dict) and refs.get("error")]
     remotes = ", ".join(record["remotes"]) or "nessuno"
     print(f"remoti: {remotes} · push bloccata in questa copia"

@@ -105,3 +105,19 @@ def test_status_prints_the_cost_of_the_unit_and_of_the_task(lane, capsys):
     out = capsys.readouterr().out
     assert "costo: giro 0.1000 $, unità 0.5000 $, compito 0.9000 $ (modello opencode-go/x)" in out
     assert "costi: compito 0.9000 $ (modello opencode-go/x, misurato alla raccolta di prova)" in out
+
+
+def test_unit_line_shows_assigned_mcp_or_none(lane):
+    task = state.start("prova status mcp")["id"]
+    state.append_event(
+        task, "unit_created", unit="u1", repo="/tmp/r", base_ref="main",
+        worktree="/tmp/w", branch="sup/u1", base="123", allow=["*"], mcp=[],
+    )
+    state.append_event(
+        task, "unit_created", unit="u2", repo="/tmp/r", base_ref="main",
+        worktree="/tmp/w2", branch="sup/u2", base="123", allow=["*"], mcp=["vault", "firecrawl"],
+    )
+    units = state.status(task)["units"]
+
+    assert "mcp: nessuno" in status.unit_line(units[0])
+    assert "mcp: vault, firecrawl" in status.unit_line(units[1])

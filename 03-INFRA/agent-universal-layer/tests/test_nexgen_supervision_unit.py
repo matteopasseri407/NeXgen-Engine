@@ -175,3 +175,11 @@ def test_the_created_unit_shows_up_in_the_status(task, repo, tmp_path):
     assert units[0]["branch"] == record["branch"]
     assert units[0]["cost_usd"] is None
     assert json.loads(json.dumps(status["units"]))[0]["worktree"] == record["worktree"]
+
+
+def test_unit_creation_records_assigned_mcp(task, repo, tmp_path):
+    record = _create(task, repo, tmp_path, mcp=["server1", "server2"])
+    assert record["mcp"] == ["server1", "server2"]
+
+    units = state.status(task)["units"]
+    assert units[0]["mcp"] == ["server1", "server2"]
