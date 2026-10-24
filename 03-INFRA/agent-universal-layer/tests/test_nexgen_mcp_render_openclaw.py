@@ -332,3 +332,32 @@ def test_openclaw_server_rendered_for_windows_uses_node_launcher(tmp_path: Path)
     assert srv["args"][1:] == ["mcp", "serve"]
     assert "openclaw.cmd" not in srv["command"]
 
+
+def test_openclaw_server_rendered_without_env_secrets_or_references(tmp_path: Path) -> None:
+    """Canonical openclaw mcp serve authenticates via local state without env block or cleartext tokens."""
+    from nexgen_core.paths import mcp_manifest
+    from nexgen_core.config import load_mcp_manifest
+    from nexgen_core.mcp_state import enable_server
+
+    # 1. Real engine manifest has no env block on openclaw
+    engine_root = Path(__file__).resolve().parents[3]
+    manifest_path = mcp_manifest(engine_root)
+    assert manifest_path.is_file()
+    data = load_mcp_manifest(manifest_path)
+    srv_def = data["servers"]["openclaw"]
+    assert "env" not in srv_def, "openclaw mcp serve authenticates via local openclaw.json; no env block needed"
+
+    # 2. Rendered entries for all target CLIs carry no env block, tokens, or ${VAR} references
+    home = tmp_path / "home"
+    enable_server("openclaw", enabled=True, home=home)
+    renderer = McpRenderer(vault_data=engine_root, home=home)
+    for cli in ("claude", "codex", "antigravity", "opencode"):
+        resolved = renderer.load_resolved_servers(cli)
+        assert "openclaw" in resolved
+        entry = resolved["openclaw"]
+        assert "env" not in entry or not entry["env"], "no env block rendered for openclaw"
+        dumped = json.dumps(entry)
+        assert "OPENCLAW_GATEWAY" not in dumped
+        assert "${" not in dumped
+
+

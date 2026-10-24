@@ -196,7 +196,11 @@ class McpRenderer:
         # env resolution
         if "env" in entry and isinstance(entry["env"], dict):
             entry["env"] = {
-                k: self._expand_value(str(v))
+                k: (
+                    str(v)
+                    if str(v).startswith("${") and str(v).endswith("}") and str(v)[2:-1] not in self.path_placeholders
+                    else self._expand_value(str(v))
+                )
                 for k, v in entry["env"].items()
             }
 
