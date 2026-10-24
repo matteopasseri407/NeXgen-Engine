@@ -32,19 +32,31 @@ from nexgen_core.i18n import detect_language
 from nexgen_core.openclaw import background, observation
 from nexgen_core.openclaw.acp import SVILUPPO_ID, SVILUPPO_NAMES, acp_block, acpx_entry, sviluppo_enabled
 from nexgen_core.openclaw.detect import Detection
-from nexgen_core.openclaw.local_models import LocalModel, local_models, provider_blocks
-from nexgen_core.openclaw.tools_profile import (  # noqa: F401 - the names are part of this module's surface
+from nexgen_core.openclaw.local_models import local_models, provider_blocks
+from nexgen_core.openclaw.tools_profile import (
     LOCAL_DENY,
     LOCAL_SAFE_TOOLS,
     SUPERVISOR_AGENT,
     SUPERVISOR_TOOLS,
     WRITE_TOOL_TABLE,
     allow_supervisor_tools,
-    cage_block,
     denied_tools,
-    person_allow_list,
     tools_block,
 )
+
+__all__ = [
+    "Choices",
+    "GATEWAY_PORT",
+    "LOCAL_DENY",
+    "LOCAL_SAFE_TOOLS",
+    "PENDING_TOKEN",
+    "SUPERVISOR_AGENT",
+    "SUPERVISOR_TOOLS",
+    "WRITE_TOOL_TABLE",
+    "agent_models",
+    "build_config",
+    "denied_tools",
+]
 
 #: The top-level sections the engine owns. Everything else in `openclaw.json` is
 #: OpenClaw's and the person's, and a plan names it as "yours, left untouched".
