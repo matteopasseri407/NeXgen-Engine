@@ -2,9 +2,10 @@
 
 `plan` says what the engine would configure and what stays the person's;
 `setup` applies exactly that plan, with a backup and a way back; `doctor`
-proves a live configuration is one OpenClaw can actually use; `stop`, `restart`
-and `pair` are the three operations a person needs around it — take the gateway
-down to edit its file by hand, bring it back, and let a phone in.
+proves a live configuration is one OpenClaw can actually use; `stop` and
+`restart` take the gateway down to edit its file by hand and bring it back;
+`pair` lets a phone, or another machine, in; `node` proposes the commands that
+make this machine a node of a gateway elsewhere.
 
 Every verb that touches the machine lives in a module of its own; this file
 only declares the arguments and prints what comes back.
@@ -69,6 +70,15 @@ def _register(sub) -> None:
                    help=t("Approve the node request with this id, showing the commands it exposes"))
     q.add_argument("--yes", action="store_true", help=t("Do not ask for confirmation"))
     q.set_defaults(func=cmd_pair)
+
+    q = psub.add_parser("node", help=t("Connect this machine as a node of a gateway on another PC"))
+    q.add_argument("--host", required=True, metavar="ADDRESS",
+                   help=t("The gateway machine's address on the home network"))
+    q.add_argument("--port", type=int, default=None, metavar="PORT",
+                   help=t("The gateway's port (default: 18789)"))
+    q.add_argument("--name", default=None, metavar="LABEL",
+                   help=t("The name the gateway shows for this machine"))
+    q.set_defaults(func=cmd_node)
 
     p.set_defaults(func=lambda args: _usage(p))
 
@@ -147,3 +157,17 @@ def cmd_pair(args) -> int:
         approve_node_id=args.approve_node,
         yes=bool(args.yes),
     )
+
+
+def cmd_node(args) -> int:
+    from nexgen_core.openclaw.node_link import build_node_link, render_node_link
+    from nexgen_core.openclaw.profile import GATEWAY_PORT
+
+    port = int(args.port) if args.port is not None else GATEWAY_PORT
+    try:
+        link = build_node_link(args.host, port=port, name=args.name)
+    except ValueError as error:
+        print(t("Cannot propose the node connection: {error}", error=error))
+        return 2
+    print(render_node_link(link))
+    return 0

@@ -1745,6 +1745,67 @@ MESSAGES: dict[str, str] = {
         "Nodo {node} approvato.",
     "Approve a node with 'nexgen openclaw pair --approve-node <id>'.":
         "Approva un nodo con 'nexgen openclaw pair --approve-node <id>'.",
+    # --- Due PC: un gateway e un nodo -------------------------------------------
+    "Connect this machine as a node of a gateway on another PC":
+        "Collega questa macchina come nodo di un gateway su un altro PC",
+    "The gateway machine's address on the home network":
+        "L'indirizzo della macchina del gateway sulla rete di casa",
+    "The gateway's port (default: 18789)":
+        "La porta del gateway (predefinita: 18789)",
+    "The name the gateway shows for this machine":
+        "Il nome che il gateway mostra per questa macchina",
+    "Cannot propose the node connection: {error}":
+        "Non riesco a proporre il collegamento del nodo: {error}",
+    "OpenClaw node for the gateway at {host}:{port}":
+        "Nodo OpenClaw per il gateway su {host}:{port}",
+    "Nothing has been changed: these are OpenClaw's own commands, in the order they work.":
+        "Non ho cambiato niente: questi sono i comandi di OpenClaw, nell'ordine in cui funzionano.",
+    "on the gateway machine":
+        "sulla macchina del gateway",
+    "on this machine":
+        "su questa macchina",
+    "check: {command}":
+        "controllo: {command}",
+    "What stays yours:":
+        "Cosa resta a te:",
+    "One paste, with a join code the gateway mints":
+        "Un solo incollaggio, con un codice di ingresso che crea il gateway",
+    "OpenClaw approves the device and its first command surface in the same step.":
+        "OpenClaw approva il dispositivo e la sua prima superficie di comandi nello stesso passaggio.",
+    "Single use, ten minutes, administrator access: treat the printed URL like a password.":
+        "Monouso, dieci minuti, accesso da amministratore: tratta l'URL stampato come una password.",
+    "the command it prints, to be pasted as it is on this machine":
+        "il comando che stampa, da incollare così com'è su questa macchina",
+    "This is the one paste that enrols the device and its first commands together.":
+        "È l'unico incollaggio che registra insieme il dispositivo e i suoi primi comandi.",
+    "One approval at a time, without a join code":
+        "Un'approvazione alla volta, senza codice di ingresso",
+    "Two requests with different ids: the device admits the connection, the node request allows commands.":
+        "Due richieste con id diversi: il dispositivo ammette la connessione, la richiesta del nodo permette i comandi.",
+    "This writes a user service on this machine; nothing else on the machine changes.":
+        "Questo scrive un servizio utente su questa macchina; nient'altro sulla macchina cambia.",
+    "the request created by this machine, with the id the next step needs":
+        "la richiesta creata da questa macchina, con l'id che serve al passo successivo",
+    "Read the request before approving it: the id is this machine's, not another device's.":
+        "Leggi la richiesta prima di approvarla: l'id è di questa macchina, non di un altro dispositivo.",
+    "Only when the node's log says it paused waiting for pairing: otherwise it reconnects on its own.":
+        "Solo quando il log del nodo dice che si è fermato in attesa dell'accoppiamento: altrimenti si ricollega da solo.",
+    "The approval lists the commands this node would expose, and those are what you are allowing.":
+        "L'approvazione elenca i comandi che questo nodo esporrebbe, e sono quelli che stai permettendo.",
+    "Without lingering, the systemd user service stops when your last session closes.":
+        "Senza il lingering, il servizio utente systemd si ferma quando chiudi l'ultima sessione.",
+    "The gateway on the other PC has to answer on the home network: 'nexgen openclaw setup --lan' writes gateway.bind 'lan', and 'nexgen openclaw doctor' there says whether it is reachable.":
+        "Il gateway dell'altro PC deve rispondere sulla rete di casa: 'nexgen openclaw setup --lan' scrive gateway.bind 'lan', e 'nexgen openclaw doctor' lì dice se è raggiungibile.",
+    "The address {host} is yours to supply: the engine does not guess another machine's address.":
+        "L'indirizzo {host} lo fornisci tu: il motore non indovina l'indirizzo di un'altra macchina.",
+    "Your own gateway is left as it is: the node host is a separate process, so a machine that already serves OpenClaw in loopback keeps serving it.":
+        "Il tuo gateway resta com'è: il nodo è un processo separato, quindi una macchina che già serve OpenClaw in loopback continua a servirlo.",
+    "Away from home only a local gateway in loopback is reachable, and a channel such as Telegram lives on one gateway at a time: it belongs to the machine that stays on.":
+        "Fuori casa è raggiungibile solo un gateway locale in loopback, e un canale come Telegram vive su un gateway alla volta: appartiene alla macchina che resta accesa.",
+    "Every approval is yours: nothing is approved automatically, and each request names the machine and the commands it would run.":
+        "Ogni approvazione è tua: niente viene approvato da solo, e ogni richiesta dice quale macchina e quali comandi eseguirebbe.",
+    "Port {port} is the one the gateway listens on; a different one there means passing it here too.":
+        "La porta {port} è quella su cui ascolta il gateway; se lì è diversa, va passata anche qui.",
     "The approval failed: {error}":
         "L'approvazione è fallita: {error}",
     "{agent}: {path} ({written} manuals written, {bootstrap})":
