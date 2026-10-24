@@ -911,3 +911,106 @@ def test_an_app_gateway_on_its_own_port_is_named_as_that_one(tmp_path):
 
     assert machine.run(detected=detection(machine.config, companion=app_gateway(port=52190))) == 0
     assert "a gateway of its own on port 52190" in machine.output()
+
+
+# ------------------------------------------- the app installed before the engine
+
+
+class ListingRunner(FakeRunner):
+    """The executor, plus the gateway's own answer to `devices list`."""
+
+    def __init__(self, devices: list[dict]):
+        super().__init__()
+        self.devices = devices
+
+    def __call__(self, argv, env=None):
+        if argv[1:3] == ["devices", "list"]:
+            self.calls.append((list(argv), dict(env or {})))
+            return RunResult(0, json.dumps(self.devices), "")
+        return super().__call__(argv, env)
+
+
+def app_without_a_gateway() -> Companion:
+    """The common case: the exe is installed and names no gateway at all."""
+    return Companion(present=True)
+
+
+def a_machine_with_a_config(tmp_path: Path, runner=None) -> Machine:
+    machine = Machine(tmp_path)
+    machine.config.parent.mkdir(parents=True)
+    machine.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
+    if runner is not None:
+        machine.runner = runner
+        machine.runner.service = machine.service
+    return machine
+
+
+def test_an_app_without_a_gateway_is_told_how_to_reach_this_one(tmp_path):
+    machine = a_machine_with_a_config(tmp_path)
+
+    code = machine.run(detected=detection(machine.config, companion=app_without_a_gateway()))
+
+    assert code == 0
+    assert "In OpenClaw Companion open Connections" in machine.output()
+    assert "a local Gateway on this PC" in machine.output()
+    assert "127.0.0.1:18789" in machine.output()
+    assert "No request from the app is waiting yet" in machine.output()
+
+
+def test_a_waiting_request_is_shown_and_approved_only_after_a_yes(tmp_path):
+    listing = [{"id": "req-1", "summary": "OpenClaw Companion on Windows", "status": "pending"}]
+    machine = a_machine_with_a_config(tmp_path, ListingRunner(listing))
+
+    code = machine.run(detected=detection(machine.config, companion=app_without_a_gateway()), confirm=lambda question: True)
+
+    assert code == 0
+    assert "  req-1  OpenClaw Companion on Windows" in machine.output(), "what would be approved is shown"
+    assert "openclaw devices approve req-1" in machine.runner.commands()
+    assert "Device req-1 approved." in machine.output()
+
+
+def test_a_refused_approval_leaves_the_request_alone(tmp_path):
+    listing = [{"id": "req-1", "summary": "OpenClaw Companion", "status": "pending"}]
+    machine = a_machine_with_a_config(tmp_path, ListingRunner(listing))
+
+    assert machine.run(
+        detected=detection(machine.config, companion=app_without_a_gateway()), confirm=lambda question: False,
+    ) == 0
+    assert "openclaw devices approve req-1" not in machine.runner.commands()
+    assert "Nothing approved" in machine.output()
+    assert "nexgen openclaw pair --approve req-1" in machine.output()
+
+
+def test_no_terminal_never_approves_the_app(tmp_path, monkeypatch):
+    """`--yes` answers the plan, not a device approval: without an answer, nothing is approved."""
+    listing = [{"id": "req-1", "summary": "OpenClaw Companion", "status": "pending"}]
+    machine = a_machine_with_a_config(tmp_path, ListingRunner(listing))
+
+    def no_terminal(prompt=""):
+        raise OSError("no terminal")
+
+    monkeypatch.setattr("builtins.input", no_terminal)
+
+    assert machine.run(detected=detection(machine.config, companion=app_without_a_gateway())) == 0
+    assert "openclaw devices approve req-1" not in machine.runner.commands()
+    assert "nexgen openclaw pair --approve req-1" in machine.output()
+
+
+def test_several_waiting_requests_are_listed_and_none_is_chosen_for_the_person(tmp_path):
+    listing = [{"id": "req-1"}, {"id": "req-2"}]
+    machine = a_machine_with_a_config(tmp_path, ListingRunner(listing))
+
+    assert machine.run(
+        detected=detection(machine.config, companion=app_without_a_gateway()), confirm=lambda question: True,
+    ) == 0
+    assert "More than one request is waiting" in machine.output()
+    assert not any("approve" in " ".join(argv) for argv, _ in machine.runner.calls)
+
+
+def test_an_app_that_owns_a_gateway_is_not_asked_to_connect(tmp_path):
+    """Case (c): the app is on its own gateway, so the native setup does not invite it anywhere."""
+    machine = a_machine_with_a_config(tmp_path, ListingRunner([]))
+
+    assert machine.run(detected=detection(machine.config, companion=app_gateway(port=52190))) == 0
+    assert "a local Gateway on this PC" not in machine.output()
+    assert not any("devices" in " ".join(argv) for argv, _ in machine.runner.calls), "nothing is listed either"

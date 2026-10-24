@@ -3,7 +3,8 @@
 One job: do the work of one step and say what it did. The order, the plan and
 the decision to continue live in `setup.py`; here is only "install the pin",
 "let OpenClaw onboard", "merge and validate", "prepare the workspaces", "make
-sure the service answers".
+sure the service answers", and, at the end, "point the Windows app here and
+offer the request it leaves".
 
 Every external program arrives through `Setup.run` and every service action
 through `Setup.service`, so a test drives the whole machine with fakes and
@@ -16,6 +17,7 @@ import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 from nexgen_core.i18n import t
 from nexgen_core.modules import current_host, write_state_file
@@ -25,6 +27,8 @@ from nexgen_core.openclaw.detect import Detection
 from nexgen_core.openclaw.governor import governor_section
 from nexgen_core.openclaw.pin import node_satisfies, required_node_version
 from nexgen_core.openclaw.setup_agents import agent_dirs, created_by_openclaw, prepare
+from nexgen_core.openclaw_pairing import approve as pairing_approve
+from nexgen_core.openclaw_pairing import listed as pairing_listed
 from nexgen_core.openclaw_pairing import qr as pairing_qr
 from nexgen_core.openclaw_processes import is_gateway_process
 from nexgen_core.openclaw_service import OpenClawService, RunResult
@@ -414,6 +418,63 @@ def phone_step(setup: Setup) -> None:
                 command=pairing_qr()["command"]))
     setup.out(t("Then approve the request from here: 'nexgen openclaw pair' lists it, "
                 "'nexgen openclaw pair --approve <id>' approves it."))
+
+
+def device_line(device: Mapping[str, Any]) -> str:
+    """One waiting device as the person reads it: its id, then what it says it is."""
+    label = device.get("summary") or device.get("status") or ""
+    return f"  {device.get('id')}  {label}".rstrip()
+
+
+def app_step(setup: Setup, snapshot: Detection, ask: Callable[[str], bool]) -> None:
+    """The Windows app: how to point it here, and the request it leaves waiting.
+
+    Only when the app is installed and owns no gateway of its own: the setup has
+    just configured the native one, so the app has exactly one place to connect
+    to. A request already waiting is shown with what would be approved and
+    approved only after the person says yes; nothing is approved because the run
+    was started with `--yes`, and nothing is approved without a terminal.
+    """
+    gateway = snapshot.companion
+    if not gateway.present or gateway.owns_local_gateway or gateway.points_remote:
+        return
+    if gateway.names_no_gateway():
+        setup.out(t("In OpenClaw Companion open Connections and choose 'a local Gateway on this PC': the gateway "
+                    "this setup configured answers on 127.0.0.1:{port}.", port=setup.service.port))
+    approve_app_request(setup, ask)
+
+
+def approve_app_request(setup: Setup, ask: Callable[[str], bool]) -> None:
+    """The one request the app left, approved only with an explicit yes."""
+    devices = pairing_listed(setup.run)
+    if devices is None:
+        setup.out(t("The gateway cannot list its devices now: 'nexgen openclaw pair' shows the request and "
+                    "approves it when the gateway answers."))
+        return
+    if not devices:
+        setup.out(t("No request from the app is waiting yet: when the app asks, 'nexgen openclaw pair' lists the "
+                    "request and 'nexgen openclaw pair --approve <id>' approves it."))
+        return
+    setup.out(t("Requests waiting for approval:"))
+    for device in devices:
+        setup.out(device_line(device))
+    if len(devices) > 1:
+        setup.out(t("More than one request is waiting: 'nexgen openclaw pair' lists them, and "
+                    "'nexgen openclaw pair --approve <id>' approves the one you choose."))
+        return
+    device_id = str(devices[0].get("id") or "").strip()
+    if not device_id:
+        setup.out(t("A request is waiting but its id cannot be read: 'nexgen openclaw pair' shows it."))
+        return
+    if not ask(t("Approve this device?")):
+        setup.out(t("Nothing approved: 'nexgen openclaw pair --approve {id}' approves it later.", id=device_id))
+        return
+    outcome = pairing_approve(device_id, runner=setup.run)
+    if outcome.get("ok"):
+        setup.out(t("Device {id} approved.", id=device_id))
+        return
+    setup.out(t("The approval failed ({reason}): 'nexgen openclaw pair --approve {id}' retries it.",
+                reason=outcome.get("error") or t("no reason given"), id=device_id))
 
 
 def plugin_step(setup: Setup) -> None:

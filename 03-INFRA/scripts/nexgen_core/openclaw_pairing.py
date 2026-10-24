@@ -7,6 +7,11 @@ the commands it would expose, and the nodes the gateway already knows. A node
 gets in only after both stages, and the two request ids are different, so the
 module keeps them apart and never confuses one for the other.
 Never exposes or prints auth tokens.
+
+The listed devices are also what the setup and the doctor read when they say
+whether the Windows app is paired, so the two questions about an entry -- does
+it name the app, and could the gateway be asked at all -- live here beside the
+listing itself.
 """
 from __future__ import annotations
 
@@ -115,6 +120,36 @@ def pending(
         "devices": devices,
         "dry_run": False,
     }
+
+
+#: The words a device record uses when it is the Windows app. The gateway's JSON
+#: shape is not documented field by field, so this is a heuristic and the
+#: sentences built on it say "names the app", never "is the app".
+APP_DEVICE_WORDS = ("companion", "windows hub", "windows-hub")
+
+
+def names_the_windows_app(device: dict[str, Any]) -> bool:
+    """Whether a device record is the Windows app, from the words it carries."""
+    words = " ".join(
+        str(device.get(key) or "")
+        for key in ("summary", "displayName", "clientId", "name", "deviceId", "id")
+    ).casefold()
+    return any(word in words for word in APP_DEVICE_WORDS)
+
+
+def listed(runner: Callable[[list[str]], RunResult] | None = None) -> list[dict[str, Any]] | None:
+    """Every device and request the gateway lists, or None when it cannot answer.
+
+    `devices list` holds paired devices and pending requests together, so an
+    entry here says the gateway knows that device, not that it approved it. A
+    stopped gateway is a normal state: the caller says what it can and moves on
+    instead of reporting a fault.
+    """
+    try:
+        listing = pending(runner=runner)
+    except OSError:  # nexgen: allow reason="a CLI that cannot be launched is an unanswered question, not a crash"
+        return None
+    return list(listing.get("devices") or []) if listing.get("ok") else None
 
 
 def approve(

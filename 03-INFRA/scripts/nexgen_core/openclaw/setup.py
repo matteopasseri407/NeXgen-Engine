@@ -35,7 +35,9 @@ from nexgen_core.openclaw.setup_steps import (
     Setup,
     Which,
     app_gateway_stop,
+    app_step,
     default_run,
+    device_line,
     ensure_installed,
     ensure_onboarded,
     governor_step,
@@ -72,7 +74,7 @@ def ask_yes_no(question: str) -> bool:
     """A yes/no question with a safe default, and no crash without a terminal."""
     try:
         answer = input(f"{question} [y/N] ")
-    except EOFError:  # nexgen: allow reason="no terminal means no answer, and a question nobody can answer is a no, never a crash mid-setup"
+    except (EOFError, OSError):  # nexgen: allow reason="no terminal means no answer, and a question nobody can answer is a no, never a crash mid-setup"
         return False
     return answer.strip().lower() in ("y", "yes", "s", "si", "sì")
 
@@ -179,7 +181,7 @@ def _plan_phase(
     return _Decision(plan, 0)
 
 
-def _apply(setup: Setup, installed: Detection, plan, before: set[str]) -> int:
+def _apply(setup: Setup, installed: Detection, plan, before: set[str], ask: Callable[[str], bool]) -> int:
     """Steps 4 to 9: write, workspaces, service, module, phone, doctor."""
     _step(setup.out, 4, t("Safe write"))
     plugin_step(setup)
@@ -205,6 +207,7 @@ def _apply(setup: Setup, installed: Detection, plan, before: set[str]) -> int:
     )
     setup.out(doctor_render(outcomes))
     setup.out("")
+    app_step(setup, installed, ask)
     setup.out(t("Setup complete."))
     return 0
 
@@ -245,7 +248,7 @@ def run_setup(
     )
     if decision.plan is None:
         return decision.code
-    return _apply(setup, installed, decision.plan, before)
+    return _apply(setup, installed, decision.plan, before, confirm or _ask)
 
 
 def run_restart(
@@ -297,8 +300,7 @@ def _device_lines(devices: list[dict], out: Emit) -> None:
         return
     out(t("Requests waiting for approval:"))
     for device in devices:
-        label = device.get("summary") or device.get("status") or ""
-        out(f"  {device.get('id')}  {label}".rstrip())
+        out(device_line(device))
 
 
 def _node_description(request: dict) -> str:

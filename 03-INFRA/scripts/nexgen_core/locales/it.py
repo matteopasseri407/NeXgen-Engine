@@ -1855,6 +1855,22 @@ MESSAGES: dict[str, str] = {
         "La porta {port} è quella su cui ascolta il gateway; se lì è diversa, va passata anche qui.",
     "The approval failed: {error}":
         "L'approvazione è fallita: {error}",
+    "In OpenClaw Companion open Connections and choose 'a local Gateway on this PC': the gateway this setup configured answers on 127.0.0.1:{port}.":
+        "In OpenClaw Companion apri Connections e scegli 'a local Gateway on this PC': il gateway che questo setup ha configurato risponde su 127.0.0.1:{port}.",
+    "The gateway cannot list its devices now: 'nexgen openclaw pair' shows the request and approves it when the gateway answers.":
+        "Il gateway ora non riesce a elencare i suoi dispositivi: 'nexgen openclaw pair' mostra la richiesta e la approva quando il gateway risponde.",
+    "No request from the app is waiting yet: when the app asks, 'nexgen openclaw pair' lists the request and 'nexgen openclaw pair --approve <id>' approves it.":
+        "Nessuna richiesta dall'app è ancora in attesa: quando l'app la lascia, 'nexgen openclaw pair' la elenca e 'nexgen openclaw pair --approve <id>' la approva.",
+    "More than one request is waiting: 'nexgen openclaw pair' lists them, and 'nexgen openclaw pair --approve <id>' approves the one you choose.":
+        "C'è più di una richiesta in attesa: 'nexgen openclaw pair' le elenca, e 'nexgen openclaw pair --approve <id>' approva quella che scegli.",
+    "A request is waiting but its id cannot be read: 'nexgen openclaw pair' shows it.":
+        "Una richiesta è in attesa ma il suo id non si legge: 'nexgen openclaw pair' la mostra.",
+    "Approve this device?":
+        "Approvo questo dispositivo?",
+    "Nothing approved: 'nexgen openclaw pair --approve {id}' approves it later.":
+        "Non ho approvato niente: 'nexgen openclaw pair --approve {id}' lo approva più tardi.",
+    "The approval failed ({reason}): 'nexgen openclaw pair --approve {id}' retries it.":
+        "L'approvazione è fallita ({reason}): 'nexgen openclaw pair --approve {id}' la riprova.",
     "{agent}: {path} ({written} manuals written, {bootstrap})":
         "{agent}: {path} ({written} manuali scritti, {bootstrap})",
     "first-run file removed":
