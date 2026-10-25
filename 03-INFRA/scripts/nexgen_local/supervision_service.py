@@ -68,14 +68,15 @@ def finished_tabs(table: list[dict]) -> list[dict]:
     """The tab shells whose unit the journal says is already published or retired.
 
     One unit, one tab, and that tab must not outlive the work: when its unit is done
-    the shell is not a session any more, it is a tab to close. A tab whose command
-    line names no unit is judged by the task instead, and only when every unit of the
-    task is finished.
+    the shell is not a session any more, it is a tab to close. Only the executor role
+    is asked about: a scout tab follows its own round, and a round still open is a
+    live session whatever the units say. A tab whose command line names no unit is
+    judged by the task instead, and only when every unit of the task is finished.
     """
     found: list[dict] = []
     for row in table:
-        task, _role = windows.marker_parts(windows.marker_of(row))
-        if not task:
+        task, role = windows.marker_parts(windows.marker_of(row))
+        if not task or role != "esecutore":
             continue
         if _finished_shell(task, windows.unit_of(row)):
             found.append(row)

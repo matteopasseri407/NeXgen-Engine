@@ -241,6 +241,20 @@ def test_a_tab_that_holds_the_shared_server_is_left_open(task, copy, posix):
     assert result["kept"] and result["kept"][0]["shared"] == SERVER_PID
 
 
+def test_a_scout_tab_is_not_a_finished_unit_tab(task, copy, posix):
+    """Una scheda scout segue il suo giro: un giro aperto è una sessione viva anche a unità chiuse."""
+    _published(task)
+    marker = windows.tab_marker(task, "scout")
+    scout = {
+        "pid": 500, "ppid": 1, "created": 1000.0, "name": "bash",
+        "command_line": "bash -c opencode run --agent plan ...", "environ": f"{windows.TAB_ENV}={marker}\0",
+    }
+
+    assert cleanup.finished_unit_tabs(table=[scout]) == []
+    before, _targets = service.plan([_server(), scout])
+    assert before == 1000.0, "resta una sessione attiva"
+
+
 # --- la TUI senza marcatore --------------------------------------------------
 
 
