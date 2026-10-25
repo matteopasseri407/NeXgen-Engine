@@ -16,6 +16,7 @@ sh install.sh --role server
 **What it does:**
 - Verifies system requirements and obtains Python 3.11+ via user-mode `uv` if missing.
 - Refuses unsafe headless configurations (e.g. passwordless `sudo` or user in `docker` group).
+- Writes the agents' sudo policy to `/etc/sudoers.d/nexgen-agents`: fifteen named commands (container logs and restarts, the compose file in your home, `systemctl` status and the two restarts, `journalctl`, `apt`), never root, and never wider than that list. `visudo -cf` reads the file before anything privileged happens. Without passwordless `sudo` it prints the file and the one `sudo install` command, because an unattended install that stops for a password is an install that hangs.
 - Enables systemd user lingering (`loginctl enable-linger`).
 - Configures OpenClaw gateway on loopback (`127.0.0.1:18789`) and exposes it securely across your tailnet via Tailscale Serve over HTTPS. No external ports are opened.
 - Hardens state directory permissions (`chmod 0700` / clears group and world write).

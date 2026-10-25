@@ -8,25 +8,22 @@ onboarding — nothing in it can be the person's yet, and its `BOOTSTRAP.md` is
 the first-run rite that would sit in front of the manual the engine writes.
 
 An `AGENTS.md` the squad declares follows the same rule, with one extension: a
-file that carries the engine's mark was written by an earlier run, so replacing
-it is how a squad change reaches the workspace, and the mark stays wherever it
-already sits below an aligned instructions block.
-
-Nothing here renders text: `templates.render_workspace` is the one place that
-knows what a standard manual says, and `squad.get_squad_instructions` the one
-place that reads what the squad declares. Both return files rather than writing
-them.
+file the engine wrote is replaced, and carrying the mark is not the only way to
+be one of those. A workspace prepared before the squad declared its own manual
+holds exactly the manual this engine ships, mark and all missing, so that text is
+the second fingerprint: byte equality proves nothing of the person's is in it.
+The mark still says where the engine's text starts, and everything above it stays.
 """
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
 from nexgen_core.openclaw.squad import INSTRUCTION_MARK
-from nexgen_core.openclaw.templates import render_workspace
+from nexgen_core.openclaw.templates import render_workspace, shipped_manuals
 
 #: The first-run file OpenClaw leaves in a new workspace. It starts a
 #: conversation that redefines the agent, which is exactly what must not happen
@@ -101,18 +98,84 @@ def _existing_mark(text: str) -> int | None:
     return None if at < 0 else at
 
 
+def _split_block(text: str) -> tuple[str, str]:
+    """The canonical-pointer block at the top of `text` (or ""), and the rest.
+
+    The markers come from `guard_instructions`, imported here rather than spelled
+    again: the sync cycle looks for that exact string, and a second spelling is
+    how the block stops being found.
+    """
+    from nexgen_core.guard_instructions import OPENCLAW_BLOCK_BEGIN, OPENCLAW_BLOCK_END
+
+    begin = text.find(OPENCLAW_BLOCK_BEGIN)
+    end = text.find(OPENCLAW_BLOCK_END)
+    if begin < 0 or end < begin:
+        return "", text
+    end += len(OPENCLAW_BLOCK_END)
+    return text[begin:end], text[end:].lstrip("\r\n")
+
+
+def _is_shipped(rest: str, shipped: Sequence[str]) -> bool:
+    """Whether `rest` is exactly one of the manuals this engine ships for the agent.
+
+    Line endings are the file's, not the engine's: the text on disk may be CRLF
+    while the manual in memory is LF, and that difference is not the person's.
+    """
+    body = rest.replace("\r\n", "\n").strip()
+    return bool(body) and any(body == manual.replace("\r\n", "\n").strip() for manual in shipped)
+
+
+def _with_line_endings(text: str, sample: str) -> str:
+    """`text` written with the line endings the file already uses."""
+    if "\r\n" not in sample:
+        return text
+    return text.replace("\r\n", "\n").replace("\n", "\r\n")
+
+
+def next_manual_text(existing: str, declared: str, shipped: Sequence[str] = ()) -> str | None:
+    """The `AGENTS.md` the workspace should hold, or None when the file is the person's.
+
+    A file carrying the mark is the engine's: the text from the mark down is what
+    the squad last wrote, so it is replaced, and everything above it — where
+    `nexgen sync` puts the block pointing at the canonical instructions — stays
+    exactly as it is.
+
+    A file without the mark is still the engine's when it is exactly the manual
+    this engine ships for that agent, block on top or not. That is a workspace
+    prepared before the squad declared instructions: every byte of it came from
+    `render_workspace`, nothing of the person's can be in it, and treating it as
+    theirs is how a squad change stopped reaching that workspace.
+
+    Anything else is text only the person wrote, and is not ours to replace.
+    """
+    written = _with_line_endings(declared, existing)
+    if not existing.strip():
+        return written  # nothing on disk yet: the block this cycle writes is the engine's
+    at = _existing_mark(existing)
+    if at is not None:
+        return existing[:at] + written
+    head, rest = _split_block(existing)
+    if not _is_shipped(rest, shipped):
+        return None
+    if not head:
+        return written
+    separator = "\r\n" if "\r\n" in head else "\n"
+    return f"{head}{separator}{written}"
+
+
 def write_instructions(
     target: Path,
     text: str,
     replace: bool,
     emit: Callable[[str], None],
+    shipped: Sequence[str] = (),
 ) -> int:
     """Write the squad's `AGENTS.md`, and only where the engine owns the file.
 
-    A file the engine never marked is the person's, so it is reported and left
-    alone. A marked file is replaced, keeping whatever sits above the mark: that
-    is where `nexgen sync` puts the block pointing at the canonical instructions,
-    and moving the block out would make the next sync rewrite the file again.
+    A file the engine never wrote is the person's, so it is reported and left
+    alone; `next_manual_text` is the one place that decides which files those are.
+    A fresh workspace (`replace`) was created by OpenClaw a moment ago, so there
+    is nothing of the person's in it to keep.
     """
     existing = None
     if target.is_file():
@@ -122,11 +185,11 @@ def write_instructions(
             emit(t("Skipping {path}: it cannot be read ({error}).", path=target, error=exc))
             return 0
     if existing is not None and not replace:
-        at = _existing_mark(existing)
-        if at is None:
-            emit(t("Skipping {path}: it carries no engine mark, so it is yours and stays as it is.", path=target))
+        updated = next_manual_text(existing, text, shipped)
+        if updated is None:
+            emit(t("Skipping {path}: the engine did not write it, so it is yours and stays as it is.", path=target))
             return 0
-        text = existing[:at] + text
+        text = updated
     target.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(target, text)
     return 1
@@ -162,7 +225,9 @@ def prepare(
             omit=INSTRUCTIONS_FILE if declared else None,
         )
         if declared:
-            written += write_instructions(directory / INSTRUCTIONS_FILE, declared, fresh, emit)
+            written += write_instructions(
+                directory / INSTRUCTIONS_FILE, declared, fresh, emit, shipped_manuals(agent_id),
+            )
         if souls and agent_id in souls:
             soul_path = directory / "SOUL.md"
             if fresh or not soul_path.exists():

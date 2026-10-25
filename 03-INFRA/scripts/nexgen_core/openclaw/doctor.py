@@ -42,7 +42,12 @@ from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.doctor_install import check_config, check_declaration, check_installed
 from nexgen_core.openclaw.evidence import check_evidence
 from nexgen_core.openclaw.governor import check_fallbacks
-from nexgen_core.openclaw.model_checks import check_agent_models, check_cage, check_ollama_latest
+from nexgen_core.openclaw.model_checks import (
+    check_agent_models,
+    check_cage,
+    check_model_overrides,
+    check_ollama_latest,
+)
 from nexgen_core.openclaw.pin import pinned_version, required_node_version
 from nexgen_core.openclaw.profile import PENDING_TOKEN
 from nexgen_core.openclaw.server_gateway import exposure
@@ -229,6 +234,7 @@ def _config_outcomes(
         doctor_config.check_mcp_lazy(config),
         doctor_mcp.check_mcp_secret_url(config, manifest_p, env or os.environ),
         check_agent_models(config, snapshot),
+        check_model_overrides(config),
         background.report(config),
         observation.report(config, path, home_dir, platform),
         check_fallbacks(config, policy),

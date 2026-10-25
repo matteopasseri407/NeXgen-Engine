@@ -378,3 +378,16 @@ def render_workspace(agent: str, lang: str | None = None) -> dict[str, str]:
         files["CLAUDE.md"] = _CLAUDE_POINTER[language]
         files[".claude/settings.json"] = json.dumps(CLAUDE_SETTINGS, indent=2) + "\n"
     return files
+
+
+def shipped_manuals(agent: str) -> tuple[str, ...]:
+    """The `AGENTS.md` this engine ships for one agent, in every language it writes.
+
+    All of them, not the language of the run: this is the text an ownership test
+    compares against, and a workspace prepared while the engine spoke another
+    language is still the engine's file. An agent the engine knows no manual for
+    (one a squad declares for itself) has none, and nothing is ever replaced on
+    that account.
+    """
+    name = AGENTS.get(agent)
+    return tuple() if name is None else tuple(_MANUALS[language][name] for language in _MANUALS)

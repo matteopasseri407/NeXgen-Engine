@@ -10,7 +10,9 @@ causes no damage and maintains configuration alignment.
 """
 from __future__ import annotations
 
+import getpass
 import os
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -41,6 +43,30 @@ from nexgen_core.openclaw.node_transition import (
     stop_node_service_safe,
 )
 from nexgen_core.paths import resolve_home
+from nexgen_core.server_sudo import FAILURES, install as _install_sudo_policy
+
+
+def installing_user() -> str:
+    """Who the agents' sudo rules are written for: the admin who ran the installer.
+
+    `sudo sh install.sh` is how a server is set up, and the gateway still runs as
+    the admin, not as root: a rule written for root would be a rule for a user the
+    agents never are. `SUDO_USER` is set exactly in that case.
+    """
+    return os.environ.get("SUDO_USER") or getpass.getuser()
+
+
+def _default_sudoers_step(home_dir: Path, out: Callable[[str], None]) -> str:
+    return _install_sudo_policy(home=home_dir, user=installing_user(), out=out)
+
+
+def _sudoers_step(
+    sudoers_fn: Callable[..., str] | None,
+    home_dir: Path,
+    out: Callable[[str], None],
+) -> str:
+    """Puts the agents' sudo policy in force, and says what happened."""
+    return (sudoers_fn or _default_sudoers_step)(home=home_dir, out=out)
 
 
 def _install_launchers_step(root: Path, out: Callable[[str], None]) -> None:
@@ -154,9 +180,20 @@ def run_server_role(
     setup_fn: Callable[..., int] | None = None,
     align_fn: Callable[[], tuple[bool, str]] | None = None,
     problems_fn: Callable[[], tuple[int, list[str]]] | None = None,
+    sudoers_fn: Callable[..., str] | None = None,
+    platform: str | None = None,
     out: Callable[[str], None] = print,
 ) -> int:
-    """Server role: always-on OpenClaw gateway on headless Linux."""
+    """Server role: always-on OpenClaw gateway on headless Linux.
+
+    The agents' sudo policy belongs to the machine, so it is written before the
+    gateway is configured: a policy the person has to add by hand after the
+    install is a server that works until the first `docker restart`. The step says
+    what happened and, without sudo, the one command an admin runs instead. A file
+    `visudo` refuses is never installed, and the role reports it at the end with a
+    non-zero code: the gateway still gets configured, and the one promise that did
+    not hold stays visible instead of being swallowed by the summary.
+    """
     out(t("NeXgen Engine · server role (always-on headless Linux gateway)"))
     home_dir = resolve_home(home)
     profile = "MULTI"
@@ -165,6 +202,8 @@ def run_server_role(
     write_remotes(root, profile=profile)
     seed_skill_manifest(root)
     _install_launchers_step(root, out)
+    on_linux = (platform or sys.platform).startswith("linux")
+    policy = _sudoers_step(sudoers_fn, home_dir, out) if on_linux else None
 
     commit_setup(root, [
         root / "99-INDEX" / "USER-PROFILE.md",
@@ -187,6 +226,9 @@ def run_server_role(
     count, _ = checker()
     if count > 0:
         out(t("{count} problem(s) remain: run 'nexgen doctor'", count=count))
+        return 1
+    if policy in FAILURES:
+        out(t("The gateway is configured, but the agents' sudo policy is not in force: see the line above."))
         return 1
     out(t("Server gateway ready."))
     return 0
