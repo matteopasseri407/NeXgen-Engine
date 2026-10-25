@@ -7,13 +7,21 @@ One job: configure a machine into one of three distinct roles:
 
 Idempotent by contract: re-running any role on an already configured machine
 causes no damage and maintains configuration alignment.
+
+The role is also recorded on the machine (`declare_role`), because the rest of
+the engine has to know whether this machine is the always-on one: on a server
+the vault's clone is read-only, and a marker kept only inside the vault would be
+reverted by the next pull that makes it read-only in the first place.
 """
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.first_run import (
     align_now as _default_align,
     commit_setup,
@@ -28,7 +36,67 @@ from nexgen_core.openclaw.node_attach import (
     FULL_EXEC_POLICY,
     apply_exec_policy,
 )
-from nexgen_core.paths import resolve_home
+from nexgen_core.paths import resolve_home, resolve_state_dir
+
+#: The three roles, as the words the installer accepts and this module records.
+SERVER_ROLE = "server"
+NODE_ROLE = "node"
+STANDALONE_ROLE = "standalone"
+ROLES = (SERVER_ROLE, NODE_ROLE, STANDALONE_ROLE)
+
+#: The `machines` value the server role fills into the user profile. It is the
+#: older half of the record: machines configured before the role file existed
+#: carry only this, and it is still read back as a fallback.
+SERVER_MACHINES = "primary (server)"
+_SERVER_PROFILE_MARKER = re.compile(
+    rf"^- \*\*machines\*\*: `{re.escape(SERVER_MACHINES)}`", re.MULTILINE
+)
+
+
+def role_record_path(home: Path | None = None) -> Path:
+    """Where this machine's role is recorded: machine-local state, never synced."""
+    return resolve_state_dir(home) / "nexgen" / "role.json"
+
+
+def declare_role(role: str, home: Path | None = None) -> None:
+    """Records the role that configured this machine.
+
+    Failing to write it must not fail the install: the role still ran, and the
+    profile carries the older marker for the server one.
+    """
+    if role not in ROLES:
+        raise ValueError(f"unknown role {role!r}; expected one of {ROLES}")
+    path = role_record_path(home)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(path, json.dumps({"role": role}, indent=2) + "\n")
+    except OSError as exc:  # nexgen: allow reason="a machine that cannot record its role still finished the role; the profile is the fallback"
+        raise OSError(f"cannot record the role in {path} ({type(exc).__name__})") from exc
+
+
+def declared_role(home: Path | None = None, vault_root: Path | None = None) -> str | None:
+    """The role that configured this machine, or None when nothing says.
+
+    The role file wins, because it is the machine's own answer and survives a
+    vault whose files are replaced by a pull. The profile's `machines` marker
+    is the fallback for machines installed before that file existed.
+    """
+    try:
+        raw = json.loads(role_record_path(home).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw = None
+    role = raw.get("role") if isinstance(raw, dict) else None
+    if isinstance(role, str) and role in ROLES:
+        return role
+    if vault_root is not None:
+        profile = Path(vault_root) / "99-INDEX" / "USER-PROFILE.md"
+        try:
+            text = profile.read_text(encoding="utf-8")
+        except OSError:  # nexgen: allow reason="no readable profile means this older marker says nothing, and the role file already answered"
+            return None
+        if _SERVER_PROFILE_MARKER.search(text):
+            return SERVER_ROLE
+    return None
 
 
 def _install_launchers_step(root: Path, out: Callable[[str], None]) -> None:
@@ -62,6 +130,7 @@ def run_standalone_role(
     home_dir = resolve_home(home)
     profile = "MINIMAL"
 
+    declare_role(STANDALONE_ROLE, home_dir)
     write_user_profile(
         root,
         profile=profile,
@@ -111,7 +180,8 @@ def run_server_role(
     home_dir = resolve_home(home)
     profile = "MULTI"
 
-    write_user_profile(root, profile=profile, clis=["openclaw"], machines="primary (server)")
+    declare_role(SERVER_ROLE, home_dir)
+    write_user_profile(root, profile=profile, clis=["openclaw"], machines=SERVER_MACHINES)
     write_remotes(root, profile=profile)
     seed_skill_manifest(root)
     _install_launchers_step(root, out)
@@ -170,6 +240,7 @@ def run_node_role(
         return 2
     profile = "MINIMAL"
 
+    declare_role(NODE_ROLE, home)
     write_user_profile(
         root,
         profile=profile,

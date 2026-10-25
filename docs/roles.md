@@ -23,6 +23,7 @@ sh install.sh --role server
 - Generates or updates `$OPENCLAW_STATE_DIR/.env` (`~/.openclaw/.env`, permissions `0600`), preserving existing user-defined keys and adding only missing variables referenced by configuration and mounted MCP servers. Never logs secret values.
 - Starts the gateway as a background user service.
 - Applies squad configuration (`squad.yaml`) and registers model provider API keys via standard input.
+- Treats its checkout of the Vault as read-only: the server role is recorded on the machine, `nexgen pull` only fast-forwards that clone, anything local is parked on a `quarantine/diverged-*` branch, and `vault-push` refuses to publish from it. Notes are written with the `vault-library`, which owns the worktree that publishes.
 
 ---
 

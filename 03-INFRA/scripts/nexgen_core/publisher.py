@@ -23,8 +23,10 @@ from nexgen_core.git_ops import (  # noqa: E402 - sys.path shim for cloned check
     publish_changes,
     resolve_remotes,
 )
+from nexgen_core.i18n import t  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.lock import host_mutation  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.paths import resolve_vault_data  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.paths import resolve_engine_root, resolve_vault_data  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.vault_readonly import readonly_reason  # noqa: E402 - sys.path shim for cloned checkout
 
 
 def _resolve_branch(vault_data: Path) -> str:
@@ -59,6 +61,15 @@ class Publisher:
         timeout: float = 30.0
     ) -> tuple[int, str]:
         with host_mutation("vault-push", timeout=timeout):
+            reason = readonly_reason(self.vault_data, engine_root=resolve_engine_root())
+            if reason:
+                # The clone a gateway reads is not the copy notes are written
+                # to: a push from here is what left a server with unpublished
+                # commits and a history nobody could fast-forward.
+                return 1, t(
+                    "Refusing to publish from this vault clone ({reason}). Notes are written with the vault-library.",
+                    reason=reason,
+                )
             auth_remote, mirrors = resolve_remotes(self.vault_data)
             if not get_current_branch(self.vault_data):
                 # A detached HEAD commits onto a commit no branch points at, and
