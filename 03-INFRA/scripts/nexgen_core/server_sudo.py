@@ -147,6 +147,11 @@ def install(
     so does the private copy of the file that waits for a person with sudo. The
     file is checked by `visudo -cf` before anything privileged happens, and the
     installed copy is compared with it so a second run has nothing to do.
+
+    "Can escalate without a prompt" is asked as `sudo -n true`. A machine whose
+    NOPASSWD set is narrower than that will be told to run the one command rather
+    than have the install guess: asking a person is the safe direction, and it
+    always works.
     """
     run = runner or _default_runner
     # POSIX spellings everywhere: these paths name a Linux file, and a command line
