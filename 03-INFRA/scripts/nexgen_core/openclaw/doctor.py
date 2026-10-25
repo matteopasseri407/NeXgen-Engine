@@ -25,7 +25,7 @@ from typing import Any
 
 from nexgen_core import quota_policy
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import background, companion, doctor_agy, doctor_runtime, node_checks, observation
+from nexgen_core.openclaw import background, companion, doctor_agy, doctor_mcp, doctor_runtime, node_checks, observation
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.doctor_install import check_config, check_declaration, check_installed
@@ -36,7 +36,7 @@ from nexgen_core.openclaw.pin import pinned_version, required_node_version
 from nexgen_core.openclaw.profile import PENDING_TOKEN
 from nexgen_core.openclaw.server_gateway import exposure
 from nexgen_core.openclaw.terms import google_subscriptions
-from nexgen_core.paths import is_machine_home, openclaw_config, resolve_home, resolve_vault_data
+from nexgen_core.paths import is_machine_home, mcp_manifest, openclaw_config, resolve_home, resolve_vault_data
 from nexgen_core.report import CheckOutcome, Severity
 
 
@@ -322,6 +322,7 @@ def _config_outcomes(
     connect: doctor_runtime.Connect | None,
     node_lister: node_checks.NodeLister | None,
     platform: str,
+    env: Mapping[str, str] | None = None,
 ) -> list[CheckOutcome]:
     """Every check that reads the configuration in force, in the order a person reads them.
 
@@ -331,6 +332,7 @@ def _config_outcomes(
     policy = failover if failover is not None else quota_policy.load(
         home_dir, vault=resolve_vault_data(home_dir, vault_data),
     )[0]
+    manifest_p = mcp_manifest(resolve_vault_data(home_dir, vault_data))
     outcomes = filter(None, [
         check_ollama_latest(config),
         check_cage(config),
@@ -343,6 +345,7 @@ def _config_outcomes(
         _check_acp(config),
         _check_tool_search(config),
         _check_mcp_lazy(config),
+        doctor_mcp.check_mcp_secret_url(config, manifest_p, env or os.environ),
         check_agent_models(config, snapshot),
         background.report(config),
         observation.report(config, path, home_dir, platform),
@@ -452,6 +455,7 @@ def collect(
     if config is not None:
         outcomes.extend(_config_outcomes(
             config, snapshot, path, home_dir, vault_data, failover, connect, node_lister, system,
+            env=values,
         ))
     outcomes.extend(_store_gateway_outcomes(home_dir, values, system))
     app_outcome = doctor_runtime.check_companion_gateway(

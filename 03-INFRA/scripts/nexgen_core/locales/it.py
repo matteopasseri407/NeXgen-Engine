@@ -1554,6 +1554,12 @@ MESSAGES: dict[str, str] = {
         "Un connettore 'lazy-mcp' personalizzato è configurato in mcp.servers; OpenClaw non usa il gateway del motore.",
     "Verify if this custom connector is needed or rename it to avoid collision with the engine gateway.":
         "Verifica se questo connettore personalizzato serve o rinominalo per evitare collisioni con il gateway del motore.",
+    "MCP server '{servers}' has a literal URL matching a secret declared in the manifest; credentials must not be stored in openclaw.json.":
+        "Il server MCP '{servers}' ha un URL letterale che coincide con un segreto dichiarato nel manifest; le credenziali non devono essere salvate in openclaw.json.",
+    "Run 'nexgen sync' or 'nexgen mcp render' to rewrite the connector through the bridge.":
+        "Esegui 'nexgen sync' o 'nexgen mcp render' per riscrivere il connettore attraverso il ponte.",
+    "No literal secret URLs in OpenClaw MCP configuration.":
+        "Nessun URL segreto letterale nella configurazione MCP di OpenClaw.",
     "The setup adds a binding for these channels: {pairs}.":
         "Il setup aggiunge un binding per questi canali: {pairs}.",
     "The gateway asks for a token.":

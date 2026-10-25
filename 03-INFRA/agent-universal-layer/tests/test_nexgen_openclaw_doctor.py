@@ -692,3 +692,83 @@ def test_mcp_lazy_mounted_by_user_warns(tmp_path):
     assert lazy.severity == Severity.WARN
     assert "custom" in lazy.message.lower()
 
+
+def _write_manifest(tmp_path: Path) -> Path:
+    manifest_p = tmp_path / "vault" / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+    manifest_p.parent.mkdir(parents=True, exist_ok=True)
+    manifest_p.write_text(
+        "schema_version: 1\nservers:\n"
+        "  vault-library:\n"
+        "    tier: core\n"
+        "    transport: http\n"
+        "    url: '${VAULT_LIBRARY_URL}'\n"
+        "    url_env: VAULT_LIBRARY_URL\n"
+        "    auth: {type: bearer, env: VAULT_LIBRARY_TOKEN}\n"
+        "  external-remote:\n"
+        "    tier: core\n"
+        "    transport: http\n"
+        "    url: 'https://api.example.com/mcp'\n",
+        encoding="utf-8",
+    )
+    return manifest_p
+
+
+def test_mcp_secret_url_in_openclaw_config_fails(tmp_path):
+    _write_manifest(tmp_path)
+    secret_url = "http://127.0.0.1:5678/mcp-deadbeef1234"
+    env = {"VAULT_LIBRARY_URL": secret_url, "VAULT_LIBRARY_TOKEN": "secret-token-xyz"}
+    cfg = clean_config()
+    cfg["mcp"] = {
+        "servers": {
+            "vault-library": {
+                "url": secret_url,
+                "transport": "streamable-http",
+            }
+        }
+    }
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg), env=env)
+    outcome = by_id(outcomes)["openclaw.mcp.secret_url"]
+    assert outcome.severity == Severity.BROKEN
+    assert "vault-library" in outcome.message
+    # NEVER print the secret URL or value
+    assert secret_url not in outcome.message
+    assert secret_url not in (outcome.action or "")
+    assert secret_url not in (outcome.detail or "")
+
+
+def test_mcp_secret_url_bridged_passes(tmp_path):
+    _write_manifest(tmp_path)
+    secret_url = "http://127.0.0.1:5678/mcp-deadbeef1234"
+    env = {"VAULT_LIBRARY_URL": secret_url, "VAULT_LIBRARY_TOKEN": "secret-token-xyz"}
+    cfg = clean_config()
+    cfg["mcp"] = {
+        "servers": {
+            "vault-library": {
+                "command": "node",
+                "args": ["/path/to/mcp-http-bridge.mjs", "${VAULT_LIBRARY_URL}", "VAULT_LIBRARY_TOKEN", "mcp-remote@0.1.38"],
+            }
+        }
+    }
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg), env=env)
+    outcome = by_id(outcomes)["openclaw.mcp.secret_url"]
+    assert outcome.severity == Severity.OK
+    assert secret_url not in outcome.message
+
+
+def test_mcp_literal_non_secret_url_passes(tmp_path):
+    _write_manifest(tmp_path)
+    secret_url = "http://127.0.0.1:5678/mcp-deadbeef1234"
+    env = {"VAULT_LIBRARY_URL": secret_url, "VAULT_LIBRARY_TOKEN": "secret-token-xyz"}
+    cfg = clean_config()
+    cfg["mcp"] = {
+        "servers": {
+            "external-remote": {
+                "url": "https://api.example.com/mcp",
+                "transport": "streamable-http",
+            }
+        }
+    }
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg), env=env)
+    outcome = by_id(outcomes)["openclaw.mcp.secret_url"]
+    assert outcome.severity == Severity.OK
+
