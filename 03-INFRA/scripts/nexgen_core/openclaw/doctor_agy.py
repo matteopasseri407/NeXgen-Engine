@@ -22,9 +22,6 @@ GUARDED_MODES = ("sandbox", "settings")
 
 CHECK_ID = "openclaw.google.cli_backend"
 
-#: The one instruction that fixes every mode this module objects to.
-_SET_ACTION = "Set plugins.entries.{backend}.config.permissionMode to 'sandbox' or 'settings'."
-
 
 def _dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
@@ -61,7 +58,8 @@ def _says_nothing(backend: str, mode: str | None) -> CheckOutcome:
         message=t("The local '{backend}' CLI backend declares permissionMode '{mode}', which is neither "
                   "'skip' nor 'sandbox'/'settings': the doctor cannot say whether 'agy' approves a tool "
                   "call by itself.", backend=backend, mode=mode),
-        action=t(_SET_ACTION, backend=backend),
+        action=t("Set plugins.entries.{backend}.config.permissionMode to 'sandbox' or 'settings'.",
+                 backend=backend),
     )
 
 
@@ -79,5 +77,6 @@ def check_local_agy(config: dict[str, Any]) -> CheckOutcome | None:
         message=t("The local '{backend}' CLI backend runs 'agy' with permissionMode '{mode}': 'agy' "
                   "approves every tool call by itself, with no approval from a person.",
                   backend=backend, mode=mode),
-        action=t(_SET_ACTION, backend=backend),
+        action=t("Set plugins.entries.{backend}.config.permissionMode to 'sandbox' or 'settings'.",
+                 backend=backend),
     )
