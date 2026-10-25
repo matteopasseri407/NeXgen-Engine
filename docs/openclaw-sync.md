@@ -210,6 +210,14 @@ rewrites the library and is the person's decision. A removal leaves nothing to
 adopt, and an event from ClawHub or a source install is that installer's business,
 so both are silent.
 
+### Automatic adoption and retirement
+
+`nexgen openclaw adopt --auto` automates canonical library synchronization:
+- **SAFE Ingress**: SAFE resources enter the canonical manifest/library without prompting. REVIEW resources remain held in machine-local state (`openclaw-adopt-state.json`) and are displayed in the `/adopt` command.
+- **Provenance**: Resources entered from OpenClaw are stamped with `origin: openclaw` and their OpenClaw identifier (`openclaw_id`). Hand-written canonical entries lack this mark and are never touched.
+- **Two-Pass Exit**: Adopted resources absent from OpenClaw for two consecutive passes are retired from the manifest/library and unmounted during sync. A single missing pass, unreadable configuration, or offline gateway removes nothing and is logged.
+- **Plugin Job**: `adopt.mjs` registers the `/adopt` command and listens to `skill_changed` events to trigger automatic passes.
+
 ### Evidence
 
 The check the old local lane had, moved into the harness that now runs the loop, so
@@ -330,3 +338,4 @@ matches shell patterns, where it would match by accident rather than by meaning.
 | `openclaw.evidence` | whether the evidence check is on, and for which local models; a WARN when the plugin is enabled but the switch or the conversation access is missing |
 | `openclaw.parity.*` | one line per layer above: PASS when both hosts hold it, WARN with the action when one does not |
 | `openclaw.unadopted` | how many skills and servers OpenClaw created and the canonical library does not declare yet, with `nexgen openclaw adopt` as the action; silent when either manifest cannot be read |
+| `openclaw.adoption` | last auto-adoption pass: count of entered, exited, and pending review items |

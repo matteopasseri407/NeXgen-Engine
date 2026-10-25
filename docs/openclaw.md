@@ -652,7 +652,7 @@ service, declares the module and runs the doctor. What the plan promises is what
 both are computed by the same pure function. On a Windows machine it also ends by pointing the app at this
 gateway and offering the request the app leaves, in the paragraph that follows the summary the doctor prints.
 
-`nexgen openclaw adopt [--skills] [--mcp] [--dry-run] [--yes]` takes what was created inside OpenClaw and
+`nexgen openclaw adopt [--skills] [--mcp] [--dry-run] [--yes] [--auto] [--json]` takes what was created inside OpenClaw and
 makes it canonical: the skills the Skill Workshop learned, the servers in `mcp.servers` that no manifest
 declares, and ClawHub plugins wrapping MCP servers (detected from plugin manifests `openclaw.plugin.json`,
 `package.json`, bundled `mcp.json`/`.mcp.json`, or catalog descriptions matching official/hosted MCP services).
@@ -661,11 +661,20 @@ preserved as references. Installed plugins that are not MCP wrappers (such as ch
 providers) are omitted from adoption with a one-line explanatory note. It prints the plan with every check before writing anything. A name already taken is a refusal and
 never an overwrite, a plaintext credential blocks, and a skill holding a script, an executable or an unknown
 file is a question: `--yes` adopts only what the checks cleared and names what it left. An adopted skill is
-copied into `03-INFRA/agent-universal-layer/skills/<name>/`, declared `origin: vault` in the skills manifest,
+copied into `03-INFRA/agent-universal-layer/skills/<name>/`, declared `origin: openclaw` with `openclaw_id` in the skills manifest,
 built into every view and archived in the Workshop through `openclaw skills workshop archive`, so OpenClaw
 loads the canonical copy like every other CLI; an adopted server enters the MCP manifest lazily, through the
-same writer `nexgen mcp add` uses. The doctor says how much is still waiting and adopts nothing by itself:
-adoption is a person's act.
+same writer `nexgen mcp add` uses, stamped with `origin: openclaw` and its OpenClaw identifier.
+Canonical resources without `origin: openclaw` are never removed by adoption.
+
+When executed with `--auto`, adoption runs non-interactively: resources verified as SAFE enter the canonical library
+immediately, whereas items classified as REVIEW remain outside and are recorded in machine-local state
+(`openclaw-adopt-state.json`, never committed) for review. In addition, `--auto` tracks absences: an adopted resource
+absent from OpenClaw for two consecutive passes is retired from the manifest/library and unmounted on subsequent sync.
+A single missed pass, broken configuration, or unreachable gateway removes nothing and produces an explanatory warning.
+The OpenClaw `nexgen` plugin registers `/adopt` to view pending items and trigger auto-adoption from chat, and the
+`doctor` reports the outcome of the last pass.
+
 
 `nexgen openclaw package [--json]` builds the plugin's npm tarball in the engine's state folder and prints
 the file and its sha256, which is the pair an install on another gateway is checked against. It installs
