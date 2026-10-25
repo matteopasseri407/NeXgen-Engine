@@ -663,6 +663,9 @@ def _settled(engine_repo: Path, current: str, target: update_channel.TargetPlan,
         return True
     if update_channel.version_tuple(target.version) == update_channel.version_tuple(current):
         print("NeXgen Engine is already at the requested released version.")
+        from nexgen_core.update_notes import say_if_tree_off_release
+
+        say_if_tree_off_release(engine_repo, target.ref, _git)
         return True
     return False
 
