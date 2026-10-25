@@ -431,6 +431,17 @@ def test_antigravity_is_installed_regression_directory_footprint(tmp_path: Path)
     assert AntigravityRuntime().is_installed(home) is False
 
 
+@pytest.mark.parametrize("footprint", ["history.jsonl", "conversations", "cli.log"])
+def test_antigravity_is_installed_from_the_cli_own_files_without_settings_json(
+    tmp_path: Path, footprint: str,
+):
+    """Una CLI installata e mai avviata non ha settings.json, ma ha già i suoi file."""
+    home = tmp_path / "home"
+    (home / ".gemini" / "antigravity-cli").mkdir(parents=True)
+    (home / ".gemini" / "antigravity-cli" / footprint).touch()
+    assert AntigravityRuntime().is_installed(home) is True
+
+
 # ── apply_all: l'integrazione ────────────────────────────────────────────
 
 def test_apply_all_skips_every_cli_when_none_installed(tmp_path: Path):
