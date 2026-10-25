@@ -68,18 +68,15 @@ def check_node_connected(
             return False
         try:
             data = json.loads(res.stdout)
-            if isinstance(data, dict):
-                status = str(data.get("status") or "").strip().lower()
-                connected = data.get("connected")
-                if connected is not None:
-                    return bool(connected)
-                return status in ("connected", "running", "online")
+            from nexgen_core.openclaw.node_status import parse_node_status_payload
+
+            parsed = parse_node_status_payload(data)
+            return parsed.is_running
         except json.JSONDecodeError:
             out_lower = res.stdout.lower()
-            return ("connected" in out_lower or "running" in out_lower) and "not connected" not in out_lower
+            return ("running" in out_lower or "connected" in out_lower) and "stopped" not in out_lower
     except Exception:  # nexgen: allow reason="node status query error is safely treated as not connected"
         return False
-    return False
 
 
 def wait_for_node_connection(

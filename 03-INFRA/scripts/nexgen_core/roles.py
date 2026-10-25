@@ -31,6 +31,7 @@ from nexgen_core.openclaw.node_transition import (
     inspect_node_transition,
     normalize_gateway_origin,
     plan_node_transition,
+    start_node_service_safe,
     stop_local_gateway_safe,
     stop_node_service_safe,
 )
@@ -193,6 +194,7 @@ def _handle_existing_node(
     root: Path,
     out: Callable[[str], None],
     align_fn: Callable[[], tuple[bool, str]] | None,
+    runner: Callable[[list[str]], Any] | None = None,
 ) -> tuple[bool, int]:
     """Handles existing node checks. Returns (handled, exit_code)."""
     if not (inspection.node.is_node and inspection.node.gateway_origin):
@@ -202,6 +204,8 @@ def _handle_existing_node(
         new_origin = normalize_gateway_origin(join_target)
         if new_origin == cur_origin:
             out(t("Questa macchina è già nodo del gateway {gw}.", gw=cur_origin))
+            if not inspection.node.is_running:
+                start_node_service_safe(runner=runner, out=out)
             return True, _sync_node_role(root, out, align_fn)
         if not force:
             out(t("Questa macchina è già nodo del gateway {gw}.", gw=cur_origin))
@@ -210,6 +214,8 @@ def _handle_existing_node(
             return True, 1
     else:
         out(t("Questa macchina è già nodo del gateway {gw}.", gw=cur_origin))
+        if not inspection.node.is_running:
+            start_node_service_safe(runner=runner, out=out)
         return True, _sync_node_role(root, out, align_fn)
     return False, 0
 
@@ -331,7 +337,7 @@ def run_node_role(
     join_target = join or target or gateway_url or os.environ.get("NEXGEN_JOIN_URL")
     name = node_name or "node"
 
-    handled, code = _handle_existing_node(inspection, join_target, force, root, out, align_fn)
+    handled, code = _handle_existing_node(inspection, join_target, force, root, out, align_fn, runner=runner)
     if handled:
         return code
     if not join_target:

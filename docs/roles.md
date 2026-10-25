@@ -84,7 +84,7 @@ Se questo computer ha già NeXgen installato (ad esempio come standalone o con u
 - **Aggiornamento motore:** il PC viene prima aggiornato all'ultima versione del motore tramite il canale esistente (`docs/upgrade.md`), poi sincronizzato; mai una seconda copia del motore accanto alla prima.
 - **Gateway locale fermato in sicurezza:** se era attivo un gateway OpenClaw locale, viene fermato e disattivato all'avvio con i comandi documentati (`openclaw gateway stop` e disinstallazione del servizio; le vecchie attività pianificate di Windows o file `.vbs` del gateway vengono rimossi).
 - **Stato preservato intatto:** la cartella `~/.openclaw` (configurazione, cronologia sessioni, memoria), agenti, skill e MCP rimangono intatti. Nessuna cancellazione di cartelle né comandi distruttivi.
-- **Rilanciabile e reversibile:** se rilanciato con lo stesso gateway, rileva che il PC è già nodo ed esegue solo il sync. Per tornare a standalone con il gateway locale riattivato, basta eseguire `sh install.sh --role standalone` / `.\install.ps1 -Role standalone`.
+- **Rilanciabile e reversibile:** se rilanciato con lo stesso gateway, rileva che il PC è già nodo (riavviando il servizio con `openclaw node start` se fermo) ed esegue solo il sync. Per tornare a standalone con il gateway locale riattivato, basta eseguire `sh install.sh --role standalone` / `.\install.ps1 -Role standalone`.
 - **Riepilogo finale:** una schermata con gateway collegato, nome del nodo, servizi fermati, dati conservati e il frammento da inserire in `squad.yaml` sul server.
 
 ---

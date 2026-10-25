@@ -15,10 +15,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 from nexgen_core.i18n import t
 from nexgen_core.openclaw.companion import probe as probe_companion
+from nexgen_core.openclaw.node_status import (
+    normalize_gateway_origin,
+    parse_node_status_payload,
+)
 from nexgen_core.openclaw_service import RunResult
 from nexgen_core.paths import openclaw_config, resolve_home
 
@@ -70,10 +73,12 @@ class ExistingNodeInfo:
     """Whether this machine is already configured or connected as a node."""
 
     is_node: bool
-    connected: bool
+    is_running: bool
     gateway_url: str | None
     gateway_origin: str | None
-    node_name: str | None
+    node_name: str | None = None
+    service_status: str | None = None
+    connected: bool = False
 
 
 @dataclass(frozen=True)
@@ -83,18 +88,6 @@ class TransitionInspection:
     engine: EngineVersionInfo
     gateway: LocalGatewayInfo
     node: ExistingNodeInfo
-
-
-def normalize_gateway_origin(target: str) -> str:
-    """Extracts host or host:port from a join URL, endpoint, or raw host address."""
-    clean = target.strip()
-    if not clean:
-        return ""
-    if "://" in clean:
-        parsed = urlsplit(clean)
-        return parsed.netloc.lower()
-    head = clean.split("/")[0]
-    return head.lower()
 
 
 def detect_engine_versions(
@@ -148,7 +141,7 @@ def _detect_companion_safe(
     if runner is None and not (state_dir.is_dir() or resolved_appdata.is_dir()):
         return False, None
     try:
-        comp = probe_companion(resolved_home, os.environ, plat, wsl_distributions=lambda: [])
+        comp = probe_companion(resolved_home, os.environ, plat, wsl_distributions=list)
         detail = ", ".join(comp.signals) if comp.signals else None
         return comp.present, detail
     except Exception:  # nexgen: allow reason="companion probe failure on unconfigured desktop safely treated as absent"
@@ -212,25 +205,27 @@ def detect_existing_node(
 
     if runner is None and not st_dir.is_dir():
         return ExistingNodeInfo(
-            is_node=False, connected=False, gateway_url=None, gateway_origin=None, node_name=None,
+            is_node=False, is_running=False, gateway_url=None, gateway_origin=None, node_name=None,
         )
 
     gw_url: str | None = None
     node_name: str | None = None
-    connected = False
+    is_running = False
     is_node = False
+    service_status: str | None = None
 
     res = run_fn(["openclaw", "node", "status", "--json"])
     if res.returncode == 0 and res.stdout.strip():
         try:
             data = json.loads(res.stdout)
-            if isinstance(data, dict):
+            parsed = parse_node_status_payload(data)
+            if parsed.is_node:
                 is_node = True
-                status = str(data.get("status") or "").strip().lower()
-                conn = data.get("connected")
-                connected = bool(conn) if conn is not None else status in ("connected", "running", "online")
-                gw_url = data.get("gateway") or data.get("gatewayUrl") or data.get("endpoint")
-                node_name = data.get("displayName") or data.get("name")
+                is_running = parsed.is_running
+                gw_url = parsed.gateway_url
+                service_status = parsed.raw_status
+                if isinstance(data, dict):
+                    node_name = data.get("displayName") or data.get("name")
         except json.JSONDecodeError:  # nexgen: allow reason="non-json node status output safely handled"
             pass
 
@@ -248,10 +243,12 @@ def detect_existing_node(
     origin = normalize_gateway_origin(gw_url) if gw_url else None
     return ExistingNodeInfo(
         is_node=is_node,
-        connected=connected,
+        is_running=is_running,
         gateway_url=gw_url,
         gateway_origin=origin,
         node_name=node_name,
+        service_status=service_status,
+        connected=is_running,
     )
 
 
@@ -300,7 +297,10 @@ def plan_node_transition(inspection: TransitionInspection) -> list[str]:
         lines.append(t("- App OpenClaw Companion: rilevata (non verrà toccata nei suoi file)."))
 
     if inspection.node.is_node and inspection.node.gateway_url:
-        lines.append(t("- Stato nodo: già nodo del gateway {gw}.", gw=inspection.node.gateway_url))
+        if not inspection.node.is_running:
+            lines.append(t("- Stato nodo: già nodo del gateway {gw}, servizio fermo.", gw=inspection.node.gateway_url))
+        else:
+            lines.append(t("- Stato nodo: già nodo del gateway {gw}.", gw=inspection.node.gateway_url))
     else:
         lines.append(t("- Stato nodo: non ancora collegato come nodo a un gateway."))
 
@@ -362,6 +362,17 @@ def stop_node_service_safe(
     out(t("Disattivazione servizio nodo OpenClaw..."))
     run_fn(["openclaw", "node", "stop"])
     run_fn(["openclaw", "node", "uninstall"])
+    return {"ok": True}
+
+
+def start_node_service_safe(
+    runner: Callable[[list[str]], RunResult] | None = None,
+    out: Callable[[str], None] = print,
+) -> dict[str, Any]:
+    """Starts node host service using documented 'openclaw node start'."""
+    run_fn = runner or _safe_default_runner
+    out(t("Riavvio servizio nodo OpenClaw con 'openclaw node start'..."))
+    run_fn(["openclaw", "node", "start"])
     return {"ok": True}
 
 

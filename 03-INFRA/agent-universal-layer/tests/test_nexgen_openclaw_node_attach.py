@@ -36,13 +36,49 @@ def test_connect_node_service_uses_target_file_and_protects_secrets() -> None:
 
 def test_check_node_connected() -> None:
     runner = MagicMock()
-    runner.return_value = RunResult(0, '{"connected": true, "status": "connected"}', "")
+    # Windows Scheduled Task: running
+    win_running = (
+        '{"service": {"label": "Scheduled Task", "loaded": true, "command": '
+        '{"programArguments": ["node.exe", "index.js", "node", "run", "--host", "gw.tailnet", "--port", "443", "--tls"]}, '
+        '"runtime": {"status": "running"}}}'
+    )
+    runner.return_value = RunResult(0, win_running, "")
     assert check_node_connected(runner) is True
 
-    runner.return_value = RunResult(0, '{"connected": false, "status": "disconnected"}', "")
+    # Windows Scheduled Task: stopped (real owner machine case)
+    win_stopped = (
+        '{"service": {"label": "Scheduled Task", "loaded": true, "command": '
+        '{"programArguments": ["node.exe", "index.js", "node", "run", "--host", "gw.tailnet", "--port", "443", "--tls"]}, '
+        '"runtime": {"status": "stopped", "state": "Ready"}}}'
+    )
+    runner.return_value = RunResult(0, win_stopped, "")
     assert check_node_connected(runner) is False
 
-    runner.return_value = RunResult(1, "", "gateway down")
+    # Linux systemd: running
+    linux_running = (
+        '{"service": {"label": "systemd", "loaded": true, "command": '
+        '{"programArguments": ["/usr/bin/node", "index.js", "node", "run", "--host", "gw.tailnet", "--port", "18789"]}, '
+        '"runtime": {"status": "running"}}}'
+    )
+    runner.return_value = RunResult(0, linux_running, "")
+    assert check_node_connected(runner) is True
+
+    # Linux systemd: stopped
+    linux_stopped = (
+        '{"service": {"label": "systemd", "loaded": true, "command": '
+        '{"programArguments": ["/usr/bin/node", "index.js", "node", "run", "--host", "gw.tailnet", "--port", "18789"]}, '
+        '"runtime": {"status": "stopped"}}}'
+    )
+    runner.return_value = RunResult(0, linux_stopped, "")
+    assert check_node_connected(runner) is False
+
+    # No service loaded
+    no_service = '{"service": {"label": "Scheduled Task", "loaded": false, "command": null, "runtime": {"status": "stopped"}}}'
+    runner.return_value = RunResult(0, no_service, "")
+    assert check_node_connected(runner) is False
+
+    # Command execution failure
+    runner.return_value = RunResult(1, "", "daemon inspection failure")
     assert check_node_connected(runner) is False
 
 
