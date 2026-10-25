@@ -1,10 +1,11 @@
 """The doctor's line about the local Google Antigravity CLI backend.
 
 One job: say how the file drives `agy`, and warn when the plugin was told to let
-`agy` approve its own tool calls. Which ids count as a Google plan, and which single
-one does not, is `terms`' decision; here we only read the switch that plugin was
-given, because a CLI that approves every call itself is a machine that runs whatever
-the model asks for.
+`agy` approve its own tool calls (or omitted permissionMode, which defaults to
+`skip` in the plugin). Which ids count as a Google plan, and which single one does
+not, is `terms`' decision; here we only read the switch that plugin was given,
+because a CLI that approves every call itself is a machine that runs whatever the
+model asks for.
 """
 from __future__ import annotations
 
@@ -15,8 +16,8 @@ from nexgen_core.openclaw.terms import local_agy_backend
 from nexgen_core.report import CheckOutcome, Severity
 
 #: The plugin's own permission modes for `agy`. `skip` is the one that hands tool
-#: approval to the CLI; `sandbox` and `settings` leave a boundary in place, and so
-#: does declaring none, which lets `agy` apply the settings it already saved.
+#: approval to the CLI, and it is the plugin's default when none is declared;
+#: `sandbox` and `settings` leave a boundary in place.
 AUTO_APPROVING_MODE = "skip"
 GUARDED_MODES = ("sandbox", "settings")
 
@@ -34,16 +35,8 @@ def _permission_mode(config: dict[str, Any], backend: str) -> str | None:
     return value.strip().lower() if isinstance(value, str) and value.strip() else None
 
 
-def _says_nothing(backend: str, mode: str | None) -> CheckOutcome:
-    """The quiet cases: a mode that keeps a boundary, or none at all."""
-    if mode is None:
-        return CheckOutcome(
-            id=CHECK_ID,
-            severity=Severity.OK,
-            message=t("The local '{backend}' CLI backend is configured: 'agy' keeps its own login and "
-                      "OpenClaw holds no Google credential; it declares no permissionMode, so 'agy' "
-                      "applies the settings it has saved.", backend=backend),
-        )
+def _says_nothing(backend: str, mode: str) -> CheckOutcome:
+    """The quiet cases: a mode that keeps a boundary."""
     if mode in GUARDED_MODES:
         return CheckOutcome(
             id=CHECK_ID,
@@ -68,7 +61,7 @@ def check_local_agy(config: dict[str, Any]) -> CheckOutcome | None:
     backend = local_agy_backend(config)
     if backend is None:
         return None
-    mode = _permission_mode(config, backend)
+    mode = _permission_mode(config, backend) or AUTO_APPROVING_MODE
     if mode != AUTO_APPROVING_MODE:
         return _says_nothing(backend, mode)
     return CheckOutcome(

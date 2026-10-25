@@ -268,11 +268,12 @@ has one, including an OAuth entry under another name. A `gemini` seat in `acp.al
 because it is allowed by the protocol and not by the terms.
 
 One road stays open, and it is Google's own client doing the work: a CLI backend plugin that runs the
-official `agy` CLI as a local process. `agy` keeps the login and the session, OpenClaw holds only the
+official `agy` CLI as a local process (OpenClaw documents CLI backends in `docs/gateway/cli-backends.md`
+and `docs/plugins/cli-backend-plugins.md`). `agy` keeps the login and the session, OpenClaw holds only the
 synthetic marker and never a Google token, and the route is `google-antigravity-cli/*` or an `agentRuntime.id`
 with the same id. `nexgen openclaw doctor` gives that backend its own line and names the permission mode the
-plugin was given: `skip` is a warning, because it lets `agy` approve every tool call by itself, while
-`sandbox` and `settings` keep an approval boundary.
+plugin was given: `skip` (and omitting it, which is the plugin's default) is a warning, because it lets
+`agy` approve every tool call by itself, while `sandbox` and `settings` keep an approval boundary.
 
 ## Windows, the traps that cost an afternoon
 

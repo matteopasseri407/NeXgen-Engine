@@ -1574,8 +1574,6 @@ MESSAGES: dict[str, str] = {
         "Imposta plugins.entries.{backend}.config.permissionMode a 'sandbox' o 'settings'.",
     "The local '{backend}' CLI backend is configured: 'agy' keeps its own login and OpenClaw holds no Google credential (permissionMode '{mode}').":
         "Il backend CLI locale '{backend}' è configurato: 'agy' conserva il proprio login e OpenClaw non detiene nessuna credenziale Google (permissionMode '{mode}').",
-    "The local '{backend}' CLI backend is configured: 'agy' keeps its own login and OpenClaw holds no Google credential; it declares no permissionMode, so 'agy' applies the settings it has saved.":
-        "Il backend CLI locale '{backend}' è configurato: 'agy' conserva il proprio login e OpenClaw non detiene nessuna credenziale Google; non dichiara permissionMode, quindi 'agy' applica le impostazioni che ha salvato.",
     "The local '{backend}' CLI backend declares permissionMode '{mode}', which is neither 'skip' nor 'sandbox'/'settings': the doctor cannot say whether 'agy' approves a tool call by itself.":
         "Il backend CLI locale '{backend}' dichiara permissionMode '{mode}', che non è né 'skip' né 'sandbox'/'settings': il doctor non può dire se 'agy' approva da solo una chiamata di tool.",
     "The ACP bridge allows the 'gemini' agent; its terms do not allow it outside Google's clients.":

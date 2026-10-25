@@ -389,8 +389,9 @@ def test_the_local_agy_cli_backend_is_not_a_subscription(tmp_path):
     assert outcomes["openclaw.google.cli_backend"].severity == Severity.OK
 
 
-def test_the_local_agy_cli_backend_approving_its_own_tools_is_a_warning(tmp_path):
-    config = local_agy_config("skip")
+@pytest.mark.parametrize("mode", ["skip", None])
+def test_the_local_agy_cli_backend_approving_its_own_tools_is_a_warning(tmp_path, mode):
+    config = local_agy_config(mode)
     outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, config)))
 
     line = outcomes["openclaw.google.cli_backend"]
@@ -400,7 +401,7 @@ def test_the_local_agy_cli_backend_approving_its_own_tools_is_a_warning(tmp_path
     assert exit_code(list(outcomes.values())) == 0
 
 
-@pytest.mark.parametrize("mode", ["sandbox", "settings", None])
+@pytest.mark.parametrize("mode", ["sandbox", "settings"])
 def test_a_guarded_agy_permission_mode_passes(tmp_path, mode):
     outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, local_agy_config(mode))))
 
