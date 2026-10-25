@@ -67,6 +67,18 @@ def test_a_finished_task_leaves_a_stale_tab_with_its_whole_tree(lane, posix):
     assert found["keep"] == []
 
 
+def test_a_task_with_retired_units_is_finished(lane, posix):
+    task = _task(lane)
+    _unit(task)
+    state.append_event(task, "unit_retired", unit="prova", why="ritirata", copy="C:/copia", branch="sup/x")
+
+    found = cleanup.survey(table=[_tab(task), _child()])
+
+    assert [tab.reason for tab in found["close"]] == ["finito"]
+    assert found["keep"] == []
+
+
+
 def test_a_task_the_lane_cannot_open_any_more_is_stale(lane, posix):
     """Una prova in una NEXGEN_HOME temporanea sparisce dalla corsia: la scheda no."""
     found = cleanup.survey(table=[_tab("20200101-000000-mai-esistito")])
@@ -261,7 +273,7 @@ def test_collect_closes_a_stopped_tab_before_the_report_is_read(monkeypatch):
     line = sup_cmd._close_stopped_tab("t1", "prova")
 
     assert line == "scheda chiusa"
-    assert calls == [("t1", "esecutore", {"still_working": ("prova",), "stopped": True})]
+    assert calls == [("t1", "esecutore", {"still_working": ("prova",), "stopped": True, "unit": "prova"})]
 
 
 def test_collect_leaves_a_working_tab_alone(monkeypatch):

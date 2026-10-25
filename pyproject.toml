@@ -27,7 +27,8 @@ keywords = ["agents", "mcp", "automation", "knowledge-vault", "ai-agents", "clau
 # SQLite checkpoints) is core: every machine provisions it. Only the model
 # endpoint itself (your Ollama server, your opencode-attached model) is the
 # user's own business and never ships here.
-dependencies = ["PyYAML>=6.0,<7.0", "langgraph>=1.0,<2", "langchain-ollama>=1.0,<2", "httpx>=0.28,<1", "mcp>=2.2.0,<3", "langgraph-checkpoint-sqlite>=3,<4"]
+# websockets is used by nexgen_core.openclaw.gateway_rpc to talk to OpenClaw Gateway.
+dependencies = ["PyYAML>=6.0,<7.0", "langgraph>=1.0,<2", "langchain-ollama>=1.0,<2", "httpx>=0.28,<1", "mcp>=2.2.0,<3", "langgraph-checkpoint-sqlite>=3,<4", "websockets>=14.0,<17"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-xdist>=3.6", "ruff>=0.6"]
@@ -61,7 +62,6 @@ vault-map = "nexgen_core.entrypoints:vault_map"
 agent-now = "nexgen_core.entrypoints:agent_now"
 agent-open-folder = "nexgen_core.entrypoints:agent_open_folder"
 agent-chrome = "nexgen_core.entrypoints:agent_chrome"
-firecrawl-local = "nexgen_core.entrypoints:firecrawl_local"
 nexgen-update = "nexgen_core.entrypoints:nexgen_update"
 skills-sync = "nexgen_core.entrypoints:skills_sync"
 agent-skill = "nexgen_core.entrypoints:agent_skill"

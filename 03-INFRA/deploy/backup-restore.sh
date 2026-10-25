@@ -1,16 +1,13 @@
 #!/usr/bin/env bash
 # backup-restore — volume backup, restore, and image-pin rollback for the
-# Cloud-Server deploy stacks (n8n, firecrawl, ocr).
+# Cloud-Server deploy stacks (n8n, ocr).
 #
 # Usage:
-#   backup-restore.sh backup [n8n|firecrawl|ocr|all]
+#   backup-restore.sh backup [n8n|ocr|all]
 #     Tars + gzips every named volume declared in the target stack's
 #     docker-compose.yml, writes it to $BACKUP_DIR, then prunes old
 #     archives so only the $RETENTION_COUNT most recent per volume remain.
-#     A stack with no named volumes (ocr today) is a no-op. firecrawl now
-#     declares firecrawl-nuq-data (the NUQ queue Postgres) and is picked up
-#     automatically; restoring it requires the matching
-#     FIRECRAWL_POSTGRES_PASSWORD in .env (see .env.example). vault-mcp uses
+#     A stack with no named volumes (ocr today) is a no-op. vault-mcp uses
 #     host bind mounts, not volumes — the vault is backed up by its own Git
 #     remotes, not by this script.
 #
@@ -30,11 +27,11 @@
 #   RETENTION_COUNT   archives kept per volume (default: 7)
 #   BACKUP_HOT=1      copy a volume while the containers using it keep running.
 #                     Off by default: a database file copied while it is being
-#                     written (n8n's SQLite, the NUQ queue's Postgres) can be an
-#                     archive that restores into a corrupt database, and nobody
-#                     finds out until the day it is needed. By default the
-#                     containers that mount the volume are stopped for the few
-#                     seconds the copy takes and started again, also on failure.
+#                     written (n8n's SQLite today) can be an archive that
+#                     restores into a corrupt database, and nobody finds out
+#                     until the day it is needed. By default the containers
+#                     that mount the volume are stopped for the few seconds the
+#                     copy takes and started again, also on failure.
 #
 # Archive naming: <volume>_<UTC timestamp>.tar.gz, e.g.
 #   n8n-data_20260712T140502Z.tar.gz
@@ -56,7 +53,7 @@ HELPER_IMAGE="alpine:3.21"
 usage() {
   cat <<'EOF'
 Usage:
-  backup-restore.sh backup [n8n|firecrawl|ocr|all]
+  backup-restore.sh backup [n8n|ocr|all]
   backup-restore.sh restore <backup-file> <volume-name>
   backup-restore.sh rollback <stack> <image-env-var> <previous-image-ref>
 
@@ -78,9 +75,8 @@ containers_using() {
 compose_file_for() {
   case "$1" in
     n8n) echo "$DEPLOY_DIR/n8n/docker-compose.yml" ;;
-    firecrawl) echo "$DEPLOY_DIR/firecrawl/docker-compose.yml" ;;
     ocr) echo "$DEPLOY_DIR/ocr/docker-compose.yml" ;;
-    *) echo "unknown stack: $1 (expected n8n, firecrawl, or ocr)" >&2; exit 2 ;;
+    *) echo "unknown stack: $1 (expected n8n or ocr)" >&2; exit 2 ;;
   esac
 }
 
@@ -155,8 +151,8 @@ cmd_backup() {
   local target="${1:-all}"
   local stacks=()
   case "$target" in
-    all) stacks=(n8n firecrawl ocr) ;;
-    n8n|firecrawl|ocr) stacks=("$target") ;;
+    all) stacks=(n8n ocr) ;;
+    n8n|ocr) stacks=("$target") ;;
     *) echo "unknown backup target: $target" >&2; usage >&2; exit 2 ;;
   esac
   local any_volume=0
@@ -171,7 +167,7 @@ cmd_backup() {
   done
   if [ "$any_volume" -eq 0 ]; then
     echo "no named volumes declared for target '$target' — nothing to back up"
-    echo "(firecrawl and ocr are stateless in this stack today; only n8n has a volume)"
+    echo "(ocr is stateless in this stack today; only n8n has a volume)"
   fi
 }
 

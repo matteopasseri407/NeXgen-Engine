@@ -159,10 +159,11 @@ def test_a_windows_shim_is_invoked_through_cmd(tmp_path, monkeypatch):
 def test_a_windows_shim_is_wrapped_and_a_plain_command_is_not(tmp_path, monkeypatch):
     """La stessa regola, provata su ogni piattaforma: si sostituisce solo il
     nome che l'helper legge dentro `nexgen_core.processes` (il modulo os vero
-    resta intatto, come vuole l'intestazione di questo file). Un .cmd passa da
-    cmd.exe, un comando normale resta quello che il chiamante ha chiesto,
-    cosi' la prova del fix vale anche nella CI Linux, dove i test
-    Windows-only vengono saltati."""
+    resta intatto, come vuole l'intestazione di questo file). Un .cmd che non e'
+    di npm passa da cmd.exe, un comando normale resta quello che il chiamante ha
+    chiesto, cosi' la prova del fix vale anche nella CI Linux, dove i test
+    Windows-only vengono saltati. Gli shim di npm hanno la loro prova in
+    test_nexgen_npm_shims.py: partono come node piu' la loro voce, mai da qui."""
     from types import SimpleNamespace
 
     from nexgen_core import processes
@@ -170,12 +171,12 @@ def test_a_windows_shim_is_wrapped_and_a_plain_command_is_not(tmp_path, monkeypa
     monkeypatch.setattr(processes, "os", SimpleNamespace(name="nt"))
     monkeypatch.setattr(
         processes.shutil, "which",
-        lambda name: str(tmp_path / f"{name}.cmd") if name == "npx" else str(tmp_path / name),
+        lambda name: str(tmp_path / f"{name}.cmd") if name == "codex" else str(tmp_path / name),
     )
 
-    wrapped = processes.windows_command_argv(["npx", "install"])
+    wrapped = processes.windows_command_argv(["codex", "exec"])
     assert wrapped[:4] == ["cmd.exe", "/d", "/s", "/c"]
-    assert wrapped[4] == str(tmp_path / "npx.cmd")
-    assert wrapped[5:] == ["install"]
+    assert wrapped[4] == str(tmp_path / "codex.cmd")
+    assert wrapped[5:] == ["exec"]
 
     assert processes.windows_command_argv(["runner", "exec"]) == ["runner", "exec"]

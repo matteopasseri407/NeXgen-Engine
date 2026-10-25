@@ -1,3 +1,4 @@
+# nexgen: one-job reason="every read-only tool the lane can reach, each one confined, capped and receipted the same way"
 """Read-only tools with canonical confinement, caps and fail-closed audit.
 
 Every tool in this module can only read. There is no write tool, no shell
@@ -156,8 +157,11 @@ def audit_event(
 class ToolRegistry:
     """The lane's whole capability surface: fourteen read-only tools."""
 
-    def __init__(self, cfg: LaneConfig) -> None:
+    def __init__(self, cfg: LaneConfig, http: Any = None) -> None:
         self.cfg = cfg
+        #: The transport the web tool calls, `(request, timeout) -> HttpResult`.
+        #: None uses the stdlib one; a test hands in a recorder and no network.
+        self.http = http
         self.calls: list[ToolCall] = []
         #: Display texts for unsuccessful operations, retained for old
         #: checkpoint compatibility. Fresh decisions use `calls[].status`.
@@ -359,15 +363,19 @@ class ToolRegistry:
         query = str(query).strip()
         if not query:
             return self._refuse("web_search", {"query": query}, "(query vuota)")
-        if not shutil.which(self.cfg.firecrawl_cmd):
-            return self._refuse("web_search", {"query": query}, "(firecrawl-local non disponibile)")
-        run = self._run([self.cfg.firecrawl_cmd, "search", query], timeout=120)
-        if not run.ok:
-            detail = (run.err or run.out).strip()[:200] or f"rc={run.rc}"
-            return self._refuse("web_search", {"query": query}, f"(ricerca web fallita: {detail})")
-        output = run.out.strip()
-        if not output:
+        from .connectors import ConnectorError
+        from .connectors import web as web_conn
+
+        try:
+            hits = web_conn.search(
+                query, limit=self.cfg.max_results, timeout=self.cfg.firecrawl_timeout,
+                http=self.http,
+            )
+        except ConnectorError as exc:
+            return self._refuse("web_search", {"query": query}, exc.refusal)
+        if not hits:
             return self._record("web_search", {"query": query}, "(nessun risultato)", status="empty")
+        output = "\n".join(hits)
         if len(output) > self.cfg.read_chars:
             output = output[: self.cfg.read_chars] + "\n[...troncato]"
         return self._record("web_search", {"query": query}, output)

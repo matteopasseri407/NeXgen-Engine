@@ -263,3 +263,26 @@ def test_the_grant_is_merged_into_the_hooks_block_already_there(tmp_path):
         "timeoutMs": 30000,
         "allowConversationAccess": True,
     }
+
+
+
+def test_the_plan_finds_the_squad_in_the_vault_when_no_vault_is_passed(tmp_path: Path, monkeypatch) -> None:
+    """`nexgen openclaw setup` passes no vault: the squad in the user's vault still applies."""
+    home = a_home(tmp_path, local_config())
+    vault = tmp_path / "vault"
+    (vault / "03-INFRA").mkdir(parents=True)
+    (vault / "03-INFRA" / "squad.yaml").write_text(
+        'default: "main"\nagents:\n  main:\n    name: "Agente Prova"\n    model: "anthropic/claude-sonnet-5-5"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENT_VAULT_DATA", str(vault))
+
+    plan = build_plan(
+        detected=machine(home / ".openclaw" / "openclaw.json"),
+        choices=Choices(),
+        home=home,
+        engine_root=tmp_path / "engine",
+        plugin_deposited=True,
+    )
+
+    assert plan.config["agents"]["entries"]["main"]["name"] == "Agente Prova"

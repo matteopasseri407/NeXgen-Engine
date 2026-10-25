@@ -142,7 +142,7 @@ def test_the_catalog_the_engine_ships_describes_files_that_exist_in_the_shape_it
     """The first thing to break when a compose file or the launcher is reformatted."""
     catalog = load_catalog(INFRA)
     declared = {mid: m.upstream for mid, m in catalog.items() if m.upstream}
-    assert {"n8n", "firecrawl", "browser"} <= set(declared)
+    assert {"n8n", "browser"} <= set(declared)
     for module_id, components in declared.items():
         for component in components:
             assert depwatch._module_pin_version(INFRA, component), f"{module_id}/{component.name}: pin not found in {component.pinned_in}"

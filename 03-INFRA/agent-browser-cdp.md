@@ -28,7 +28,7 @@ Read-only scraping/search goes through `firecrawl`, self-hosted on the remote ba
 ## Procedure for any agent (every web task)
 
 1. Check it is up: `curl http://localhost:9222/json/version` (Linux/Mac) or `Invoke-RestMethod http://localhost:9222/json/version` (Windows).
-2. If not up, start it (local + reversible, no approval): run the launcher configured during install, then poll the port until it answers.
+2. If not up, start it (local + reversible, no approval): run the launcher (`agent-chrome --ensure`), then poll the port until it answers. Agents never start `chrome.exe` directly.
 3. Attach and reuse the visible window — never `launch()`:
 
 ```python
@@ -126,7 +126,7 @@ both handled:
 **Hard rule — unequivocal and MANDATORY for every agent and every model, cheap models included, no exceptions (Rosetta Stone).** The moment a task touches the web — a URL, a page, a login, a form, scraping, "look at / open / fill / check / search" something online — the agent acts PROACTIVELY and immediately. The user does not have to ask, explain the method, or beg: as soon as they say do something web-related, you are already opening/entering the shared Chrome. Every time, in order:
 
 1. Check CDP: `GET http://localhost:9222/json/version`.
-2. If it does not answer, **START it yourself** (run the launcher — local, reversible, no approval needed), then wait for the port to respond.
+2. If it does not answer, **START it yourself** (run the launcher: `agent-chrome --ensure` — local, reversible, no approval needed; agents never start `chrome.exe` directly), then wait for the port to respond.
 3. ATTACH over CDP and reuse the existing VISIBLE window (`browser.contexts[0]`), then work.
 
 ## Headless carve-out and per-OS launchers (moved from the bootstrap)
@@ -134,6 +134,6 @@ both handled:
 **Headless carve-out — read-only & anonymous only.** The DEFAULT lane for scraping/search is `firecrawl` (self-hosted on the remote backend, via local SSH tunnel) — server-side, off this machine, no local browser. **Local headless is permitted, but strictly as an exception, never the habit:** only for read-only, anonymous, non-logged-in work where firecrawl genuinely doesn't fit — and never, ever silently for anything interactive, authenticated, or state-changing, which always stays in the visible shared Chrome. The dividing line is NOT "scraping vs not" but **read-only & anonymous** vs **anything touching their session or changing state**. Escalate to the user only if the launcher itself fails.
 
 - **Linux/Mac**: there is ONE Chrome for the user and agents. A launcher (`agent-chrome '<URL>'`) is provided by the MULTI provisioner and launches the user's personal working profile from a non-default CDP-capable path; it is the system default browser and the only visible Chrome launcher. Never start plain Chrome or another profile. In `profile: MINIMAL` without the launcher installed, attach to the user's existing visible Chrome over CDP (`http://localhost:9222/json/version`), or ask them to open Chrome with `--remote-debugging-port=9222` from a non-default user-data-dir.
-- **Windows**: uses the shared CDP Chrome at `http://localhost:9222`. Attach to the existing shared Chrome and never spawn another browser. Full runbook: `03-INFRA/agent-browser-cdp.md`.
+- **Windows**: uses the shared CDP Chrome at `http://localhost:9222`. Attach to the existing shared Chrome and never spawn another browser (run `agent-chrome --ensure`, never launch `chrome.exe` directly). Full runbook: `03-INFRA/agent-browser-cdp.md`.
 
 Chrome 136+ blocks remote debugging on the standard default data directory. The solution is not a second daily browser: the user's single working profile must live in a non-default path launched with CDP enabled.

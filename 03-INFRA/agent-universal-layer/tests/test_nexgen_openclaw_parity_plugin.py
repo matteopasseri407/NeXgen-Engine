@@ -630,3 +630,39 @@ console.log(JSON.stringify({{ text }}));
 """)
 
     assert fired["text"].startswith("quota: the engine did not answer in time")
+
+
+# --------------------------------------------------------------------- /spend
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_plugin_registers_the_spend_command(tmp_path):
+    fired = drive(deployed(tmp_path), """
+console.log(JSON.stringify([...commands.values()].map((spec) => ({name: spec.name, description: spec.description}))));
+""")
+
+    spend = [spec for spec in fired if spec["name"] == "spend"]
+    assert len(spend) == 1
+    assert spend[0]["description"]  # a command with no description is a command nobody finds
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_spend_asks_the_engine_for_nexgen_usage_and_forwards_its_lines(tmp_path):
+    """The numbers are printed once, by `nexgen usage --json`: the chat forwards them."""
+    target = a_quota_plugin(tmp_path, (
+        "if (process.argv[2] !== 'usage' || process.argv[3] !== '--json') { console.error(process.argv.slice(2)); process.exit(2); }\n"
+        "console.log(JSON.stringify({lines: ['OpenCode Go: 2.00 $ in the last 30d', 'Claude Code: 150 tokens in the last 5h']}));"
+    ))
+
+    fired = drive(target, "console.log(JSON.stringify(await command('spend')));\n")
+
+    assert fired == {"text": "OpenCode Go: 2.00 $ in the last 30d\nClaude Code: 150 tokens in the last 5h"}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_spend_leaves_openclaws_own_usage_command_alone(tmp_path):
+    """`/usage` is OpenClaw's footer and its own cost summary: the engine answers beside it."""
+    fired = drive(deployed(tmp_path), "console.log(JSON.stringify([...commands.keys()]));\n")
+
+    assert "spend" in fired
+    assert "usage" not in fired

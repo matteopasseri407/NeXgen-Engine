@@ -100,6 +100,13 @@ def read_jsonl(path: Path) -> list[dict]:
 def append_event(task_id: str, event: str, **fields) -> dict:
     """Record one event on the task's journal and return the written row."""
     folder = open_task(task_id)
+    if event == "attached" and (not fields.get("harness") or fields.get("harness") == "opencode"):
+        unit = str(fields.get("unit") or "")
+        if unit:
+            for rec in _units_from_events(read_events(task_id)):
+                if rec["unit"] == slug(unit) and rec.get("harness") and rec["harness"] != "opencode":
+                    fields["harness"] = rec["harness"]
+                    break
     row: dict = {"at": now_iso(), "event": event, "task": task_id}
     row.update({key: value for key, value in fields.items() if value is not None})
     append_jsonl(folder / JOURNAL_FILE, row)
@@ -372,7 +379,7 @@ def _blank_unit(unit: str) -> dict:
         "approved": False, "approved_head": "", "published": [], "model": "",
         "stalled_minutes": 0.0, "stall_threshold": 0.0, "repo": "", "base_ref": "",
         "cost": {}, "folder": "", "retired": False, "publish_conflicts": [],
-        "mcp": [],
+        "mcp": [], "identity": {},
     }
 
 
@@ -380,6 +387,7 @@ def _fold_creation(record: dict, row: dict) -> None:
     """What `unit_created` says: the copy, its branch, the base it started from and the scope it may touch."""
     record.update({
         "role": "esecutore",
+        "harness": str(row.get("harness") or record.get("harness") or ""),
         "repo": str(row.get("repo") or ""),
         "base_ref": str(row.get("base_ref") or ""),
         "worktree": str(row.get("worktree") or ""),
@@ -393,6 +401,7 @@ def _fold_creation(record: dict, row: dict) -> None:
         "remote_pushurls": dict(row.get("remote_pushurls") or {}),
         "config_hashes": dict(row.get("config_hashes") or {}),
         "url_override_keys": [str(key) for key in row.get("url_override_keys") or []],
+        "identity": dict(row.get("identity") or {}) if isinstance(row.get("identity"), dict) else {},
     })
 
 

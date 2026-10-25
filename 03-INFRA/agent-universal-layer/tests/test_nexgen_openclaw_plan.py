@@ -181,7 +181,42 @@ def test_the_human_plan_says_that_nothing_was_written(tmp_path):
     text = render_plan(build_plan(detected=detected(path), home=home, env={}))
     assert "Nothing was written" in text
     assert "opencode-go/deepseek-v4.1-flash" in text
-    assert "assistente" in text
+    # The name the configuration carries, in the language the plan is written in.
+    assert "assistant" in text
+
+
+def test_the_plan_of_a_server_keeps_loopback_and_asks_for_tailscale_serve(tmp_path):
+    home = tmp_path / "home"
+    path = put_config(home, {})
+
+    payload = build_plan(detected=detected(path), home=home, env={}, choices=Choices(serve=True)).to_dict()
+
+    assert payload["config"]["gateway"]["bind"] == "loopback"
+    assert payload["config"]["gateway"]["tailscale"] == {"mode": "serve"}
+
+
+def test_the_plan_command_passes_the_server_flag_to_the_same_choice(monkeypatch):
+    """`plan --server` is the read-only preview of what `setup --server` writes."""
+    import argparse
+
+    from nexgen_core.cli import openclaw_cmds
+
+    captured: dict = {}
+
+    class FakePlan:
+        def to_dict(self) -> dict:
+            return {}
+
+    def fake_build(**kwargs):
+        captured.update(kwargs)
+        return FakePlan()
+
+    monkeypatch.setattr("nexgen_core.openclaw.plan.build_plan", fake_build)
+    args = argparse.Namespace(json=True, lan=False, server=True, acpx=False)
+
+    assert openclaw_cmds.cmd_plan(args) == 0
+    assert captured["choices"].serve is True
+    assert captured["choices"].lan is False
 
 
 # ------------------------------------------------------------- the Windows app
@@ -240,3 +275,145 @@ def test_the_plan_says_nothing_about_an_app_that_is_not_installed(tmp_path):
     text = render_plan(build_plan(detected=detected(path), home=home, env={}))
 
     assert "OpenClaw Companion" not in text
+
+
+def test_the_plan_names_isolated_native_gateway_when_alone(tmp_path):
+    home = tmp_path / "home"
+    path = put_config(home, {})
+    comp = Companion(
+        present=True, owns_local_gateway=True, port=52190,
+        signals=("the app's isolated native gateway",),
+        target="isolated",
+    )
+
+    text = render_plan(build_plan(
+        detected=detected(path, installed=False, companion=comp), home=home, env={},
+    ))
+
+    assert "points to its own isolated native gateway" in text
+    assert "--node-gateway" in text
+
+
+def test_the_plan_names_isolated_native_gateway_when_both_present(tmp_path):
+    home = tmp_path / "home"
+    path = put_config(home, {})
+    comp = Companion(
+        present=True, owns_local_gateway=True, port=52190,
+        signals=("the app's isolated native gateway",),
+        target="isolated",
+    )
+
+    text = render_plan(build_plan(
+        detected=detected(path, installed=True, companion=comp), home=home, env={},
+    ))
+
+    assert "points to its own isolated native gateway" in text
+    assert "setup below writes the native one" in text
+
+
+def test_plugin_not_enabled_when_folder_exists_without_index_mjs(tmp_path):
+    """The plugin is enabled only if its executable entrypoint index.mjs is present."""
+    home = tmp_path / "home"
+    path = put_config(home, {})
+    plugin_dir = path.parent / "extensions" / "nexgen"
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+
+    plan = build_plan(detected=detected(path), home=home, env={})
+    assert "nexgen" not in plan.config.get("plugins", {}).get("allow", [])
+    assert "nexgen" not in plan.config.get("plugins", {}).get("entries", {})
+    assert "plugins.entries.nexgen.enabled" not in plan.added
+
+    (plugin_dir / "index.mjs").write_text("// entrypoint", encoding="utf-8")
+    plan_with_entrypoint = build_plan(detected=detected(path), home=home, env={})
+    assert "nexgen" in plan_with_entrypoint.config.get("plugins", {}).get("allow", [])
+    assert "plugins.entries.nexgen.enabled" in plan_with_entrypoint.added
+
+
+
+def test_a_squad_that_writes_the_default_agent_says_so_in_the_plan(tmp_path):
+    """A roster with more than one explicit agent needs an owner, or OpenClaw refuses the main session."""
+    home = tmp_path / "home"
+    path = put_config(home, {})
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "squad.yaml").write_text(
+        "default: capo\nagents:\n  main:\n    name: assistente\n  capo:\n    name: capo\n",
+        encoding="utf-8",
+    )
+
+    plan = build_plan(detected=detected(path), home=home, env={}, vault_data=vault)
+
+    assert plan.config["agents"]["defaults"]["systemAgent"]["agentId"] == "capo"
+    assert "agents.defaults.systemAgent.agentId" in plan.added
+
+
+def test_a_squad_default_that_names_no_agent_is_named_in_the_plan(tmp_path):
+    """The plan is what a person reads before anything is written, so a typo must not be silent."""
+    home = tmp_path / "home"
+    path = put_config(home, {})
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "squad.yaml").write_text(
+        "default: sviluppo\nagents:\n  main:\n    name: assistente\n",
+        encoding="utf-8",
+    )
+
+    plan = build_plan(detected=detected(path), home=home, env={}, vault_data=vault)
+
+    assert "systemAgent" not in plan.config["agents"].get("defaults", {})
+    assert any("sviluppo" in note and "default agent" in note for note in plan.notes)
+
+
+def test_the_plan_lists_the_agents_of_the_configuration_it_proposes(tmp_path):
+    """A vault squad adds agents after the engine's own roster: the plan must name that team."""
+    home = tmp_path / "home"
+    path = put_config(home, {})
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "squad.yaml").write_text(
+        "default: assistente\n"
+        "agents:\n"
+        "  main:\n    name: assistente\n"
+        "  revisore:\n    name: revisore\n    model: opencode-go/deepseek-v4-pro\n",
+        encoding="utf-8",
+    )
+
+    plan = build_plan(detected=detected(path), home=home, env={}, vault_data=vault)
+    text = render_plan(plan)
+
+    assert "revisore" in text
+    assert plan.config["agents"]["entries"]["revisore"]["model"] in text
+    # The roster the setup starts from is still there, renamed by the squad, beside its own agent.
+    assert "assistente" in text
+    assert set(plan.to_dict()["agents"]) == set(plan.config["agents"]["entries"])
+
+
+def test_an_agent_of_the_squad_with_no_model_of_its_own_is_named_but_not_given_one(tmp_path):
+    """No number is invented: an agent with no model says so, and inherits the configured default."""
+    home = tmp_path / "home"
+    path = put_config(home, {})
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "squad.yaml").write_text(
+        "agents:\n  revisore:\n    name: revisore\n",
+        encoding="utf-8",
+    )
+
+    plan = build_plan(detected=detected(path), home=home, env={}, vault_data=vault)
+
+    assert plan.to_dict()["agents"]["revisore"] == ""
+    assert "revisore: no model declared" in render_plan(plan)
+
+
+def test_an_agent_with_no_model_inherits_the_configured_default():
+    """An agent the squad declares without a model runs the configuration's own default, named as such."""
+    from nexgen_core.openclaw.plan import planned_agents
+
+    config = {
+        "agents": {
+            "entries": {"revisore": {"name": "revisore"}},
+            "defaults": {"model": {"primary": "opencode-go/deepseek-v4-pro"}},
+        },
+    }
+
+    assert planned_agents(config) == {"revisore": "opencode-go/deepseek-v4-pro"}

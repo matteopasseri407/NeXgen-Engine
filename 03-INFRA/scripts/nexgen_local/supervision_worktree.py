@@ -111,18 +111,20 @@ def create(
     if not scope:
         raise WorktreeError("confine vuoto: indica almeno un `--allow <glob>`")
     root = _repo_root(repo)
+    owner = repo_identity(root)
     base_sha = _base_commit(root, base)
     brief_text = _brief_text(brief)
     branch = unit_branch(task_id, unit)
     _add_worktree(root, folder, branch, base_sha)
     try:
         _block_push(root, folder)
+        _set_identity(folder, owner)
     except (GitError, OSError) as exc:
         _discard(root, folder, branch)
-        raise WorktreeError(f"push non bloccata in {folder}: copia rimossa ({exc})") from exc
+        raise WorktreeError(f"configurazione della copia non riuscita in {folder}: copia rimossa ({exc})") from exc
     snapshot = remote_refs(root)
     (Path(folder).parent / f"20-brief-{state.slug(unit)}.md").write_text(brief_text, encoding="utf-8")
-    environment = _environment_text(task_id, unit, folder, branch, base, base_sha, scope, verify)
+    environment = _environment_text(task_id, unit, folder, branch, base, base_sha, scope, verify, identity=owner)
     (Path(folder).parent / f"22-ambiente-{state.slug(unit)}.md").write_text(environment, encoding="utf-8")
     mcp_assigned = list(dict.fromkeys(
         str(item).strip() for item in (mcp or []) if str(item).strip()
@@ -136,6 +138,7 @@ def create(
         "worktree": str(folder),
         "allow": scope,
         "verify": verify,
+        "identity": owner,
         "mcp": mcp_assigned,
         "remotes": snapshot,
         "remote_urls": remote_urls(root),
@@ -185,6 +188,29 @@ def _add_worktree(root: Path, folder: Path, branch: str, base_sha: str) -> None:
         raise WorktreeError(f"copia di lavoro non creata: {exc}") from exc
 
 
+def repo_identity(root: Path) -> dict[str, str]:
+    """The owner's identity as configured in the repository, refused when either field is missing."""
+    name = git(root, "config", "user.name", check=False).strip()
+    email = git(root, "config", "user.email", check=False).strip()
+    if not name or not email:
+        missing = []
+        if not name:
+            missing.append("user.name")
+        if not email:
+            missing.append("user.email")
+        raise WorktreeError(
+            f"il repository non ha un'identità configurata ({', '.join(missing)} mancante in {root}): "
+            "configura user.name e user.email prima di creare l'unità"
+        )
+    return {"name": name, "email": email}
+
+
+def _set_identity(worktree: Path, identity: dict[str, str]) -> None:
+    """Write the owner's identity into the copy's per-worktree configuration."""
+    git(worktree, "config", "--worktree", "user.name", identity["name"])
+    git(worktree, "config", "--worktree", "user.email", identity["email"])
+
+
 def _block_push(root: Path, worktree: Path) -> None:
     """Make every push from this copy fail, without touching hooks or the shared push config.
 
@@ -206,7 +232,7 @@ def _discard(root: Path, folder: Path, branch: str) -> None:
 
 def _environment_text(
     task_id: str, unit: str, folder: Path, branch: str, base: str, base_sha: str,
-    scope: list[str], verify: str,
+    scope: list[str], verify: str, identity: dict[str, str] | None = None,
 ) -> str:
     """The environment the executor has to know: where it is and what it may not do."""
     lines = [
@@ -216,6 +242,7 @@ def _environment_text(
         f"- copia di lavoro: {folder}",
         f"- ramo locale: {branch}",
         f"- base: {base} ({base_sha})",
+        *( [f"- identità: {identity['name']} <{identity['email']}>"] if identity else [] ),
         f"- verifica: {verify or 'nessuna dichiarata'}",
         "",
         "## Confine",

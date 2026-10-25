@@ -29,7 +29,7 @@ from pathlib import Path
 
 import yaml
 
-from nexgen_core import quota_claude, quota_codex, quota_policy
+from nexgen_core import quota_antigravity, quota_claude, quota_codex, quota_policy
 from nexgen_core.i18n import t
 from nexgen_core.paths import codex_home, resolve_home, resolve_vault_data
 
@@ -128,10 +128,11 @@ def build_report(*, home: Path | None = None, vault: Path | None = None,
     if usage.note:
         notes.append(usage.note)
     rows.extend(_claude_rows(usage, moment))
-    rows.append(QuotaRow(
-        provider="Antigravity", state="unknown",
-        note=t("not measured"),
-    ))
+    if not any(row.provider == "Antigravity" for row in rows):
+        rows.append(QuotaRow(
+            provider="Antigravity", state="unknown",
+            note=t("not measured"),
+        ))
     policy, unusable = quota_policy.load(home, vault=vault)
     return QuotaReport(read_at=moment, rows=tuple(with_handovers(rows, policy)),
                        notes=tuple(notes + unusable))
@@ -162,6 +163,7 @@ def percentage_rows(*, home: Path | None = None, vault: Path | None = None,
     notes: list[str] = []
     rows.extend(_codex_rows(home, moment, notes))
     rows.extend(_opencode_rows(home, vault, moment, notes))
+    rows.extend(_antigravity_rows(home, moment, notes))
     return rows, notes
 
 
@@ -277,7 +279,7 @@ def _codex_rows(home: Path | None, now: float, notes: list[str]) -> list[QuotaRo
     for limit in (usage.primary, usage.secondary):
         if limit is None:
             continue
-        window = _window_label(limit.window_minutes)
+        window = window_label(limit.window_minutes)
         stale = _expired(usage.read_at, limit.window_minutes, now)
         rows.append(QuotaRow(
             provider=provider,
@@ -359,6 +361,28 @@ def _claude_rows(usage: quota_claude.ClaudeUsage, now: float) -> list[QuotaRow]:
     ]
 
 
+def _antigravity_rows(home: Path | None, now: float, notes: list[str]) -> list[QuotaRow]:
+    """Antigravity's prompt credits percentage, dropped when older than its 30d window."""
+    usage = quota_antigravity.read_usage(home=home, now=now)
+    if not usage.known:
+        return []
+    window = "30d"
+    window_minutes = 30 * 1440
+    stale = _expired(usage.read_at, window_minutes, now)
+    return [
+        QuotaRow(
+            provider="Antigravity",
+            window=window,
+            used=usage.prompt_credits_used_percent,
+            unit="percent",
+            percent=None if stale else usage.prompt_credits_used_percent,
+            resets_at=float(usage.resets_at) if usage.resets_at else None,
+            read_at=usage.read_at,
+            state="stale" if stale else _state(usage.prompt_credits_used_percent),
+        )
+    ]
+
+
 # ------------------------------------------------------------------- helpers
 
 
@@ -386,7 +410,7 @@ def percent_text(value: float | None) -> str:
     return f"{value:.0f}%" if abs(value - round(value)) < 0.05 else f"{value:.1f}%"
 
 
-def _window_label(minutes: int | None) -> str:
+def window_label(minutes: int | None) -> str:
     """A window length as the short label a person reads: 5h, 7d, 12h."""
     if not minutes or minutes <= 0:
         return "?"

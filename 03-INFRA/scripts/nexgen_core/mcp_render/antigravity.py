@@ -41,8 +41,47 @@ def _servers_kept_in_copies(renderer, canonical: Path) -> dict[str, Any]:
     return kept
 
 
+def _agy_backend_is_local(renderer) -> bool:
+    """Whether OpenClaw drives the local `agy` CLI here: the plugin and the CLI share one home."""
+    from nexgen_core.mcp_render import load_json_object
+    from nexgen_core.openclaw.terms import local_agy_backend
+    from nexgen_core.paths import openclaw_config
+
+    try:
+        data = load_json_object(openclaw_config(renderer.home))
+    except (OSError, ValueError):  # nexgen: allow reason="an unreadable OpenClaw config never changes what agy outside it mounts"
+        return False
+    return local_agy_backend(data) is not None
+
+
+def _servers_openclaw_mounts_directly(renderer, own: dict[str, Any]) -> dict[str, Any]:
+    """What `agy` must see when OpenClaw drives it too: the direct servers, never the gateway.
+
+    The `google-antigravity-cli` plugin starts the same `agy`, from the same home, so the
+    file this dialect writes is read on both sides. OpenClaw never mounts the engine's
+    `lazy-mcp` gateway (it has its own Tool Search), so a server placed behind that gateway
+    is dead inside OpenClaw. One file serves both lives: it carries the servers OpenClaw
+    mounts directly, and the gateway itself is not written.
+    """
+    from nexgen_core.mcp_placement import GATEWAY, place
+
+    manifest = renderer._manifest_servers()  # noqa: SLF001 - the placement rule is asked by name
+    openclaw_direct = renderer.load_resolved_servers("openclaw")
+    merged = dict(own)
+    for name, entry in openclaw_direct.items():
+        srv = manifest.get(name)
+        if name == GATEWAY or not isinstance(srv, dict):
+            continue
+        if place(srv, "antigravity").mounted:
+            merged[name] = entry
+    merged.pop(GATEWAY, None)
+    return merged
+
+
 def _render_impl(renderer, write: bool = False) -> tuple[bool, str]:
     servers = renderer.load_resolved_servers("antigravity")
+    if _agy_backend_is_local(renderer):
+        servers = _servers_openclaw_mounts_directly(renderer, servers)
     cfg_file = antigravity_config(renderer.home)
     existing = load_json_object(cfg_file)
     before = copy.deepcopy(existing)

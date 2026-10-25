@@ -1,9 +1,11 @@
-"""The tools: the real time, a folder to open, the browser, search.
+"""The tools: the real time, a folder to open, the browser.
 
 These are small commands the engine ships because agents use them. Each
 stays its own module: this is just the hook into the dispatcher.
 """
 from __future__ import annotations
+
+import sys
 
 from nexgen_core.i18n import t
 
@@ -35,7 +37,6 @@ def _register_utilities(sub) -> None:
     q.add_argument("args", nargs="*", help=t("Additional Chrome arguments or URLs"))
     q.set_defaults(func=cmd_chrome)
 
-    _register_firecrawl(tsub)
     _register_update_notifier(tsub)
     p.set_defaults(func=lambda a: _usage(p))
 
@@ -44,34 +45,6 @@ def _register_utilities(sub) -> None:
     # agent-universal-layer/council/council.py where the logic lives.
     c = sub.add_parser("council", help=t("Convene a review across models from different vendors"))
     c.set_defaults(func=cmd_council)
-
-
-def _register_firecrawl(tsub) -> None:
-    """One local service, its four verbs: search and scrape through the engine's own instance."""
-    q = tsub.add_parser("firecrawl", help=t("Search and scraping via the local instance"))
-    fsub = q.add_subparsers(dest="firecrawl_action", metavar="action")
-
-    qs = fsub.add_parser("status", help=t("Check the service status"))
-    qs.set_defaults(func=lambda a: _run("firecrawl", ["status"]))
-
-    qs = fsub.add_parser("scrape", help=t("Scrape a URL"))
-    qs.add_argument("url", help=t("URL to fetch"))
-    qs.add_argument("-f", "--format", default="markdown", help=t("Comma-separated formats (markdown, links)"))
-    qs.add_argument("--json", action="store_true", help=t("Raw JSON output"))
-    qs.add_argument("-o", "--output", help=t("Save the output to a file"))
-    qs.set_defaults(func=_forward_firecrawl_scrape)
-
-    qs = fsub.add_parser("search", help=t("Run a web search"))
-    qs.add_argument("query", nargs="+", help=t("Search terms"))
-    qs.add_argument("--limit", type=int, default=20, help=t("Maximum number of results"))
-    qs.add_argument("--sources", help=t("Comma-separated sources (web, news, images)"))
-    qs.add_argument("--scrape", action="store_true", help=t("Also fetch the content of the results"))
-    qs.add_argument("--scrape-formats", default="markdown", help=t("Scraping formats"))
-    qs.add_argument("--json", action="store_true", help=t("Raw JSON output"))
-    qs.add_argument("-o", "--output", help=t("Save the output to a file"))
-    qs.set_defaults(func=_forward_firecrawl_search)
-
-    q.set_defaults(func=lambda a: _run("firecrawl", _all(a)))
 
 
 def _register_update_notifier(tsub) -> None:
@@ -164,11 +137,39 @@ def _register_mcp_inspection(msub) -> None:
     a.add_argument("--direct", action="store_true", help=t("Instead: measure the directly mounted servers (tools and weight of what a CLI loads up front)"))
     a.set_defaults(func=cmd_mcp_check)
 
+    _register_mcp_bridge(msub)
+
+
+def _register_mcp_bridge(msub) -> None:
+    """The bridge, for a gateway that cannot launch this machine's stdio connectors itself."""
+    from nexgen_core.mcp_bridge import DEFAULT_PORT
+
+    b = msub.add_parser("bridge", help=t("Serve this machine's stdio connectors over local HTTP, for a gateway that cannot launch them"))
+    bsub = b.add_subparsers(dest="bridge_command", metavar="action")
+
+    start = bsub.add_parser("start", help=t("Start the bridge: loopback by default, and never on its own"))
+    start.add_argument("--host", help=t("Address to bind (default: loopback; 'wsl' for the virtual WSL interface)"))
+    start.add_argument("--wsl", action="store_true", help=t("Bind the virtual WSL interface, the address the distro can reach"))
+    start.add_argument("--port", type=int, default=DEFAULT_PORT, help=t("Port to listen on (default: {port})", port=DEFAULT_PORT))
+    start.add_argument("--server", action="append", dest="servers",
+                       help=t("Bridge only this connector; repeatable (default: every stdio connector the OpenClaw gateway mounts)"))
+    start.add_argument("--foreground", action="store_true", help=t("Stay in this terminal instead of detaching"))
+    start.set_defaults(func=cmd_mcp_bridge_start)
+
+    stop = bsub.add_parser("stop", help=t("Ask the running bridge to stop"))
+    stop.set_defaults(func=cmd_mcp_bridge_stop)
+
+    status = bsub.add_parser("status", help=t("Where the bridge listens and which connectors it serves"))
+    status.set_defaults(func=cmd_mcp_bridge_status)
+
+    b.set_defaults(func=lambda a: _usage(b))
+
 
 def register(sub) -> None:
     _register_utilities(sub)
     _register_mcp_block(sub)
     _register_quota(sub)
+    _register_usage(sub)
 
 
 def _register_quota(sub) -> None:
@@ -180,6 +181,19 @@ def _register_quota(sub) -> None:
     q = sub.add_parser("quota", help=t("What is left of each subscription, and how old the reading is"))
     q.add_argument("--json", action="store_true", help=t("Output in JSON format"))
     q.set_defaults(func=cmd_quota)
+
+
+def _register_usage(sub) -> None:
+    """What was spent, and what is left, said provider by provider.
+
+    The same readings as `quota`, grouped the way a chat asks for them: OpenClaw's
+    `/usage cost` sums its own session logs, so a subscription agent reads as $0 and
+    a flat lane that was really paid for is invisible. `/spend` inside OpenClaw
+    forwards these lines.
+    """
+    u = sub.add_parser("usage", help=t("What this machine spent, and what each plan has left, per provider"))
+    u.add_argument("--json", action="store_true", help=t("Output in JSON format"))
+    u.set_defaults(func=cmd_usage)
 
 
 def _usage(parser) -> int:
@@ -247,40 +261,6 @@ def cmd_chrome(args) -> int:
     return chrome_main(argv)
 
 
-def _forward_firecrawl_scrape(args) -> int:
-    from nexgen_core.tools.firecrawl import main as fc_main
-
-    argv = ["scrape", args.url]
-    if getattr(args, "format", None):
-        argv.extend(["-f", args.format])
-    if getattr(args, "json", False):
-        argv.append("--json")
-    if getattr(args, "output", None):
-        argv.extend(["-o", args.output])
-    argv.extend(_all(args))
-    return fc_main(argv)
-
-
-def _forward_firecrawl_search(args) -> int:
-    from nexgen_core.tools.firecrawl import main as fc_main
-
-    argv = ["search", *args.query]
-    if getattr(args, "limit", None) is not None:
-        argv.extend(["--limit", str(args.limit)])
-    if getattr(args, "sources", None):
-        argv.extend(["--sources", args.sources])
-    if getattr(args, "scrape", False):
-        argv.append("--scrape")
-    if getattr(args, "scrape_formats", None):
-        argv.extend(["--scrape-formats", args.scrape_formats])
-    if getattr(args, "json", False):
-        argv.append("--json")
-    if getattr(args, "output", None):
-        argv.extend(["-o", args.output])
-    argv.extend(_all(args))
-    return fc_main(argv)
-
-
 def cmd_council(args) -> int:
     from nexgen_core.tools.council import main as council_main
 
@@ -291,6 +271,12 @@ def cmd_quota(args) -> int:
     from nexgen_core import quota
 
     return quota.main(as_json=getattr(args, "json", False))
+
+
+def cmd_usage(args) -> int:
+    from nexgen_core import usage
+
+    return usage.main(as_json=getattr(args, "json", False))
 
 
 def cmd_mcp_add(args) -> int:
@@ -369,3 +355,66 @@ def cmd_mcp_list(args) -> int:
     from nexgen_core.renderer_cli import cmd_inventory
 
     return cmd_inventory()
+
+
+def cmd_mcp_bridge_start(args) -> int:
+    from nexgen_core.mcp_bridge import BridgeError, start_bridge
+
+    try:
+        info = start_bridge(
+            host=getattr(args, "host", None),
+            port=getattr(args, "port", 8765),
+            wsl=getattr(args, "wsl", False),
+            names=getattr(args, "servers", None),
+            foreground=getattr(args, "foreground", False),
+        )
+    except BridgeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print(t("MCP HTTP bridge stopped"))
+        return 0
+    if info.get("status") == "already_running":
+        print(t("MCP HTTP bridge is already running: {url}", url=info.get("url", "")))
+        return 0
+    print(t("MCP HTTP bridge started: {url} (PID {pid})", url=info.get("url", ""), pid=info.get("pid", "?")))
+    _print_bridge_connectors(info)
+    return 0
+
+
+def cmd_mcp_bridge_stop(args) -> int:
+    from nexgen_core.mcp_bridge import stop_bridge
+
+    result = stop_bridge()
+    if result.get("stopped"):
+        print(t("MCP HTTP bridge stopped"))
+        return 0
+    if result.get("reason") == "not running":
+        print(t("MCP HTTP bridge is not running"))
+        return 0
+    print(t("MCP HTTP bridge is still answering at {url}: stop the process {pid} by hand",
+            url=result.get("url", ""), pid=result.get("pid", "?")))
+    return 1
+
+
+def cmd_mcp_bridge_status(args) -> int:
+    from nexgen_core.mcp_bridge import status_bridge
+
+    status = status_bridge()
+    if status.get("running"):
+        print(t("MCP HTTP bridge is running: {url} (PID {pid})", url=status.get("url", ""), pid=status.get("pid", "?")))
+        _print_bridge_connectors(status)
+        return 0
+    if status.get("stale"):
+        print(t("MCP HTTP bridge is not running: the state file describes a run that ended"))
+        return 1
+    print(t("MCP HTTP bridge is not running"))
+    return 1
+
+
+def _print_bridge_connectors(info) -> None:
+    """The names a gateway can address, so a person can copy one into a config."""
+    servers = info.get("servers") or []
+    if servers:
+        print(t("Connectors: {servers}", servers=", ".join(str(name) for name in servers)))
+

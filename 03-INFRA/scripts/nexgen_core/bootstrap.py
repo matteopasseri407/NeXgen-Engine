@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# nexgen: one-job reason="preflight prerequisites, interactive configuration, and role bootstrap"
 """First run: what's missing, what's there, and what's the next step.
 
 This logic used to exist twice, in `install.sh` and `install.ps1`, kept in
@@ -611,6 +612,24 @@ def render(findings: list[Finding], title: str, stream=None) -> int:
     return missing
 
 
+def _role_args(parser: argparse.ArgumentParser) -> None:
+    """The three roles, and the four answers only the node role reads."""
+    parser.add_argument("--role", choices=["server", "node", "standalone"], default=None,
+                        help=t("Role for this machine: server, node, or standalone"))
+    parser.add_argument("--target", default=None,
+                        help=t("Gateway join URL or setup code (for node role)"))
+    parser.add_argument("--gateway-url", default=None,
+                        help=t("Gateway WebSocket or join URL (for node role)"))
+    parser.add_argument("--gateway-token", default=None,
+                        help=t("Gateway authentication token (for node role)"))
+    parser.add_argument("--node-name", default=None,
+                        help=t("Display name for this node (for node role)"))
+    parser.add_argument("--exec-policy", dest="exec_policy", default=None, choices=["full"],
+                        help=t("For the node role: also align this PC's exec approvals with 'full' (no prompt, "
+                               "fallback full), so the gateway's commands are not stopped on a machine where nobody "
+                               "can answer an approval"))
+
+
 def _main_impl(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="nexgen-bootstrap",
@@ -618,6 +637,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--check", action="store_true",
                         help=t("Checks only: no questions and no writes"))
+    _role_args(parser)
     parser.add_argument("--local", action="store_true",
                         help=t("Single machine: no questions, no secrets, no remote required. "
                                "Profile MINIMAL, services LOCAL-ONLY, then alignment and doctor"))
@@ -676,6 +696,23 @@ def _main_impl(argv: list[str] | None = None) -> int:
         print(f"\n{c['bold']}{c['cyan']}4 · " + t("Next step") + c['reset'])
         print("  " + t("Everything required is in place. Run the installer without --check."))
         return 0
+
+    if args.role:
+        from nexgen_core import roles
+
+        if args.role == "server":
+            return roles.run_server_role(root, out=print)
+        if args.role == "node":
+            return roles.run_node_role(
+                root,
+                target=args.target,
+                gateway_url=args.gateway_url,
+                node_name=args.node_name,
+                exec_policy=args.exec_policy,
+                out=print,
+            )
+        if args.role == "standalone":
+            return roles.run_standalone_role(root, out=print)
 
     if args.local:
         # The no-conversation install: one machine, no remote, no secrets,
@@ -768,7 +805,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
     if aligned and count == 0:
         print(safe_text(f"  {c['green']}" + t("Ready.") + f"{c['reset']} " + t("Nothing else is required.")))
         if mode == "LOCAL-FULL":
-            print(safe_text(f"  {c['dim']}→ " + t("the five connectors run here: 'nexgen stack up' starts them.") + c['reset']))
+            print(safe_text(f"  {c['dim']}→ " + t("the local services run here: 'nexgen stack up' starts them.") + c['reset']))
         elif mode == "CLOUD-SERVER":
             print(safe_text(f"  {c['dim']}→ " + t("the services live on a server: see 03-INFRA/deploy/.") + c['reset']))
         print(safe_text("\n  " + t("From now on: 'nexgen doctor' tells you if anything is wrong, "

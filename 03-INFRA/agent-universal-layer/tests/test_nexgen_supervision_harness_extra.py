@@ -139,6 +139,30 @@ def test_the_run_verb_passes_the_chosen_harness_only_when_the_owner_names_it(mon
     assert seen[1] == {"task": "t", "unit": "u", "harness": "claude"}
 
 
+def test_the_run_verb_passes_the_model_only_when_the_owner_names_it(monkeypatch):
+    seen: list[dict] = []
+
+    def fake_run(task_id, unit, **kwargs):
+        seen.append({"task": task_id, "unit": unit, **kwargs})
+        return {"mode": "tab", "window": {}, "session": None, "unit": unit}
+
+    monkeypatch.setattr(harness, "run_unit", fake_run)
+
+    sup_cmd._run_unit(SimpleNamespace(id="t", unit="u", harness="agy", model=""))
+    sup_cmd._run_unit(SimpleNamespace(id="t", unit="u", harness="agy", model="gemini-3.8-flash"))
+
+    assert seen[0] == {"task": "t", "unit": "u", "harness": "agy"}
+    assert seen[1] == {"task": "t", "unit": "u", "harness": "agy", "model": "gemini-3.8-flash"}
+
+
+def test_the_run_parser_offers_the_model_flag(capsys):
+    with pytest.raises(SystemExit):
+        cli.main(["sup", "run", "--help"])
+
+    out = capsys.readouterr().out
+    assert "--model" in out
+
+
 def test_the_scout_verb_accepts_a_harness_and_resolves_it_before_the_copy(lane):
     (lane / "config.json").write_text(
         json.dumps({"supervision": {"roles": {"ricognitore": "opencode"}}}), encoding="utf-8",
@@ -159,10 +183,16 @@ def test_the_scout_parser_offers_the_harness_flag(lane, capsys):
     assert "--in-scheda" not in out and "--round" not in out
 
 
-def test_agy_as_executor_opens_a_tab_and_says_the_session_stays_manual(task, lane, monkeypatch):
+def test_agy_as_executor_opens_a_tab_and_says_the_session_stays_manual(task, lane, monkeypatch, tmp_path):
+    """agy can be followed now, so the note says what happened, not that it is blind.
+
+    The store is a fake folder of this test's own: the engine reads agy's
+    conversations read-only, and no test may reach the one this machine has.
+    """
     _unit(lane, task, "prova")
     opener = Opener()
     monkeypatch.setattr(harness.shutil, "which", lambda name: f"{name}-finto")
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path / "antigravity"))
 
     result = harness.run_unit(task, "prova", harness="agy", opener=opener, wait_s=0)
 
@@ -171,8 +201,8 @@ def test_agy_as_executor_opens_a_tab_and_says_the_session_stays_manual(task, lan
     assert argv[1:4] == ["--mode", "accept-edits", "--prompt-interactive"]
     assert result["session"] is None
     assert result["harness"] == "agy"
-    assert "non sa elencare le sessioni" in result["reason"]
-    assert "agganciare a mano" in result["reason"]
+    assert "nessuna sessione di agy è comparsa" in result["reason"]
+    assert "aggancio a mano" in result["reason"]
 
 
 def test_claude_opens_a_tab_with_the_id_the_engine_itself_chose(task, lane, monkeypatch, tmp_path):

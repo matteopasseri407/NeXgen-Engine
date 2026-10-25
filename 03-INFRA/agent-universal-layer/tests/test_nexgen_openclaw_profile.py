@@ -13,6 +13,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
@@ -225,8 +227,9 @@ def test_every_local_model_carries_the_cage():
     assert cage["ollama/one"]["profile"] == "messaging"
     assert cage["ollama/one"]["alsoAllow"] == ["read", "view_image", "pdf", "tts", "memory_search", "memory_get"]
     for pattern in ("group:web", "group:runtime", "write", "edit", "apply_patch", "skill_workshop",
-                    "playwright__*", "lazy-mcp__lazy_mutate"):
+                    "playwright__*"):
         assert pattern in deny
+    assert "lazy-mcp__lazy_mutate" not in deny
     for pattern in ("n8n-mcp__create_*", "n8n-mcp__delete_*", "vault-library__update_section",
                     "drive__drive_confirm_upload"):
         assert pattern in deny
@@ -306,6 +309,22 @@ def test_a_tailscale_the_person_turned_on_is_not_switched_off():
     assert gateway["tailscale"] == {"mode": "serve"}
 
 
+def test_a_server_keeps_loopback_and_lets_tailscale_serve_publish_it():
+    """The pair OpenClaw documents for a machine with no screen: no port is opened."""
+    gateway = build_config(machine(go=True), Choices(serve=True))["gateway"]
+
+    assert gateway["bind"] == "loopback"
+    assert gateway["tailscale"] == {"mode": "serve"}
+
+
+def test_a_server_keeps_the_rest_of_the_tailscale_section_the_person_wrote():
+    current = {"gateway": {"tailscale": {"mode": "off", "preserveFunnel": True}}}
+
+    gateway = build_config(machine(go=True), Choices(serve=True), current=current)["gateway"]
+
+    assert gateway["tailscale"] == {"mode": "serve", "preserveFunnel": True}
+
+
 def test_a_token_already_in_the_file_is_never_replaced():
     current = {"gateway": {"auth": {"mode": "token", "token": "a-real-token"}}}
     gateway = build_config(machine(go=True), current=current)["gateway"]
@@ -347,9 +366,9 @@ def test_the_agents_may_talk_only_to_the_pairs_that_exist():
     assert "agentToAgent" not in alone["tools"]
 
 
-def test_exec_is_allowlisted_and_tool_search_is_off():
+def test_exec_is_allowlisted_and_tool_search_is_not_written():
     tools = build_config(machine(go=True))["tools"]
-    assert tools["toolSearch"] is False
+    assert "toolSearch" not in tools
     assert tools["exec"] == {"security": "allowlist", "ask": "on-miss"}
 
 
@@ -388,3 +407,115 @@ def test_the_manuals_carry_no_path_of_this_machine():
         assert "C:\\" not in text
         assert "/home/" not in text
         assert "matte" not in text.lower()
+
+
+def test_the_owner_approved_agy_backend_stays_allowed() -> None:
+    """The local agy CLI backend the owner installed survives a setup; no other Google plugin is kept."""
+    current = {"plugins": {
+        "allow": ["google-antigravity-cli", "google"],
+        "entries": {"google-antigravity-cli": {"enabled": True}, "google": {"enabled": True}},
+    }}
+
+    allow = build_config(machine(claude=True), current=current)["plugins"]["allow"]
+
+    assert "google-antigravity-cli" in allow
+    assert "google" not in allow
+    assert "google-antigravity-cli" not in build_config(machine(claude=True))["plugins"]["allow"]
+
+
+def test_the_approved_agy_backend_gets_a_guarded_permission_mode() -> None:
+    """`agy` approves its own tool calls unless the plugin is told to keep a boundary."""
+    current = {"plugins": {
+        "allow": ["google-antigravity-cli"],
+        "entries": {"google-antigravity-cli": {"enabled": True}},
+    }}
+
+    entries = build_config(machine(), current=current)["plugins"]["entries"]
+
+    assert entries["google-antigravity-cli"] == {"config": {"permissionMode": "sandbox"}}
+    assert "enabled" not in entries["google-antigravity-cli"], "the engine never turns a plugin on or off"
+
+
+@pytest.mark.parametrize("declared", ["sandbox", "settings"])
+def test_a_guarded_mode_the_person_chose_is_kept(declared: str) -> None:
+    current = {"plugins": {
+        "allow": ["google-antigravity-cli"],
+        "entries": {"google-antigravity-cli": {"enabled": True, "config": {"permissionMode": declared}}},
+    }}
+
+    entries = build_config(machine(), current=current)["plugins"]["entries"]
+
+    assert entries["google-antigravity-cli"]["config"]["permissionMode"] == declared
+
+
+def test_a_skip_permission_mode_is_never_carried_into_the_proposal() -> None:
+    """The one mode that lets `agy` approve every tool call is replaced, not preserved."""
+    current = {"plugins": {
+        "allow": ["google-antigravity-cli"],
+        "entries": {"google-antigravity-cli": {"enabled": True, "config": {"permissionMode": "skip"}}},
+    }}
+
+    entries = build_config(machine(), current=current)["plugins"]["entries"]
+
+    assert entries["google-antigravity-cli"]["config"]["permissionMode"] == "sandbox"
+
+
+def test_a_backend_nobody_approved_gets_no_entry_and_no_mode() -> None:
+    entries = build_config(machine())["plugins"]["entries"]
+
+    assert "google-antigravity-cli" not in entries
+
+
+def test_every_reachable_provider_is_selectable_from_any_agent() -> None:
+    """The owner can change the model of every agent: a wildcard per provider that answers."""
+    defaults = build_config(machine(claude=True, codex=True, go=True, ollama=("qwen3:8b",)))["agents"]["defaults"]
+
+    assert defaults["modelPolicy"]["allow"] == [
+        "anthropic/*", "claude-cli/*", "openai/*", "opencode-go/*", "ollama/*",
+    ]
+
+
+def test_a_claude_login_makes_the_claude_code_models_selectable_too() -> None:
+    """OpenClaw lists the Claude Code models as their own `claude-cli` catalogue."""
+    allow = build_config(machine(claude=True))["agents"]["defaults"]["modelPolicy"]["allow"]
+
+    assert allow == ["anthropic/*", "claude-cli/*"]
+
+
+def test_the_agy_backend_plugin_makes_its_models_selectable() -> None:
+    current = {"plugins": {
+        "allow": ["google-antigravity-cli"],
+        "entries": {"google-antigravity-cli": {"enabled": True}},
+    }}
+
+    allow = build_config(machine(), current=current)["agents"]["defaults"]["modelPolicy"]["allow"]
+
+    assert allow == ["google-antigravity-cli/*"]
+
+
+def test_a_machine_with_nothing_reachable_gets_no_policy() -> None:
+    """An empty allowlist would read as "nothing is selectable", so it is not written."""
+    assert "modelPolicy" not in build_config(machine())["agents"]["defaults"]
+
+
+def test_a_policy_the_person_wrote_is_extended_and_never_narrowed() -> None:
+    current = {"agents": {"defaults": {"modelPolicy": {"allow": ["moonshot/*"]}}}}
+
+    allow = build_config(machine(claude=True), current=current)["agents"]["defaults"]["modelPolicy"]["allow"]
+
+    assert allow[0] == "moonshot/*", "what the owner wrote stays first and stays there"
+    assert "anthropic/*" in allow
+
+
+def test_a_provider_the_file_already_names_stays_selectable() -> None:
+    current = {"agents": {"entries": {"main": {"model": "deepseek/deepseek-chat"}}}}
+
+    allow = build_config(machine(claude=True), current=current)["agents"]["defaults"]["modelPolicy"]["allow"]
+
+    assert "deepseek/*" in allow
+
+
+def test_registering_the_reachable_models_changes_no_agent_default() -> None:
+    assert build_config(machine(claude=True, codex=True, go=True))["agents"]["entries"] == build_config(
+        machine(claude=True, codex=True, go=True),
+    )["agents"]["entries"]

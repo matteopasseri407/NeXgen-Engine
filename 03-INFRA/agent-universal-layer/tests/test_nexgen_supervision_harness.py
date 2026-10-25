@@ -81,6 +81,29 @@ def test_run_opens_the_harness_on_the_unit_and_attaches_its_session(task, unit, 
     ]
 
 
+def test_run_puts_the_model_the_owner_asked_for_on_the_tab(task, lane, monkeypatch, tmp_path):
+    """`sup run --model` arriva davvero sulla scheda di agy, non solo fino al motore."""
+    folder = lane / task / "23-unita-prova"
+    folder.mkdir(parents=True)
+    (lane / task / "20-brief-prova.md").write_text("# Brief\n", encoding="utf-8")
+    state.append_event(
+        task, "unit_created", unit="prova", worktree=str(folder), branch=f"sup/{task}/prova",
+        base="0" * 40, allow=["docs/*.md"], verify="", repo=str(tmp_path),
+    )
+    monkeypatch.setattr(harness.shutil, "which", lambda name: f"{name}-finto")
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path / "antigravity"))
+    opened: list = []
+
+    result = harness.run_unit(
+        task, "prova", harness="agy", model="gemini-3.8-flash", wait_s=0,
+        opener=lambda title, argv, *, cwd, marker="": opened.append(list(argv)) or {"title": title, "pid": 9},
+        lister=lambda: [],
+    )
+
+    assert opened[0][opened[0].index("--model") + 1] == "gemini-3.8-flash"
+    assert result["model_applied"] is True
+
+
 def test_run_writes_the_profile_with_only_the_mcp_the_unit_was_given(task, lane, tmp_path, monkeypatch):
     """La copia di un lavoratore nasce senza MCP: il profilo spegne i globali che il supervisore non ha assegnato."""
     folder = lane / task / "23-unita-mcp"
@@ -722,3 +745,106 @@ def test_a_turn_that_dies_before_its_envelope_keeps_what_it_said(unit, monkeypat
     assert written["stderr"] is not subprocess.DEVNULL
     assert log.is_file(), "nessun file di stderr nella cartella del compito"
     assert "provider ha rifiutato il modello" in log.read_text(encoding="utf-8")
+
+
+def test_open_first_tab_records_pid_in_event(task, unit, monkeypatch, harness_cli):
+    """L'apertura della scheda registra il PID dell'handle nel diario degli eventi."""
+    result = harness._open_first_tab(
+        task, "prova", unit, "prompt",
+        opener=lambda title, argv, cwd, marker="": {"title": title, "pid": 9876},
+        lister=lambda: [], wait_s=0,
+    )
+    assert result["window"]["pid"] == 9876
+    events = [r for r in state.read_events(task) if r.get("event") == "unit_started"]
+    assert len(events) == 1
+    assert events[0]["pid"] == 9876
+
+
+def test_a_tab_states_the_model_it_was_asked_for_and_says_so(task, unit, harness_cli):
+    """agy ha solo la scheda per scegliere il modello: l'argv lo dichiara e il motivo lo dice."""
+    opened: list = []
+    result = harness._open_first_tab(
+        task, "prova", unit, "prompt",
+        opener=lambda title, argv, cwd, marker="": opened.append(list(argv)) or {"title": title, "pid": 11},
+        lister=lambda: [], wait_s=0, adapter=harness.adapters.get("agy"), model="gemini-3.8-flash",
+    )
+
+    assert opened[0][opened[0].index("--model") + 1] == "gemini-3.8-flash"
+    assert result["model_requested"] == "gemini-3.8-flash"
+    assert result["model_applied"] is True
+
+
+def test_a_harness_without_a_model_on_the_tab_never_claims_it_was_applied(task, unit, harness_cli, monkeypatch):
+    """Claude Code sceglie il modello nella configurazione, non sulla scheda: il motore non mente."""
+    monkeypatch.setattr(harness.shutil, "which", lambda name: f"{name}-finto")
+    result = harness._open_first_tab(
+        task, "prova", unit, "prompt",
+        opener=lambda title, argv, cwd, marker="": {"title": title, "pid": 12},
+        lister=lambda: [], wait_s=0, adapter=harness.adapters.get("claude"),
+        model="anthropic/claude-opus-5-5",
+    )
+
+    assert result["model_requested"] == "anthropic/claude-opus-5-5"
+    assert result["model_applied"] is False
+
+
+def test_agy_tab_finds_and_attaches_session_after_tab_open(task, unit, tmp_path, monkeypatch, harness_cli):
+    """Con agy, la conversazione nel DB sqlite viene cercata e agganciata."""
+    conv_dir = tmp_path / "conversations"
+    conv_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path))
+
+    conv_id = "c0555555-5555-5555-5555-55555555555c"
+    db_file = conv_dir / f"{conv_id}.db"
+    import sqlite3
+    con = sqlite3.connect(db_file)
+    con.execute("CREATE TABLE steps (idx integer, step_payload blob)")
+    con.execute("INSERT INTO steps VALUES (0, ?)", (str(unit).encode("utf-8"),))
+    con.commit()
+    con.close()
+
+    adapter = harness.adapters.get("agy")
+    result = harness._open_first_tab(
+        task, "prova", unit, "prompt",
+        opener=lambda title, argv, cwd, marker="": {"title": title, "pid": 4321},
+        lister=lambda: [], wait_s=0.1, adapter=adapter,
+    )
+    assert result["session"] is not None
+    assert result["session"]["id"] == conv_id
+    rec = state.harness_session_record(task, "agy", unit="prova")
+    assert rec is not None
+    assert rec["session"] == conv_id
+
+
+def test_rework_delivers_to_agy_by_reopening_interactive_tab(task, unit, monkeypatch, harness_cli):
+    """Agy non sa send_turn: la consegna di correzioni riapre la scheda con resume_argv."""
+    conv_id = "a544d85d-f5b3-4741-bbe2-8044c85b348f"
+    state.append_event(
+        task, "attached", unit="prova", role="esecutore", harness="agy",
+        session=conv_id, folder=str(unit),
+    )
+    review_file = unit.parent / "45-revisione-prova-1.md"
+    review_file.write_text("# Revisione\n\ncorrezioni per agy\n", encoding="utf-8")
+
+    opened: list = []
+    result = harness.send_corrections(
+        task, "prova", review_file, 1,
+        opener=lambda title, argv, *, cwd, marker="": opened.append((title, argv, cwd)) or {"title": title, "pid": 77},
+        runner=lambda *a: pytest.fail("agy non deve mai ricevere un run invisibile"),
+        measure=lambda session: pytest.fail("agy non ha misura di costo da interrogare"),
+        lister=lambda: [], wait_s=0,
+    )
+
+    assert len(opened) == 1
+    title, argv, cwd = opened[0]
+    assert title == "esecutore · prova"
+    assert "agy" in argv[0].lower()
+    assert argv[1:] == [
+        "--mode", "accept-edits", "--conversation", conv_id,
+        "--prompt-interactive", harness.corrections_text(task, "prova", review_file, 1),
+    ]
+    assert cwd == unit
+    assert result["mode"] == "tab" and result["reopened"] is True
+    assert result["session"] == {"id": conv_id}
+
+

@@ -32,7 +32,6 @@ LEGACY_ALIASES: dict[str, list[str]] = {
     "agent-now": ["tool", "now"],
     "agent-open-folder": ["tool", "open"],
     "agent-chrome": ["tool", "chrome"],
-    "firecrawl-local": ["tool", "firecrawl"],
     "nexgen-update": ["update"],
     "skills-sync": ["skill"],
     "agent-skill": ["skill"],

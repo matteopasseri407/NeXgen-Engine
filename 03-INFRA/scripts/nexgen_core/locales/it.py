@@ -409,7 +409,7 @@ MESSAGES: dict[str, str] = {
     'No file gets written: this is just a recommendation.': 'Nessun file viene scritto: è solo un consiglio.',
     'Profile:': 'Profilo:',
     'Services:': 'Servizi:',
-    "the five connectors run here: 'nexgen stack up' starts them.": "i cinque connettori girano qui: 'nexgen stack up' li avvia.",
+    "the local services run here: 'nexgen stack up' starts them.": "i servizi locali girano qui: 'nexgen stack up' li avvia.",
     'the services live on a server: see 03-INFRA/deploy/.': 'i servizi stanno su un server: vedi 03-INFRA/deploy/.',
     'no services: native search, no remote automation.': 'nessun servizio: ricerca nativa, niente automazioni remote.',
     'Next step': 'Passo successivo',
@@ -513,6 +513,12 @@ MESSAGES: dict[str, str] = {
     "MCP connector '{name}' is not responding ({detail}).": "Il connettore MCP '{name}' non risponde ({detail}).",
     "Check that the service behind '{name}' is running, then rerun the doctor.": "Controlla che il servizio dietro '{name}' sia avviato, poi riesegui il doctor.",
     "Could not check the reachability of '{name}' ({detail}).": "Non è stato possibile verificare la raggiungibilità di '{name}' ({detail}).",
+    "The MCP manifest could not be read, so the {name} key was not checked.": "Non riesco a leggere il manifest MCP, quindi la chiave di {name} non è stata verificata.",
+    "The manifest declares no {name} connector: nothing to check": "Il manifest non dichiara alcun connettore {name}: niente da verificare",
+    "The {name} connector declares no key to check.": "Il connettore {name} non dichiara alcuna chiave da verificare.",
+    "The {name} connector can mount: {gate} is set": "Il connettore {name} può essere montato: {gate} è impostata",
+    "The {name} connector is not mounted here: {gate} is not set.": "Il connettore {name} non è montato qui: {gate} non è impostata.",
+    "Store it with 'nexgen-secrets set {gate}': the value stays in the secret store, and the next sync mounts the connector.": "Salvala con 'nexgen-secrets set {gate}': il valore resta nel deposito dei segreti e il prossimo sync monta il connettore.",
 
     # --- checks/security_checks.py ---
     "The canonical AGENTS.md bootstrap is not present.": "Il bootstrap canonico AGENTS.md non è presente.",
@@ -563,30 +569,15 @@ MESSAGES: dict[str, str] = {
     "{name}: did not stop ({detail})": "{name}: non si è fermato ({detail})",
     "Unknown service '{name}'.": "Servizio '{name}' sconosciuto.",
 
-    # --- tools/firecrawl.py ---
-    "Firecrawl Local CLI (v2)": "CLI locale di Firecrawl (v2)",
-    "Check the service status": "Controlla lo stato del servizio",
-    "Scrape a URL": "Esegue lo scrape di un URL",
-    "URL to fetch": "URL da scaricare",
-    "Comma-separated formats (markdown, links)": "Formati separati da virgola (markdown, links)",
-    "Raw JSON output": "Output JSON grezzo",
-    "Save the output to a file": "Salva l'output su file",
-    "Run a web search": "Esegue una ricerca web",
-    "Search terms": "Termini di ricerca",
-    "Maximum number of results": "Numero massimo di risultati",
-    "Comma-separated sources (web, news, images)": "Sorgenti separate da virgola (web, news, images)",
-    "Also fetch the content of the results": "Scarica anche il contenuto dei risultati",
-    "Scraping formats": "Formati di scraping",
-    "local default": "predefinito locale",
-    "status: up": "stato: attivo",
-    "status: unreachable ({error})": "stato: non raggiungibile ({error})",
-    "unknown error": "errore sconosciuto",
-
     # --- tools/chrome.py ---
     "agent-chrome: Chrome or Chromium not found on this system.": "agent-chrome: Chrome o Chromium non trovato su questo sistema.",
     "agent-chrome: error launching Chrome ({error})": "agent-chrome: errore nell'avvio di Chrome ({error})",
     "agent-chrome: Chrome is holding the debug profile (process {pid}) but isn't responding on port 9222. Restarting it.": "agent-chrome: Chrome sta tenendo il profilo di debug (processo {pid}) ma non risponde sulla porta 9222. Lo riavvio.",
     "Usage: agent-chrome [--ensure|--heal] [args...]\n\nManages Chrome with a shared local CDP port.": "Uso: agent-chrome [--ensure|--heal] [args...]\n\nGestisce Chrome con una porta CDP locale condivisa.",
+    "agent-chrome: this shell runs on the desktop {desktop}, which the user cannot see. Starting Chrome on the user's desktop through Task Scheduler.": "agent-chrome: questa shell gira sul desktop {desktop}, che l'utente non vede. Avvio Chrome sul desktop dell'utente tramite l'Utilità di pianificazione.",
+    "agent-chrome: Task Scheduler could not start Chrome ({error}). Not starting it from here: on {desktop} it would be invisible.": "agent-chrome: l'Utilità di pianificazione non è riuscita ad avviare Chrome ({error}). Non lo avvio da qui: su {desktop} sarebbe invisibile.",
+    "agent-chrome: Chrome was started through Task Scheduler but port 9222 did not answer within {seconds} seconds.": "agent-chrome: Chrome è stato avviato tramite l'Utilità di pianificazione ma la porta 9222 non ha risposto entro {seconds} secondi.",
+    "agent-chrome: Chrome is responding on port 9222 but has no top-level windows on {desktop}. Restarting it.": "agent-chrome: Chrome risponde sulla porta 9222 ma non ha finestre di primo livello su {desktop}. Lo riavvio.",
 
     # --- tools/now.py ---
     "Deterministic current date/time source for agents": "Sorgente deterministica di data/ora corrente per gli assistenti",
@@ -1281,6 +1272,12 @@ MESSAGES: dict[str, str] = {
         'ChatGPT desktop e la CLI codex usano la stessa versione di Codex ({version})',
     'ChatGPT desktop bundles Codex {desktop} but the codex CLI is {cli}; both read the same ~/.codex, so each may run settings the other does not understand.':
         "ChatGPT desktop include Codex {desktop} ma la CLI codex è {cli}; leggono entrambi lo stesso ~/.codex, quindi ciascuno potrebbe eseguire impostazioni che l'altro non capisce.",
+    "Chrome is responding on CDP port 9222 but has no top-level windows on {desktop}.":
+        "Chrome risponde sulla porta CDP 9222 ma non ha finestre di primo livello su {desktop}.",
+    "Run 'agent-chrome --heal' to restart Chrome on the user's desktop.":
+        "Esegui 'agent-chrome --heal' per riavviare Chrome sul desktop dell'utente.",
+    "Shared Chrome is up on {desktop} with CDP on 127.0.0.1:9222":
+        "Il Chrome condiviso è attivo su {desktop} con CDP su 127.0.0.1:9222",
     "Antigravity's MCP configuration has not been rendered on this machine yet, so its copies were not compared.":
         'La configurazione MCP di Antigravity non è ancora stata generata su questa macchina, quindi le sue copie non sono state confrontate.',
     'points elsewhere':
@@ -1502,12 +1499,67 @@ MESSAGES: dict[str, str] = {
         "Nodi già accoppiati:",
     "Set gateway.bind to 'loopback', or 'lan' if you use the phone app on your home network.":
         "Imposta gateway.bind a 'loopback', oppure 'lan' se usi l'app sul telefono nella rete di casa.",
+    # --- Come il gateway è raggiungibile -----------------------------------------
+    "The gateway listens on loopback only: nothing outside this machine can reach it.":
+        "Il gateway ascolta solo su loopback: niente fuori da questa macchina lo raggiunge.",
+    "The gateway listens on loopback only and Tailscale Serve publishes it over HTTPS on the tailnet.":
+        "Il gateway ascolta solo su loopback e Tailscale Serve lo pubblica in HTTPS sulla tailnet.",
+    "The gateway listens on the home network ({bind}).":
+        "Il gateway ascolta sulla rete di casa ({bind}).",
+    "The gateway listens on the Tailscale address itself ({bind}), with no HTTPS in front.":
+        "Il gateway ascolta direttamente sull'indirizzo Tailscale ({bind}), senza HTTPS davanti.",
+    "Set gateway.bind to 'loopback' and gateway.tailscale.mode to 'serve' for an HTTPS address on the tailnet.":
+        "Imposta gateway.bind a 'loopback' e gateway.tailscale.mode a 'serve' per un indirizzo HTTPS sulla tailnet.",
+    "The gateway is published on the public internet through Tailscale Funnel, on {bind}.":
+        "Il gateway è pubblicato su internet con Tailscale Funnel, su {bind}.",
+    "Use gateway.tailscale.mode 'serve' unless the public URL is what you want.":
+        "Usa gateway.tailscale.mode 'serve' a meno che l'URL pubblico non sia quello che vuoi.",
+    "A gateway published through Tailscale Serve must stay on loopback: this one also listens on {bind}, so the port is reachable without the HTTPS Serve provides.":
+        "Un gateway pubblicato con Tailscale Serve deve restare su loopback: questo ascolta anche su {bind}, quindi la porta è raggiungibile senza l'HTTPS che Serve dà.",
+    "Set gateway.bind to 'loopback' and run 'nexgen openclaw setup --server' again.":
+        "Imposta gateway.bind a 'loopback' e rilancia 'nexgen openclaw setup --server'.",
+    "The gateway listens on every interface ({bind}): the network it sits on decides who reaches it.":
+        "Il gateway ascolta su tutte le interfacce ({bind}): la rete in cui si trova decide chi lo raggiunge.",
+    "Set gateway.bind to 'loopback', or to 'lan' when only the devices at home have to reach it.":
+        "Imposta gateway.bind a 'loopback', oppure a 'lan' quando solo i dispositivi di casa devono raggiungerlo.",
+    "The gateway is published through Tailscale Serve: a node on another PC reaches it by the gateway's MagicDNS name, and no port is opened here.":
+        "Il gateway è pubblicato con Tailscale Serve: un nodo su un altro PC lo raggiunge con il nome MagicDNS del gateway, e qui nessuna porta viene aperta.",
+    "Run 'nexgen openclaw node --host <host>.<tailnet>.ts.net' on the other machine.":
+        "Lancia 'nexgen openclaw node --host <host>.<tailnet>.ts.net' sull'altra macchina.",
     "These configured channels have no agent binding: {names}. With explicit ownership their messages reach no agent.":
         "Questi canali configurati non hanno un binding verso un agente: {names}. Con l'ownership esplicita i loro messaggi non arrivano a nessuno.",
     "Run 'nexgen openclaw setup': it binds them to the main agent and leaves your bindings untouched.":
         "Lancia 'nexgen openclaw setup': li collega all'agente main e non tocca i tuoi binding.",
     "Every configured channel has an agent binding.":
         "Ogni canale configurato ha un binding verso un agente.",
+    "Tool Search is active ({mode}): MCP and runtime tools are deferred behind search and call.":
+        "Tool Search è attivo ({mode}): i tool MCP e di runtime sono differiti dietro ricerca e chiamata.",
+    "Tool Search is disabled by a legacy engine setting; next setup will remove it.":
+        "Tool Search è disabilitato da un residuo del motore: il prossimo setup lo toglie.",
+    "Run 'nexgen openclaw setup' to retire the legacy setting and restore native Tool Search.":
+        "Esegui 'nexgen openclaw setup' per rimuovere il residuo e ripristinare Tool Search.",
+    "Tool Search is disabled by user configuration with {count} MCP servers mounted: direct schemas add large overhead to every prompt.":
+        "Tool Search è disattivato dalla configurazione utente con {count} server MCP montati: gli schemi diretti appesantiscono ogni prompt.",
+    "Remove 'tools.toolSearch' from openclaw.json to restore native Tool Search.":
+        "Rimuovi 'tools.toolSearch' da openclaw.json per ripristinare il Tool Search nativo.",
+    "Tool Search is disabled by user configuration ({count} MCP servers mounted, direct schemas in use).":
+        "Tool Search è disattivato dalla configurazione utente ({count} server MCP montati, in uso gli schemi diretti).",
+    "No lazy-mcp gateway is mounted in OpenClaw (connectors are direct).":
+        "Nessun gateway lazy-mcp è montato in OpenClaw (i connettori sono diretti).",
+    "The lazy-mcp gateway is mounted inside OpenClaw by the engine: OpenClaw connects MCP servers directly.":
+        "Il gateway lazy-mcp è montato dentro OpenClaw dal motore: OpenClaw collega i server MCP direttamente.",
+    "Run 'nexgen sync' or 'nexgen mcp render' to remove the engine's lazy-mcp entry.":
+        "Esegui 'nexgen sync' o 'nexgen mcp render' per rimuovere la voce lazy-mcp del motore.",
+    "A custom 'lazy-mcp' connector is configured under mcp.servers; OpenClaw does not use the engine gateway.":
+        "Un connettore 'lazy-mcp' personalizzato è configurato in mcp.servers; OpenClaw non usa il gateway del motore.",
+    "Verify if this custom connector is needed or rename it to avoid collision with the engine gateway.":
+        "Verifica se questo connettore personalizzato serve o rinominalo per evitare collisioni con il gateway del motore.",
+    "MCP server '{servers}' has a literal URL matching a secret declared in the manifest; credentials must not be stored in openclaw.json.":
+        "Il server MCP '{servers}' ha un URL letterale che coincide con un segreto dichiarato nel manifest; le credenziali non devono essere salvate in openclaw.json.",
+    "Run 'nexgen sync' or 'nexgen mcp render' to rewrite the connector through the bridge.":
+        "Esegui 'nexgen sync' o 'nexgen mcp render' per riscrivere il connettore attraverso il ponte.",
+    "No literal secret URLs in OpenClaw MCP configuration.":
+        "Nessun URL segreto letterale nella configurazione MCP di OpenClaw.",
     "The setup adds a binding for these channels: {pairs}.":
         "Il setup aggiunge un binding per questi canali: {pairs}.",
     "The gateway asks for a token.":
@@ -1522,6 +1574,14 @@ MESSAGES: dict[str, str] = {
         "Rimuovilo: usa Claude, Codex, la chiave OpenCode Go o un modello locale.",
     "No Google subscription is configured in OpenClaw.":
         "Nessun abbonamento Google è configurato in OpenClaw.",
+    "The local '{backend}' CLI backend runs 'agy' with permissionMode '{mode}': 'agy' approves every tool call by itself, with no approval from a person.":
+        "Il backend CLI locale '{backend}' lancia 'agy' con permissionMode '{mode}': 'agy' approva da solo ogni chiamata di tool, senza l'approvazione di una persona.",
+    "Set plugins.entries.{backend}.config.permissionMode to 'sandbox' or 'settings'.":
+        "Imposta plugins.entries.{backend}.config.permissionMode a 'sandbox' o 'settings'.",
+    "The local '{backend}' CLI backend is configured: 'agy' keeps its own login and OpenClaw holds no Google credential (permissionMode '{mode}').":
+        "Il backend CLI locale '{backend}' è configurato: 'agy' conserva il proprio login e OpenClaw non detiene nessuna credenziale Google (permissionMode '{mode}').",
+    "The local '{backend}' CLI backend declares permissionMode '{mode}', which is neither 'skip' nor 'sandbox'/'settings': the doctor cannot say whether 'agy' approves a tool call by itself.":
+        "Il backend CLI locale '{backend}' dichiara permissionMode '{mode}', che non è né 'skip' né 'sandbox'/'settings': il doctor non può dire se 'agy' approva da solo una chiamata di tool.",
     "The ACP bridge allows the 'gemini' agent; its terms do not allow it outside Google's clients.":
         "Il bridge ACP permette l'agente 'gemini'; i termini non lo permettono fuori dai client Google.",
     "Remove 'gemini' from acp.allowedAgents.":
@@ -1584,6 +1644,14 @@ MESSAGES: dict[str, str] = {
         "le sue impostazioni nominano un gateway su questo PC",
     "its settings name a gateway elsewhere":
         "le sue impostazioni nominano un gateway altrove",
+    "the app's isolated native gateway":
+        "il gateway nativo isolato dell'app",
+    "The OpenClaw Companion app points to its own isolated native gateway ({signals}) and the engine gateway is here too.":
+        "L'app OpenClaw Companion punta al proprio gateway nativo isolato ({signals}) e c'è anche il gateway del motore.",
+    "In OpenClaw Companion choose 'a local Gateway on this PC' with the engine gateway address, and turn off autostart for the native gateway (or uninstall the OpenClaw Gateway package; the app remains).":
+        "Nell'app scegliere 'gateway su questo PC' con l'indirizzo del gateway del motore, e spegnere l'avvio automatico del gateway nativo (o disinstallare il pacchetto OpenClaw Gateway, l'app resta).",
+    "The OpenClaw Companion app points to its own isolated native gateway ({signals}). This version of the engine configures the native Node gateway, not the isolated one: it writes nothing here and starts no second gateway.":
+        "L'app OpenClaw Companion punta al proprio gateway nativo isolato ({signals}). Questa versione del motore configura il gateway Node nativo, non quello isolato: non scrive nulla qui e non avvia un secondo gateway.",
     "The OpenClaw Companion app runs the gateway on this PC ({signals}). This version of the engine configures the native gateway, not the app's one: it writes nothing here and starts no second gateway.":
         "L'app OpenClaw Companion esegue il gateway su questo PC ({signals}). Questa versione del motore configura il gateway nativo, non quello dell'app: qui non scrive niente e non avvia un secondo gateway.",
     "Use the app as it is, or install the native gateway with {command} and run 'nexgen openclaw setup'.":
@@ -1610,6 +1678,8 @@ MESSAGES: dict[str, str] = {
         "Il gateway elenca {count} dispositivi, nessuno dei quali nomina l'app: 'nexgen openclaw pair' mostra la richiesta e la approva.",
     "The OpenClaw Companion app runs the gateway on this PC ({signals}) and there is no native one.":
         "L'app OpenClaw Companion esegue il gateway su questo PC ({signals}) e non ce n'è uno nativo.",
+    "The OpenClaw Companion app points to its own isolated native gateway ({signals}) and there is no native one.":
+        "L'app OpenClaw Companion punta al proprio gateway nativo isolato ({signals}) e non ce n'è uno nativo.",
     "This version of the engine configures the native Node gateway, which is the road it supports, not the app's one: nothing was installed and nothing was written, because a native gateway beside it would fight over the same port.":
         "Questa versione del motore configura il gateway nativo Node, che è la strada che supporta, non quello dell'app: non è stato installato né scritto niente, perché un gateway nativo accanto a quello dell'app si batterebbe per la stessa porta.",
     "To use the app with the engine, open Connections in OpenClaw Companion and choose 'a local Gateway on this PC'.":
@@ -1632,12 +1702,21 @@ MESSAGES: dict[str, str] = {
         ", e l'app è collegata a un gateway suo sulla porta {port}",
     "The OpenClaw Companion app runs the gateway on this PC ({signals}): this engine configures the native Node gateway, which is the road it supports, and cannot write the app's one. To use the app with the engine, open Connections in OpenClaw Companion and choose 'a local Gateway on this PC'; the setup stops here until then, and runs beside the app's gateway only with --node-gateway.":
         "L'app OpenClaw Companion esegue il gateway su questo PC ({signals}): questo motore configura il gateway nativo Node, che è la strada che supporta, e non può scrivere quello dell'app. Per usare l'app con il motore, apri Connections in OpenClaw Companion e scegli 'a local Gateway on this PC'; fino ad allora il setup si ferma qui, e gira accanto al gateway dell'app solo con --node-gateway.",
+    "The OpenClaw Companion app points to its own isolated native gateway ({signals}): this engine configures the native Node gateway, which is the road it supports, and cannot write the app's isolated one. To use the app with the engine, open Connections in OpenClaw Companion and choose 'a local Gateway on this PC'; the setup stops here until then, and runs beside the app's gateway only with --node-gateway.":
+        "L'app OpenClaw Companion punta al proprio gateway nativo isolato ({signals}): questo motore configura il gateway nativo Node, che è la strada che supporta, e non può scrivere quello isolato dell'app. Per usare l'app con il motore, apri Connections in OpenClaw Companion e scegli 'a local Gateway on this PC'; fino ad allora il setup si ferma qui, ed esegue accanto al gateway dell'app solo con --node-gateway.",
     "The OpenClaw Companion app has a gateway of its own on this PC ({signals}){uses}: the setup below writes the native one.":
         "L'app OpenClaw Companion ha un gateway suo su questo PC ({signals}){uses}: il setup qui sotto scrive quello nativo.",
+    "The OpenClaw Companion app points to its own isolated native gateway ({signals}){uses}: the setup below writes the native one.":
+        "L'app OpenClaw Companion punta al proprio gateway nativo isolato ({signals}){uses}: il setup qui sotto scrive quello nativo.",
     "The OpenClaw Companion app is connected to a gateway elsewhere: nothing here is in conflict, and the setup below writes the native gateway on this PC only.":
         "L'app OpenClaw Companion è collegata a un gateway altrove: qui non c'è nessun conflitto, e il setup qui sotto scrive solo il gateway nativo di questo PC.",
     "The OpenClaw Companion app is installed and names no gateway on this PC: once the setup below has configured this PC's gateway, open Connections in OpenClaw Companion and choose 'a local Gateway on this PC'.":
-        "L'app OpenClaw Companion è installata e non nomina nessun gateway su questo PC: quando il setup qui sotto ha configurato il gateway di questo PC, apri Connections in OpenClaw Companion e scegli 'a local Gateway on this PC'.",
+        "L'app OpenClaw Companion è installata e non nomina nessun gateway su questo PC: quando il setup qui sotto ha configurato il gateway di questo PC, apri Connections in OpenClaw Companion e scegli 'a local Gateway on this PC'.",    "Session continuity checkpoint is enabled.":
+        "Il checkpoint di continuità della sessione è abilitato.",
+    "Session continuity checkpoint is disabled.":
+        "Il checkpoint di continuità della sessione è disabilitato.",
+    "Enable 'checkpoint' in {path} or run 'nexgen sync'.":
+        "Abilita 'checkpoint' in {path} o lancia 'nexgen sync'.",
     "{passed} passed, {warned} warnings, {failed} failures":
         "{passed} superati, {warned} avvisi, {failed} errori",
     # Il comando
@@ -1692,6 +1771,43 @@ MESSAGES: dict[str, str] = {
         "Il lingering è spento per {user}: il gateway si ferma quando chiudi l'ultima sessione.",
     "Run 'loginctl enable-linger {user}' once, then run the setup again.":
         "Lancia una volta 'loginctl enable-linger {user}', poi rilancia il setup.",
+    # --- Un gateway su una macchina accesa, senza schermo ------------------------
+    "Server mode: the gateway stays on loopback and Tailscale Serve publishes it over HTTPS on the tailnet, so no port is opened.":
+        "Modo server: il gateway resta su loopback e Tailscale Serve lo pubblica in HTTPS sulla tailnet, quindi nessuna porta viene aperta.",
+    "--server is for a Linux machine with no screen, and this one runs {platform}.":
+        "--server è per una macchina Linux senza schermo, e questa gira {platform}.",
+    "Run 'nexgen openclaw setup' without --server to configure a desktop.":
+        "Lancia 'nexgen openclaw setup' senza --server per configurare un desktop.",
+    "Tailscale is not installed, and this setup never installs a system program on its own.":
+        "Tailscale non è installato, e questo setup non installa mai un programma di sistema da solo.",
+    "Install it from {url}, run 'tailscale up' and log in, then run this setup again.":
+        "Installalo da {url}, lancia 'tailscale up' e fai il login, poi rilancia il setup.",
+    "Tailscale is installed but not connected ({state}): there is no address to publish the gateway on.":
+        "Tailscale è installato ma non collegato ({state}): non c'è un indirizzo su cui pubblicare il gateway.",
+    "Run 'tailscale up' and log in, then run this setup again.":
+        "Lancia 'tailscale up' e fai il login, poi rilancia il setup.",
+    "no state reported":
+        "nessuno stato riportato",
+    "Tailscale is connected ({state}) and this account holds no root power: this machine can host the gateway.":
+        "Tailscale è collegato ({state}) e questo account non ha poteri da root: questa macchina può ospitare il gateway.",
+    "This account is root, and a gateway that runs agents must not run with root power.":
+        "Questo account è root, e un gateway che esegue agenti non deve girare con poteri da root.",
+    "This account can become root without a password ('sudo -n true' succeeds), and a gateway that runs agents must not carry that power.":
+        "Questo account può diventare root senza password ('sudo -n true' riesce), e un gateway che esegue agenti non deve portarsi quel potere.",
+    "This account is in the 'docker' group, which is root through a container, and a gateway that runs agents must not carry that power.":
+        "Questo account è nel gruppo 'docker', che è root attraverso un container, e un gateway che esegue agenti non deve portarsi quel potere.",
+    "Create the account the gateway will use without sudo and without the docker group, and run the setup from there.":
+        "Crea l'account che userà il gateway senza sudo e senza il gruppo docker, e lancia il setup da lì.",
+    "If you accept the risk, run the same command again with --yes-i-know.":
+        "Se accetti il rischio, rilancia lo stesso comando con --yes-i-know.",
+    "--yes-i-know was given: the run goes on, and this line records what the gateway keeps.":
+        "--yes-i-know è stato dato: l'esecuzione va avanti, e questa riga registra cosa si tiene il gateway.",
+    "--server and --lan are opposites: --lan opens the gateway to the network it is on, --server keeps it on loopback and publishes it through Tailscale Serve. Choose one.":
+        "--server e --lan sono opposti: --lan apre il gateway alla rete in cui si trova, --server lo tiene su loopback e lo pubblica con Tailscale Serve. Scegline uno.",
+    "A Linux machine with no screen: loopback plus Tailscale Serve for HTTPS on the tailnet":
+        "Una macchina Linux senza schermo: loopback più Tailscale Serve per l'HTTPS sulla tailnet",
+    "Go on even when this account holds sudo or the docker group":
+        "Va avanti anche se questo account ha sudo o il gruppo docker",
     "npm is not beside Node. Install Node from {url}: it brings npm with it.":
         "npm non è accanto a Node. Installa Node da {url}: porta npm con sé.",
     "The engine cannot read its OpenClaw pin, so it will not install an unknown release. Check agent-universal-layer/openclaw/pin.json and run the setup again.":
@@ -1821,16 +1937,16 @@ MESSAGES: dict[str, str] = {
     # --- Due PC: un gateway e un nodo -------------------------------------------
     "Connect this machine as a node of a gateway on another PC":
         "Collega questa macchina come nodo di un gateway su un altro PC",
-    "The gateway machine's address on the home network":
-        "L'indirizzo della macchina del gateway sulla rete di casa",
+    "The gateway machine's address: its name on the home network, or its Tailscale MagicDNS name":
+        "L'indirizzo della macchina del gateway: il suo nome sulla rete di casa, oppure il suo nome MagicDNS di Tailscale",
     "The gateway's port (default: 18789)":
         "La porta del gateway (predefinita: 18789)",
     "The name the gateway shows for this machine":
         "Il nome che il gateway mostra per questa macchina",
     "Cannot propose the node connection: {error}":
         "Non riesco a proporre il collegamento del nodo: {error}",
-    "OpenClaw node for the gateway at {host}:{port}":
-        "Nodo OpenClaw per il gateway su {host}:{port}",
+    "OpenClaw node for the gateway at {address}":
+        "Nodo OpenClaw per il gateway su {address}",
     "Nothing has been changed: these are OpenClaw's own commands, in the order they work.":
         "Non ho cambiato niente: questi sono i comandi di OpenClaw, nell'ordine in cui funzionano.",
     "on the gateway machine":
@@ -1849,8 +1965,8 @@ MESSAGES: dict[str, str] = {
         "Monouso, dieci minuti, accesso da amministratore: tratta l'URL stampato come una password.",
     "the command it prints, to be pasted as it is on this machine":
         "il comando che stampa, da incollare così com'è su questa macchina",
-    "This is the one paste that enrols the device and its first commands together.":
-        "È l'unico incollaggio che registra insieme il dispositivo e i suoi primi comandi.",
+    "This is the one paste that enrols the device and its first commands together; --session-host also lets it run agent sessions, so keep it to a machine you trust as shared infrastructure.":
+        "È l'unico incollaggio che registra insieme il dispositivo e i suoi primi comandi; --session-host gli lascia anche eseguire sessioni di agente, quindi usalo solo su una macchina di cui ti fidi come infrastruttura condivisa.",
     "One approval at a time, without a join code":
         "Un'approvazione alla volta, senza codice di ingresso",
     "Two requests with different ids: the device admits the connection, the node request allows commands.":
@@ -1879,6 +1995,15 @@ MESSAGES: dict[str, str] = {
         "Ogni approvazione è tua: niente viene approvato da solo, e ogni richiesta dice quale macchina e quali comandi eseguirebbe.",
     "Port {port} is the one the gateway listens on; a different one there means passing it here too.":
         "La porta {port} è quella su cui ascolta il gateway; se lì è diversa, va passata anche qui.",
+    # Un gateway su una macchina accesa, raggiunta per nome MagicDNS
+    "A MagicDNS address means the gateway publishes itself with 'nexgen openclaw setup --server': it stays on loopback and Tailscale Serve gives it the HTTPS address {host} on port 443.":
+        "Un indirizzo MagicDNS significa che il gateway si pubblica con 'nexgen openclaw setup --server': resta su loopback e Tailscale Serve gli dà l'indirizzo HTTPS {host} sulla porta 443.",
+    "Both machines have to be on the same tailnet and logged in to Tailscale: the address is reachable there and nowhere else.":
+        "Tutte e due le macchine devono stare sulla stessa tailnet e aver fatto il login a Tailscale: l'indirizzo è raggiungibile lì e da nessun'altra parte.",
+    "The join code carries the HTTPS address the gateway mints, so the node needs no port and no token of its own; the explicit route needs '--port 443 --tls' because Serve owns that port.":
+        "Il codice di ingresso porta con sé l'indirizzo HTTPS che crea il gateway, quindi il nodo non ha bisogno di porta né di token propri; la strada esplicita richiede '--port 443 --tls' perché quella porta è di Serve.",
+    "Port 443 is the one Tailscale Serve owns on the gateway machine; the gateway's own port {port} stays on its loopback.":
+        "La porta 443 è quella che Tailscale Serve occupa sulla macchina del gateway; la porta {port} del gateway resta sul suo loopback.",
     "The approval failed: {error}":
         "L'approvazione è fallita: {error}",
     "In OpenClaw Companion open Connections and choose 'a local Gateway on this PC': the gateway this setup configured answers on 127.0.0.1:{port}.":
@@ -1907,6 +2032,14 @@ MESSAGES: dict[str, str] = {
         "Preparerei la cartella per {agent}: {path}",
     "Skipping the manual for {agent}: {error}":
         "Salto il manuale di {agent}: {error}",
+    "Skipping {path}: it cannot be read ({error}).":
+        "Salto {path}: non riesco a leggerlo ({error}).",
+    "Skipping {path}: it carries no engine mark, so it is yours and stays as it is.":
+        "Salto {path}: non porta il segno del motore, quindi è tuo e resta com'è.",
+    "The squad names an instructions file that cannot be read: {path}":
+        "La squadra indica un file di istruzioni che non riesco a leggere: {path}",
+    "The squad names {agent} as the default agent but does not declare it: no default was written.":
+        "La squadra indica {agent} come agente predefinito ma non lo dichiara: non ho scritto nessun predefinito.",
     "The OpenCode agent is not created: setup was asked to leave it out.":
         "L'agente OpenCode non viene creato: il setup è stato chiesto di lasciarlo fuori.",
     "The OpenCode agent is not created: the 'opencode' command is not on PATH.":
@@ -2133,4 +2266,16 @@ MESSAGES: dict[str, str] = {
         "Il plugin del motore non è depositato: le sue catene di ripiego non sono state scritte.",
     "The fallback chains reach {count} agents; the plugin reads them on every turn.":
         "Le catene di ripiego arrivano a {count} agenti; il plugin le legge a ogni turno.",
+    "OpenClaw MCP server enabled for other harnesses.":
+        "Server MCP di OpenClaw abilitato per gli altri harness.",
+    "Could not enable OpenClaw MCP server: {error}":
+        "Impossibile abilitare il server MCP di OpenClaw: {error}",
+    "plugin '{id}' is not an MCP wrapper ({kind}): not adoptable":
+        "il plugin '{id}' non è un wrapper MCP ({kind}): non adottabile",
+    "Build the reproducible plugin tarball for OpenClaw gateways":
+        "Costruisce il pacchetto riproducibile del plugin per i gateway OpenClaw",
+    "Notice: shell is retired in favor of OpenClaw TUI":
+        "Avviso: la shell è ritirata a favore di OpenClaw TUI",
+    "The interactive shell has been retired: use 'openclaw tui' or the OpenClaw Dashboard instead.":
+        "La shell interattiva è stata ritirata: usa 'openclaw tui' o la Dashboard di OpenClaw.",
 }

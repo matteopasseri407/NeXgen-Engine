@@ -231,6 +231,36 @@ def test_attach_refuses_an_id_it_would_splice_into_a_command(lane, capsys):
     assert [row["event"] for row in state.read_events(task_id)] == ["started"], "niente aggancio nel diario"
 
 
+def test_attach_accepts_agy_uuid_session(lane, capsys):
+    cli.main(["sup", "start", "prova agy"])
+    task_id = _only_task(lane)
+    state.append_event(task_id, "unit_created", unit="schede", harness="agy")
+    capsys.readouterr()
+
+    uuid_str = "a544d85d-f5b3-4741-bbe2-8044c85b348f"
+    assert cli.main([
+        "sup", "attach", task_id, "schede", "--session", uuid_str,
+    ]) == 0
+
+    attached = [row for row in state.read_events(task_id) if row["event"] == "attached"][-1]
+    assert attached["session"] == uuid_str
+    assert attached["harness"] == "agy"
+    assert f"agy {uuid_str}" in capsys.readouterr().out
+
+
+def test_attach_refuses_invalid_uuid_for_agy(lane, capsys):
+    cli.main(["sup", "start", "prova agy invalido"])
+    task_id = _only_task(lane)
+    state.append_event(task_id, "unit_created", unit="schede", harness="agy")
+    capsys.readouterr()
+
+    assert cli.main([
+        "sup", "attach", task_id, "schede", "--session", "ses_invalid_for_agy",
+    ]) == 1
+    err = capsys.readouterr().err
+    assert "sessione non valido" in err and "UUID" in err
+
+
 def test_the_sup_verbs_answer_for_help(lane, capsys):
     for argv in (["sup", "--help"], ["sup", "start", "--help"], ["sup", "attach", "--help"]):
         with pytest.raises(SystemExit) as exit_info:

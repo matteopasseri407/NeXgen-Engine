@@ -9,6 +9,7 @@ lines, read stores and write profiles, and the engine keeps the launch policy.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -108,14 +109,33 @@ class Adapter:
     label = "?"
     executable = "?"
     capabilities = Capabilities()
+    session_id_pattern = re.compile(r".+")
+    session_id_description = "identificativo di sessione valido"
+
+    def validate_session(self, session_id: str) -> str:
+        """The session id in this harness's declared format, or a refusal before it is used."""
+        token = (session_id or "").strip()
+        if not self.session_id_pattern.fullmatch(token):
+            raise AdapterError(
+                f"identificativo di sessione non valido: {session_id!r} "
+                f"(atteso {self.session_id_description})"
+            )
+        return token
 
     def require(self, operation: str, why: str = "") -> None:
         """Refuse before anything is opened when this harness does not have the operation."""
         if not self.capabilities.has(operation):
             raise Unsupported(self.name, operation, why)
 
-    def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "") -> list[str]:
-        """The command that opens a visible tab on this folder, with the prompt as a pointer."""
+    def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "",
+                 model: str = "") -> list[str]:
+        """The command that opens a visible tab on this folder, with the prompt as a pointer.
+
+        `model` is the model the owner asked for on this run. A harness whose tab
+        takes one states it on the command line; one that chooses its model from
+        its own configuration ignores it, and the caller reads the argv back to
+        report whether it was applied instead of assuming it was.
+        """
         raise Unsupported(self.name, "open_tab")
 
     def send_argv(self, executable: str, session: str, prompt: str, *, model: str = "") -> list[str]:

@@ -9,6 +9,7 @@ runs: this adapter only decides when to call it and with which harness name.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -39,6 +40,8 @@ class OpenCodeAdapter(base.Adapter):
     name = "opencode"
     label = "OpenCode"
     executable = "opencode"
+    session_id_pattern = re.compile(r"ses_[A-Za-z0-9]{1,64}")
+    session_id_description = "`ses_` seguito da lettere e cifre"
     capabilities = base.Capabilities(
         open_tab=True, find_session=True, send_turn=True, live_state=True, cost=True,
         tokens=True, write_permissions=True, resume=True, scout=True,
@@ -46,8 +49,13 @@ class OpenCodeAdapter(base.Adapter):
         deny_push="profilo del progetto (opencode.json) e pushurl bloccata della copia",
     )
 
-    def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "") -> list[str]:
-        """`opencode <folder> [--session <id>] --prompt <pointer>`: never `--auto`."""
+    def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "",
+                 model: str = "") -> list[str]:
+        """`opencode <folder> [--session <id>] --prompt <pointer>`: never `--auto`.
+
+        `model` is accepted and not used: an OpenCode tab picks the model from the
+        owner's configuration, and the caller reports it as not applied.
+        """
         argv = [executable, str(folder)]
         if session:
             argv.extend(["-s", session])

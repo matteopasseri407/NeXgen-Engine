@@ -134,7 +134,7 @@ def test_an_external_module_cannot_shadow_a_built_in(tmp_path: Path) -> None:
 def test_modules_without_the_new_fields_are_unchanged() -> None:
     """Il vocabolario nuovo è additivo: i moduli esistenti non si accorgono."""
     catalog = load_catalog(ENGINE)
-    for mid in ("memory", "firecrawl", "n8n", "browser", "council"):
+    for mid in ("memory", "ocr", "n8n", "browser", "council"):
         assert not catalog[mid].provides
         assert not catalog[mid].requires
         assert catalog[mid].source_path is None

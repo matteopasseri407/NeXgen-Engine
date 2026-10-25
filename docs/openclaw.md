@@ -96,6 +96,7 @@ engine already rendered. The phone and the terminal therefore cannot disagree.
 | From the chat | What it answers | Who may use it |
 | --- | --- | --- |
 | `/quota` | what is left of each plan, and how old the reading is | anyone |
+| `/spend` | what this machine spent, per provider, and what each plan has left | anyone |
 | `/council <question>` | starts a council and answers with an identifier; the outcome arrives when the run ends | anyone |
 | `/sup` | every supervised task with its units, then the spend of the sessions | anyone |
 | `/sup <id>` | that one task | anyone |
@@ -267,6 +268,14 @@ clients. The engine never writes a `google` plugin, and `nexgen openclaw doctor`
 has one, including an OAuth entry under another name. A `gemini` seat in `acp.allowedAgents` is a warning,
 because it is allowed by the protocol and not by the terms.
 
+One road stays open, and it is Google's own client doing the work: a CLI backend plugin that runs the
+official `agy` CLI as a local process (OpenClaw documents CLI backends in `docs/gateway/cli-backends.md`
+and `docs/plugins/cli-backend-plugins.md`). `agy` keeps the login and the session, OpenClaw holds only the
+synthetic marker and never a Google token, and the route is `google-antigravity-cli/*` or an `agentRuntime.id`
+with the same id. `nexgen openclaw doctor` gives that backend its own line and names the permission mode the
+plugin was given: `skip` (and omitting it, which is the plugin's default) is a warning, because it lets
+`agy` approve every tool call by itself, while `sandbox` and `settings` keep an approval boundary.
+
 ## Windows, the traps that cost an afternoon
 
 - `openclaw gateway restart` does not restart on Windows. Stop the processes and relaunch the service, or
@@ -279,9 +288,11 @@ because it is allowed by the protocol and not by the terms.
 
 ## OpenClaw Companion (l'app Windows)
 
-On Windows, OpenClaw's own advice is the **Windows Hub / OpenClaw Companion** app. Its first run can provision a
-WSL distribution of its own, `OpenClawGateway`, with the gateway inside it and its state in that distribution's
-home directory, under `.openclaw`; the app talks to that gateway on `ws://127.0.0.1:18789`.
+On Windows, OpenClaw provides the **Windows Hub / OpenClaw Companion** app (`OpenClaw.Tray.WinUI`). The companion app supports three distinct gateway modes:
+
+1. **WSL distribution (`wsl`)**: The app provisions a dedicated WSL2 distribution (`OpenClawGateway`), hosting the gateway inside Linux with state under `.openclaw` inside the distribution, communicating on `ws://127.0.0.1:18789`.
+2. **Local engine gateway (`engine`)**: The companion connects to the host's native Node gateway managed by NeXgen ("a local Gateway on this PC" in companion settings), sharing loopback and host state.
+3. **Isolated native gateway (`isolated`)**: The companion provisions an isolated native MSIX gateway (`OpenClawFoundation.OpenClawGateway`) executing inside an isolated Windows session (`isolated-session-v1`) on a high loopback port (e.g. 52190). The isolated gateway runs under a separate hidden Windows user profile with its own sandboxed workspace and Node runtime; it does not touch WSL, but cannot directly read the main user's files or NeXgen state.
 
 ### What this engine does today
 
@@ -292,18 +303,30 @@ It tells these situations apart, from evidence that starts nothing:
 | the native gateway only | the npm package and `~/.openclaw/openclaw.json` | configures it, as always |
 | the app installed, naming no gateway | the app's files, with no gateway in them, plus the native package or nothing | configures the native one as above, and at the end says the one step that connects the app: Connections, "a local Gateway on this PC" |
 | the app on this PC's gateway | a loopback gateway URL on the engine's own port | one line that says the app is connected, and, when the gateway answers, whether its device is in the gateway's list |
-| the app's gateway only | the `OpenClawGateway` distribution, or the app's own WSL storage, or a gateway its settings name on this PC | says what it found and stops before installing or writing anything |
-| both | one of those, plus the native package | configures the native one, and names the app's gateway as a second gateway in conflict |
+| the app's gateway only (WSL or isolated) | the `OpenClawGateway` distribution, or the isolated native gateway session, or a gateway its settings name on this PC | says what it found (WSL or isolated native) and stops before installing or writing anything |
+| both | one of those, plus the native package | configures the native one, and notes the app's gateway as a second gateway in conflict |
 | the app connected elsewhere | an `sshTunnel`, or a gateway URL that is not loopback | says so; nothing is in conflict |
 
 - The distribution list comes from `HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss`, which answers without
-  starting WSL, and the app's files are read as JSON: `settings.json` for a gateway-named URL, `gateways.json` for
-  `url`, `isLocal`, `sshTunnel` and `setupManagedDistroName`. Every field is optional and a file that does not parse
-  says nothing, because the app's schema is not documented field by field.
+  starting WSL, and the app's files are read as JSON: `settings.json` for active configuration, `gateways.json` for
+  `url`, `isLocal`, `sshTunnel` and `setupManagedDistroName`, and the isolated session package `setup.json`/`gateway.json`
+  for native runtime contract evidence. Every field is optional and a file that does not parse says nothing.
 - A gateway URL can carry a token in its query string, so it is parsed for its host and its port and then dropped:
   no URL, no token and no device key is ever printed, and a `device-key*` file is never opened.
 - The engine never starts the app, WSL or the distribution, and never writes under `%APPDATA%\OpenClawTray`,
-  `%LOCALAPPDATA%\OpenClawTray` or `\\wsl.localhost`.
+  `%LOCALAPPDATA%\OpenClawTray`, the isolated session profile, or `\\wsl.localhost`.
+
+### How doctor, plan and setup interact with each mode
+
+- **Doctor (`nexgen openclaw doctor`)**:
+  - `openclaw.companion_gateway`: reports OK when connected to the engine gateway, or when either the isolated native gateway or WSL distribution runs alone as the designated gateway. Warns only when both an engine gateway and an app-managed gateway run simultaneously.
+  - `openclaw.store_gateway`: excludes the companion's isolated native gateway MSIX (`OpenClawGatewayMSIX`), preventing false-positive Store package conflict alarms.
+- **Plan (`nexgen openclaw plan`)**:
+  - Notes the detected companion gateway mode (`isolated`, `wsl`, `engine`, `remote`).
+  - Distinguishes isolated native gateway from WSL or remote gateways in proposal summaries.
+- **Setup (`nexgen openclaw setup`)**:
+  - When an app gateway (WSL or isolated) is active, setup stops and guides switching to the native gateway via `--node-gateway` once the app's gateway is stopped.
+  - Setup never modifies, removes, or overwrites isolated session files or companion settings.
 
 ### The app's gateway and the native one, when both are wanted
 
@@ -333,11 +356,78 @@ Full support, which means talking to the gateway through its own protocol and in
 comes in a later release. Until then the two gateways stay two separate things, and the engine only ever writes the
 native one.
 
+## Talking to the gateway
+
+The RPC client (`nexgen_core.openclaw.gateway_rpc`) implements the WebSocket JSON-RPC transport (protocol v4)
+so the engine speaks to the OpenClaw gateway directly (`ws://127.0.0.1:18789`).
+
+It authenticates as an operator client with the gateway's own token, never printing or logging it, and exposes
+one primitive per operation:
+- `health()`: the gateway's operational state and the plugins it loaded;
+- `config_get()`: the configuration snapshot and the base hash the concurrency check needs;
+- `config_patch(patch, base_hash)`: a partial configuration update, protected by optimistic locking;
+- `plugins_install(source)` and `plugins_reload(id)`: installing a plugin and reloading it in place.
+
+With this client the engine configures OpenClaw and manages its plugins whatever the hosting environment is (a
+native Windows gateway, a WSL gateway managed by OpenClaw Companion, a Linux or a remote one): it never has to
+reach into an isolated filesystem, and it never has to restart a process.
+
+One read-only command inspects the RPC connection by hand:
+`nexgen openclaw rpc health [--json] [--url URL]`
+
+## The plugin as a package, for the gateways the engine cannot reach
+
+The engine deposits the `nexgen` plugin by copying its files into `<state dir>/extensions/nexgen/`, which
+needs a gateway whose filesystem it can write.
+The gateway the Companion app runs inside its own WSL distro is not one: `C:` is not mounted there and the
+distro belongs to the app, so the engine must not reach into it.
+OpenClaw installs a plugin there from an npm tarball, and `nexgen openclaw package` builds that tarball
+from the list the deposit itself reads.
+
+It contains the plugin's own files, the shared `nexgen-guardrail-core.mjs` and `vault-briefing.txt`, plus a
+`package.json` that carries the engine's version, declares `type: module` and points `openclaw.extensions`
+at `./index.mjs`.
+The guardrail body, `nexgen-guardrail.config.json` and `nexgen.config.json` stay out: the policy belongs to
+the Vault, and this artifact is the part that travels.
+The same files produce the same bytes and the same sha256, so a build that changed unnoticed cannot pass for
+the one that was reviewed.
+
+The tarball lands in `<state dir>/openclaw/plugin/nexgen-<version>.tgz`.
+The engine installs nothing itself: moving it to the gateway host and running
+`openclaw plugins install npm-pack:<path.tgz> --force` there is a separate step someone can see.
+Without a sidecar beside it the plugin has no policy to run, so it refuses the commands it would judge
+instead of allowing them: the package carries the mechanism, and the policy arrives by the route that
+gateway allows.
+
+## The MCP bridge, when the gateway runs in WSL
+
+The Windows companion app keeps OpenClaw in an app-owned WSL distro where interop is off
+and `C:` is not mounted, so a connector the engine declares as a Windows command
+(`python ...\lazy-mcp.py`, `node ...\playwright-human-safe.mjs`) never starts there.
+
+`nexgen mcp bridge start` runs those connectors on the Windows side and serves them as MCP
+Streamable HTTP: one endpoint per connector at `http://127.0.0.1:8765/mcp/<name>`, plus
+`/mcp` for the gateway itself (`lazy-mcp`). The list of connectors is not written twice: the
+bridge asks the renderer what this machine mounts directly in OpenClaw and starts exactly
+that, so a connector added to the manifest appears at the bridge on its own. `--server NAME`
+narrows it, `--wsl` binds the virtual WSL interface, which is the address a distro on the
+default NAT network reaches (with mirrored networking, loopback is enough).
+
+Every request carries `Authorization: Bearer $NEXGEN_MCP_BRIDGE_TOKEN`. The token is
+generated into the engine's secrets deposit (`~/.config/nexgen/secrets.env`, 0600) and is
+never printed; OpenClaw substitutes the variable itself, so no value enters `openclaw.json`.
+Nothing starts the bridge automatically: `nexgen mcp bridge start`, `stop` and `status` are
+the whole surface, and `status` exits non-zero when nothing is listening.
+
+`0.0.0.0` is accepted only as an explicit `--host` and only with the token. `stop` asks the
+listener to finish and waits for the port; it never kills a process by pid, because the pid
+in a stale state file can belong to somebody else by the time it is used.
+
 ## Installazione con un comando
 
-`nexgen openclaw setup [--yes] [--lan] [--dry-run] [--no-sviluppo] [--node-gateway]` runs nine steps, in this
-order, printing what each one did. It stops at the first step that cannot succeed, and the machine keeps the
-state it had before that step.
+`nexgen openclaw setup [--yes] [--lan | --server] [--yes-i-know] [--dry-run] [--no-sviluppo] [--node-gateway]`
+runs nine steps, in this order, printing what each one did. It stops at the first step that cannot succeed,
+and the machine keeps the state it had before that step.
 
 1. **Installation.** If OpenClaw is missing, or is not on the release `openclaw/pin.json` names:
    `npm install -g openclaw@<pin> --allow-scripts=@google/genai,esbuild,koffi,protobufjs,openclaw`, with npm
@@ -372,7 +462,9 @@ state it had before that step.
 6. **Service.** The gateway is installed as a service when it is not one already, started when the install
    only registered it, and the port is awaited for up to ten minutes, with the elapsed seconds printed: a
    cold start takes about five minutes.
-7. **Module.** The host declares `openclaw: local` in `modules.state.yaml`, under its own name.
+7. **Module and bridge.** The host declares `openclaw: local` in `modules.state.yaml`, under its own name,
+   and enables the canonical `openclaw` MCP server (`openclaw mcp serve`) in `manifest.yaml` so other harnesses
+   can reach OpenClaw tools.
 8. **Phone.** It prints `openclaw qr`, to be run in a terminal of one's own, and `nexgen openclaw pair` for
    the approval.
 9. **Doctor.** `doctor.collect()` runs and its summary is printed.
@@ -385,6 +477,53 @@ plan, never a device approval, and a run with no terminal approves nothing and p
 Several requests are listed and none is chosen for the person.
 
 Everything is idempotent: a second `setup` with nothing to change writes no file and restarts no gateway.
+
+### A machine that is always on, with no screen: `--server`
+
+`nexgen openclaw setup --server` is the same nine steps for a Linux machine with no desktop: a VPS, a mini
+PC in a cupboard. The gateway stays on `gateway.bind: "loopback"` and OpenClaw publishes it with
+`gateway.tailscale.mode: "serve"`, the pair its own manual recommends (`gateway/tailscale.md`,
+`gateway/stable-https-url.md`): HTTPS with a real certificate on `https://<host>.<tailnet>.ts.net`, and no
+port opened on the machine. The `tailscale` section already in `openclaw.json` is kept; only its `mode`
+changes.
+
+Before anything is installed, four questions decide whether this host may carry a gateway:
+
+1. Is it Linux? A desktop is configured without `--server`; `--server` on another system stops and says so.
+2. Is Tailscale installed? If not, the run names the download page and stops: the engine never installs a
+   system program on its own.
+3. Is Tailscale logged in? `tailscale status --json` must report `BackendState: "Running"`; any other state
+   stops the run with `tailscale up` as the action.
+4. Does the account hold root power? Root itself, `sudo -n true` succeeding, or membership of the `docker`
+   group each stop the run, because a gateway that runs agents must not be able to become root through the
+   process it supervises. `--yes-i-know` is the explicit way past it, and the run prints what it accepted.
+
+`--server` and `--lan` are opposites and are refused together: `--lan` opens the gateway to the network it
+sits on, `--server` keeps it on loopback and lets Tailscale Serve do the publishing.
+
+The service is the systemd user service OpenClaw installs (`openclaw gateway install`), and the lingering
+check a Linux host already gets applies here as well: without `loginctl enable-linger <user>` the gateway
+stops when the last session closes.
+
+## OpenClaw as an MCP server for other harnesses
+
+OpenClaw can serve its tools to all other harnesses (`claude`, `codex`, `antigravity`, `opencode`) via
+`openclaw mcp serve`.
+The canonical entry is declared in `03-INFRA/agent-universal-layer/mcp/manifest.yaml` with stdio transport:
+
+```yaml
+openclaw:
+  exposure: eager
+  transport: stdio
+  command: openclaw
+  args: ["mcp", "serve"]
+  targets: [claude, codex, antigravity, opencode]
+  enabled: false
+```
+
+It is disabled by default (`enabled: false`) and automatically enabled during `nexgen openclaw setup` when
+OpenClaw is installed on the machine. The OpenClaw renderer explicitly filters it out, ensuring OpenClaw never
+configures itself as an MCP client.
 
 To go back, stop the gateway first, copy the backup over the file, then let it start again so the plugins are
 reloaded:
@@ -437,9 +576,10 @@ On the laptop, once:
    check after each command. It runs none of them.
    Check: the printed commands are the ones below.
 3. Either the one-paste route: `openclaw devices join-code` on the fixed PC, then the command it prints,
-   `openclaw connect <url> --service`, on the laptop. OpenClaw approves the device and its first command surface
-   in the same step. The URL is single use, lasts about ten minutes and carries administrator access: treat it
-   like a password and paste it nowhere else.
+   `openclaw connect <url> --service --session-host`, on the laptop. OpenClaw approves the device and its
+   first command surface in the same step; `--session-host` also lets the node run agent sessions, so keep it
+   to a machine you trust as shared infrastructure. The URL is single use, lasts about ten minutes and
+   carries administrator access: treat it like a password and paste it nowhere else.
    Or the explicit route: `openclaw node install --host <address> --port 18789` and `openclaw node start` on the
    laptop, then `nexgen openclaw pair` on the fixed PC to read the device request, `nexgen openclaw pair
    --approve <device id>` to admit it, a reconnect that asks for the commands, and `nexgen openclaw pair
@@ -448,8 +588,25 @@ On the laptop, once:
 4. On Linux, `loginctl enable-linger <user>` once: without it the systemd user service stops when the last
    session closes. `nexgen doctor` already says when lingering is off.
 
-On the fixed PC, to see the result: `nexgen openclaw doctor --nodes` adds the paired nodes to the report, and
-`nexgen openclaw pair` lists them with their state. Neither approves anything on its own.
+On the fixed PC, to see the result: `nexgen openclaw doctor --nodes` adds the paired nodes to the report and
+checks that the node accepts the commands an agent asks it to run, and `nexgen openclaw pair` lists them with
+their state. Neither approves anything on its own.
+
+### A gateway behind Tailscale Serve, and a laptop on the same tailnet
+
+On the always-on machine: `nexgen openclaw setup --server`, then `nexgen openclaw restart` if the gateway was
+already running.
+Check: `nexgen openclaw doctor` says the gateway listens on loopback and Tailscale Serve publishes it over
+HTTPS on the tailnet.
+
+On the laptop: `nexgen openclaw node --host <host>.<tailnet>.ts.net` prints the same two routes and
+recognises the MagicDNS name.
+The join code carries the HTTPS address the gateway mints, so `openclaw connect <url> --service
+--session-host` needs no port and no token of its own; the explicit route is printed as `--port 443 --tls`,
+because that port belongs to Serve.
+Both machines have to be on the same tailnet and logged in to Tailscale.
+Check: `openclaw node status --json` on the laptop, and `nexgen openclaw pair` on the gateway for the
+approval.
 
 ### Outside the house
 
@@ -469,31 +626,39 @@ lost when it is down, and nothing else is either: memory, channels and cron jobs
 
 ## Commands
 
-`nexgen openclaw plan [--json] [--lan] [--acpx]` reads the configuration in force, computes what the engine
-would write, and prints what it would add, what it would change, what it no longer proposes, and which keys
-are the person's and stay. It writes nothing.
+`nexgen openclaw plan [--json] [--lan | --server] [--acpx]` reads the configuration in force, computes what
+the engine would write, and prints what it would add, what it would change, what it no longer proposes, and
+which keys are the person's and stay. It writes nothing; `--server` is the read-only preview of the change
+`setup --server` applies.
 
 `nexgen openclaw doctor [--json] [--nodes]` checks installation, version against the pin, the configuration's
 validity, `:latest` ids, caged local models, whether the evidence check runs and for which local models, the
-heartbeat, the gateway's bind and authentication, Google entries, ACP seats, agents on subscriptions this
-machine does not have, which background job would wake a local model, whether the gateway watches the whole
-home recursively, whether the gateway is listening, whether every agent has a fallback chain, a second
-gateway from the Microsoft Store, the OpenClaw Companion's own gateway, which it reports without configuring
-it, and how many skills and servers OpenClaw created that the canonical library does not declare yet.
+heartbeat, the gateway's bind and authentication, how the gateway is exposed (loopback, the home network,
+every interface, a direct tailnet listener, Tailscale Serve or Funnel, with a failure when a gateway published
+through Serve also listens on a network address), Google entries, the local `agy` backend and the permission
+mode its plugin was given, ACP seats, agents on subscriptions this machine does not have, which background
+job would wake a local model, whether the gateway watches the whole home recursively, whether the gateway is
+listening, whether every agent has a fallback chain, a second gateway from the Microsoft Store, the OpenClaw
+Companion's own gateway, which it reports without configuring it, and how many skills and servers OpenClaw
+created that the canonical library does not declare yet.
 When the app is installed, one line answers the two questions a person has: whether the app's settings point at
 this PC's gateway, and whether the gateway's own device list knows the app. `nexgen openclaw doctor` reads that
 list with `openclaw devices list --json`, on that line only and only when the app says it is on this gateway;
 a stopped gateway is a normal state, so the line then says nothing about devices instead of reporting a fault.
 `--nodes` adds the nodes the running gateway knows, which costs one run of OpenClaw's CLI and is therefore
-never done unless asked; the line about the network needs no query, so it is always there. `nexgen doctor`
+never done unless asked; the line about the network needs no query, so it is always there. The same flag reads
+each node's own exec approvals for every agent that runs its commands there, and warns when that PC is stricter
+than what the agent asks for: a node whose fallback is `deny` answers the agent with `exec denied:
+request-failed`, which says nothing about the cause. Without the flag nothing of a node is asked. `nexgen doctor`
 runs the same checks as part of its own report, without `--nodes` and without launching that list, and says
 nothing at all on a machine that never installed OpenClaw, never declared the module and has no Companion
 gateway.
 
 `nexgen openclaw node --host <address> [--port 18789] [--name <label>]` prints the commands that make this
 machine a node of a gateway elsewhere: OpenClaw's one-paste route with a join code, and the explicit route with
-its two approvals. It writes nothing and runs nothing, because `openclaw node install` already writes the
-service on each platform.
+its two approvals. The address may be a name on the home network or a Tailscale MagicDNS name; the second
+needs no port in the one-paste route and `--port 443 --tls` in the explicit one. It writes nothing and runs
+nothing, because `openclaw node install` already writes the service on each platform.
 
 `nexgen openclaw setup` applies that same plan: it installs the pinned release, onboards when there is no
 file, merges the owned sections with a backup beside them, writes the agent manuals, installs and starts the
@@ -502,8 +667,12 @@ both are computed by the same pure function. On a Windows machine it also ends b
 gateway and offering the request the app leaves, in the paragraph that follows the summary the doctor prints.
 
 `nexgen openclaw adopt [--skills] [--mcp] [--dry-run] [--yes]` takes what was created inside OpenClaw and
-makes it canonical: the skills the Skill Workshop learned, and the servers in `mcp.servers` that no manifest
-declares. It prints the plan with every check before writing anything. A name already taken is a refusal and
+makes it canonical: the skills the Skill Workshop learned, the servers in `mcp.servers` that no manifest
+declares, and ClawHub plugins wrapping MCP servers (detected from plugin manifests `openclaw.plugin.json`,
+`package.json`, bundled `mcp.json`/`.mcp.json`, or catalog descriptions matching official/hosted MCP services).
+Underlying MCP servers are extracted and proposed for adoption as unmanaged servers, with credentials in `${VAR}`
+preserved as references. Installed plugins that are not MCP wrappers (such as channels, memory, or model
+providers) are omitted from adoption with a one-line explanatory note. It prints the plan with every check before writing anything. A name already taken is a refusal and
 never an overwrite, a plaintext credential blocks, and a skill holding a script, an executable or an unknown
 file is a question: `--yes` adopts only what the checks cleared and names what it left. An adopted skill is
 copied into `03-INFRA/agent-universal-layer/skills/<name>/`, declared `origin: vault` in the skills manifest,
@@ -512,6 +681,13 @@ loads the canonical copy like every other CLI; an adopted server enters the MCP 
 same writer `nexgen mcp add` uses. The doctor says how much is still waiting and adopts nothing by itself:
 adoption is a person's act.
 
+`nexgen openclaw package [--json]` builds the plugin's npm tarball in the engine's state folder and prints
+the file and its sha256, which is the pair an install on another gateway is checked against. It installs
+nothing and writes nothing else; `--json` reports the same path and hash with the files inside.
+
 `nexgen openclaw restart` and `nexgen openclaw pair` bring the gateway back and let a phone, or another
 machine, in; they are described above, with the rest of the installation. `nexgen openclaw stop` takes it down
 and waits until the port is free, which is what a hand edit of `openclaw.json` needs.
+
+`nexgen openclaw rpc health [--json] [--url URL]` inspects the gateway's operational state through the
+WebSocket `health` call, reporting uptime and the plugins it loaded without changing anything.

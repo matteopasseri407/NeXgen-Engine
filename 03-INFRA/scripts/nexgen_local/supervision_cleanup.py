@@ -366,7 +366,7 @@ def _reason(task_id: str, role: str) -> str:
         return EMPTY
     open_units = [
         record["unit"] for record in units
-        if not (record.get("approved") or record.get("published"))
+        if not (record.get("approved") or record.get("published") or record.get("retired") or record.get("state") in DONE_STATES)
     ]
     if open_units:
         return OPEN

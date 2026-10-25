@@ -295,6 +295,45 @@ def test_resend_opens_the_first_tab_when_the_task_has_no_session(task, repo, tmp
     assert str(result["path"]) in opened[0][3], "la scheda nuova punta al file del giro"
 
 
+def test_resend_delivers_to_agy_by_reopening_interactive_tab(task, repo, tmp_path, monkeypatch, harness_cli):
+    """Il resend verso agy riapre la scheda con resume_argv sulla conversazione esistente."""
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    conv_id = "a544d85d-f5b3-4741-bbe2-8044c85b348f"
+    state.append_event(
+        task, "attached", unit="prova", role="esecutore", harness="agy",
+        session=conv_id, folder=str(folder),
+    )
+    gates.collect(task, "prova")
+
+    review_file = tmp_path / "correzioni.md"
+    review_file.write_text("# Correzioni\n\nApplica le modifiche richieste.\n", encoding="utf-8")
+    review_path = Path(state.open_task(task)) / "45-revisione-prova-1.md"
+    review_path.write_text(review_file.read_text(encoding="utf-8"), encoding="utf-8")
+    state.append_event(task, "unit_reviewed", unit="prova", verdict=state.REWORKED, round=1, path=str(review_path), head="0"*40)
+    state.append_event(task, "unit_queued", unit="prova", round=1, session=conv_id, reason="da consegnare")
+
+    opened: list = []
+    monkeypatch.setattr(
+        harness.windows, "open_window",
+        lambda title, argv, *, cwd, marker="": opened.append((title, argv, cwd)) or {"title": title, "launcher": "finto", "pid": 12},
+    )
+
+    result = review.resend(task, "prova")
+
+    assert result["delivery"]["mode"] == "tab"
+    assert len(opened) == 1
+    title, argv, cwd = opened[0]
+    assert title == "esecutore · prova"
+    assert "agy" in argv[0].lower()
+    assert argv[1:] == [
+        "--mode", "accept-edits", "--conversation", conv_id,
+        "--prompt-interactive", harness.corrections_text(task, "prova", review_path, 1),
+    ]
+    assert cwd == folder
+
+
+
 def test_the_cli_resends_a_pending_round(task, repo, tmp_path, capsys, monkeypatch):
     folder = _unit(task, repo, tmp_path)
     _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})

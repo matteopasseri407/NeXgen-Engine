@@ -80,8 +80,8 @@ inside the vault clone you are about to delete. If you ran the connectors
 on this machine's own Docker (`nexgen stack up`), stopping them
 with `nexgen stack down` leaves their data volumes intact, same as the rest
 of this project's "repair, never destroy" posture. To actually remove that
-data, back up anything you want to keep first (n8n workflows, Firecrawl
-data, OCR state), then run `docker compose down -v` yourself inside each
+data, back up anything you want to keep first (n8n workflows, OCR state),
+then run `docker compose down -v` yourself inside each
 stack's folder under `03-INFRA/deploy/<service>/`.
 
 ## 6. Remove the vault clone
@@ -99,7 +99,7 @@ rm -rf ~/KnowledgeVault   # or wherever you cloned it
 
 ## 7. Cloud-Server mode: tear down the VPS stack separately
 
-If you deployed `03-INFRA/deploy/` (n8n, Firecrawl, OCR) on a VPS, that's a separate Docker Compose stack on a separate machine; this repo's uninstall does not reach it over the network, so you tear it down yourself. Back up anything you want to keep from it first (n8n workflows, Firecrawl data, OCR state) — `docker compose down -v` in that stack's folder deletes its containers *and* its volumes, so that data does not survive the command.
+If you deployed `03-INFRA/deploy/` (n8n, OCR, vault-mcp) on a VPS, that's a separate Docker Compose stack on a separate machine; this repo's uninstall does not reach it over the network, so you tear it down yourself. Back up anything you want to keep from it first (n8n workflows, OCR state) — `docker compose down -v` in that stack's folder deletes its containers *and* its volumes, so that data does not survive the command.
 
 ## 8. State and secrets left behind
 

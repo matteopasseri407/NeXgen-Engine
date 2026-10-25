@@ -12,6 +12,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -39,6 +40,8 @@ class CodexAdapter(base.Adapter):
     name = "codex"
     label = "Codex"
     executable = "codex"
+    session_id_pattern = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+    session_id_description = "UUID come '01a161aa-7ac3-7ab0-8371-e339b5bbc783'"
     capabilities = base.Capabilities(
         open_tab=True, find_session=True, send_turn=True, live_state=True, cost=False,
         tokens=True, write_permissions=False, resume=True, scout=True,
@@ -47,13 +50,16 @@ class CodexAdapter(base.Adapter):
         limits="su Windows il sandbox scrive come un utente separato: il motore non legge né cancella il lavoro, quindi l'esecutore non è utilizzabile end-to-end",
     )
 
-    def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "") -> list[str]:
+    def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "",
+                 model: str = "") -> list[str]:
         """`codex -C <folder> -s workspace-write -a never <pointer>`: a visible tab.
 
         The unit's brief and report live in the task folder, and a worktree keeps
         its git objects in the checkout: both are outside the copy Codex takes as
         its workspace, so they are added as writable roots. Without them the model
         cannot read the brief, cannot write the report, and cannot commit.
+        `model` is accepted and not used: a Codex tab opens on the model of the
+        owner's own configuration.
         """
         argv = [executable, "-C", str(folder), "-s", SANDBOX, "-a", APPROVAL]
         for root in _extra_roots(folder):

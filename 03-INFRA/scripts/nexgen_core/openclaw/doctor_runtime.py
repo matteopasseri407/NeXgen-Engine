@@ -1,3 +1,4 @@
+# nexgen: one-job reason="the live state around an installed OpenClaw: what runs, what else listens, and what the plugin reads"
 """The live state around an installed OpenClaw: ports, other gateways, learned skills.
 
 One job: the checks that read machine state rather than configuration, so
@@ -12,6 +13,7 @@ question; here it is only a value that decides which sentence a person reads.
 """
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -191,6 +193,14 @@ def check_bindings(config: dict[str, Any]) -> CheckOutcome | None:
     )
 
 
+def _is_isolated_gateway_package(child: Path) -> bool:
+    """Whether this package folder is the Companion's isolated native gateway."""
+    lowered = child.name.casefold()
+    if "openclawfoundation.openclawgateway" in lowered:
+        return True
+    return (child / "LocalState" / "OpenClawGatewayMSIX").is_dir()
+
+
 def store_packages(home: Path, env: Mapping[str, str], platform: str) -> list[str]:
     """The Microsoft Store package of OpenClaw, when Windows installed one."""
     if not platform.startswith("win"):
@@ -201,7 +211,7 @@ def store_packages(home: Path, env: Mapping[str, str], platform: str) -> list[st
         return []
     return sorted(
         child.name for child in packages.iterdir()
-        if child.is_dir() and "openclaw" in child.name.lower()
+        if child.is_dir() and "openclaw" in child.name.lower() and not _is_isolated_gateway_package(child)
     )
 
 
@@ -345,6 +355,31 @@ def check_unadopted(
 # ------------------------------------------------------------- the Companion app
 
 
+def _isolated_companion_outcome(companion: Companion, situation: str) -> CheckOutcome | None:
+    """Outcome when the app points to its own isolated native gateway."""
+    if situation == app.BOTH:
+        return CheckOutcome(
+            id="openclaw.companion_gateway",
+            severity=Severity.WARN,
+            message=t("The OpenClaw Companion app points to its own isolated native gateway ({signals}) and the engine "
+                      "gateway is here too.", signals=", ".join(companion.signals)),
+            action=t("In OpenClaw Companion choose 'a local Gateway on this PC' with the engine gateway address, "
+                     "and turn off autostart for the native gateway (or uninstall the OpenClaw Gateway package; "
+                     "the app remains)."),
+        )
+    if situation == app.APP:
+        return CheckOutcome(
+            id="openclaw.companion_gateway",
+            severity=Severity.OK,
+            message=t("The OpenClaw Companion app points to its own isolated native gateway ({signals}). This version "
+                      "of the engine configures the native Node gateway, not the isolated one: it writes nothing here "
+                      "and starts no second gateway.", signals=", ".join(companion.signals)),
+            action=t("Use the app as it is, or install the native gateway with {command} and run "
+                     "'nexgen openclaw setup'.", command="npm install -g openclaw"),
+        )
+    return None
+
+
 def check_companion_gateway(
     companion: Companion,
     native_installed: bool,
@@ -367,6 +402,10 @@ def check_companion_gateway(
     if not platform.startswith("win"):
         return None
     situation = companion.situation(native_installed)
+    if companion.is_isolated:
+        isolated_outcome = _isolated_companion_outcome(companion, situation)
+        if isolated_outcome is not None:
+            return isolated_outcome
     if situation == app.APP:
         return CheckOutcome(
             id="openclaw.companion_gateway",
@@ -451,3 +490,30 @@ def _devices_sentence(
         return t("The gateway lists its device.")
     return t("The gateway lists {count} device(s), none of them naming the app: 'nexgen openclaw pair' shows the "
              "request and approves it.", count=len(devices))
+
+
+def check_checkpoint(plugin_dir: Path) -> CheckOutcome | None:
+    """Whether session continuity checkpoint is enabled in nexgen.config.json."""
+    config_path = plugin_dir / "nexgen.config.json"
+    if not config_path.is_file():
+        return None
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # nexgen: allow reason="an unreadable plugin config file means checkpoint cannot be judged"
+        return None
+    checkpoint = data.get("checkpoint") if isinstance(data, dict) else None
+    enabled = checkpoint.get("enabled") if isinstance(checkpoint, dict) else None
+    if enabled is True:
+        return CheckOutcome(
+            id="openclaw.checkpoint",
+            severity=Severity.OK,
+            message=t("Session continuity checkpoint is enabled."),
+        )
+    if enabled is False:
+        return CheckOutcome(
+            id="openclaw.checkpoint",
+            severity=Severity.WARN,
+            message=t("Session continuity checkpoint is disabled."),
+            action=t("Enable 'checkpoint' in {path} or run 'nexgen sync'.", path=config_path),
+        )
+    return None

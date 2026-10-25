@@ -79,6 +79,18 @@ def test_no_lister_means_no_node_line_and_no_query():
     assert by_id(outcomes)["openclaw.gateway.lan"].severity == Severity.OK
 
 
+def test_a_served_gateway_is_reached_by_its_magicdns_name_not_by_opening_the_lan():
+    """A node does not need the LAN when Tailscale Serve already publishes the gateway."""
+    config = gateway_config()
+    config["gateway"]["tailscale"] = {"mode": "serve"}
+
+    outcome = by_id(check_nodes(config, listening, lambda: NODES))["openclaw.gateway.lan"]
+
+    assert outcome.severity == Severity.OK
+    assert "MagicDNS" in outcome.message
+    assert "--lan" not in (outcome.action or "")
+
+
 def test_a_listening_gateway_names_the_nodes_it_knows():
     outcomes = check_nodes(gateway_config(), listening, lambda: NODES)
 

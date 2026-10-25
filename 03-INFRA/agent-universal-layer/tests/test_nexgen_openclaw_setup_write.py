@@ -194,3 +194,37 @@ def test_a_list_is_still_replaced_where_the_proposal_owns_it():
 
     assert merged == {"name": "new", "tags": ["b"]}
 
+
+
+# --------------------------------------------------------------- retirement
+
+
+def test_legacy_bare_false_tool_search_is_retired():
+    """An earlier engine wrote `toolSearch: False`: setup removes the bare boolean."""
+    current = {"tools": {"toolSearch": False, "profile": "minimal"}}
+    proposed = {"tools": {"profile": "standard"}}
+
+    merged = setup_write.merged_document(current, proposed)
+
+    assert "toolSearch" not in merged["tools"]
+    assert merged["tools"]["profile"] == "standard"
+
+
+def test_user_configured_tool_search_object_is_preserved():
+    """An object written by the person (e.g. `mode` or `enabled: False`) is preserved."""
+    current = {"tools": {"toolSearch": {"enabled": False}}}
+    proposed = {"tools": {"profile": "standard"}}
+
+    merged = setup_write.merged_document(current, proposed)
+
+    assert merged["tools"]["toolSearch"] == {"enabled": False}
+
+
+def test_user_configured_tool_search_boolean_true_is_preserved():
+    """If the person explicitly pinned `toolSearch: True`, it is preserved."""
+    current = {"tools": {"toolSearch": True}}
+    proposed = {}
+
+    merged = setup_write.merged_document(current, proposed)
+
+    assert merged["tools"]["toolSearch"] is True

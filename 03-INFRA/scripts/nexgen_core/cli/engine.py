@@ -108,7 +108,8 @@ def _register_info(sub) -> None:
     p.add_argument("--all", action="store_true", help=t("List every skill, not only the third-party and the changed ones"))
     p.set_defaults(func=cmd_info)
 
-    p = sub.add_parser("shell", aliases=["interactive", "repl"], help=t("Launch the interactive NeXgen Shell"))
+    notice = t("Notice: shell is retired in favor of OpenClaw TUI")
+    p = sub.add_parser("shell", aliases=["interactive", "repl"], help=notice, description=notice)
     p.set_defaults(func=cmd_shell)
 
     p = sub.add_parser("update", help=t("Update the engine, with confirmation"))
@@ -403,12 +404,11 @@ def cmd_info(args) -> int:
     interactive = getattr(args, "interactive", False)
     print(safe_text(render_info(as_json=as_json, show_all=getattr(args, "all", False))))
     if interactive:
-        from nexgen_core.tools.shell import run_shell
-        return run_shell()
+        print(t("The interactive shell has been retired: use 'openclaw tui' or the OpenClaw Dashboard instead."))
     return 0
 
 
 def cmd_shell(args) -> int:
-    """Launches the interactive NeXgen Shell."""
-    from nexgen_core.tools.shell import run_shell
-    return run_shell()
+    """Guidance for the retired interactive shell, pointing to OpenClaw."""
+    print(t("The interactive shell has been retired: use 'openclaw tui' or the OpenClaw Dashboard instead."))
+    return 0

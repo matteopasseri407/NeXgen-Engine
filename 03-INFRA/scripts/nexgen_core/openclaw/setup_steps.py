@@ -1,3 +1,4 @@
+# nexgen: one-job reason="individual execution steps for OpenClaw gateway setup"
 """The nine steps of `nexgen openclaw setup`, one function each.
 
 One job: do the work of one step and say what it did. The order, the plan and
@@ -266,9 +267,22 @@ def write_step(setup: Setup, plan) -> str:
 
 def workspaces_step(setup: Setup, plan, before: set[str]) -> None:
     """Step 5: the folders, the manuals, and the first-run file to remove."""
+    from nexgen_core.openclaw.squad import (
+        find_squad_file,
+        get_squad_instructions,
+        get_squad_souls,
+        load_squad,
+    )
+
     dirs = agent_dirs(plan.config.get("agents", {}).get("entries") or {})
     created = {agent for agent, path in dirs.items() if created_by_openclaw(path, setup.state_dir, before)}
-    prepare(dirs, created, plan.choices.lang or None, setup.out)
+    squad_file = find_squad_file(setup.vault_data, home=setup.home)
+    squad = load_squad(squad_file)
+    souls = get_squad_souls(squad)
+    instructions, unreadable = get_squad_instructions(squad, squad_file)
+    for path in unreadable:
+        setup.out(t("The squad names an instructions file that cannot be read: {path}", path=path))
+    prepare(dirs, created, plan.choices.lang or None, setup.out, souls=souls, instructions=instructions)
 
 
 def wait_for_port(
@@ -320,8 +334,38 @@ def _install_left_a_gateway(setup: Setup, result: dict) -> bool:
         service.sleeper(1.0)
 
 
+def fix_state_permissions(setup: Setup) -> bool:
+    """Ensure OpenClaw state directory and files are not group/world-writable."""
+    if (setup.platform or sys.platform) == "win32":
+        return True
+    state_dir = setup.state_dir
+    if not state_dir.exists():
+        return True
+    fixed = False
+    try:
+        st = state_dir.stat()
+        if st.st_mode & 0o022:
+            state_dir.chmod(st.st_mode & ~0o022)
+            fixed = True
+        for item in state_dir.iterdir():
+            try:
+                ist = item.stat()
+                if ist.st_mode & 0o022:
+                    item.chmod(ist.st_mode & ~0o022)
+                    fixed = True
+            except OSError:  # nexgen: allow reason="unreadable individual files in state dir must not abort permission hardening"
+                pass
+    except OSError as exc:
+        setup.out(t("Warning: could not inspect state directory permissions: {error}", error=exc))
+        return False
+    if fixed:
+        setup.out(t("OpenClaw state permissions corrected (removed group/world-writable)."))
+    return True
+
+
 def service_step(setup: Setup, restarted: bool) -> bool:
     """Step 6: a service that is installed, and a port that answers."""
+    fix_state_permissions(setup)
     status = setup.service.status()
     installed_now = False
     if status.get("installed"):
@@ -375,6 +419,24 @@ def governor_step(setup: Setup, plan) -> None:
                 count=len(section["agents"])))
 
 
+def enable_openclaw_mcp(setup: Setup, vault: Path) -> bool:
+    """Enable the canonical OpenClaw MCP server in machine-local state for other CLIs."""
+    from nexgen_core.mcp_state import enable_server
+    from nexgen_core.paths import mcp_manifest
+
+    manifest_path = mcp_manifest(vault)
+    if not manifest_path.is_file():
+        return False
+    try:
+        if not setup.dry_run:
+            enable_server("openclaw", enabled=True, home=setup.home)
+        setup.out(t("OpenClaw MCP server enabled for other harnesses."))
+        return True
+    except (OSError, ValueError) as exc:  # nexgen: allow reason="state write error reports a step that did not land, never crashes setup"
+        setup.out(t("Could not enable OpenClaw MCP server: {error}", error=exc))
+    return False
+
+
 def module_step(setup: Setup) -> None:
     """Step 7: this machine declares the module, so the doctor keeps it aligned."""
     vault = resolve_vault_data(setup.home, setup.vault_data)
@@ -384,6 +446,7 @@ def module_step(setup: Setup) -> None:
         setup.out(t("The module declaration did not land: {error}", error=exc))
         return
     setup.out(t("This machine declares 'openclaw: local' for host {host}.", host=current_host()))
+    enable_openclaw_mcp(setup, vault)
 
 
 def phone_step(setup: Setup) -> None:
@@ -394,9 +457,53 @@ def phone_step(setup: Setup) -> None:
                 "'nexgen openclaw pair --approve <id>' approves it."))
 
 
-def plugin_step(setup: Setup) -> None:
-    """The engine's plugin is enabled only when its folder is actually there."""
-    if engine_plugin_path(setup).is_dir():
+def _find_engine_hooks_dir(engine_root: Path | None) -> Path | None:
+    if engine_root:
+        for candidate in (
+            engine_root / "03-INFRA" / "agent-universal-layer" / "hooks",
+            engine_root / "agent-universal-layer" / "hooks",
+        ):
+            if candidate.is_dir():
+                return candidate
+        return None
+    candidate = Path(__file__).resolve().parents[3] / "agent-universal-layer" / "hooks"
+    if candidate.is_dir():
+        return candidate
+    return None
+
+
+def is_plugin_verified(setup: Setup) -> bool:
+    """True when the plugin folder exists and contains its manifest and entrypoint."""
+    p = engine_plugin_path(setup)
+    return p.is_dir() and (p / "openclaw.plugin.json").is_file() and (p / "index.mjs").is_file()
+
+
+def _deposit_plugin_attempt(setup: Setup) -> bool:
+    from nexgen_core.runtimes.openclaw import OpenClawRuntime, plugin_files
+
+    hooks = _find_engine_hooks_dir(setup.engine_root)
+    if not hooks:
+        return False
+    try:
+        OpenClawRuntime()._deploy_plugin(engine_plugin_path(setup), plugin_files(hooks))
+    except Exception as exc:  # noqa: BLE001
+        setup.out(t("Plugin deposit exception: {error}", error=exc))
+        return False
+    return is_plugin_verified(setup)
+
+
+def plugin_step(setup: Setup) -> bool:
+    """The engine's plugin is verified and deposited in the same setup turn."""
+    if is_plugin_verified(setup):
         setup.out(t("The engine plugin {plugin} is deposited and enabled.", plugin=PLUGIN_ID))
-    else:
-        setup.out(t("The engine plugin {plugin} is not deposited on this machine: not enabled.", plugin=PLUGIN_ID))
+        return True
+
+    setup.out(t("Engine plugin not deposited: depositing now..."))
+    if not _deposit_plugin_attempt(setup):
+        setup.out(t("First deposit attempt unverified; retrying once..."))
+        if not _deposit_plugin_attempt(setup):
+            setup.out(t("Error: engine plugin {plugin} could not be deposited or verified.", plugin=PLUGIN_ID))
+            return False
+
+    setup.out(t("The engine plugin {plugin} is deposited and enabled.", plugin=PLUGIN_ID))
+    return True

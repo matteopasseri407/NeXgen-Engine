@@ -61,20 +61,31 @@ servers:
     windows:
       args: ["${AGENT_ENGINE_ROOT}\\agent-universal-layer\\mcp\\playwright-human-safe.mjs", "--cdp-endpoint", "http://localhost:9222"]
 
-  # ---- self-hosted backend (Cloud-Server mode only) --------------------
-  # Ports come from env vars set by the user; sane defaults aligned with
-  # 03-INFRA/deploy/*.yml. If the env var is absent, the renderer omits the
-  # server (require_env).
+  # ---- cloud connector: the vendor's API, the user's own key -----------
+  # The connector is Firecrawl's own MCP server against the official cloud
+  # API. Nothing is self-hosted and there is no tunnel: the key lives in the
+  # person's secret store (`nexgen-secrets`), arrives here only as a
+  # reference, and a machine without it mounts nothing (require_env).
 
   firecrawl:
+    # Tools never used in OpenCode/Codex history (2026-10-07); hidden to save ~6k tokens a session on CLIs that load tools up front.
+    # Put a name back by deleting it here; `nexgen mcp check --direct` shows the effect.
+    # Hiding a tool is also what puts the server behind `mcp-trim.py`: the launcher resolves the key at
+    # spawn time, so the credential stays a reference and no CLI's config file ever holds it.
+    tools_deny: ["firecrawl_crawl", "firecrawl_check_crawl_status", "firecrawl_feedback", "firecrawl_find_tools", "firecrawl_parse", "firecrawl_credit_usage", "firecrawl_developer_search", "firecrawl_monitor_create", "firecrawl_monitor_check", "firecrawl_monitor_checks", "firecrawl_monitor_update", "firecrawl_monitor_list", "firecrawl_monitor_run", "firecrawl_monitor_delete", "firecrawl_monitor_get"]
     transport: stdio
     tier: core
     command: npx
     args: ["-y", "firecrawl-mcp@3.25.3"]
     env:
-      FIRECRAWL_API_URL: "http://127.0.0.1:${FIRECRAWL_TUNNEL_PORT:-33002}"
-    require_env: FIRECRAWL_TUNNEL_PORT
+      FIRECRAWL_API_KEY: "${FIRECRAWL_API_KEY}"
+    require_env: FIRECRAWL_API_KEY
     targets: [claude, codex, antigravity, opencode, openclaw]
+
+  # ---- self-hosted backend (Cloud-Server mode only) --------------------
+  # Ports come from env vars set by the user; sane defaults aligned with
+  # 03-INFRA/deploy/*.yml. If the env var is absent, the renderer omits the
+  # server (require_env).
 
   n8n-mcp:
     transport: http
@@ -158,6 +169,19 @@ servers:
     args: ["-y", "@modelcontextprotocol/server-memory@2026.7.4"]
     require_env: MCP_MEMORY_OPT_IN
     targets: [codex]
+
+  # ---- OpenClaw channel conversations (enabled on setup) -----------------
+  # `openclaw mcp serve` exposes routed channel conversations over stdio.
+  # Disabled by default (`enabled: false`); turned on by `nexgen openclaw setup`
+  # when OpenClaw is installed, so Claude Code, Codex, OpenCode, and agy can
+  # read and send messages across the owner's channels.
+  openclaw:
+    exposure: eager
+    transport: stdio
+    command: openclaw
+    args: ["mcp", "serve"]
+    targets: [claude, codex, antigravity, opencode]
+    enabled: false
 
   # ---- the gateway (always mounted) -------------------------------------
 

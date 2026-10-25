@@ -122,6 +122,7 @@ def marker_of(row: dict) -> str:
 def close_tab(
     task_id: str, role: str, *, lister=None, killer=None,
     still_working: tuple[str, ...] = (), stopped: bool = True,
+    unit: str = "",
 ) -> dict:
     """Close the tab that ran this role, unless closing it would kill work still running.
 
@@ -129,11 +130,10 @@ def close_tab(
     engine wrote; under it are the harness and whatever the harness started.
     Killing the shell closes the tab and killing the harness ends its work, and
     nothing is killed when the tab is still needed. For the executor that means
-    the session may still be writing (`stopped` false), or another unit of the
-    same task may still be created, queued, running or waiting for a decision:
-    the task has one session for all of them, and `still_working` names a unit
-    the caller has just collected, which is already done. Then the tab stays,
-    `tab_left_open` names why, and the owner sees it. Nor is a tree holding an
+    the session may still be writing (`stopped` false), or another unit sharing
+    this tab may still be working: a tab shared between multiple units closes
+    only when the last unit using it is done. Independent copies close their tab
+    without waiting for units in other copies. Nor is a tree holding an
     `opencode serve` ever closed: the first tab of the day starts the server
     every other session shares, so closing that one would stop them all. A tab
     that is no longer there is not an error: the engine closes what it opened,
@@ -148,20 +148,9 @@ def close_tab(
     if not roots:
         return _tab_result(role, [], "")
     if role == "esecutore":
-        if not stopped:
-            reason = "la sessione dell'esecutore sta ancora lavorando: la scheda resta aperta"
-            state.append_event(task_id, "tab_left_open", role=role, reason=reason)
-            return _tab_result(role, [], reason, found=True)
-        still_open = _open_units(task_id, except_units=still_working)
-        if still_open:
-            reason = (
-                "altre unità del compito possono ancora lavorare nella stessa sessione "
-                f"({', '.join(still_open)}): chiudo la scheda quando sono pubblicate"
-            )
-            state.append_event(
-                task_id, "tab_left_open", role=role, reason=reason, units=still_open,
-            )
-            return _tab_result(role, [], reason, found=True)
+        blocked, roots = _check_executor_active(task_id, roots, table, unit, still_working, stopped)
+        if blocked:
+            return blocked
     tree = processes.subtree(table, [row["pid"] for row in roots])
     shared = [row for _, row in tree if processes.is_shared_server(row)]
     if shared:
@@ -191,30 +180,118 @@ def _tab_result(role: str, pids: list[int], reason: str, *, found: bool = False)
     return {"role": role, "found": found, "closed": list(pids), "reason": reason, "line": line}
 
 
+def _check_executor_active(
+    task_id: str, roots: list[dict], table: list[dict], unit: str,
+    still_working: tuple[str, ...], stopped: bool,
+) -> tuple[dict | None, list[dict]]:
+    """Verify whether an executor tab can be closed, returning (result, effective_roots)."""
+    if not stopped:
+        reason = "la sessione dell'esecutore sta ancora lavorando: la scheda resta aperta"
+        state.append_event(task_id, "tab_left_open", role="esecutore", reason=reason)
+        return _tab_result("esecutore", [], reason, found=True), roots
+
+    unit_roots = _filter_unit_roots(roots, table, task_id, unit) if unit else []
+    is_isolated = bool(unit and unit_roots and len(unit_roots) < len(roots))
+    if is_isolated:
+        still_open = _sharing_open_units(task_id, unit, except_units=still_working)
+        effective = unit_roots
+    else:
+        still_open = _open_units(task_id, except_units=still_working)
+        effective = roots
+
+    if still_open:
+        reason = (
+            "altre unità del compito possono ancora lavorare nella stessa sessione "
+            f"({', '.join(still_open)}): chiudo la scheda quando sono pubblicate"
+        )
+        state.append_event(task_id, "tab_left_open", role="esecutore", reason=reason, units=still_open)
+        return _tab_result("esecutore", [], reason, found=True), effective
+    return None, effective
+
+
+
 def _is_tab_shell(row: dict, marker: str) -> bool:
     """Whether this row is the shell the engine opened for this tab, and not a command citing it."""
     return marker_of(row) == marker
 
 
-def _open_units(task_id: str, *, except_units: tuple[str, ...] = ()) -> list[str]:
-    """The task's units whose executor may still put work into the one session.
+def _is_unit_done(record: dict) -> bool:
+    """Whether a unit has reached a terminal state with no more executor work."""
+    if record.get("approved") or record.get("published") or record.get("retired"):
+        return True
+    return record.get("state") in ("pubblicata", "pubblicata in locale", "ritirata")
 
-    A task has one executor session for all its units, so a published unit does
-    not free the tab while a second one is created, queued, running, stalled or
-    waiting for a decision: closing it would kill that unit's work. A unit that
-    is approved and published, or approved and waiting only for `sup publish`,
-    has no work left, and `except_units` names the one a collection has just
-    finished with: it is done with its work by definition.
-    """
+
+def _open_units(task_id: str, *, except_units: tuple[str, ...] = ()) -> list[str]:
+    """The task's units whose executor may still put work into the one session."""
     ignored = {state.slug(name) for name in except_units if name}
     found: list[str] = []
     for record in state.status(task_id)["units"]:
-        if record["unit"] in ignored:
-            continue
-        if record.get("approved") or record.get("published"):
+        if record["unit"] in ignored or _is_unit_done(record):
             continue
         found.append(str(record.get("unit") or ""))
     return found
+
+
+def _sharing_open_units(task_id: str, unit: str, *, except_units: tuple[str, ...] = ()) -> list[str]:
+    """Other open units that actually share the same session, copy or tab with `unit`."""
+    target_slug = state.slug(unit)
+    ignored = {state.slug(name) for name in except_units if name}
+    ignored.add(target_slug)
+
+    units_data = state.status(task_id)["units"]
+    target_rec = next((r for r in units_data if r["unit"] == target_slug), None)
+    if not target_rec:
+        return _open_units(task_id, except_units=except_units)
+
+    target_session = str(target_rec.get("session") or "")
+    target_wt = os.path.normcase(os.path.normpath(str(target_rec.get("worktree") or ""))) if target_rec.get("worktree") else ""
+    events = state.read_events(task_id)
+    target_pids = {row.get("pid") for row in events if row.get("unit") == target_slug and row.get("pid")}
+
+    sharing_open: list[str] = []
+    for record in units_data:
+        name = record["unit"]
+        if name in ignored or _is_unit_done(record):
+            continue
+        rec_session = str(record.get("session") or "")
+        rec_wt = os.path.normcase(os.path.normpath(str(record.get("worktree") or ""))) if record.get("worktree") else ""
+        rec_pids = {row.get("pid") for row in events if row.get("unit") == name and row.get("pid")}
+
+        shares = (
+            (target_session and target_session == rec_session)
+            or (target_wt and target_wt == rec_wt)
+            or bool(target_pids and (target_pids & rec_pids))
+        )
+        if shares:
+            sharing_open.append(str(name))
+    return sharing_open
+
+
+def _filter_unit_roots(roots: list[dict], table: list[dict], task_id: str, unit: str) -> list[dict]:
+    """Isolate tab roots belonging specifically to this unit by pid, window title or copy folder."""
+    target_slug = state.slug(unit)
+    events = state.read_events(task_id)
+    unit_pids = {row.get("pid") for row in events if row.get("unit") == target_slug and row.get("pid")}
+    unit_title = f"esecutore · {unit}"
+    unit_marker_term = f"23-unita-{unit}"
+
+    unit_roots: list[dict] = []
+    for root in roots:
+        tree = processes.subtree(table, [root["pid"]])
+        all_tree_rows = [root] + [r for _, r in tree]
+        matched = False
+        for r in all_tree_rows:
+            if r["pid"] in unit_pids:
+                matched = True
+                break
+            cmd = str(r.get("command_line") or "")
+            if unit_title in cmd or unit_marker_term in cmd:
+                matched = True
+                break
+        if matched:
+            unit_roots.append(root)
+    return unit_roots if unit_roots else roots
 
 
 def _windows_window(

@@ -32,6 +32,12 @@ nexgen mcp check    # starts each CLI's gateway as that CLI would, lists what it
 `nexgen doctor` reports an incoherent plan statically (`mcp.placement`); `check` is the live half and starts the
 backends, so it is a command you run, not part of `doctor`.
 
+## OpenClaw: direct connectors, no gateway
+
+Inside OpenClaw, `lazy-mcp` is never mounted. The proxy exists for CLIs that insert full tool schemas into the system prompt up front (Claude Code, Codex, Antigravity, OpenCode). OpenClaw already provides its own native mechanism, **Tool Search**, active by default when `tools.toolSearch` is unset: it defers tool schemas behind search, describe, and call controls, applying OpenClaw's policy, inventory, and execution approvals to each call.
+
+Mounting `lazy-mcp` inside OpenClaw would create a double-lazy layer (a search tool inside another search tool), obscure connectors from OpenClaw's policy and approval system, and funnel writes through `lazy_mutate` instead of OpenClaw's native approvals. Every server targeting OpenClaw is therefore placed directly, and `lazy-mcp` itself is never mounted (an operator wishing to disable OpenClaw native Tool Search configures an object such as `tools.toolSearch: { "enabled": false }`).
+
 What stops the gateway's children: a CLI that goes away closes the gateway's input, and the gateway and its
 backends exit with it (tested). A gateway killed outright (the OOM killer, `kill -9`) cannot clean up after
 itself and leaves its backends running until they are stopped by hand.
@@ -151,6 +157,18 @@ A server that dies on startup (a missing import, a bad path) used to be reported
 "tool not found", with whatever it printed thrown away. The last lines of its stderr are now kept
 and shown in the error, with the values of the secrets the proxy gave it and the usual token shapes
 replaced by `[redacted]`.
+
+### `command: npx` on Windows
+
+Windows starts a batch file only by handing it to `cmd.exe`, and `npx` there is
+`C:\Program Files\nodejs\npx.cmd`: a path with a space in it, which the interpreter splits at the space
+(`"C:\Program" is not recognized`). npm's shim is a wrapper around a JavaScript entry that sits beside it,
+so the engine starts `node node_modules/npm/bin/npx-cli.js` instead, with the same arguments and no
+interpreter in the middle. One rule, `nexgen_core.processes`, and every launcher uses it: the gateway,
+`mcp-trim`, `nexgen mcp check`, and the alert path through OpenClaw. When the entry or node is missing the
+launch is refused with a sentence that names the shim and the entry it expected, and the gateway repeats
+that sentence instead of the exception's class name. On Linux and macOS the command is passed through
+exactly as it was written.
 
 ## Concurrency
 

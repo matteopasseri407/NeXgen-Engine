@@ -2,7 +2,7 @@
 
 This is a **specification**, not source code. Nothing in `03-INFRA/deploy/`
 runs this for you — there is still no `semantic-search/` compose stack next
-to `firecrawl/`, `ocr/`, and `n8n/`. What follows is a complete, unambiguous
+to `ocr/`, and `n8n/`. What follows is a complete, unambiguous
 description of a backend that satisfies the `vault-library` MCP's
 `semantic_search` contract (see `03-INFRA/deploy/vault-mcp/src/vault_mcp_server/config.py`
 and `server.py`) and reproduces the exact retrieval architecture, weights,
@@ -223,8 +223,8 @@ directory's convention of every service declaring an explicit `mem_limit`
 (see `03-INFRA/deploy/README.md`'s Resource notes — an uncapped container
 that OOMs can take the whole VPS down with it). The maintainer's own
 instance runs with a 4 GB cap for headroom; either fits the free tier above
-with room to spare for the other stacks (`vault-mcp` at 512 MB, Firecrawl at
-~6 GB, OCR at 2 GB).
+with room to spare for the other stacks (`vault-mcp` at 512 MB, OCR at
+2 GB).
 
 Deployment rules, consistent with every other stack in this directory:
 

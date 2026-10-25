@@ -526,6 +526,22 @@ def antigravity_settings(home: Path | None = None) -> Path:
     return _antigravity_settings_impl(home)
 
 
+#: What `agy` itself writes under `~/.gemini/antigravity-cli` the first time it runs.
+#: `skills` is deliberately absent: this layer's own skill materializer creates that
+#: folder, so it says nothing about whether the CLI is installed.
+ANTIGRAVITY_CLI_FOOTPRINTS: tuple[str, ...] = ("settings.json", "history.jsonl", "conversations", "cli.log")
+
+
+def _antigravity_cli_state_impl(home: Path | None = None) -> Path:
+    """Implementation behind :func:`antigravity_cli_state`."""
+    return resolve_home(home) / ".gemini" / "antigravity-cli"
+
+
+def antigravity_cli_state(home: Path | None = None) -> Path:
+    """The folder `agy` keeps its own settings, history and conversations in."""
+    return _antigravity_cli_state_impl(home)
+
+
 def _antigravity_hooks_impl(home: Path | None = None) -> Path:
     """Implementation behind :func:`antigravity_hooks`."""
     return resolve_home(home) / ".gemini" / "config" / "hooks.json"

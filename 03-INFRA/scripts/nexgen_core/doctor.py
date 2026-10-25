@@ -61,7 +61,10 @@ from nexgen_core.checks.module_checks import check_modules_catalog, check_module
 from nexgen_core.checks.openclaw_checks import check_openclaw  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.openclaw_parity_checks import check_openclaw_parity  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.quota_checks import check_quota  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.checks.reachability_checks import check_mcp_reachability  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.checks.reachability_checks import (  # noqa: E402 - sys.path shim for cloned checkout
+    check_cloud_connector_key,
+    check_mcp_reachability,
+)
 from nexgen_core.checks.security_checks import (  # noqa: E402 - sys.path shim for cloned checkout
     check_leak_patterns_twin,
     check_required_rules,
@@ -229,6 +232,8 @@ def _mcp_and_module_checks(run, doc: Doctor) -> None:
     run("mcp.desktop_allowlist", lambda: check_desktop_allowlist(vault, home))
     run("mcp.unresolved_refs", lambda: check_mcp_unresolved_refs(vault, home))
     run("mcp.reachability", lambda: check_mcp_reachability(vault, home))
+    # The cloud connector has no port to probe: its key decides whether it exists here.
+    run("mcp.cloud_key", lambda: check_cloud_connector_key(manifest_mcp))
     run("mcp.deps", lambda: check_mcp_deps(manifest_mcp, state))
     run("modules.catalog", lambda: check_modules_catalog(engine_root, vault))
     # Installed is not working: a module says so itself, and only the doctor

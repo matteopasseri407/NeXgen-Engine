@@ -22,14 +22,22 @@ def package_text(
     results: list, cost_line: str, diffstat: str, diff: str,
     skipped: list[str], request_scan: dict, pytest_surface: list[str] = (),
     test_removals: list[str] = (), test_removals_error: str = "",
+    identity: dict | str | None = None,
 ) -> str:
     """The file a supervisor reads: verdict, gate lines, retirements, pytest surface, skips, requests, diffstat, diff, cost."""
     kept, cut = _truncated(diff, DIFF_MAX_LINES)
+    if isinstance(identity, dict) and (identity.get("name") or identity.get("email")):
+        id_display = f"{identity.get('name', '')} <{identity.get('email', '')}>".strip()
+    elif isinstance(identity, str) and identity.strip():
+        id_display = identity.strip()
+    else:
+        id_display = "non registrata"
     lines = [
         f"# Pacchetto di revisione: {unit}",
         "",
         f"- compito: {task_id}",
         f"- ramo: {branch}",
+        f"- identità: {id_display}",
         f"- base: {base[:12]}",
         f"- head: {head[:12]}",
         f"- verdetto: {verdict}",

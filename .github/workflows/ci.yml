@@ -267,38 +267,23 @@ jobs:
         # pull images, or build anything. Docker is preinstalled on
         # ubuntu-latest runners.
         #
-        # FIRECRAWL_REDIS_PASSWORD is declared `${VAR:?message}` (required)
-        # on purpose (2026-07-12 hardening, finding C): a silent empty
-        # default there would mean `--requirepass ""`, i.e. auth silently
-        # disabled. CI has no real .env, so a CI-only placeholder is
-        # exported here purely to let `config` validate the template's
-        # syntax/interpolation -- this never reaches a real deploy, which
-        # still gets its own value from bootstrap-vps.sh's ensure_env_secret.
+        # Every ${VAR:?message} guard in the templates is required on purpose:
+        # a silent empty default would disable auth. CI has no real .env, so
+        # CI-only placeholders are exported purely to let `config` validate
+        # the templates' syntax/interpolation; real deploys get their own
+        # values from bootstrap-vps.sh.
         run: |
           set -euo pipefail
-          export FIRECRAWL_REDIS_PASSWORD="ci-validate-only-placeholder"
-          # Same rationale for every other ${VAR:?} guard below: CI-only
-          # placeholders so `config` can validate the template; real deploys
-          # get their values from bootstrap-vps.sh.
-          export FIRECRAWL_POSTGRES_PASSWORD="ci-validate-only-placeholder"
-          export BRAVE_SEARCH_API_KEY="ci-validate-only-placeholder"
-          export FIRECRAWL_SEARXNG_SECRET="ci-validate-only-placeholder"
           export VAULT_LIBRARY_TOKEN="ci-validate-only-placeholder"
           export VAULT_MCP_UID=1000 VAULT_MCP_GID=1000
           for f in \
             03-INFRA/deploy/ocr/docker-compose.yml \
             03-INFRA/deploy/n8n/docker-compose.yml \
-            03-INFRA/deploy/firecrawl/docker-compose.yml \
             03-INFRA/deploy/vault-mcp/docker-compose.yml \
           ; do
             echo "== $f =="
             docker compose -f "$f" config >/dev/null
           done
-          echo "== firecrawl search overlay =="
-          docker compose \
-            -f 03-INFRA/deploy/firecrawl/docker-compose.yml \
-            -f 03-INFRA/deploy/firecrawl/docker-compose.search.yml \
-            config >/dev/null
 
   powershell-analysis:
     # Pure static linting of .ps1 files on Linux - not execution. The

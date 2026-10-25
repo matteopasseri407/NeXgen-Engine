@@ -14,7 +14,12 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from nexgen_core.paths import antigravity_hooks, antigravity_settings
+from nexgen_core.paths import (
+    ANTIGRAVITY_CLI_FOOTPRINTS,
+    antigravity_cli_state,
+    antigravity_hooks,
+    antigravity_settings,
+)
 from nexgen_core.runtimes.base import EVENT_SINK_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
 
 _IS_WINDOWS = platform.system() == "Windows"
@@ -45,10 +50,13 @@ class AntigravityRuntime(Runtime):
         names = ("agy.exe", "agy.cmd", "agy") if _IS_WINDOWS else ("agy",)
         if any((home / ".local" / "bin" / name).is_file() for name in names):
             return True
-        # settings.json is written only by Antigravity itself on first
-        # launch -- unlike mcp_config.json, which this layer creates from
-        # scratch on every cycle regardless of whether it's installed.
-        return self._settings_path(home).is_file()
+        # settings.json is written only by Antigravity itself on first launch, and so are
+        # the CLI's history, its conversation store and its log: any of them is the
+        # product's own footprint. `skills/` is not on that list on purpose, because this
+        # very layer's skill materializer creates it on a machine with no Antigravity at all
+        # -- the defect `test_antigravity_is_installed_regression_directory_footprint` pins.
+        state = antigravity_cli_state(home)
+        return any((state / name).exists() for name in ANTIGRAVITY_CLI_FOOTPRINTS)
 
     def _load_json(self, path: Path, *, label: str) -> dict[str, Any] | None:
         if not path.is_file():

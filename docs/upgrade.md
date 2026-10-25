@@ -192,7 +192,7 @@ for the one bootstrap upgrade from a version that predates the command.
 
 Everything above upgrades the machine you typed it on. It does not touch
 your server. `03-INFRA/deploy/` — `vault-mcp` (the `vault-library` MCP
-write door), the OCR API, Firecrawl, n8n — is engine code that happens to
+write door), the OCR API, n8n — is engine code that happens to
 run somewhere else, and the VPS keeps running the containers it was last
 deployed with. Nothing on your workstation can restart them for you, and
 for a long time nothing even told you they were behind.
@@ -235,6 +235,18 @@ it does not recognize rather than rejecting the document (see
 automatic data-migration mechanism beyond that tolerance today — if a
 release ever needs a genuine reshape of an existing field, `CHANGELOG.md`
 will say so explicitly and give the manual steps.
+
+## When a module retires
+
+A module can leave the catalog in a release (Firecrawl did: the connector is
+the vendor's cloud API now, with your own key, so there is nothing left to
+place). The derivation ignores a `modules.state.yaml` entry whose module is no
+longer in the catalog, and `nexgen doctor` reports it once, as a warning, with
+the module name. Drop that line from
+`03-INFRA/agent-universal-layer/modules.state.yaml` when you see it; nothing
+else depends on it. A retired connector's server also disappears from the
+rendered CLI configs on the next sync, and its key is simply not needed any
+more.
 
 ## What never happens automatically
 

@@ -17,7 +17,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.openclaw.companion import Companion  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.companion import Companion, probe  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.detect import Detection, Installation, LocalModelInfo, LocalModels, Login, detect  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.doctor import collect, exit_code  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.profile import PENDING_TOKEN  # noqa: E402 - sys.path shim for cloned checkout
@@ -53,7 +53,6 @@ def clean_config() -> dict:
             },
         },
         "tools": {
-            "toolSearch": False,
             "exec": {"security": "allowlist", "ask": "on-miss"},
             "byProvider": {"ollama/qwen3:8b": {"profile": "messaging", "deny": ["write"]}},
             "agentToAgent": {"enabled": True, "allow": [["main", "capo"], ["capo", "main"]]},
@@ -356,11 +355,69 @@ def test_the_gemini_cli_runtime_is_a_failure(tmp_path):
     assert by_id(outcomes)["openclaw.plugins.google"].severity == Severity.BROKEN
 
 
+def test_a_gemini_cli_model_route_is_a_failure(tmp_path):
+    """No agentRuntime: the route's own prefix is what selects the backend."""
+    config = clean_config()
+    config["agents"]["defaults"]["models"]["google-gemini-cli/gemini-3-pro"] = {}
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, config))
+    assert by_id(outcomes)["openclaw.plugins.google"].severity == Severity.BROKEN
+
+
 def test_a_google_oauth_profile_is_a_failure(tmp_path):
     config = clean_config()
     config["auth"] = {"profiles": {"google-gemini-cli:me": {"provider": "google-gemini-cli", "mode": "oauth"}}}
     outcomes = run_doctor(tmp_path, write_config(tmp_path, config))
     assert by_id(outcomes)["openclaw.plugins.google"].severity == Severity.BROKEN
+
+
+def local_agy_config(mode: str | None = "sandbox") -> dict:
+    """The file that drives the local agy CLI, with the mode the plugin was given."""
+    config = clean_config()
+    config["plugins"]["allow"].append("google-antigravity-cli")
+    entry: dict = {"config": {} if mode is None else {"permissionMode": mode}}
+    config["plugins"]["entries"]["google-antigravity-cli"] = entry
+    config["agents"]["defaults"]["models"]["google/gemini-3-pro"] = {
+        "agentRuntime": {"id": "google-antigravity-cli"},
+    }
+    return config
+
+
+def test_the_local_agy_cli_backend_is_not_a_subscription(tmp_path):
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, local_agy_config())))
+
+    assert outcomes["openclaw.plugins.google"].severity == Severity.OK
+    assert outcomes["openclaw.google.cli_backend"].severity == Severity.OK
+
+
+@pytest.mark.parametrize("mode", ["skip", None])
+def test_the_local_agy_cli_backend_approving_its_own_tools_is_a_warning(tmp_path, mode):
+    config = local_agy_config(mode)
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, config)))
+
+    line = outcomes["openclaw.google.cli_backend"]
+    assert line.severity == Severity.WARN
+    assert "'skip'" in line.message
+    assert "sandbox" in (line.action or "") and "settings" in (line.action or "")
+    assert exit_code(list(outcomes.values())) == 0
+
+
+@pytest.mark.parametrize("mode", ["sandbox", "settings"])
+def test_a_guarded_agy_permission_mode_passes(tmp_path, mode):
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, local_agy_config(mode))))
+
+    assert outcomes["openclaw.google.cli_backend"].severity == Severity.OK
+
+
+def test_an_agy_permission_mode_the_doctor_does_not_know_is_a_warning(tmp_path):
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, local_agy_config("auto"))))
+
+    assert outcomes["openclaw.google.cli_backend"].severity == Severity.WARN
+
+
+def test_the_local_agy_cli_backend_has_no_line_when_nobody_names_it(tmp_path):
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, clean_config())))
+
+    assert "openclaw.google.cli_backend" not in outcomes
 
 
 def test_a_gemini_seat_through_acp_is_a_warning(tmp_path):
@@ -496,6 +553,36 @@ def test_a_second_gateway_from_the_microsoft_store_is_a_warning(tmp_path):
     assert "OpenClaw_abc123" in store.message
 
 
+def test_isolated_native_gateway_package_is_not_treated_as_store_conflict_in_doctor(tmp_path):
+    package = tmp_path / "localappdata" / "Packages" / "OpenClawFoundation.OpenClawGateway_rfcbke2p71se2"
+    (package / "LocalState" / "OpenClawGatewayMSIX").mkdir(parents=True)
+    gateways = tmp_path / "appdata" / "OpenClawTray" / "gateways.json"
+    gateways.parent.mkdir(parents=True)
+    gateways.write_text(json.dumps({
+        "gateways": [
+            {
+                "id": "native-gw",
+                "url": "ws://127.0.0.1:52190",
+                "friendlyName": "Native Gateway",
+                "isLocal": True,
+                "nativePackageFamilyName": "OpenClawFoundation.OpenClawGateway_rfcbke2p71se2",
+                "nativeRuntimeContract": "isolated-session-v1",
+            }
+        ],
+        "activeId": "native-gw",
+    }), encoding="utf-8")
+
+    values = {"LOCALAPPDATA": str(tmp_path / "localappdata"), "APPDATA": str(tmp_path / "appdata")}
+    comp = probe(tmp_path / "home", values, "win32")
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()), platform="win32", companion=comp)
+    assert "openclaw.store_gateway" not in by_id(outcomes)
+    app_line = by_id(outcomes)["openclaw.companion_gateway"]
+    assert app_line.severity == Severity.WARN
+    assert "isolated native gateway" in app_line.message
+    assert "turn off autostart for the native gateway" in (app_line.action or "")
+
+
+
 def test_installed_but_undeclared_is_named_without_the_module(tmp_path):
     outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()), declared=False)
     assert by_id(outcomes)["openclaw.declared"].severity == Severity.WARN
@@ -507,3 +594,181 @@ def test_an_empty_report_says_why_it_is_empty():
     text = render([])
     assert "OpenClaw" in text
     assert "PASS" not in text
+
+
+def test_tool_search_active_by_default(tmp_path):
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()))
+    ts = by_id(outcomes)["openclaw.tool_search"]
+    assert ts.severity == Severity.OK
+    assert "Tool Search is active" in ts.message
+    assert "default" in ts.message
+
+
+def test_tool_search_explicitly_configured(tmp_path):
+    cfg = clean_config()
+    cfg["tools"]["toolSearch"] = {"mode": "directory"}
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg))
+    ts = by_id(outcomes)["openclaw.tool_search"]
+    assert ts.severity == Severity.OK
+    assert "directory" in ts.message
+
+
+def test_tool_search_legacy_bare_false_warns(tmp_path):
+    cfg = clean_config()
+    cfg["tools"]["toolSearch"] = False
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg))
+    ts = by_id(outcomes)["openclaw.tool_search"]
+    assert ts.severity == Severity.WARN
+    assert "legacy engine setting" in ts.message
+    assert "nexgen openclaw setup" in (ts.action or "")
+
+
+def test_tool_search_user_disabled_with_few_mcp_servers_passes(tmp_path):
+    cfg = clean_config()
+    cfg["tools"]["toolSearch"] = {"enabled": False}
+    cfg["mcp"] = {
+        "servers": {
+            "srv1": {"command": "node", "args": ["s1.js"]},
+            "srv2": {"command": "node", "args": ["s2.js"]},
+        }
+    }
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg))
+    ts = by_id(outcomes)["openclaw.tool_search"]
+    assert ts.severity == Severity.OK
+    assert "disabled by user configuration" in ts.message
+
+
+def test_tool_search_user_disabled_with_many_mcp_servers_warns(tmp_path):
+    cfg = clean_config()
+    cfg["tools"]["toolSearch"] = {"enabled": False}
+    cfg["mcp"] = {
+        "servers": {
+            f"srv{i}": {"command": "node", "args": [f"s{i}.js"]}
+            for i in range(4)
+        }
+    }
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg))
+    ts = by_id(outcomes)["openclaw.tool_search"]
+    assert ts.severity == Severity.WARN
+    assert "4 MCP servers" in ts.message
+    assert "openclaw.json" in (ts.action or "")
+
+
+def test_mcp_lazy_absent_passes(tmp_path):
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()))
+    lazy = by_id(outcomes)["openclaw.mcp.lazy"]
+    assert lazy.severity == Severity.OK
+
+
+def test_mcp_lazy_mounted_by_engine_fails(tmp_path):
+    cfg = clean_config()
+    cfg["mcp"] = {
+        "servers": {
+            "lazy-mcp": {
+                "command": "python",
+                "args": ["/path/to/lazy-mcp.py"],
+                "env": {"LAZY_MCP_CLI": "openclaw"},
+            }
+        }
+    }
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg))
+    lazy = by_id(outcomes)["openclaw.mcp.lazy"]
+    assert lazy.severity == Severity.BROKEN
+    assert "lazy-mcp" in lazy.message
+
+
+def test_mcp_lazy_mounted_by_user_warns(tmp_path):
+    cfg = clean_config()
+    cfg["mcp"] = {
+        "servers": {
+            "lazy-mcp": {
+                "command": "node",
+                "args": ["custom-proxy.js"],
+            }
+        }
+    }
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg))
+    lazy = by_id(outcomes)["openclaw.mcp.lazy"]
+    assert lazy.severity == Severity.WARN
+    assert "custom" in lazy.message.lower()
+
+
+def _write_manifest(tmp_path: Path) -> Path:
+    manifest_p = tmp_path / "vault" / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+    manifest_p.parent.mkdir(parents=True, exist_ok=True)
+    manifest_p.write_text(
+        "schema_version: 1\nservers:\n"
+        "  vault-library:\n"
+        "    tier: core\n"
+        "    transport: http\n"
+        "    url: '${VAULT_LIBRARY_URL}'\n"
+        "    url_env: VAULT_LIBRARY_URL\n"
+        "    auth: {type: bearer, env: VAULT_LIBRARY_TOKEN}\n"
+        "  external-remote:\n"
+        "    tier: core\n"
+        "    transport: http\n"
+        "    url: 'https://api.example.com/mcp'\n",
+        encoding="utf-8",
+    )
+    return manifest_p
+
+
+def test_mcp_secret_url_in_openclaw_config_fails(tmp_path):
+    _write_manifest(tmp_path)
+    secret_url = "http://127.0.0.1:5678/mcp-deadbeef1234"
+    env = {"VAULT_LIBRARY_URL": secret_url, "VAULT_LIBRARY_TOKEN": "secret-token-xyz"}
+    cfg = clean_config()
+    cfg["mcp"] = {
+        "servers": {
+            "vault-library": {
+                "url": secret_url,
+                "transport": "streamable-http",
+            }
+        }
+    }
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg), env=env)
+    outcome = by_id(outcomes)["openclaw.mcp.secret_url"]
+    assert outcome.severity == Severity.BROKEN
+    assert "vault-library" in outcome.message
+    # NEVER print the secret URL or value
+    assert secret_url not in outcome.message
+    assert secret_url not in (outcome.action or "")
+    assert secret_url not in (outcome.detail or "")
+
+
+def test_mcp_secret_url_bridged_passes(tmp_path):
+    _write_manifest(tmp_path)
+    secret_url = "http://127.0.0.1:5678/mcp-deadbeef1234"
+    env = {"VAULT_LIBRARY_URL": secret_url, "VAULT_LIBRARY_TOKEN": "secret-token-xyz"}
+    cfg = clean_config()
+    cfg["mcp"] = {
+        "servers": {
+            "vault-library": {
+                "command": "node",
+                "args": ["/path/to/mcp-http-bridge.mjs", "${VAULT_LIBRARY_URL}", "VAULT_LIBRARY_TOKEN", "mcp-remote@0.1.38"],
+            }
+        }
+    }
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg), env=env)
+    outcome = by_id(outcomes)["openclaw.mcp.secret_url"]
+    assert outcome.severity == Severity.OK
+    assert secret_url not in outcome.message
+
+
+def test_mcp_literal_non_secret_url_passes(tmp_path):
+    _write_manifest(tmp_path)
+    secret_url = "http://127.0.0.1:5678/mcp-deadbeef1234"
+    env = {"VAULT_LIBRARY_URL": secret_url, "VAULT_LIBRARY_TOKEN": "secret-token-xyz"}
+    cfg = clean_config()
+    cfg["mcp"] = {
+        "servers": {
+            "external-remote": {
+                "url": "https://api.example.com/mcp",
+                "transport": "streamable-http",
+            }
+        }
+    }
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg), env=env)
+    outcome = by_id(outcomes)["openclaw.mcp.secret_url"]
+    assert outcome.severity == Severity.OK
+

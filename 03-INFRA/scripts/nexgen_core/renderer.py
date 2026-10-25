@@ -17,9 +17,10 @@ from __future__ import annotations
 import contextlib
 import os
 import platform
+import shutil
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
@@ -45,11 +46,15 @@ class McpRenderer:
         vault_data: Path | None = None,
         engine_root: Path | None = None,
         home: Path | None = None,
+        which: Callable[[str], str | None] | None = None,
+        is_windows: bool | None = None,
     ) -> None:
         self.home = resolve_home(home)
         _v = resolve_vault_data(self.home, vault_data)
         self.vault_data = _v
         self.engine_root = resolve_engine_root(self.home, engine_root)
+        self.which = which if which is not None else shutil.which
+        self.is_windows = IS_WINDOWS if is_windows is None else bool(is_windows)
 
         self.manifest_path = self.vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
         #: While not None, writes are collected here instead of performed
@@ -58,6 +63,11 @@ class McpRenderer:
         #: Error text per target from the last :meth:`render_all`, for the
         #: callers that must say why a target failed (the guard does).
         self.last_errors: dict[str, str] = {}
+        #: OpenClaw only: connectors the caller wants reached over the local MCP
+        #: bridge instead of launched on this machine (`{name: {url, token_env}}`,
+        #: see `nexgen_core.mcp_bridge.bridged_http_servers`). None, the default,
+        #: renders every connector as before.
+        self.openclaw_http_servers: dict[str, Any] | None = None
         self.path_placeholders = {
             "AGENT_ENGINE_ROOT": str(self.engine_root),
             "AGENT_VAULT_DATA": str(self.vault_data),
@@ -117,10 +127,45 @@ class McpRenderer:
         return self._retired_server_names_impl()
 
     def _retired_server_names_impl(self) -> set[str]:
-        if not self.manifest_path.is_file():
-            return set()
-        data = load_mcp_manifest(self.manifest_path)
-        return set(data.get("retired_servers", set()))
+        retired: set[str] = set()
+        manifest_names: set[str] = set()
+        if self.manifest_path.is_file():
+            data = load_mcp_manifest(self.manifest_path)
+            retired = set(data.get("retired_servers", set()))
+            manifest_names = set(data.get("servers", {}))
+        try:
+            from nexgen_core import mcp_trials
+
+            retired |= {n for n in mcp_trials.retired_names() if n not in manifest_names}
+        except Exception:  # nexgen: allow reason="trial state failure must not stop manifest retirements"
+            pass
+        return retired
+
+    def _resolve_command_and_args(self, entry: dict[str, Any]) -> None:
+        cmd = entry.get("command") or entry.get("cmd")
+        args = entry.get("args", [])
+        if isinstance(cmd, list):
+            resolved_cmd = [self._expand_value(str(c)) for c in cmd]
+            if self.is_windows and resolved_cmd:
+                resolved_cmd[0] = self._normalize_windows_shim(resolved_cmd[0])
+            entry["command"] = resolved_cmd[0] if resolved_cmd else ""
+            entry["args"] = resolved_cmd[1:]
+        elif isinstance(cmd, str):
+            expanded_cmd = self._expand_value(cmd)
+            if self.is_windows:
+                expanded_cmd = self._normalize_windows_shim(expanded_cmd)
+            entry["command"] = expanded_cmd
+            entry["args"] = [self._expand_value(str(a)) for a in args] if isinstance(args, list) else []
+
+        if self.is_windows and entry.get("command") == "openclaw":
+            from nexgen_core.megaphone import openclaw_launch
+
+            found = self.which("openclaw")
+            if found:
+                launch = openclaw_launch(found, self.which)
+                if launch:
+                    entry["command"] = launch[0]
+                    entry["args"] = launch[1:] + (entry.get("args") or [])
 
     def _resolve_entry(
         self,
@@ -147,29 +192,12 @@ class McpRenderer:
         # `deps` is the provisioning contract, resolved at spawn by the
         # waiter; it must never reach the CLIs' native configs.
         entry.pop("deps", None)
-        if IS_WINDOWS and "windows" in entry:
+        if self.is_windows and "windows" in entry:
             win_override = entry.pop("windows")
             if isinstance(win_override, dict):
                 entry.update(win_override)
 
-        # command and args resolution
-        cmd = entry.get("command") or entry.get("cmd")
-        args = entry.get("args", [])
-        if isinstance(cmd, list):
-            resolved_cmd = [self._expand_value(str(c)) for c in cmd]
-            if IS_WINDOWS and resolved_cmd:
-                resolved_cmd[0] = self._normalize_windows_shim(resolved_cmd[0])
-            entry["command"] = resolved_cmd[0] if resolved_cmd else ""
-            entry["args"] = resolved_cmd[1:]
-        elif isinstance(cmd, str):
-            expanded_cmd = self._expand_value(cmd)
-            if IS_WINDOWS:
-                expanded_cmd = self._normalize_windows_shim(expanded_cmd)
-            entry["command"] = expanded_cmd
-            if isinstance(args, list):
-                entry["args"] = [self._expand_value(str(a)) for a in args]
-            else:
-                entry["args"] = []
+        self._resolve_command_and_args(entry)
 
         if not str(entry.get("command") or "").strip() and not entry.get("url"):
             logging.getLogger(__name__).warning("MCP server %r has an empty command after expansion, skipped", name)
@@ -182,7 +210,11 @@ class McpRenderer:
         # env resolution
         if "env" in entry and isinstance(entry["env"], dict):
             entry["env"] = {
-                k: self._expand_value(str(v))
+                k: (
+                    str(v)
+                    if str(v).startswith("${") and str(v).endswith("}") and str(v)[2:-1] not in self.path_placeholders
+                    else self._expand_value(str(v))
+                )
                 for k, v in entry["env"].items()
             }
 
@@ -194,14 +226,26 @@ class McpRenderer:
 
         return entry
 
+    def _manifest_servers(self) -> dict[str, dict[str, Any]]:
+        servers: dict[str, dict[str, Any]] = {}
+        if self.manifest_path.is_file():
+            servers = load_mcp_manifest(self.manifest_path).get("servers", {})
+        try:
+            from nexgen_core import mcp_trials
+
+            servers = mcp_trials.overlay(servers)
+        except Exception:  # nexgen: allow reason="trial state failure must not stop manifest rendering"
+            pass
+        from nexgen_core.mcp_state import apply_state_overrides
+
+        return apply_state_overrides(servers, home=self.home)
+
     def manifest_server_names(self) -> list[str]:
         """Every server the manifest declares, in manifest order, resolvable here or not."""
         return self._manifest_server_names_impl()
 
     def _manifest_server_names_impl(self) -> list[str]:
-        if not self.manifest_path.is_file():
-            return []
-        return list(load_mcp_manifest(self.manifest_path).get("servers", {}))
+        return list(self._manifest_servers())
 
     def load_resolved_servers(self, cli_target: str) -> dict[str, dict[str, Any]]:
         """Loads the MCP servers resolved and filtered for a specific CLI.
@@ -217,11 +261,7 @@ class McpRenderer:
             from nexgen_core.mcp_render.claude_desktop import allowed_desktop_servers
 
             return allowed_desktop_servers(self)
-        if not self.manifest_path.is_file():
-            return {}
-
-        data = load_mcp_manifest(self.manifest_path)
-        raw_servers = data.get("servers", {})
+        raw_servers = self._manifest_servers()
         resolved: dict[str, dict[str, Any]] = {}
 
         for name, srv in raw_servers.items():
@@ -271,11 +311,9 @@ class McpRenderer:
           core/enabled and not lazy-routed away) stay on disk: the recurring
           guard runs without the shell environment, and deleting them there
           would make the doctor report them missing twice an hour, forever."""
-        if not self.manifest_path.is_file():
-            return set()
-        data = load_mcp_manifest(self.manifest_path)
+        servers = self._manifest_servers()
         unmounted = set()
-        for name, srv in data.get("servers", {}).items():
+        for name, srv in servers.items():
             if name in mounted:
                 continue
             would_mount = place(srv, cli_target).kind == DIRECT
@@ -295,16 +333,19 @@ class McpRenderer:
         if cli_target == "claude-desktop":
             from nexgen_core.mcp_render.claude_desktop import gated_desktop_names
             return gated_desktop_names(self)
-        if not self.manifest_path.is_file():
-            return set()
         return {
-            name for name, srv in load_mcp_manifest(self.manifest_path).get("servers", {}).items()
+            name for name, srv in self._manifest_servers().items()
             if srv.get("require_env") and not os.environ.get(srv["require_env"])
             and place(srv, cli_target).kind == DIRECT
         }
 
     def _drop_unmounted(self, mcp_servers: dict, mounted: dict, cli_target: str = "") -> None:
         for name in self.unmounted_server_names(mounted, cli_target):
+            if name == "lazy-mcp" and cli_target == "openclaw":
+                from nexgen_core.mcp_render.openclaw import is_engine_lazy_mcp
+
+                if not is_engine_lazy_mcp(mcp_servers.get("lazy-mcp")):
+                    continue
             mcp_servers.pop(name, None)
 
     def list_lazy_servers(self, cli_target: str) -> list[str]:
@@ -314,11 +355,8 @@ class McpRenderer:
         `enabled: true` is a choice, so it is listed, never reported as a
         problem.
         """
-        if not self.manifest_path.is_file():
-            return []
-        data = load_mcp_manifest(self.manifest_path)
         out: list[str] = []
-        for name, srv in data.get("servers", {}).items():
+        for name, srv in self._manifest_servers().items():
             # "Known to exist, not mounted": neither core nor enabled, or switched off while optional.
             why = place(srv, cli_target).why
             if why.startswith("inert") or (why == "disabled" and str(srv.get("tier", "")).strip().lower() != "core"):
@@ -350,10 +388,14 @@ class McpRenderer:
         from nexgen_core.mcp_render import claude_desktop
         return claude_desktop.render(self, write=write)
 
-    def render_openclaw(self, write: bool = False) -> tuple[bool, str]:
+    def render_openclaw(
+        self,
+        write: bool = False,
+        http_servers: dict[str, Any] | None = None,
+    ) -> tuple[bool, str]:
         """Writes the connectors into OpenClaw's own config (~/.openclaw/openclaw.json)."""
         from nexgen_core.mcp_render import openclaw
-        return openclaw.render(self, write=write)
+        return openclaw.render(self, write=write, http_servers=http_servers)
 
     def render_all(self, write: bool = False) -> dict[str, bool]:
         """Renders for all targets, each isolated: one corrupt live config must not stall the others."""

@@ -192,8 +192,16 @@ def scan(
     declared = {
         str(name) for name in (skills_manifest or {}).get("skills", {})
     } if isinstance(skills_manifest, Mapping) else set()
+    from nexgen_core.openclaw.adopt_plugins import scan_plugins
+
+    engine_owned = declared_names(mcp_manifest)
+    live = unmanaged_servers(live_servers(loaded), mcp_manifest)
+    existing_names = engine_owned | {s.name for s in live}
+    plugin_servers, plugin_notes = scan_plugins(Path(state_dir), loaded, existing_names)
+    all_servers = sorted(list(live) + [s for s in plugin_servers if s.name not in existing_names], key=lambda s: s.name)
+    all_notes = tuple(notes) + tuple(plugin_notes)
     return Scan(
         skills=tuple(workshop_skills(loaded, Path(state_dir), Path(home), declared)),
-        servers=tuple(unmanaged_servers(live_servers(loaded), mcp_manifest)),
-        notes=tuple(notes),
+        servers=tuple(all_servers),
+        notes=all_notes,
     )

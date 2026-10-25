@@ -21,14 +21,34 @@ it.
 | Instructions | an `AGENTS.md` block in each agent workspace | the guard's instructions phase |
 | Skills | `~/.agents/skills/` (the shared catalog) | the skills phase |
 | The plugin | `<state dir>/extensions/nexgen/` | the guard's permissions phase |
-| Briefing, posture, engine | `<state dir>/extensions/nexgen/nexgen.config.json` | the permissions phase and the module state |
+| Briefing, checkpoint, posture, engine | `<state dir>/extensions/nexgen/nexgen.config.json` | the permissions phase and the module state |
 
 ## MCP connectors
 
-The manifest's servers are written into the `mcp.servers` table of `openclaw.json`
+The manifest's servers targeting OpenClaw are written directly into the `mcp.servers` table of `openclaw.json`
 and nothing else in that file is touched: models, channels, gateway settings and
 servers the manifest does not declare are OpenClaw's own. A machine where OpenClaw
 was never set up has no config file, and the renderer does not invent one.
+
+Inside OpenClaw, connectors are always mounted **directly**, never behind `lazy-mcp`. OpenClaw already provides
+native **Tool Search** (active by default when `tools.toolSearch` is unset) to compact tool schemas behind search
+and call controls while applying OpenClaw's own tool policies, inventory, and approval cards. The engine never
+writes `tools.toolSearch` and retires any legacy `tools.toolSearch: false` left by earlier setups. As documented in
+OpenClaw's `docs/gateway/local-models.md`, local routes use structured Tool Search on their own to preserve capabilities
+without blowing prompt context; an operator who explicitly wishes to disable Tool Search globally can do so by configuring
+an object such as `tools.toolSearch: { "enabled": false }` (see `docs/concepts/experimental-features.md`). The MCP renderer
+removes any engine-written `lazy-mcp` entry from `mcp.servers` while preserving any user-defined connector with that name.
+
+OpenClaw can also act as an MCP server for the other harnesses (`claude`, `codex`,
+`antigravity`, `opencode`) via `openclaw mcp serve`. The canonical manifest entry is
+`enabled: false` by default and flipped to `true` by `nexgen openclaw setup`. The
+OpenClaw renderer explicitly excludes this server when rendering `openclaw.json`, so
+OpenClaw never mounts itself recursively.
+
+Conversely, ClawHub plugins installed in OpenClaw that wrap external or bundled MCP
+servers can be adopted into the canonical library using `nexgen openclaw adopt --mcp`.
+Once adopted, their underlying servers enter `manifest.yaml` and are materialized for
+all target harnesses across all machines.
 
 In `mcp.servers.*.env`, every `${VAR}` stays a reference in `openclaw.json`:
 OpenClaw substitutes it itself, and a credential must not be copied out of the
@@ -37,6 +57,32 @@ engine-owned paths or ports (`AGENT_VAULT_DATA`, `AGENT_ENGINE_ROOT`,
 `KNOWLEDGE_VAULT_PATH`, the tunnel ports), which is written resolved because the
 gateway's environment is not the engine's. A value that mixes the two stays a
 reference: a missing port is a better outcome than a leaked secret.
+
+For remote HTTP servers whose manifest URL contains `${VAR}` or declares `url_env`
+(such as the Vault library's secret endpoint), OpenClaw cannot accept `${VAR}` in the
+`url` field because it validates URLs before variable substitution. To ensure secrets
+never land in plaintext in `openclaw.json`, the renderer writes these connectors as
+stdio child processes through `03-INFRA/agent-universal-layer/mcp/mcp-http-bridge.mjs`
+(via `mcp-remote`), passing `"${VAR}"` and the token variable name in `args` where
+OpenClaw performs safe runtime substitution. Connectors with literal non-secret URLs
+continue to be written as native HTTP (`streamable-http`).
+
+### When the gateway is in WSL
+
+The app-owned WSL distro cannot launch the Windows commands the manifest declares for
+stdio connectors. `nexgen mcp bridge start` serves those same connectors on the Windows
+side as MCP Streamable HTTP, and the renderer writes, for a connector the engine asks it
+to bridge, `url`, `transport: "streamable-http"` and
+`Authorization: Bearer ${NEXGEN_MCP_BRIDGE_TOKEN}` instead of `command` and `args`. Nothing
+else about that connector changes: its timeouts and its tool filter travel with it.
+
+`nexgen_core.mcp_bridge.bridged_http_servers()` builds that map from the running bridge and
+`McpRenderer.openclaw_http_servers` is where the engine hands it over; with no bridge
+running the map is empty and every connector renders as before, because a connector
+pointed at a dead port fails at the first call. The token stays a reference in the file:
+it is generated into the engine's deposit on this machine, and the gateway must find
+`NEXGEN_MCP_BRIDGE_TOKEN` in its own environment inside the distro for the substitution to
+resolve.
 
 ## Instructions
 
@@ -86,7 +132,9 @@ extensions/nexgen/
   index.mjs                     registers the jobs; the guardrail comes first
   guardrail.mjs                 the gate on before_tool_call
   briefing.mjs                  the vault briefing after a compaction
+  checkpoint.mjs                session continuity: a pointer to this session, in machine state
   quota.mjs                     `/quota`: the lines the engine already rendered
+  spend.mjs                     `/spend`: what was spent, per provider, from the engine
   workshop.mjs                  a log line when the Skill Workshop learned a skill
   governor.mjs                  the fallback handover on before_model_resolve
   council.mjs                   /council: the AI Council, started now and reported when it ends
@@ -100,7 +148,8 @@ extensions/nexgen/
   openclaw.plugin.json          id: nexgen, onStartup, the tool names it owns
   nexgen-guardrail-core.mjs     the shared core every adapter imports
   nexgen-guardrail.config.json  which guardrail body, with what timeout, the audit file
-  nexgen.config.json            the engine's switches: briefing, posture, engine, governor, evidence
+  nexgen.config.json            the engine's switches: briefing, checkpoint, posture, engine,
+                                governor, evidence
   nexgen-quota-state.json       what the beat last read, for the governor
   vault-briefing.txt            the briefing text, shared with Claude Code
   hooks/<body>.mjs              the guardrail body (the private policy)
@@ -142,13 +191,22 @@ engine deploys no copy of that hook, so its registration is the observable
 condition. A briefing that fails is swallowed: a session that loses its briefing is
 a worse session, not a broken one.
 
-### The `/quota` command
+### The `/quota` and `/spend` commands
 
 `quota.mjs` registers a chat command and answers with the lines the engine has
 already rendered: `nexgen quota --json` prints `lines`, and the plugin forwards
 that text without formatting a single number of its own, so the phone and the
 terminal cannot disagree about a percentage. What each provider gives, and what
 cannot be measured from here, is `docs/quota.md`.
+
+`spend.mjs` does the same with `nexgen usage --json`: the same readings, grouped
+by the provider that was paid, because that is the question a chat asks. It is
+called `/spend` and not `/usage` on purpose: `/usage` is OpenClaw's own command
+(the per-response footer and its `/usage cost`), and a plugin command is matched
+before the built-in ones, so registering that name would take the surface away
+from OpenClaw. Its cost summary sums session logs, which is why an agent on a
+subscription reports $0 there and the flat lane that was really paid for does not
+appear at all.
 
 The engine's path is deposited, not looked up: `nexgen.config.json` carries
 `engine.command` and `engine.entry`, the interpreter and the CLI module, because
@@ -222,6 +280,15 @@ annotated in its place. The phrase tables are long and bilingual, not exhaustive
 claim worded in a way neither list carries is still checked where the rule does not
 depend on a phrase (a cited source, an invented result, facts with nothing retrieved).
 
+### Session continuity
+
+Session continuity across CLIs operates through machine-local state and MCP:
+- **OpenClaw -> State**: on `after_compaction` and `session_end`, the `checkpoint.mjs` plugin job writes a session pointer to `openclaw-checkpoint.json` in the machine-local state directory (`~/.local/state/nexgen/`, never into the KnowledgeVault). The record captures origin (`openclaw`), agent, the `session_key` formatted for `openclaw mcp serve`, event, reason, and an ISO timestamp.
+- **Claude Code -> Context**: on `SessionStart` (resume or compact), `claude-vault-checkpoint.mjs` remains strictly read-only ("never writes"). If a recent checkpoint exists (< 12 hours), it appends a guidance note referencing the agent, time, and session key, directing the operator to inspect conversation history through the `openclaw` MCP server (`openclaw mcp serve`, made available across harnesses via the MCP bridge).
+- If the checkpoint is missing, older than 12 hours, or unreadable, the hook falls back silently to the briefing text alone.
+
+The checkpoint job is controlled by `checkpoint.enabled` in `nexgen.config.json` (enabled by default like the briefing). Any error during write is swallowed safely and never breaks OpenClaw sessions.
+
 ### Posture
 
 The private permission manifest's posture travels into `nexgen.config.json` in the
@@ -278,6 +345,7 @@ matches shell patterns, where it would match by accident rather than by meaning.
 | `guardrail.consulted.openclaw` | the guardrail has been called at least once since it was installed |
 | `guardrail.openclaw_plugin` | the plugin is deposited, and whether OpenClaw will load it (`plugins.allow`, `plugins.deny`, an entry switched off) |
 | `instructions.openclaw` | every agent workspace's `AGENTS.md` carries the managed block, and which workspace folders do not exist yet |
+| `openclaw.checkpoint` | session continuity is on: the plugin writes its session pointer on compaction and at session end |
 | `openclaw.evidence` | whether the evidence check is on, and for which local models; a WARN when the plugin is enabled but the switch or the conversation access is missing |
 | `openclaw.parity.*` | one line per layer above: PASS when both hosts hold it, WARN with the action when one does not |
 | `openclaw.unadopted` | how many skills and servers OpenClaw created and the canonical library does not declare yet, with `nexgen openclaw adopt` as the action; silent when either manifest cannot be read |

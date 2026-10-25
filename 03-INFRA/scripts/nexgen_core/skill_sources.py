@@ -29,7 +29,7 @@ from nexgen_core.i18n import t  # noqa: E402
 from nexgen_core.files import atomic_write_text, retry_transient_lock  # noqa: E402
 from nexgen_core.lock import HostLock  # noqa: E402
 from nexgen_core.paths import resolve_home, resolve_state_dir  # noqa: E402
-from nexgen_core.processes import windows_command_argv  # noqa: E402 - one place knows the Windows shims
+from nexgen_core.processes import ShimEntryError, windows_command_argv  # noqa: E402 - one place knows the Windows shims
 
 
 @dataclass
@@ -460,7 +460,7 @@ class SkillFetcher:
                 "the installer for '{name}' did not finish within {seconds}s",
                 name=entry.name, seconds=INSTALLER_TIMEOUT_SECONDS,
             )
-        except OSError as exc:
+        except (OSError, ShimEntryError) as exc:  # an OS failure, or a shim the launcher refuses to start
             return False, f"{ERROR}{exc}"
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip().splitlines()

@@ -84,7 +84,7 @@ sometimes with an empty final answer).
 ```bash
 pip install nexgen-engine              # orchestration included, no extra needed
 nexgen-local doctor                    # preconditions and read-only surface
-nexgen-local run "Che priorita' c'e' nel current focus?"
+# nexgen-local run is retired: use 'openclaw agent' or 'openclaw tui' (execution belongs to OpenClaw)
 nexgen-local eval --suite all          # functional + trap suites (blocking)
 ```
 

@@ -19,7 +19,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.stack import runner, secrets
-from nexgen_core.stack.services import SERVICES, by_name
+from nexgen_core.stack.services import LOCAL_ONLY_CONNECTORS, SERVICES, by_name
 
 
 def test_secrets_are_generated_only_when_missing(tmp_path: Path):
@@ -138,6 +138,13 @@ def test_every_service_declares_a_compose_file_that_exists():
         assert compose_file(engine_root, service).is_file(), (
             f"{service.name} dichiara uno stack che non esiste nel repo"
         )
+
+
+def test_the_stack_no_longer_starts_a_firecrawl_backend():
+    """Firecrawl is the vendor's cloud API: there is no container to start for it."""
+    assert by_name("firecrawl") is None
+    assert {service.name for service in SERVICES} == {"vault-ocr", "n8n", "vault-library"}
+    assert "firecrawl" not in LOCAL_ONLY_CONNECTORS
 
 
 def test_interrupted_secrets_write_keeps_previous_env_intact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

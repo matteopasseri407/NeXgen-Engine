@@ -26,7 +26,9 @@ from nexgen_core.openclaw.companion import (  # noqa: E402 - sys.path shim for c
     COMPANION_DISTRO,
     NATIVE,
     NONE,
+    TARGET_ISOLATED,
     Companion,
+    IsolatedGateway,
     probe,
     read_settings,
 )
@@ -285,3 +287,122 @@ def test_the_case_is_read_from_where_the_gateway_is(local, remote, native, expec
     found = Companion(present=True, owns_local_gateway=local, points_remote=remote)
 
     assert found.situation(native) == expected
+
+
+# ---------------------------------------------------- the isolated native gateway
+
+
+def test_isolated_native_gateway_package_is_detected(tmp_path):
+    home, env = machine(tmp_path)
+    pkg_family = "OpenClawFoundation.OpenClawGateway_fakefamily123"
+    pkg_state = Path(env["LOCALAPPDATA"]) / "Packages" / pkg_family / "LocalState" / "OpenClawGatewayMSIX"
+    pkg_state.mkdir(parents=True)
+    write(pkg_state, "setup.json", {"phase": "Ready", "startupEnabled": True})
+    write(pkg_state, "gateway.json", {
+        "observedPorts": [52190],
+        "processId": 1234,
+        "autostartDisabled": False,
+    })
+    write(pkg_state, "session.json", {
+        "agentUserName": "fake-agent-user",
+        "agentUserSid": "S-1-5-21-0000000000-0000000000-0000000000-1001",
+        "workspacePath": "C:\\Users\\fake-agent-user\\Shared",
+    })
+
+    write(app_dir(env), "gateways.json", {
+        "gateways": [
+            {
+                "id": "native-gw",
+                "url": f"ws://127.0.0.1:52190/?token={SECRET}",
+                "friendlyName": "Native Gateway",
+                "isLocal": True,
+                "nativePackageFamilyName": pkg_family,
+                "nativeRuntimeContract": "isolated-session-v1",
+                "sharedGatewayToken": "fake-shared-token-never-returned",
+            }
+        ],
+        "activeId": "native-gw",
+    })
+
+    found = probe(home, env, "win32", wsl_distributions=lambda: [])
+
+    assert found.present is True
+    assert found.owns_local_gateway is True
+    assert found.is_isolated is True
+    assert found.target == TARGET_ISOLATED
+    assert found.port == 52190
+    assert found.situation(False) == APP
+    assert found.situation(True) == BOTH
+
+    assert found.isolated is not None
+    assert isinstance(found.isolated, IsolatedGateway)
+    assert found.isolated.package_family_name == pkg_family
+    assert found.isolated.runtime_contract == "isolated-session-v1"
+    assert found.isolated.phase == "Ready"
+    assert found.isolated.startup_enabled is True
+    assert found.isolated.autostart_disabled is False
+    assert found.isolated.process_id == 1234
+
+    # Security check: secrets and private tokens never leak
+    serialized = json.dumps(found.to_dict()) + " ".join(found.signals) + repr(found)
+    assert SECRET not in serialized
+    assert "fake-shared-token-never-returned" not in serialized
+    assert "fake-agent-user" not in serialized
+
+
+def test_isolated_native_gateway_from_gateways_json_alone(tmp_path):
+    home, env = machine(tmp_path)
+    pkg_family = "OpenClawFoundation.OpenClawGateway_stub123"
+    write(app_dir(env), "gateways.json", {
+        "gateways": [
+            {
+                "id": "isolated-gw",
+                "url": "ws://127.0.0.1:52195",
+                "friendlyName": "Native Gateway",
+                "isLocal": True,
+                "nativePackageFamilyName": pkg_family,
+                "nativeRuntimeContract": "isolated-session-v1",
+            }
+        ],
+        "activeId": "isolated-gw",
+    })
+
+    found = probe(home, env, "win32", wsl_distributions=lambda: [])
+
+    assert found.present is True
+    assert found.owns_local_gateway is True
+    assert found.is_isolated is True
+    assert found.target == TARGET_ISOLATED
+    assert found.port == 52195
+    assert found.isolated is not None
+    assert isinstance(found.isolated, IsolatedGateway)
+    assert found.isolated.package_family_name == pkg_family
+    assert found.isolated.runtime_contract == "isolated-session-v1"
+
+
+def test_isolated_native_gateway_autostart_disabled_is_detected(tmp_path):
+    home, env = machine(tmp_path)
+    pkg_family = "OpenClawFoundation.OpenClawGateway_disabled123"
+    pkg_state = Path(env["LOCALAPPDATA"]) / "Packages" / pkg_family / "LocalState" / "OpenClawGatewayMSIX"
+    pkg_state.mkdir(parents=True)
+    write(pkg_state, "setup.json", {"phase": "Ready", "startupEnabled": False})
+    write(pkg_state, "gateway.json", {
+        "observedPorts": [52199],
+        "autostartDisabled": True,
+    })
+
+    write(app_dir(env), "gateways.json", {
+        "native": {
+            "url": "ws://127.0.0.1:52199",
+            "isLocal": True,
+            "nativePackageFamilyName": pkg_family,
+            "nativeRuntimeContract": "isolated-session-v1",
+        }
+    })
+
+    found = probe(home, env, "win32", wsl_distributions=lambda: [])
+
+    assert found.is_isolated is True
+    assert found.isolated is not None
+    assert found.isolated.startup_enabled is False
+    assert found.isolated.autostart_disabled is True

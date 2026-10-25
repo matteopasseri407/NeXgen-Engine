@@ -41,7 +41,7 @@ Il motore tiene separate tre fonti di configurazione:
 ## Cosa fa
 
 * **Core unico in Python (`nexgen_core`):** gira su Linux e Windows ed è verificato dalla suite CI.
-* **Moduli deterministici:** catalogo di 10 moduli (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `local-lane`, `openclaw`, `sync`) gestito con `nexgen modules list` e `nexgen modules set`.
+* **Moduli deterministici:** catalogo di 9 moduli (`memory`, `semantic-rag`, `ocr`, `n8n`, `browser`, `council`, `local-lane`, `openclaw`, `sync`) gestito con `nexgen modules list` e `nexgen modules set`.
 * **Modelli locali, opzionali:** `nexgen-local` costruisce query in sola lettura e registra le fonti di ogni risposta.
   Il gate di valutazione fallisce se la suite trappole rileva un'injection o una risposta senza riscontro.
   Il caricamento su Drive è l'unica modifica che mette in attesa di approvazione, con `nexgen-local drive-propose` / `drive-upload`.
@@ -49,7 +49,7 @@ Il motore tiene separate tre fonti di configurazione:
   Vedi [local-lane.md](docs/local-lane.md).
 * **Segreti:** cifratura asimmetrica `age` (`99-SECRETS/secrets.yaml.age`) su chiavi locali (`0600`), slot OAuth isolati per host e `secrets.env` generato per shell e servizi.
   Non serve una passphrase.
-* **Shell operatore:** dashboard `nexgen info` e REPL interattiva `nexgen shell`, così la gestione ordinaria non richiede mai una CLI AI aperta.
+* **Dashboard operatore:** dashboard `nexgen info` da terminale, così l'ispezione ordinaria non richiede mai una CLI AI aperta.
 * **Quota dei piani (`nexgen quota`, `/quota` in OpenClaw):** quanto resta di ogni abbonamento, letto da quello che gli harness hanno già scritto in locale, con l'età di ogni lettura. Una finestra che da questa macchina non si può misurare lo dice, invece di tirare a indovinare. Vedi [quota.md](docs/quota.md).
 * **Cinque runtime più l'app Desktop:** Claude Code, Codex, OpenCode (nativo V2: istruzioni, `plugins`/`permissions`, viste skill), Antigravity e OpenClaw, ognuno nel suo dialetto, seggi Council inclusi. OpenClaw è tecnicamente la quinta CLI della sincronizzazione, ma è l'harness ufficiale di NeXgen Engine: la porta d'ingresso con interfaccia (pannello web, app sul telefono) da cui si usano gli altri harness e i tuoi abbonamenti. L'app Claude Desktop riceve solo server read-only esplicitamente consentiti (`desktop_allow`), dato che non ha hook guardrail.
   Vedi [openclaw.md](docs/openclaw.md) per cosa rileva il motore, i tre agenti, la gabbia del modello locale e le trappole note di Windows.
@@ -78,7 +78,11 @@ Le installazioni come pacchetto si aggiornano tramite il gestore usato per insta
 ```bash
 git clone https://github.com/matteopasseri407/NeXgen-Engine.git ~/KnowledgeVault
 cd ~/KnowledgeVault
-bash install.sh --check          # Windows PowerShell: .\install.ps1 -Check
+# Scegli il comando per il ruolo della tua macchina (vedi docs/roles.md):
+sh install.sh --role server      # Gateway Linux headless sempre attivo
+sh install.sh --role node        # Nodo collegato a un gateway esistente
+sh install.sh --role standalone  # PC locale con il proprio gateway
+# Windows PowerShell: .\install.ps1 -Role <server|node|standalone>
 ```
 
 Per i clone Git, `nexgen update` richiede conferma; il heartbeat pianificato può applicare aggiornamenti patch senza intervento.
@@ -110,7 +114,6 @@ nexgen doctor
 
 ```bash
 nexgen info
-nexgen shell
 ```
 
 ---

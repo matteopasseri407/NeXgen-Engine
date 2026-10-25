@@ -437,3 +437,123 @@ def test_the_linux_marker_is_in_the_environment_from_the_first_exec(
     assert kwargs["env"][windows.TAB_ENV] == marker
     assert kwargs["env"]["PATH"] == os.environ["PATH"], "l'ambiente del proprietario resta quello di partenza"
     assert f"export {windows.TAB_ENV}=" in argv[-1], "la shell finale riceve comunque l'export"
+
+
+def test_close_tab_closes_unit_tab_without_waiting_for_units_in_other_copies(task, tmp_path, pretend_os):
+    """Una scheda di un'unità finita si chiude senza aspettare altre unità con copie separate."""
+    pretend_os(windows, "nt")
+    folder_u1 = tmp_path / "23-unita-u1"
+    folder_u1.mkdir()
+    folder_u2 = tmp_path / "23-unita-u2"
+    folder_u2.mkdir()
+
+    state.append_event(
+        task, "unit_created", unit="u1", worktree=str(folder_u1),
+        branch=f"sup/{task}/u1", base="0"*40, allow=["docs/*.md"],
+    )
+    state.append_event(
+        task, "unit_created", unit="u2", worktree=str(folder_u2),
+        branch=f"sup/{task}/u2", base="0"*40, allow=["docs/*.md"],
+    )
+    state.append_event(task, "unit_started", unit="u1", pid=100, window="esecutore · u1")
+    state.append_event(task, "unit_started", unit="u2", pid=400, window="esecutore · u2")
+
+    marker = windows.tab_marker(task, "esecutore")
+    rows = [
+        # Tab u1
+        {"pid": 100, "ppid": 1, "name": "pwsh.exe", "command_line": f"pwsh.exe -NoExit -Command \"$env:NEXGEN_SUP_TAB = '{marker}'\"\n# esecutore · u1"},
+        {"pid": 200, "ppid": 100, "name": "cmd.exe", "command_line": "opencode.CMD"},
+        {"pid": 300, "ppid": 200, "name": "opencode.exe", "command_line": f"opencode.exe {folder_u1} --prompt ..."},
+        # Tab u2
+        {"pid": 400, "ppid": 1, "name": "pwsh.exe", "command_line": f"pwsh.exe -NoExit -Command \"$env:NEXGEN_SUP_TAB = '{marker}'\"\n# esecutore · u2"},
+        {"pid": 500, "ppid": 400, "name": "cmd.exe", "command_line": "opencode.CMD"},
+        {"pid": 600, "ppid": 500, "name": "opencode.exe", "command_line": f"opencode.exe {folder_u2} --prompt ..."},
+    ]
+    killed: list = []
+
+    result = windows.close_tab(
+        task, "esecutore", unit="u1", still_working=("u1",), stopped=True,
+        lister=lambda: rows, killer=killed.extend,
+    )
+
+    assert killed == [300, 200, 100]
+    assert result["closed"] == [300, 200, 100]
+    assert "scheda esecutore chiusa" in result["line"]
+
+
+def test_close_tab_shared_tab_stays_open_until_last_sharing_unit_finishes(task, tmp_path, pretend_os):
+    """Una scheda condivisa tra più unità resta aperta finché anche l'ultima unità ha finito."""
+    pretend_os(windows, "nt")
+    shared_folder = tmp_path / "23-unita-condivisa"
+    shared_folder.mkdir()
+
+    state.append_event(
+        task, "unit_created", unit="u1", worktree=str(shared_folder),
+        branch=f"sup/{task}/u1", base="0"*40, allow=["docs/*.md"],
+    )
+    state.append_event(
+        task, "unit_created", unit="u2", worktree=str(shared_folder),
+        branch=f"sup/{task}/u2", base="0"*40, allow=["docs/*.md"],
+    )
+    state.append_event(task, "unit_started", unit="u1", pid=100, window="esecutore · u1")
+
+    marker = windows.tab_marker(task, "esecutore")
+    rows = [
+        {"pid": 100, "ppid": 1, "name": "pwsh.exe", "command_line": f"pwsh.exe -NoExit -Command \"$env:NEXGEN_SUP_TAB = '{marker}'\""},
+        {"pid": 200, "ppid": 100, "name": "cmd.exe", "command_line": "opencode.CMD"},
+        {"pid": 300, "ppid": 200, "name": "opencode.exe", "command_line": f"opencode.exe {shared_folder} --prompt ..."},
+    ]
+    killed: list = []
+
+    # u1 è finita, ma u2 condivide la copia ed è ancora aperta
+    result = windows.close_tab(
+        task, "esecutore", unit="u1", still_working=("u1",), stopped=True,
+        lister=lambda: rows, killer=killed.extend,
+    )
+
+    assert killed == []
+    assert "lasciata aperta" in result["line"]
+    assert "u2" in result["reason"]
+
+    # u1 viene approvata e quando anche u2 finisce, la scheda si chiude
+    state.append_event(task, "unit_reviewed", unit="u1", verdict=state.APPROVED, head="0"*40)
+    result2 = windows.close_tab(
+        task, "esecutore", unit="u2", still_working=("u2",), stopped=True,
+        lister=lambda: rows, killer=killed.extend,
+    )
+    assert killed == [300, 200, 100]
+    assert result2["closed"] == [300, 200, 100]
+
+
+def test_close_tab_does_not_hold_for_retired_unit(task, tmp_path, pretend_os):
+    """Un'unità ritirata non trattiene la scheda aperta di un'altra unità."""
+    pretend_os(windows, "nt")
+    folder_u1 = tmp_path / "23-unita-u1"
+    folder_u1.mkdir()
+
+    state.append_event(
+        task, "unit_created", unit="u1", worktree=str(folder_u1),
+        branch=f"sup/{task}/u1", base="0"*40, allow=["docs/*.md"],
+    )
+    state.append_event(
+        task, "unit_created", unit="u2", worktree=str(folder_u1),
+        branch=f"sup/{task}/u2", base="0"*40, allow=["docs/*.md"],
+    )
+    state.append_event(task, "unit_retired", unit="u2", why="non più necessaria", copy=str(folder_u1), branch=f"sup/{task}/u2")
+
+    marker = windows.tab_marker(task, "esecutore")
+    rows = [
+        {"pid": 100, "ppid": 1, "name": "pwsh.exe", "command_line": f"pwsh.exe -NoExit -Command \"$env:NEXGEN_SUP_TAB = '{marker}'\""},
+        {"pid": 200, "ppid": 100, "name": "cmd.exe", "command_line": "opencode.CMD"},
+        {"pid": 300, "ppid": 200, "name": "opencode.exe", "command_line": f"opencode.exe {folder_u1} --prompt ..."},
+    ]
+    killed: list = []
+
+    result = windows.close_tab(
+        task, "esecutore", unit="u1", still_working=("u1",), stopped=True,
+        lister=lambda: rows, killer=killed.extend,
+    )
+
+    assert killed == [300, 200, 100]
+    assert result["closed"] == [300, 200, 100]
+

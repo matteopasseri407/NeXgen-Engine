@@ -27,6 +27,7 @@ GATE_NAMES = (
     "file vietati",
     "integrità dei test",
     "prova per commit",
+    "identità",
     "verifica indipendente",
     "test raccolti",
     "lint",
@@ -999,4 +1000,65 @@ def test_the_gate_runs_the_engines_script_not_the_one_in_the_copy(task, repo, tm
     assert script is not None
     assert not script.resolve().is_relative_to(folder.resolve())
     assert script.name == "ruff_baseline_check.py"
+
+
+def test_identity_gate_fails_when_commit_has_different_email(task, repo, tmp_path):
+    folder = _unit(task, repo, tmp_path)
+    target = folder / "docs" / "guida.md"
+    target.write_text("# guida\n\nseconda riga.\n", encoding="utf-8")
+    git_in(folder, "add", "-A")
+    git_in(folder, "-c", "user.email=estraneo@example.com", "commit", "-q", "-m", "docs: riga con email diversa")
+
+    result = gates.collect(task, "prova")
+
+    assert result["verdict"] == "FAIL"
+    gate = _gate(result, "identità")
+    assert not gate.ok
+    assert "estraneo@example.com" in gate.reason
+
+
+def test_identity_gate_fails_when_commit_has_different_author_name(task, repo, tmp_path):
+    folder = _unit(task, repo, tmp_path)
+    target = folder / "docs" / "guida.md"
+    target.write_text("# guida\n\nseconda riga.\n", encoding="utf-8")
+    git_in(folder, "add", "-A")
+    git_in(folder, "-c", "user.name=Altro", "commit", "-q", "-m", "docs: riga con autore diverso")
+
+    result = gates.collect(task, "prova")
+
+    assert result["verdict"] == "FAIL"
+    gate = _gate(result, "identità")
+    assert not gate.ok
+    assert "Altro" in gate.reason
+
+
+def test_identity_gate_passes_for_legacy_unit_without_recorded_identity(task, repo, tmp_path):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nseconda riga.\n"})
+    diario = state.open_task(task) / "01-diario.jsonl"
+    events = state.read_events(task)
+    for ev in events:
+        if ev.get("event") == "unit_created":
+            ev.pop("identity", None)
+    diario.write_text("\n".join(json.dumps(ev) for ev in events) + "\n", encoding="utf-8")
+
+    result = gates.collect(task, "prova")
+
+    assert result["verdict"] == "PASS"
+    gate = _gate(result, "identità")
+    assert gate.ok
+    assert "senza identità registrata" in gate.reason
+    package = Path(result["package"]).read_text(encoding="utf-8")
+    assert "- identità: non registrata" in package
+
+
+def test_the_package_displays_registered_identity(task, repo, tmp_path):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nseconda riga.\n"})
+
+    result = gates.collect(task, "prova")
+
+    package = Path(result["package"]).read_text(encoding="utf-8")
+    assert "- identità: t <t@example.com>" in package
+
 

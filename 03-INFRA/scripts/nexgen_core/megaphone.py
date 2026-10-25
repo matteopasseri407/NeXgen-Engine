@@ -30,7 +30,7 @@ from nexgen_core import notify
 from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
 from nexgen_core.paths import resolve_state_dir
-from nexgen_core.processes import no_window_kwargs
+from nexgen_core.processes import SHIM_SUFFIXES, no_window_kwargs, shim_node_argv
 
 STATE_FILE_NAME = "agent-healthcheck.state"
 DEFAULT_DEBOUNCE_HOURS = 4.0
@@ -41,9 +41,6 @@ OPENCLAW_COMMAND = "openclaw"
 #: The file the npm package declares as its `bin`, sitting beside the shim that
 #: npm also installs. Node runs it as a program; a `.cmd` cannot be one.
 OPENCLAW_ENTRY = "node_modules/openclaw/openclaw.mjs"
-
-#: The suffixes Windows starts only by handing the file to a command interpreter.
-SHIM_SUFFIXES = (".cmd", ".bat", ".ps1")
 
 #: A send that has not answered in twenty seconds is not going to answer. The
 #: alert then belongs to the transports after it, not to a hung child process.
@@ -89,17 +86,15 @@ def openclaw_launch(found: str, which: Which) -> list[str] | None:
     `%` in whatever it is given: with an alert that carries arbitrary text that
     is injection, not a lost message. The package declares `openclaw.mjs` as its
     `bin` and puts it beside the shim, so node runs it as a program with
-    arguments. When that entry or node itself is missing, OpenClaw is not a
-    transport on this machine and the next one takes the alert.
+    arguments. The rule is npm's, not OpenClaw's, and it lives in
+    `nexgen_core.processes` beside the shims the engine starts itself. When that
+    entry or node itself is missing, OpenClaw is not a transport on this machine
+    and the next one takes the alert.
     """
     shim = Path(found)
     if shim.suffix.lower() not in SHIM_SUFFIXES:
         return [OPENCLAW_COMMAND]
-    entry = shim.parent / OPENCLAW_ENTRY
-    node = which("node")
-    if not entry.is_file() or not node:
-        return None
-    return [node, str(entry)]
+    return shim_node_argv(found, OPENCLAW_ENTRY, [], which)
 
 
 class Megaphone:

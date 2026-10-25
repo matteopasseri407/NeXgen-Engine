@@ -35,11 +35,6 @@ EXPORT_TIMEOUT_S = 180.0
 #: What OpenCode prints: `ses_` and alphanumerics. The shape is narrow on purpose,
 #: so nothing a command line reads (`&`, `;`, quotes, spaces) can ever get through.
 _SESSION_RE = re.compile(r"ses_[A-Za-z0-9]{1,64}")
-#: The shape a harness store names its own sessions with: Codex uses a UUID.
-_THREAD_RE = re.compile(r"[A-Za-z0-9_-]{1,200}")
-#: The shape a harness that routes by name uses: OpenClaw's `agent:<agente>:<chiave>`.
-#: A colon is not a shell fragment and reaches OpenClaw as one `--session-key` argument.
-_NAMED_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9:._-]{0,200}")
 #: What an export says when the session is gone, as opposed to a failed read.
 _MISSING_EVIDENCE = re.compile(r"(not found|does not exist|no such session|unknown session|non esiste)", re.IGNORECASE)
 #: The harness's own store, and the tables that hold sessions in its two schemas.
@@ -334,8 +329,20 @@ def record(
     a zero.
     """
     folder = state.open_task(task_id)
-    chosen = (harness or "opencode").strip().lower() or "opencode"
-    session = _session_id(session_id) if chosen in ("opencode", "local") else _thread_id(session_id)
+    chosen = (harness or "").strip().lower()
+    if not chosen or chosen == "opencode":
+        try:
+            rec = state.unit_record(task_id, unit)
+            chosen = str(rec.get("harness") or "") or chosen
+        except SupervisionError:  # nexgen: allow reason="a unit nobody described yet keeps the declared or default harness"
+            pass
+    chosen = chosen or "opencode"
+    from . import supervision_adapters as adapters
+    try:
+        adapter = adapters.get(chosen)
+        session = adapter.validate_session(session_id)
+    except adapters.base.AdapterError as exc:
+        raise CostError(str(exc)) from exc
     name = (unit or "").strip()
     if not name:
         raise SupervisionError("unità vuota: indica a quale unità appartiene la sessione")
@@ -344,13 +351,13 @@ def record(
         "task": task_id,
         "unit": name,
         "role": (role or "").strip() or "esecutore",
-        "harness": harness,
+        "harness": chosen,
         "session": session,
         "window": window,
-        "source": source_for(harness),
+        "source": source_for(chosen),
     }
     try:
-        facts = measure_for(harness, session)
+        facts = measure_for(chosen, session)
     except CostError as exc:
         row.update(_empty_measurements())
         row["cost_usd"] = None
@@ -558,21 +565,6 @@ def _session_id(session_id: str) -> str:
             f"identificativo di sessione non valido: {session_id!r} "
             "(atteso `ses_` seguito da lettere e cifre)"
         )
-    return session
-
-
-def _thread_id(session_id: str) -> str:
-    """A session id of a harness that keeps its own store: its own shape, still one token.
-
-    Codex names a thread with a UUID and reads it from its SQLite index, so the
-    `ses_` shape OpenCode prints would refuse every Codex attach. OpenClaw routes
-    by the session key it prints, `agent:<agente>:<chiave>`, and the engine keeps
-    that key as the session id: both are one argument, and this check only keeps a
-    line break or a shell fragment out of the ledger.
-    """
-    session = (session_id or "").strip()
-    if not (_THREAD_RE.fullmatch(session) or _NAMED_RE.fullmatch(session)):
-        raise CostError(f"identificativo di sessione non valido: {session_id!r}")
     return session
 
 

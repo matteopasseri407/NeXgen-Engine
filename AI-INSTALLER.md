@@ -31,9 +31,11 @@ time:
 1. How many CLIs do you want to use — just one, or more than one (Claude
    Code / Codex / OpenCode / Antigravity)?
 2. How many machines need to stay aligned — just this one, or more?
-3. Where should the connectors (n8n/Firecrawl/OCR/vault-library) live:
-   nowhere (Local-Only), in Docker on this machine (Local-Full, needs
-   Docker), or on a VPS you have SSH access to (Cloud-Server)?
+3. Where should the connectors (n8n/OCR/vault-library) live: nowhere
+   (Local-Only), in Docker on this machine (Local-Full, needs Docker), or
+   on a VPS you have SSH access to (Cloud-Server)? Web search is not one of
+   them: it is Firecrawl's cloud connector, and it needs the user's key in
+   `FIRECRAWL_API_KEY` (`nexgen-secrets set FIRECRAWL_API_KEY`).
 4. Any key documents (CV, project brief, brand rules) you want ingested
    into the vault right away?
 
@@ -44,7 +46,7 @@ CLI and 1 machine → `MINIMAL`; 2+ of either → `MULTI`.
 
 Follow `INIT.md`'s Steps 1.5 through 7 (English section) exactly, but as
 direct action instead of a guided conversation: run Step 1.5's read-only
-`nexgen inventory` scan first (or `python3 03-INFRA/scripts/agent_sync.py inventory`
+`nexgen inventory` scan first (or `python3 03-INFRA/scripts/nexgen.py inventory`
 before the commands are installed), and if it finds anything
 out-of-manifest, put its ADOPT / START FRESH / PICK BY HAND menu to the
 user and act on their choice — this is a real fork in behavior, not just

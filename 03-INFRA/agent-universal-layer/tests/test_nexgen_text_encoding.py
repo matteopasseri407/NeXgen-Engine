@@ -50,6 +50,18 @@ def _violations(tree: ast.AST) -> list[tuple[int, str]]:
     return found
 
 
+def test_the_scan_catches_a_helper_open_that_names_no_encoding():
+    """The scan cannot see a helper's mode, so naming the encoding is what makes it readable.
+
+    The plugin's tarball builder was the last call of this kind: `tarfile.open` with a
+    `fileobj` and no encoding, indistinguishable to a reader from a text file opened
+    without one.
+    """
+    assert _violations(ast.parse("tarfile.open(mode='w', fileobj=buf)")) == [(1, "open")]
+    assert _violations(ast.parse("tarfile.open(mode='w', fileobj=buf, encoding='utf-8')")) == []
+    assert _violations(ast.parse("open('x', 'rb')")) == []
+
+
 def test_every_text_io_call_names_its_encoding():
     offenders = []
     for path in sorted(INFRA.rglob("*.py")):

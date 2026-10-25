@@ -9,12 +9,10 @@ license; this file gives credit and points to the source.
 | Component | Upstream | License | Purpose |
 |---|---|---|---|
 | **n8n** | https://github.com/n8n-io/n8n | Sustainable Use License | Workflow automation engine |
-| **Firecrawl** | https://github.com/firecrawl/firecrawl | AGPL-3.0 | Self-hosted web scraping/search |
 | **RapidOCR** | https://github.com/RapidAI/RapidOCR | Apache-2.0 | OCR engine (used in Vault OCR) |
 | **Playwright MCP** | https://github.com/microsoft/playwright-mcp | Apache-2.0 | Browser automation over CDP |
 | **FastAPI** | https://github.com/tiangolo/fastapi | MIT | Vault OCR API framework |
 | **uvicorn** | https://github.com/encode/uvicorn | BSD-3-Clause | ASGI server |
-| **Redis** | https://github.com/redis/redis | RSALv2/SSPL | Firecrawl queue |
 
 ## MCP servers (mcp/manifest.yaml)
 

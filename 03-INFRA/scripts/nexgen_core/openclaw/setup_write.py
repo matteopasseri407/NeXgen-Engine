@@ -35,10 +35,13 @@ BACKUP_MARKER = ".pre-nexgen-"
 #: Values an earlier engine wrote and this one no longer proposes, by path. A key
 #: is removed only when it still holds exactly that value: anything the person
 #: changed by hand is theirs and stays. (2026-10-23: the OpenCode agent ran on
-#: an ACP runtime, which in a direct chat answered with the default model.)
+#: an ACP runtime, which in a direct chat answered with the default model.
+#: 2026-10-24: toolSearch was forced to false; OpenClaw's native structured Tool
+#: Search is now preserved instead.)
 RETIRED_VALUES: tuple[tuple[tuple[str, ...], Any], ...] = (
     (("agents", "entries", "sviluppo", "runtime"),
      {"type": "acp", "acp": {"agent": "opencode", "backend": "acpx", "mode": "persistent"}}),
+    (("tools", "toolSearch"), False),
 )
 
 
@@ -239,8 +242,13 @@ def _retire(document: dict[str, Any]) -> None:
         parent: Any = document
         for key in path[:-1]:
             parent = parent.get(key) if isinstance(parent, dict) else None
-        if isinstance(parent, dict) and parent.get(path[-1]) == value:
-            del parent[path[-1]]
+        if isinstance(parent, dict) and path[-1] in parent:
+            target = parent.get(path[-1])
+            if isinstance(value, bool):
+                if isinstance(target, bool) and target == value:
+                    del parent[path[-1]]
+            elif target == value:
+                del parent[path[-1]]
 
 
 def generate_token() -> str:

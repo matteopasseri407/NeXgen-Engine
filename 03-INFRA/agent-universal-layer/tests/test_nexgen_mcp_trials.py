@@ -52,7 +52,8 @@ def test_a_trial_is_lazy_for_every_cli_and_leaves_the_manifest_alone(env):
     assert code == 0
     assert env.read_text(encoding="utf-8") == before, "a trial must never reach the synced manifest"
     entry = mcp_trials.active_entries()["spike"]
-    assert all(mp.place(entry, cli).kind == mp.GATEWAY_KIND for cli in mp.CLIS)
+    assert mp.place(entry, "openclaw").kind == mp.DIRECT
+    assert all(mp.place(entry, cli).kind == mp.GATEWAY_KIND for cli in mp.CLIS if cli != "openclaw")
 
 
 def test_the_state_file_is_private_and_holds_no_secret(env, tmp_path):
@@ -130,8 +131,11 @@ def test_the_plan_shows_a_trial_with_its_time_and_the_gateway_serves_it(env):
     try_server()
     plan = build(env)
     row = next(r for r in plan["rows"] if r["server"] == "spike")
-    assert row["trial"] and all(cell == "gateway" for cell in row["cells"].values())
-    assert all("spike" in served for served in plan["gateway"].values())
+    assert row["trial"]
+    assert row["cells"]["openclaw"] == "direct"
+    assert all(row["cells"][cli] == "gateway" for cli in mp.CLIS if cli != "openclaw")
+    assert "spike" not in plan["gateway"]["openclaw"]
+    assert all("spike" in plan["gateway"][cli] for cli in mp.CLIS if cli != "openclaw")
 
 
 def gateway_module(monkeypatch, cli="claude"):
@@ -242,3 +246,80 @@ def test_a_trial_is_refused_when_there_is_no_gateway_to_serve_it(env):
     code, message = try_server()
     assert code == 2 and "lazy-mcp" in message
     assert not mcp_trials.active(), "nothing was started"
+
+
+def test_a_trial_is_mounted_direct_in_openclaw_and_leaves_at_expiry_on_next_sync(env, tmp_path):
+    from nexgen_core.paths import openclaw_config
+    from nexgen_core.renderer import McpRenderer
+
+    cfg = openclaw_config(tmp_path / "home")
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(json.dumps({
+        "mcp": {
+            "servers": {
+                "my-own-server": {"command": "node", "args": ["mine.mjs"]}
+            }
+        }
+    }, indent=2), encoding="utf-8")
+
+    code, _ = try_server("spike", hours=1)
+    assert code == 0
+
+    rend = McpRenderer(vault_data=env.parents[3], engine_root=INFRA, home=tmp_path / "home")
+    ok, _ = rend.render_openclaw(write=True)
+    assert ok
+
+    servers = json.loads(cfg.read_text(encoding="utf-8"))["mcp"]["servers"]
+    assert "spike" in servers, "a trial must be mounted direct in OpenClaw"
+    assert servers["spike"]["command"] == ("npx.cmd" if os.name == "nt" else "npx")
+    assert servers["my-own-server"]["command"] == "node", "user server must be preserved"
+    for other_cli in ("claude", "codex", "opencode", "antigravity"):
+        assert "spike" not in rend.load_resolved_servers(other_cli), f"{other_cli} keeps trial behind gateway"
+
+    # Fast-forward time past expiration
+    trial_path = tmp_path / "state" / mcp_trials.FILENAME
+    data = json.loads(trial_path.read_text(encoding="utf-8"))
+    data["trials"]["spike"]["expires"] = 1.0
+    trial_path.write_text(json.dumps(data), encoding="utf-8")
+    assert mcp_trials.active() == {}
+
+    # Next sync unmounts the expired trial from openclaw.json
+    ok, _ = rend.render_openclaw(write=True)
+    assert ok
+
+    after_sync = json.loads(cfg.read_text(encoding="utf-8"))["mcp"]["servers"]
+    assert "spike" not in after_sync, "expired trial must exit from mcp.servers at next sync"
+    assert "my-own-server" in after_sync, "user server must still be preserved"
+
+
+def test_a_purged_trial_leaves_openclaw_at_next_sync(env, tmp_path):
+    from nexgen_core.paths import openclaw_config
+    from nexgen_core.renderer import McpRenderer
+
+    cfg = openclaw_config(tmp_path / "home")
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(json.dumps({
+        "mcp": {
+            "servers": {
+                "my-own-server": {"command": "node", "args": ["mine.mjs"]}
+            }
+        }
+    }, indent=2), encoding="utf-8")
+
+    try_server("spike", hours=1)
+    rend = McpRenderer(vault_data=env.parents[3], engine_root=INFRA, home=tmp_path / "home")
+    rend.render_openclaw(write=True)
+    assert "spike" in json.loads(cfg.read_text(encoding="utf-8"))["mcp"]["servers"]
+
+    trial_path = tmp_path / "state" / mcp_trials.FILENAME
+    data = json.loads(trial_path.read_text(encoding="utf-8"))
+    data["trials"]["spike"]["expires"] = 1.0
+    trial_path.write_text(json.dumps(data), encoding="utf-8")
+
+    expired = mcp_trials.purge_expired()
+    assert expired == ["spike"]
+
+    rend.render_openclaw(write=True)
+    after = json.loads(cfg.read_text(encoding="utf-8"))["mcp"]["servers"]
+    assert "spike" not in after
+    assert "my-own-server" in after

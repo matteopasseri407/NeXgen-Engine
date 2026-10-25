@@ -23,7 +23,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 from nexgen_core.cli import tool_cmds as tc_mod  # noqa: E402
 
 MCP_VERBS = {"add", "try", "trials", "promote", "drop", "list", "bump", "plan", "check"}
-TOOL_VERBS = {"now", "open", "chrome", "firecrawl", "update-notifier"}
+TOOL_VERBS = {"now", "open", "chrome", "update-notifier"}
 
 
 def _no_real_commands_no_network(monkeypatch: pytest.MonkeyPatch) -> None:

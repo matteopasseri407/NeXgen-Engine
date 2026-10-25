@@ -286,3 +286,71 @@ def test_a_symlink_is_followed_and_a_link_to_the_source_is_not(tmp_path: Path):
     assert symlink_write_target(link, keep=tmp_path / "canon.md") == target.resolve()
     assert symlink_write_target(link, keep=target) == link
     assert symlink_write_target(link.parent / "plain.md", keep=target) == link.parent / "plain.md"
+
+
+def test_atomic_write_survives_transient_lock_on_chmod(tmp_path: Path, monkeypatch):
+    """A transient lock on chmod (e.g. WinError 5 during concurrent access)
+    is retried and succeeds once the handle is released."""
+    import nexgen_core.files as files_mod
+
+    target = tmp_path / "cfg.json"
+    target.write_text("old", encoding="utf-8")
+
+    real_chmod = os.chmod
+    calls = 0
+
+    def flaky_chmod(path, mode, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise PermissionError(13, "Access is denied", str(path), 5)
+        return real_chmod(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(files_mod.os, "chmod", flaky_chmod)
+    files_mod.atomic_write_text(target, "new")
+
+    assert calls >= 2
+    assert target.read_text(encoding="utf-8") == "new"
+    assert list(tmp_path.glob("*.tmp*")) == []
+
+
+def test_atomic_write_propagates_permanent_chmod_error(tmp_path: Path, monkeypatch):
+    """A permanent denial on chmod is not concealed and propagates to the caller."""
+    import nexgen_core.files as files_mod
+
+    target = tmp_path / "cfg.json"
+    target.write_text("old", encoding="utf-8")
+
+    calls = 0
+    # `winerror` is the fourth constructor argument only on Windows: on POSIX the
+    # same denial reaches the retry policy with no winerror at all, which it reads
+    # as a lock that clears and retries for two seconds. Set on the instance, the
+    # test states the same permanent denial on every host.
+    permanent_err = PermissionError(13, "Access is permanently denied", str(target))
+    permanent_err.winerror = 1
+
+    def refusing_chmod(path, mode, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise permanent_err
+
+    monkeypatch.setattr(files_mod.os, "chmod", refusing_chmod)
+
+    with pytest.raises(PermissionError) as exc_info:
+        files_mod.atomic_write_text(target, "new")
+
+    assert exc_info.value is permanent_err
+    assert calls == 1
+
+    clock = [0.0]
+    monkeypatch.setattr(files_mod.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(files_mod.time, "sleep", lambda delay: clock.__setitem__(0, clock[0] + delay))
+
+    def persistent_chmod(path, mode, *args, **kwargs):
+        raise PermissionError(13, "still locked", str(path), 5)
+
+    monkeypatch.setattr(files_mod.os, "chmod", persistent_chmod)
+    with pytest.raises(PermissionError, match="still locked"):
+        files_mod.atomic_write_text(target, "newer")
+    assert clock[0] <= files_mod._RETRY_BUDGET_SECONDS + 0.5
+

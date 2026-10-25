@@ -49,15 +49,17 @@ def test_the_independent_checks_run_at_the_same_time():
 def test_a_check_past_the_deadline_is_reported_missing_never_dropped():
     checks = [
         schedule.Check("fast-a", _slow(0.01, "fast-a")),
-        schedule.Check("slow", _slow(3.0, "slow")),
+        schedule.Check("slow", _slow(6.0, "slow")),
         schedule.Check("fast-b", _slow(0.01, "fast-b")),
     ]
 
+    # A loaded Windows runner needs most of a second to start three threads: the
+    # deadline leaves room for the fast checks and still cuts the slow one short.
     started = time.monotonic()
-    report = schedule.run(checks, deadline_seconds=0.2)
+    report = schedule.run(checks, deadline_seconds=1.0)
     spent = time.monotonic() - started
 
-    assert spent < 1.5, spent
+    assert spent < 4.0, spent
     ids = [o.id for o in report.outcomes]
     assert ids == ["fast-a", "slow.late", "fast-b"], ids
     late = report.outcomes[1]

@@ -53,7 +53,7 @@ class SessionLost(HarnessError):
 
 def run_unit(
     task_id: str, unit: str, *, harness: str = "", opener=None, runner=None, lister=None,
-    measure=None, wait_s: float = SESSION_WAIT_S,
+    measure=None, wait_s: float = SESSION_WAIT_S, model: str = "",
 ) -> dict:
     """Put the unit's work into its harness session, queue it, or open the first tab.
 
@@ -61,6 +61,8 @@ def run_unit(
     for this run. A unit whose recorded session was born in another folder gets a
     new tab in the unit's own copy: the harness binds a session to its directory,
     and reusing it makes the executor work in a folder that may no longer exist.
+    `model` is a model the owner named for this run: it travels on the tab the run
+    opens, and a harness that has no tab left to open reports it as not applied.
     """
     record, folder = _unit_copy(task_id, unit)
     name = record["unit"]
@@ -78,7 +80,7 @@ def run_unit(
     if not previous:
         opened = _open_first_tab(
             task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
-            adapter=adapter, measure=measure, allowed=allowed, runner=runner,
+            adapter=adapter, measure=measure, allowed=allowed, runner=runner, model=model,
         )
         opened["harness"] = chosen
         opened["notes"] = local_notes
@@ -91,7 +93,7 @@ def run_unit(
         )
         opened = _open_first_tab(
             task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
-            adapter=adapter, measure=measure, allowed=allowed, runner=runner,
+            adapter=adapter, measure=measure, allowed=allowed, runner=runner, model=model,
             reason="sessione nata in un'altra copia: scheda nuova nella copia dell'unità",
         )
         opened["harness"] = chosen
@@ -100,7 +102,7 @@ def run_unit(
     result = _deliver(
         task_id, name, folder, prompt, previous["session"], event="unit_started", extra={},
         opener=opener, runner=runner, lister=lister, measure=measure, wait_s=wait_s,
-        allowed=allowed, adapter=adapter,
+        allowed=allowed, adapter=adapter, model=model,
     )
     result["harness"] = chosen
     result["notes"] = local_notes
@@ -201,7 +203,7 @@ def send_corrections(
         opened = _open_first_tab(
             task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
             event="unit_reworked", extra={"round": round_no}, adapter=adapter,
-            measure=measure, allowed=allowed, runner=runner,
+            measure=measure, allowed=allowed, runner=runner, model=model,
         )
     elif _foreign_copy(previous.get("folder") or "", folder):
         opened = _handle_foreign_session(
@@ -216,7 +218,9 @@ def send_corrections(
             measure=measure, wait_s=wait_s, allowed=allowed, model=model, adapter=adapter,
         )
     opened["harness"] = chosen
-    if model and opened.get("mode") != "run":
+    if model and "model_applied" not in opened:
+        # The corrections went into a tab the engine reopened on the session the task
+        # already has: that tab takes the model of the owner's configuration.
         opened["model_requested"] = model
         opened["model_applied"] = False
     return opened
@@ -242,11 +246,9 @@ def _deliver(
         )
         opened = _open_first_tab(
             task_id, unit, folder, prompt, opener or windows.open_window, lister, wait_s,
-            event=event, extra=extra, adapter=adapter, measure=measure, allowed=allowed, runner=runner,
+            event=event, extra=extra, adapter=adapter, measure=measure, allowed=allowed,
+            runner=runner, model=model,
         )
-        if model:
-            opened["model_requested"] = model
-            opened["model_applied"] = False
         return opened
 
 
@@ -323,7 +325,11 @@ def _enter_the_session(
     the owner cannot see is what this engine exists to prevent.
     """
     adapter = adapter or _adapter("opencode")
-    adapter.require("send_turn", "una sessione esistente non può ricevere un turno")
+    if not adapter.capabilities.has("send_turn") or _tab_closed(task_id):
+        return _reopen_tab(
+            task_id, unit, session, folder, prompt, event=event, extra=extra,
+            opener=opener, model=model, adapter=adapter,
+        )
     facts = _measure_or_lost(measure, session)
     running = str(getattr(facts, "model", "") or "")
     chosen = model or running
@@ -344,11 +350,6 @@ def _enter_the_session(
             reason=reason, folder=str(folder), **extra,
         )
         return {"unit": unit, "mode": "queued", "session": session, "reason": reason}
-    if _tab_closed(task_id):
-        return _reopen_tab(
-            task_id, unit, session, folder, prompt, event=event, extra=extra,
-            opener=opener, model=model, adapter=adapter,
-        )
     proc = runner(session, prompt, folder, model)
     state.append_event(
         task_id, event, unit=unit, harness=adapter.name, session=session, mode="run",
@@ -396,10 +397,35 @@ def _opening(adapter, task_id: str, unit: str) -> tuple:
     return chosen, executable, identifier
 
 
+def _model_note(requested: str, argv: list[str]) -> dict:
+    """What the owner asked for and whether it reached the command line, read from the argv itself."""
+    if not requested:
+        return {}
+    return {"model_requested": requested, "model_applied": requested in argv}
+
+
+def _open_tab(
+    task_id: str, unit: str, folder: Path, prompt: str, opener, adapter, executable: str,
+    chosen: str, *, model: str, event: str, extra: dict,
+) -> tuple[dict, dict]:
+    """The visible tab itself, its event in the journal, and whether the model reached it."""
+    argv = adapter.tab_argv(executable, folder, prompt, session=chosen, model=model)
+    handle = opener(
+        f"esecutore · {unit}", argv, cwd=folder,
+        marker=windows.tab_marker(task_id, "esecutore"),
+    )
+    state.append_event(
+        task_id, event, unit=unit, harness=adapter.name, window=str(handle.get("title", "")),
+        mode="tab", folder=str(folder), pid=handle.get("pid"), **dict(extra),
+    )
+    return handle, _model_note(model, argv)
+
+
 def _open_first_tab(
     task_id: str, unit: str, folder: Path, prompt: str, opener, lister, wait_s: float,
     *, event: str = "unit_started", extra: dict | None = None, adapter=None,
     measure=None, allowed: tuple[str, ...] = (), reason: str = "", runner=None,
+    model: str = "",
 ) -> dict:
     """No session for this harness yet: open the tab and bind the session it creates.
 
@@ -411,6 +437,8 @@ def _open_first_tab(
     that came up on a model outside it is named and left unattached, so the next
     `sup run` does not send work into it. A harness that cannot say which session
     a tab opened leaves the attach manual and says so; the id is never invented.
+    A model the owner named travels on the tab when the harness accepts one there,
+    and the result says whether it did.
     """
     adapter, executable, chosen = _opening(adapter, task_id, unit)
     if not adapter.capabilities.window:
@@ -420,20 +448,15 @@ def _open_first_tab(
             allowed=allowed, lister=lister, wait_s=wait_s, reason=reason,
         )
     started_ms = int(time.time() * 1000)
-    argv = adapter.tab_argv(executable, folder, prompt, session=chosen)
-    handle = opener(
-        f"esecutore · {unit}", argv, cwd=folder,
-        marker=windows.tab_marker(task_id, "esecutore"),
-    )
-    state.append_event(
-        task_id, event, unit=unit, harness=adapter.name, window=str(handle.get("title", "")),
-        mode="tab", folder=str(folder), **dict(extra or {}),
+    handle, applied = _open_tab(
+        task_id, unit, folder, prompt, opener, adapter, executable, chosen,
+        model=model, event=event, extra=extra or {},
     )
     found, note = _session_after(adapter, folder, started_ms, lister, wait_s, chosen)
     if found is None:
         result = {
             "unit": unit, "mode": "tab", "window": handle, "session": None,
-            "harness": adapter.name,
+            "harness": adapter.name, **applied,
         }
         result["reason"] = reason or note
         return result
@@ -448,10 +471,10 @@ def _open_first_tab(
         )
         return {
             "unit": unit, "mode": "refused", "sent": True, "window": handle,
-            "session": session, "model": model, "reason": refusal,
+            "session": session, "model": model, "reason": refusal, **applied,
         }
     _attach(task_id, unit, session, handle, adapter.name, folder)
-    result = {"unit": unit, "mode": "tab", "window": handle, "session": session}
+    result = {"unit": unit, "mode": "tab", "window": handle, "session": session, **applied}
     if reason:
         result["reason"] = reason
     return result
@@ -566,7 +589,7 @@ def _reopen_tab(
     )
     state.append_event(
         task_id, event, unit=unit, harness=adapter.name, window=str(handle.get("title", "")),
-        mode="tab", session=session, reopened=True, folder=str(folder), **extra,
+        mode="tab", session=session, reopened=True, folder=str(folder), pid=handle.get("pid"), **extra,
     )
     row = costs.record(
         task_id, unit, "esecutore", session, harness=adapter.name, window=windows.WINDOW_NAME,

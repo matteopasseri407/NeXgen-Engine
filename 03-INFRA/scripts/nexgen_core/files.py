@@ -125,10 +125,10 @@ def _atomic_publish(
         # back on the published file, so nothing read-only stays read-only by
         # accident (the temporary stays writable until it is gone).
         if old_mode is not None and not old_mode & 0o200:
-            os.chmod(path, old_mode | 0o200)
+            retry_transient_lock(lambda: os.chmod(path, old_mode | 0o200))
         retry_transient_lock(lambda: os.link(tmp, path) if exclusive else os.replace(tmp, path))
         if old_mode is not None:
-            os.chmod(path, old_mode)
+            retry_transient_lock(lambda: os.chmod(path, old_mode))
         # Some filesystems (and Windows) do not support directory fsync.
         with contextlib.suppress(OSError):
             dir_fd = os.open(path.parent, os.O_RDONLY)

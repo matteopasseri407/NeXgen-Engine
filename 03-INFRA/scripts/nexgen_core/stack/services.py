@@ -1,9 +1,9 @@
 """The services that make up a complete installation, declared once.
 
-These are the five connectors the manifest marks `tier: core`. Four are
-containers that can be hosted either on a server or on the user's own
-machine; the fifth, the browser, always runs locally and has no stack to
-start.
+These are the connectors the manifest marks `tier: core` and that can be
+hosted either on a server or on the user's own machine. The rest run no
+container: the browser uses the machine's own Chrome, and Firecrawl is the
+vendor's cloud API reached with the person's key.
 
 This table exists because until now the only way to get them was a script
 that declared "Run ON the VPS" and configured a server's firewall. On a
@@ -35,17 +35,9 @@ class Service:
     """Secrets that must exist before starting: they generate themselves."""
 
 
-#: The four containers. The order is the startup order: whatever depends on
+#: The three containers. The order is the startup order: whatever depends on
 #: nothing starts first, so a failure shows up right away, not halfway through.
 SERVICES: tuple[Service, ...] = (
-    Service(
-        name="firecrawl",
-        stack="firecrawl",
-        container="firecrawl-api",
-        port=3002,
-        exports={"FIRECRAWL_TUNNEL_PORT": "{port}", "FIRECRAWL_API_URL": "http://127.0.0.1:{port}"},
-        requires_secret=("FIRECRAWL_REDIS_PASSWORD", "FIRECRAWL_NUQ_POSTGRES_PASSWORD"),
-    ),
     Service(
         name="vault-ocr",
         stack="ocr",
@@ -74,9 +66,9 @@ SERVICES: tuple[Service, ...] = (
     ),
 )
 
-#: The fifth core connector. It has no container: it lives on the machine
-#: of whoever uses it, and it's named here only so "the five essentials"
-#: stays true.
+#: The core connector that has no container of its own. It drives the machine's
+#: own Chrome, so it is named here only so "what a full install mounts" stays
+#: readable in one place.
 LOCAL_ONLY_CONNECTORS = ("playwright",)
 
 

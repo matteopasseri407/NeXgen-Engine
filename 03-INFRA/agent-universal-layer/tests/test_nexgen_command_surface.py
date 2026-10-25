@@ -202,18 +202,21 @@ def test_config_refuses_to_rewrite_a_malformed_remotes_yaml(tmp_path: Path, monk
 
 
 def test_tool_subcommands_display_help_with_their_specific_options():
-    """`nexgen tool now --help`, `nexgen tool firecrawl --help` etc. devono mostrare i propri argomenti."""
+    """`nexgen tool now --help`, `nexgen vault map --help` etc. devono mostrare i propri argomenti."""
     res_now = _run(["tool", "now", "--help"])
     assert res_now.returncode == 0
     assert "--format" in res_now.stdout or "--human" in res_now.stdout
 
-    res_fc = _run(["tool", "firecrawl", "--help"])
-    assert res_fc.returncode == 0
-    assert "scrape" in res_fc.stdout and "search" in res_fc.stdout
-
     res_map = _run(["vault", "map", "--help"])
     assert res_map.returncode == 0
     assert "--check" in res_map.stdout or "--json" in res_map.stdout
+
+
+def test_the_retired_firecrawl_verb_is_gone():
+    """Search and scraping are an MCP connector now, not an engine subcommand."""
+    res = _run(["tool", "firecrawl", "--help"])
+    assert res.returncode != 0
+    assert "invalid choice" in (res.stdout + res.stderr).lower()
 
 
 

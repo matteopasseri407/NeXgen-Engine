@@ -11,6 +11,7 @@ import contextlib
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -22,6 +23,7 @@ from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.companion import Companion  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.detect import Detection, Installation, LocalModelInfo, LocalModels, Login  # noqa: E402
 from nexgen_core.openclaw.setup import run_setup  # noqa: E402
+from nexgen_core.openclaw.setup_steps import Setup  # noqa: E402
 from nexgen_core.openclaw_service import ProcessInfo, RunResult  # noqa: E402
 from nexgen_core.runtimes.openclaw import PLUGIN_ID  # noqa: E402
 
@@ -35,6 +37,15 @@ def _english_and_no_sockets(monkeypatch):
     """English output to assert on, and never a real TCP connect to port 18789."""
     i18n.set_language("en")
     monkeypatch.setattr("nexgen_core.openclaw.doctor_runtime.default_connect", lambda host, port, timeout: False)
+
+    def _fake_plugin_step(setup):
+        if (setup.state_dir / "extensions" / PLUGIN_ID / "index.mjs").is_file():
+            setup.out(i18n.t("The engine plugin {plugin} is deposited and enabled.", plugin=PLUGIN_ID))
+        else:
+            setup.out(i18n.t("The engine plugin {plugin} is not deposited on this machine: not enabled.", plugin=PLUGIN_ID))
+        return True
+
+    monkeypatch.setattr("nexgen_core.openclaw.setup.plugin_step", _fake_plugin_step)
     yield
     i18n.set_language(None)
 
@@ -716,10 +727,28 @@ def test_the_module_is_declared_local_for_this_host(tmp_path):
     assert "hosts:" in state
 
 
-def test_service_step_does_not_start_a_gateway_the_install_already_launched():
-    """`openclaw gateway install` brings the daemon up: starting it again made two."""
-    from types import SimpleNamespace
+def _make_setup_for_service(service: Any, out: Any, tmp_path: Path) -> Setup:
+    state_dir = tmp_path / ".openclaw"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return Setup(
+        home=tmp_path / "home",
+        env={},
+        config_path=state_dir / "openclaw.json",
+        engine_root=None,
+        vault_data=None,
+        pinned="2026.10.6",
+        dry_run=False,
+        out=out,
+        which=lambda cmd: None,
+        run=lambda cmd: RunResult(0, "", ""),
+        service=service,
+        stamp="20261024-test",
+        platform=sys.platform,
+    )
 
+
+def test_service_step_does_not_start_a_gateway_the_install_already_launched(tmp_path):
+    """`openclaw gateway install` brings the daemon up: starting it again made two."""
     from nexgen_core.openclaw.setup_steps import service_step
 
     class InstallLaunched(FakeService):
@@ -734,8 +763,9 @@ def test_service_step_does_not_start_a_gateway_the_install_already_launched():
 
     service = InstallLaunched()
     lines: list[str] = []
+    setup = _make_setup_for_service(service, lines.append, tmp_path)
 
-    assert service_step(SimpleNamespace(service=service, out=lines.append), restarted=False) is True
+    assert service_step(setup, restarted=False) is True
 
     assert service.events.count("install") == 1
     assert "start" not in service.events, "the install already started it"
@@ -758,10 +788,8 @@ def test_the_commands_the_setup_prints_quote_a_path_with_a_space(tmp_path):
     assert f'"{npm}" install' in output or f"'{npm}' install" in output
 
 
-def test_service_step_waits_for_an_install_that_is_still_starting():
+def test_service_step_waits_for_an_install_that_is_still_starting(tmp_path):
     """A slow install must not be doubled by an immediate start: wait, bounded, first."""
-    from types import SimpleNamespace
-
     from nexgen_core.openclaw.setup_steps import service_step
 
     class SlowInstall(FakeService):
@@ -781,17 +809,16 @@ def test_service_step_waits_for_an_install_that_is_still_starting():
 
     service = SlowInstall()
     lines: list[str] = []
+    setup = _make_setup_for_service(service, lines.append, tmp_path)
 
-    assert service_step(SimpleNamespace(service=service, out=lines.append), restarted=False) is True
+    assert service_step(setup, restarted=False) is True
 
     assert "start" not in service.events, "the wait found the gateway the install was bringing up"
     assert service.sleeps[:2] == [1.0, 1.0], "the grace checks once a second, not twice"
     assert any("the install started" in line for line in lines)
 
 
-def test_service_step_starts_the_gateway_when_the_install_only_registered_it():
-    from types import SimpleNamespace
-
+def test_service_step_starts_the_gateway_when_the_install_only_registered_it(tmp_path):
     from nexgen_core.openclaw.setup_steps import service_step
 
     class RegisteredOnly(FakeService):
@@ -802,8 +829,9 @@ def test_service_step_starts_the_gateway_when_the_install_only_registered_it():
 
     service = RegisteredOnly()
     lines: list[str] = []
+    setup = _make_setup_for_service(service, lines.append, tmp_path)
 
-    assert service_step(SimpleNamespace(service=service, out=lines.append), restarted=False) is True
+    assert service_step(setup, restarted=False) is True
 
     assert "start" in service.events
     assert any("Starting the gateway" in line for line in lines)
@@ -899,6 +927,25 @@ def test_a_dry_run_with_only_the_app_gateway_stops_the_same_way(tmp_path):
     assert code == 1
     assert "use the app as it is" in machine.output()
     assert not machine.config.is_file()
+
+
+def test_isolated_native_gateway_alone_stops_before_installing_or_writing(tmp_path):
+    machine = Machine(tmp_path)
+    comp = Companion(
+        present=True, owns_local_gateway=True, port=52190,
+        signals=("the app's isolated native gateway",),
+        target="isolated",
+    )
+
+    code = machine.run(detected=detection(machine.config, installed=False, companion=comp))
+
+    assert code == 1
+    assert machine.runner.commands() == []
+    assert not machine.config.is_file()
+    assert "isolated native gateway" in machine.output()
+    assert "nothing was installed and nothing was written" in machine.output()
+    assert "use the app as it is" in machine.output()
+
 
 
 def test_both_gateways_proceed_and_the_plan_names_the_one_the_app_uses(tmp_path):
@@ -1069,3 +1116,46 @@ def test_node_gateway_stops_when_the_apps_gateway_still_holds_the_port(tmp_path)
     assert "127.0.0.1:18789 already" in machine.output()
     assert "stop the app's gateway in OpenClaw Companion" in machine.output()
     assert "never starts, stops or writes the app's distribution" in machine.output()
+
+
+def test_setup_enables_the_openclaw_mcp_server_in_local_state(tmp_path):
+    machine = Machine(tmp_path)
+    machine.config.parent.mkdir(parents=True)
+    machine.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
+    mcp_folder = machine.vault / "03-INFRA" / "agent-universal-layer" / "mcp"
+    mcp_folder.mkdir(parents=True)
+    manifest = mcp_folder / "manifest.yaml"
+    initial_manifest_content = (
+        "schema_version: 1\nservers:\n  openclaw:\n    exposure: eager\n    transport: stdio\n    command: openclaw\n    args: ['mcp', 'serve']\n    targets: [claude, codex, antigravity, opencode]\n    enabled: false\n"
+    )
+    manifest.write_text(initial_manifest_content, encoding="utf-8")
+
+    assert machine.run() == 0
+
+    # 1. Manifest file itself was NOT modified
+    assert manifest.read_text(encoding="utf-8") == initial_manifest_content
+
+    # 2. Local state file records openclaw as enabled
+    from nexgen_core.mcp_state import load_mcp_state
+    local_state = load_mcp_state(home=machine.home)
+    assert local_state.get("servers", {}).get("openclaw", {}).get("enabled") is True
+
+    # 3. Renderer loads openclaw as resolved server
+    from nexgen_core.renderer import McpRenderer
+    renderer = McpRenderer(vault_data=machine.vault, home=machine.home)
+    resolved = renderer.load_resolved_servers("claude")
+    assert "openclaw" in resolved
+
+
+def test_find_engine_hooks_dir_returns_none_when_explicit_root_lacks_hooks(tmp_path: Path) -> None:
+    from nexgen_core.openclaw.setup_steps import _find_engine_hooks_dir
+
+    empty_engine_root = tmp_path / "engine_without_hooks"
+    empty_engine_root.mkdir(parents=True, exist_ok=True)
+
+    # Module hooks exist in this repository checkout
+    assert _find_engine_hooks_dir(None) is not None
+
+    # An explicit engine root without hooks must return None (no fallback to module hooks)
+    assert _find_engine_hooks_dir(empty_engine_root) is None
+

@@ -19,9 +19,10 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.openclaw.companion import Companion, probe  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.companion import Companion, IsolatedGateway, probe  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.doctor_runtime import (  # noqa: E402 - sys.path shim for cloned checkout
     check_companion_gateway,
+    check_store_gateway,
     check_unadopted,
     check_workshop_skills,
 )
@@ -325,3 +326,95 @@ def test_the_line_never_tells_the_person_to_remove_the_app(tmp_path):
         assert "uninstall the app" not in words
     assert "npm uninstall -g openclaw" in (both.action or ""), "the native one is the engine's to give up"
 
+
+def test_isolated_native_gateway_is_not_reported_as_store_conflict(tmp_path):
+    env = companion_env(tmp_path)
+    pkg = Path(env["LOCALAPPDATA"]) / "Packages" / "OpenClawFoundation.OpenClawGateway_rfcbke2p71se2"
+    (pkg / "LocalState" / "OpenClawGatewayMSIX").mkdir(parents=True)
+
+    outcome = check_store_gateway(tmp_path / "home", env, "win32")
+    assert outcome is None, "the Companion's native gateway package must not be treated as a store conflict"
+
+
+def test_isolated_native_gateway_with_native_installed_is_a_warning_with_action(tmp_path):
+    comp = Companion(
+        present=True,
+        owns_local_gateway=True,
+        port=52190,
+        signals=("the app's isolated native gateway",),
+        isolated=IsolatedGateway(
+            package_family_name="OpenClawFoundation.OpenClawGateway_rfcbke2p71se2",
+            runtime_contract="isolated-session-v1",
+            phase="Ready",
+            startup_enabled=True,
+            port=52190,
+        ),
+        target="isolated",
+    )
+
+    outcome = check_companion_gateway(comp, True, "win32")
+
+    assert outcome is not None
+    assert outcome.severity is Severity.WARN
+    assert "isolated native gateway" in outcome.message
+    assert "engine gateway is here too" in outcome.message
+    assert "turn off autostart for the native gateway" in (outcome.action or "")
+    assert "the app remains" in (outcome.action or "")
+
+
+def test_isolated_native_gateway_alone_is_informative_and_not_a_conflict(tmp_path):
+    comp = Companion(
+        present=True,
+        owns_local_gateway=True,
+        port=52190,
+        signals=("the app's isolated native gateway",),
+        isolated=IsolatedGateway(
+            package_family_name="OpenClawFoundation.OpenClawGateway_rfcbke2p71se2",
+            runtime_contract="isolated-session-v1",
+            phase="Ready",
+            startup_enabled=True,
+            port=52190,
+        ),
+        target="isolated",
+    )
+
+    outcome = check_companion_gateway(comp, False, "win32")
+
+    assert outcome is not None
+    assert outcome.severity is Severity.OK
+    assert "isolated native gateway" in outcome.message
+    assert "not the isolated one" in outcome.message
+    assert "conflict" not in outcome.message.casefold()
+    assert "as it is" in (outcome.action or "")
+
+
+def test_isolated_native_gateway_messages_in_italian(tmp_path):
+    comp = Companion(
+        present=True,
+        owns_local_gateway=True,
+        port=52190,
+        signals=("il gateway nativo isolato dell'app",),
+        isolated=IsolatedGateway(
+            package_family_name="OpenClawFoundation.OpenClawGateway_rfcbke2p71se2",
+            runtime_contract="isolated-session-v1",
+            phase="Ready",
+            startup_enabled=True,
+            port=52190,
+        ),
+        target="isolated",
+    )
+
+    try:
+        i18n.set_language("it")
+        both = check_companion_gateway(comp, True, "win32")
+        assert both is not None and both.severity is Severity.WARN
+        assert "L'app OpenClaw Companion punta al proprio gateway nativo isolato" in both.message
+        assert "gateway su questo PC" in (both.action or "")
+        assert "OpenClaw Gateway" in (both.action or "")
+
+        alone = check_companion_gateway(comp, False, "win32")
+        assert alone is not None and alone.severity is Severity.OK
+        assert "L'app OpenClaw Companion punta al proprio gateway nativo isolato" in alone.message
+        assert "conflitto" not in alone.message.casefold()
+    finally:
+        i18n.set_language(None)

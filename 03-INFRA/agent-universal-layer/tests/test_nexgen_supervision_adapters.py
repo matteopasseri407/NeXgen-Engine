@@ -62,7 +62,7 @@ def test_the_capability_table_says_what_each_harness_can_and_cannot_do():
     assert len(lines) == len(registry.names())
     assert all("sa:" in line and "manca:" in line and "push:" in line for line in lines)
     assert registry.supports("agy", "scout") is True
-    assert registry.supports("agy", "find_session") is False
+    assert registry.supports("agy", "find_session") is True
     assert registry.supports("codex", "tokens") is True
     assert registry.supports("codex", "cost") is False
 
@@ -81,6 +81,23 @@ def test_a_folder_is_compared_apart_from_separators_case_and_windows_prefix():
     assert base.normal_path("C:\\Copia\\Unità") == base.normal_path("c:/copia/unità")
     assert base.normal_path("//?/C:/copia") == base.normal_path("C:/copia")
     assert base.normal_path("") == ""
+
+
+def test_each_adapter_declares_and_validates_its_session_id_format():
+    oc = registry.get("opencode")
+    assert oc.validate_session("ses_12345ABC") == "ses_12345ABC"
+    with pytest.raises(base.AdapterError, match="atteso `ses_`"):
+        oc.validate_session("a544d85d-f5b3-4741-bbe2-8044c85b348f")
+
+    agy_adapter = registry.get("agy")
+    assert agy_adapter.validate_session("a544d85d-f5b3-4741-bbe2-8044c85b348f") == "a544d85d-f5b3-4741-bbe2-8044c85b348f"
+    with pytest.raises(base.AdapterError, match="atteso UUID"):
+        agy_adapter.validate_session("ses_12345ABC")
+
+    cdx = registry.get("codex")
+    assert cdx.validate_session("a544d85d-f5b3-4741-bbe2-8044c85b348f") == "a544d85d-f5b3-4741-bbe2-8044c85b348f"
+    with pytest.raises(base.AdapterError, match="atteso UUID"):
+        cdx.validate_session("not-a-uuid")
 
 
 # --- OpenCode ---------------------------------------------------------------
@@ -525,21 +542,73 @@ def test_codex_says_when_the_store_is_missing(tmp_path, monkeypatch):
 # --- agy (Antigravity) ------------------------------------------------------
 
 
-def test_agy_is_a_scout_and_an_executor_that_cannot_be_followed(tmp_path):
+def _fake_agy_db(path: Path, payload: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE steps (idx integer, step_payload blob)")
+    con.execute("INSERT INTO steps VALUES (0, ?)", (payload.encode("utf-8"),))
+    con.commit()
+    con.close()
+
+
+def test_agy_is_a_scout_and_an_executor_with_find_session(tmp_path):
     adapter = antigravity.AntigravityAdapter()
     assert adapter.tab_argv("agy", tmp_path, "leggi", session="c1") == [
         "agy", "--mode", "accept-edits", "--conversation", "c1", "--prompt-interactive", "leggi",
     ]
     assert adapter.scout_argv("agy", "guarda") == ["agy", "--mode", "plan", "--prompt", "guarda"]
-    assert adapter.capabilities.has("find_session") is False
+    assert adapter.capabilities.has("find_session") is True
     assert adapter.capabilities.has("send_turn") is False
     assert adapter.capabilities.has("cost") is False
     assert "pushurl" in adapter.capabilities.deny_push
 
-    with pytest.raises(base.Unsupported, match="non sa find_session"):
-        adapter.find_session(tmp_path, 0)
     with pytest.raises(base.Unsupported, match="non sa send_turn"):
         adapter.send_argv("agy", "c1", "correggi")
+
+
+def test_agy_states_on_the_tab_the_model_the_owner_asked_for(tmp_path):
+    """`--model` is the only way to choose agy's model, so the tab that opens declares it."""
+    adapter = antigravity.AntigravityAdapter()
+    assert adapter.tab_argv("agy", tmp_path, "leggi", session="c1", model="gemini-3.8-flash") == [
+        "agy", "--mode", "accept-edits", "--model", "gemini-3.8-flash",
+        "--conversation", "c1", "--prompt-interactive", "leggi",
+    ]
+    assert adapter.tab_argv("agy", tmp_path, "leggi") == [
+        "agy", "--mode", "accept-edits", "--prompt-interactive", "leggi",
+    ]
+
+
+def test_agy_find_session_finds_conversation_by_copy_or_brief(tmp_path, monkeypatch):
+    conv_dir = tmp_path / "conversations"
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path))
+    adapter = antigravity.AntigravityAdapter()
+
+    copy_folder = tmp_path / "23-unita-schede"
+    copy_folder.mkdir()
+
+    conv_id = "a544d85d-f5b3-4741-bbe2-8044c85b348f"
+    db_file = conv_dir / f"{conv_id}.db"
+    _fake_agy_db(db_file, "Leggi il brief in 20-brief-schede.md e lavora in 23-unita-schede")
+
+    found = adapter.find_session(copy_folder, since_ms=0, wait_s=0.1, poll_s=0.01)
+    assert found is not None
+    assert found.id == conv_id
+    assert found.folder == str(copy_folder)
+
+
+def test_agy_find_session_refuses_when_ambiguous(tmp_path, monkeypatch):
+    conv_dir = tmp_path / "conversations"
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path))
+    adapter = antigravity.AntigravityAdapter()
+
+    copy_folder = tmp_path / "23-unita-schede"
+    copy_folder.mkdir()
+
+    _fake_agy_db(conv_dir / "c0111111-1111-1111-1111-11111111111a.db", "23-unita-schede")
+    _fake_agy_db(conv_dir / "c0222222-2222-2222-2222-22222222222b.db", "20-brief-schede.md")
+
+    with pytest.raises(base.AdapterError, match="ambigua"):
+        adapter.find_session(copy_folder, since_ms=0, wait_s=0.1, poll_s=0.01)
 
 
 # --- local model as an executor ---------------------------------------------

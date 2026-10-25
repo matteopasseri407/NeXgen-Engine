@@ -29,7 +29,8 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import detect_language
-from nexgen_core.openclaw import background, observation
+from nexgen_core.openclaw import agy_backend, background, model_policy, observation
+from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
 from nexgen_core.openclaw.acp import SVILUPPO_ID, SVILUPPO_NAMES, acp_block, acpx_entry, sviluppo_enabled
 from nexgen_core.openclaw.detect import Detection
 from nexgen_core.openclaw.local_models import local_models, provider_blocks
@@ -97,6 +98,9 @@ class Choices:
     lan: bool = False
     #: The acpx plugin, off unless asked for.
     acpx: bool = False
+    #: A machine with no screen: the gateway stays on loopback and Tailscale Serve
+    #: publishes it over HTTPS on the tailnet, so no port is ever opened.
+    serve: bool = False
     #: The language of the agent identities; None means the engine's own.
     lang: str | None = None
     #: The OpenCode agent, on unless the person asked for it to be left out.
@@ -125,8 +129,13 @@ def _llama_cpp_enabled(current: dict[str, Any] | None) -> bool:
     return entry.get("enabled") is True or (named and entry.get("enabled") is not False)
 
 
+def _agy_backend_kept(current: dict[str, Any] | None) -> bool:
+    """The local agy CLI backend, the one Google road the owner approved, stays when already allowed."""
+    return agy_backend.approved(current, LOCAL_AGY_BACKEND)
+
+
 def _plugin_allow(detected: Detection, choices: Choices, current: dict[str, Any] | None = None) -> list[str]:
-    """The plugins this machine can actually use, and never a Google one."""
+    """The plugins this machine can actually use; of Google's, only the approved agy backend already in force."""
     allow = list(BASE_PLUGINS)
     if detected.claude.available:
         allow.append("anthropic")
@@ -140,6 +149,8 @@ def _plugin_allow(detected: Detection, choices: Choices, current: dict[str, Any]
         allow.append("llama-cpp")
     if choices.acpx or sviluppo_enabled(detected, choices.sviluppo):
         allow.append("acpx")
+    if _agy_backend_kept(current):
+        allow.append(LOCAL_AGY_BACKEND)
     return allow
 
 
@@ -168,6 +179,12 @@ def _plugin_entries(
         entries["llama-cpp"] = {"enabled": True}
     if chosen.acpx or sviluppo_enabled(detected, chosen.sviluppo):
         entries["acpx"] = acpx_entry(detected)
+    if _agy_backend_kept(current):
+        # The owner already approved this backend: the engine aligns the one setting it
+        # owns, and never enables or disables a plugin that is not its own.
+        entries[LOCAL_AGY_BACKEND] = {
+            "config": {"permissionMode": agy_backend.mode_for_engine(current, LOCAL_AGY_BACKEND)},
+        }
     return entries
 
 
@@ -222,6 +239,17 @@ def _workspace(agent_id: str, current: dict[str, Any] | None, state_dir: Path | 
     return str(state_dir / "workspace" if agent_id == "main" else state_dir / f"workspace-{agent_id}")
 
 
+def _existing_agent_name(current: dict[str, Any] | None, agent_id: str) -> str | None:
+    if not isinstance(current, dict):
+        return None
+    entries = current.get("agents", {}).get("entries", {}) if isinstance(current.get("agents"), dict) else {}
+    agent_entry = entries.get(agent_id) if isinstance(entries, dict) else None
+    if not isinstance(agent_entry, dict):
+        return None
+    identity = agent_entry.get("identity") if isinstance(agent_entry.get("identity"), dict) else {}
+    return identity.get("name") or agent_entry.get("name")
+
+
 def _sviluppo_entry(model: str, current: dict[str, Any] | None, state_dir: Path | None, language: str) -> dict[str, Any]:
     """The OpenCode agent: a native agent on the Go key that drives real OpenCode.
 
@@ -231,7 +259,8 @@ def _sviluppo_entry(model: str, current: dict[str, Any] | None, state_dir: Path 
     one: the agent opens it with `sessions_spawn` (runtime `acp`, agent
     `opencode`), as its manual says, and the session shows up in the panel.
     """
-    name = SVILUPPO_NAMES[language]
+    existing_name = _existing_agent_name(current, SVILUPPO_ID)
+    name = existing_name or SVILUPPO_NAMES[language]
     entry: dict[str, Any] = {"name": name, "identity": {"name": name}}
     workspace = _workspace(SVILUPPO_ID, current, state_dir)
     if workspace:
@@ -248,9 +277,12 @@ def _agent_entries(models: dict[str, str], detected: Detection, current: dict[st
         if agent_id == SVILUPPO_ID:
             entries[agent_id] = _sviluppo_entry(model, current, state_dir, language)
             continue
+        existing_name = _existing_agent_name(current, agent_id)
+        default_name = IDENTITY_NAMES[language].get(agent_id, agent_id)
+        chosen_name = existing_name or default_name
         entry: dict[str, Any] = {
             "name": agent_id,
-            "identity": {"name": IDENTITY_NAMES[language][agent_id]},
+            "identity": {"name": chosen_name},
             "model": model,
         }
         workspace = _workspace(agent_id, current, state_dir)
@@ -303,6 +335,12 @@ def _gateway(chosen: Choices, current: dict[str, Any] | None) -> dict[str, Any]:
     auth = gateway.get("auth") if isinstance(gateway, dict) else None
     token = auth.get("token") if isinstance(auth, dict) else None
     tailscale = gateway.get("tailscale") if isinstance(gateway, dict) else None
+    block = dict(tailscale) if isinstance(tailscale, dict) else {"mode": "off"}
+    if chosen.serve:
+        # The pair OpenClaw documents for a machine with no screen: the listener
+        # never leaves loopback and Tailscale serves it over HTTPS on the tailnet.
+        # The rest of the section is the person's and stays: only the mode changes.
+        block["mode"] = "serve"
     return {
         "mode": "local",
         "port": GATEWAY_PORT,
@@ -313,7 +351,7 @@ def _gateway(chosen: Choices, current: dict[str, Any] | None) -> dict[str, Any]:
         },
         # The person may have chosen Tailscale for remote access: turning it off
         # silently would break a setup that works and was not the engine's to undo.
-        "tailscale": dict(tailscale) if isinstance(tailscale, dict) else {"mode": "off"},
+        "tailscale": block,
     }
 
 
@@ -411,6 +449,9 @@ def build_config(
         "tools": tools,
         "gateway": _gateway(chosen, current),
     }
+    # Every model this machine can reach is selectable from any agent's picker; `model`
+    # on an agent is only its default, and this changes none of them.
+    config = model_policy.with_reachable(config, detected, current)
     allow_supervisor_tools(config["agents"]["entries"], current)
     for agent_id, entry in config["agents"]["entries"].items():
         if agent_id in partners:

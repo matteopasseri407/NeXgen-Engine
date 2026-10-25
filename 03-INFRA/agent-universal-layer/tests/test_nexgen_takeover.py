@@ -136,7 +136,6 @@ def test_the_paths_the_previous_version_invokes_by_path_still_answer():
         SCRIPTS_DIR / "agent_sync.py",
         SCRIPTS_DIR / "skills-sync.py",
         SCRIPTS_DIR / "agent-skill.py",
-        SCRIPTS_DIR / "firecrawl-search-health.py",
         REPO_ROOT / "03-INFRA" / "agent-universal-layer" / "mcp" / "render.py",
     ]
     missing = [str(p.relative_to(REPO_ROOT)) for p in contract if not p.is_file()]

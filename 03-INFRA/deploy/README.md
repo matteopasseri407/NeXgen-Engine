@@ -1,17 +1,21 @@
 # Deploy — self-hosted stack (Cloud-Server mode)
 
 This directory deploys the remote backend services that the Cloud-Server
-install mode relies on: **n8n** (automation), **Firecrawl** (self-hosted
-scraping/search), **Vault OCR** (self-hosted text extraction), and
-**vault-mcp** (the `vault-library` MCP server — the Git-backed write door
-for vault notes).
+install mode relies on: **n8n** (automation), **Vault OCR** (self-hosted
+text extraction), and **vault-mcp** (the `vault-library` MCP server — the
+Git-backed write door for vault notes).
+
+Firecrawl is not here. The scraping/search connector is the vendor's official
+cloud API, mounted by each CLI on the workstation wherever that person's
+`FIRECRAWL_API_KEY` exists, so there is no stack to deploy for it and no
+tunnel to open.
 
 A **Local-Only** install does NOT need any of this — everything runs on the
 workstation with native CLI search, model vision for OCR, and no remote
 automations.
 
 If you're standing this stack up for more than one person, its credentials
-(`.env`, the n8n/Firecrawl/OCR tunnels) are shared infrastructure with no
+(`.env`, the n8n/OCR tunnels) are shared infrastructure with no
 per-person scoping today — read `docs/team.md` before you adopt it as
 shared team infra.
 
@@ -25,10 +29,6 @@ deploy/
 ├── semantic-search-recipe.md  # spec to build a semantic_search backend (no compose file, see below)
 ├── n8n/
 │   └── docker-compose.yml  # n8n automation engine
-├── firecrawl/
-│   ├── docker-compose.yml  # Firecrawl base: scrape, crawl, map, extract
-│   ├── docker-compose.search.yml  # Optional pinned SearXNG + Brave search
-│   └── searxng/            # Secret-safe settings renderer and entrypoint
 ├── ocr/
 │   ├── docker-compose.yml  # Vault OCR API (RapidOCR)
 │   ├── api/                # OCR service source (FastAPI + RapidOCR)
@@ -64,12 +64,8 @@ bash bootstrap-vps.sh
 Requirements on the VPS: Docker, and the Compose v2 plugin (`docker compose`,
 not the legacy standalone `docker-compose`).
 
-To enable Web search, put a Brave Search API key in
-`BRAVE_SEARCH_API_KEY` inside `.env`. The bootstrap generates the separate
-SearXNG session secret and merges `firecrawl/docker-compose.search.yml`
-automatically. Leave the key empty for a scrape-only deployment. Set the
-Brave dashboard usage limit to **Free credits only** so the provider rejects
-requests before they can become paid overage.
+Web search does not go through this server any more: agents search with the
+Firecrawl cloud connector (their own key) or with their CLI's native search.
 
 ## Upgrading the server side
 
@@ -88,8 +84,8 @@ the OCR API, or a compose file changes nothing on the server by itself.
 
 It reads the version the running server reports on its own root route and
 compares it with `vault-mcp/src/vault_mcp_server/__init__.py` in your
-clone. The other three stacks have no equivalent probe: if a release
-touched them, `CHANGELOG.md` is the signal.
+clone. The other stacks have no equivalent probe: if a release touched them,
+`CHANGELOG.md` is the signal.
 
 The upgrade is the deploy, re-run:
 
@@ -122,29 +118,17 @@ Two things to know before you run it:
 
 ## Image pins
 
-Every service image in the four `docker-compose.yml` files is pinned to an
-explicit version tag — or, where upstream publishes no versioned tags at
-all (`firecrawl/nuq-postgres`, `firecrawl/playwright-service`), to a sha256
-digest, which is even stronger — so a redeploy on a fresh VPS reproduces
-the same images instead of drifting to whatever shipped that day. Every pin
-can be overridden with an env var (`N8N_IMAGE`, `OCR_IMAGE`,
-`VAULT_MCP_IMAGE`, `FIRECRAWL_IMAGE`, `FIRECRAWL_REDIS_IMAGE`,
-`FIRECRAWL_RABBITMQ_IMAGE`, `FIRECRAWL_NUQ_POSTGRES_IMAGE`,
-`FIRECRAWL_PLAYWRIGHT_IMAGE`, `FIRECRAWL_SEARXNG_IMAGE`) — see
-`.env.example`.
-
-Note: the Firecrawl images use the `ghcr.io/firecrawl/*` path. The project
-moved there from `ghcr.io/mendableai/*` upstream; the old path no longer
-resolves at all (VERIFIED 2026-07-12, see the comment in
-`firecrawl/docker-compose.yml`) — do not use it if you find it in an older
-note or a search result.
+Every service image in the three `docker-compose.yml` files is pinned to an
+explicit version tag, so a redeploy on a fresh VPS reproduces the same
+images instead of drifting to whatever shipped that day. Every pin can be
+overridden with an env var (`N8N_IMAGE`, `OCR_IMAGE`, `VAULT_MCP_IMAGE`) —
+see `.env.example`.
 
 ## Healthchecks
 
-Every service in all four compose files has a `healthcheck:`. Where a
+Every service in all three compose files has a `healthcheck:`. Where a
 service exposes no HTTP endpoint of its own, the healthcheck uses the
-closest available liveness signal (e.g. a TCP connect for Playwright,
-`rabbitmq-diagnostics` for RabbitMQ, `pg_isready` for the NUQ Postgres).
+closest available liveness signal.
 `docker compose -f <stack>/docker-compose.yml ps` shows current health once
 a service has been up longer than its `start_period`.
 
@@ -168,11 +152,9 @@ docker compose -f n8n/docker-compose.yml up -d
 
 Backups land in `./backups` (override with `BACKUP_DIR`), named
 `<volume>_<UTC timestamp>.tar.gz`; only the `RETENTION_COUNT` most recent
-archives per volume are kept (default 7). n8n has `n8n-data` and Firecrawl
-has `firecrawl-nuq-data` (the NUQ queue Postgres — restoring it requires
-the matching `FIRECRAWL_POSTGRES_PASSWORD` in `.env`); Firecrawl's Redis
-and the OCR service are stateless by design, and vault-mcp's data is the
-vault itself (backed up by its own Git remotes, not by this script). Run
+archives per volume are kept (default 7). n8n has `n8n-data`; the OCR
+service is stateless by design, and vault-mcp's data is the vault itself
+(backed up by its own Git remotes, not by this script). Run
 `./backup-restore.sh --help` for the full usage.
 
 A backup stops the containers that mount the volume for the few seconds the
@@ -206,7 +188,6 @@ Create persistent SSH tunnels (port variables come from
 
 ```bash
 ssh -L 127.0.0.1:<n8n-tunnel-port>:127.0.0.1:5678 \
-    -L 127.0.0.1:<firecrawl-tunnel-port>:127.0.0.1:3002 \
     -L 127.0.0.1:<ocr-tunnel-port>:127.0.0.1:3033 \
     -L 127.0.0.1:<vault-mcp-tunnel-port>:127.0.0.1:8081 \
     <remote-alias> -N
@@ -218,7 +199,7 @@ Or run them as systemd user units (recommended for always-on use).
 
 The `vault-library` MCP server (Git-backed read/write to the vault from
 agents) ships in `vault-mcp/` and is deployed by `bootstrap-vps.sh` as the
-fourth stack: it provisions the bare vault repo + worktree on the VPS
+third stack: it provisions the bare vault repo + worktree on the VPS
 (`vault-mcp/provision-vault-repo.sh`, idempotent), generates
 `VAULT_LIBRARY_TOKEN` into `.env`, and starts the container on
 `127.0.0.1:8081`. In Cloud-Server mode this is the ONLY door for writing
@@ -240,10 +221,6 @@ stack (e.g. a VPS that only hosts n8n for a Local-Only install).
 ## Resource notes
 
 - n8n: 1g memory limit.
-- Firecrawl: ~6g total cap for the base services (harness API 3g + Playwright
-  1g + NUQ Postgres 1g + RabbitMQ 512m + Redis 512m), plus up to 768m when
-  the SearXNG search overlay is enabled. The 2.11 architecture is heavier
-  than the old API+worker shape — budget the VPS accordingly.
 - OCR: 2g memory, 1.5 CPU (RapidOCR model load). Keep one worker.
 - vault-mcp: 512m memory limit.
 - Add `--memory` caps to any extra container you add; an uncapped OOM can

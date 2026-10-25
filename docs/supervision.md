@@ -136,11 +136,16 @@ review delivery goes back to the same session.
 | `claude` | yes | yes | yes | yes | yes | yes | yes (`.claude/settings.json`) | yes | yes | no | project profile + blocked pushurl | no |
 | `codex` | yes | yes | yes | yes | no (said unreadable) | yes | no (launch sandbox) | yes | yes | no | `workspace-write` without network + blocked pushurl | no |
 | `openclaw` | yes (a session, not a window) | yes | yes | yes | yes (the turn's own envelope) | yes | no | yes | no | no | blocked pushurl only | no |
-| `agy` | yes | no | no | no | no | no | no | yes | yes | no | blocked pushurl only | no |
+| `agy` | yes | yes | no | no | no | no | no | yes | yes | no | blocked pushurl only | no |
 
 The table is the answer to "can this harness do it", not a promise that every
-operation is useful. `agy` opens a tab and writes its report, but it cannot be
-asked for its session later, so it is a scout and not an executor; Codex can
+operation is useful. `agy` opens a tab and writes its report, and finds its session
+by looking up the copy folder or brief in agy's local SQLite database
+(`~/.gemini/antigravity-cli/conversations/<uuid>.db`) in read-only mode, refusing
+when ambiguous. Because it has no background turn injection (`send_turn`), review
+rework and resend deliveries reopen an interactive tab on the unit's conversation
+(`agy --mode accept-edits --conversation <id> --prompt-interactive <pointer>`);
+Codex can
 execute and resume, but its cost is not exposed in a form the engine reads, and
 the package says so instead of writing zero. `openclaw` opens no window of its
 own: its session is the work surface, and the section below says how it is driven.
@@ -534,6 +539,7 @@ not evidence; every line below is read from git or run by the engine.
 | `file vietati` | `VERSION`, `CHANGELOG.md` or `.github/**` changed and the boundary does not name it; both names of a rename count |
 | `integrità dei test` | an existing test was deleted, shrunk, skipped or renamed out of discovery (`nexgen_core/discipline/integrity.py`, reused); a unit whose boundary holds `.nexgen-discipline.toml` is judged commit by commit with the configuration of each commit's parent, so a commit that adds the authorisation and removes the test at once fails, and the PASS reason names the files it retired and how many cases each gave up |
 | `prova per commit` | a `fix:` commit has no test that fails on its parent (`nexgen_core/discipline/regress.py`, reused) |
+| `identità` | a commit of the unit's interval has an author or committer different from the identity recorded at creation; a unit created before this check (without a recorded identity) passes with a note |
 | `verifica indipendente` | the declared command is missing or exits non-zero; it is one command with no shell operator (`&&`, `\|\|`, `\|`, `;`, `&`), its executable must come from outside the unit's copy, a Python interpreter is started with `-P` and an environment cleaned of `PYTHONPATH`, `PYTHONSTARTUP`, `PYTHONHOME`, `PYTHONUSERBASE`, `PYTEST_ADDOPTS` and `PYTEST_PLUGINS` (the user site directory is left alone: it is outside the copy), and the run has a ceiling of 1800 seconds that `NEXGEN_SUP_VERIFY_TIMEOUT_S` moves for a slower machine (a value that is not a positive number is ignored) |
 | `test raccolti` | the head collects fewer tests than the base and a lost node id's file is not in the **base's** `test_removal_ok`, or a collection cannot answer: both trees are exported with `git archive` (no `.git` in them), collected with `python -P -m pytest --collect-only -q` under the same cleaned environment, and the two node-id sets are compared against a floor that is the base's own count, so a head that collects at least as many tests passes and a renamed or re-parametrised test is named as information only; a file the owner authorised is retired and the reason says how many tests and from which files, an increase is normal, and the head's own `.nexgen-discipline.toml` is never read, because a unit does not authorise itself; a unit whose boundary holds that file is judged commit by commit instead, so a lost node id is accepted only where a commit that lowered its own count inherited its file's authorisation from the parent, and a loss no commit accounts for stays a FAIL that names it |
 | `lint` | the project has `03-INFRA/scripts/ruff_baseline_check.py` and the copy adds a `(file, code)` finding group its committed baseline did not have; the copy only decides whether the gate exists and what its baseline allows, while the script that runs is the engine's own, so a unit cannot weaken the check |
@@ -849,20 +855,19 @@ what `origin` is. A shallow checkout cannot seed a different, empty remote: git
 itself refuses (`Failed to traverse parents`, then `shallow update not allowed`),
 and that is a property of the clone, not of the engine.
 
-Once the commits are applied, `sup publish` closes the executor's tab: the
-engine wrote a marker into that tab's shell (`NEXGEN_SUP_TAB`), finds the shell
-by the exact assignment it wrote, and stops it and its children from the deepest
-one up to the shell, so the tab disappears and nothing behind it keeps running.
-Then it retires the unit as described above: the copy and the `sup/*` branch go
-once the commits are verified. Two things stop the tab closure.
-another unit of the same task is created, queued, running, stalled or waiting
-for a decision, the tab stays, `tab_left_open` names the open units, and the verb
-says why: it closes when the last unit is approved and published. And it refuses
-when the tree holds an `opencode serve`: the first tab of the day starts the
-server every other session shares, and closing that one would stop every other
-worker. Then the tab stays, `tab_left_open` records the pid that made it unsafe,
-and the verb says so; when it closes, `tab_closed` records the pids. A tab the
-owner already closed is not an error.
+Once the commits are applied, `sup publish` closes the executor's tab (and
+`sup review ... --approve ... --close` does the same when retiring an approved
+unit): the engine wrote a marker into that tab's shell (`NEXGEN_SUP_TAB`), tracks
+the tab by title (`esecutore · <unità>`) and pid registered when opening, and
+stops it and its children from the deepest one up to the shell. It closes only
+tabs opened by the engine itself. Independent units with separate copies and tabs
+have their tab closed immediately when finished, without waiting for other units.
+A tab shared by multiple units closes only when the last unit using it is finished
+(published, approved and closed, or retired). Two things stop closing: if another
+unit sharing the tab is still open, the tab stays and `tab_left_open` names the open
+units; and it refuses when the tree holds a shared `opencode serve`, where closing
+it would stop every other worker. When it closes, `tab_closed` records the pids.
+A tab the owner already closed is not an error.
 
 ## Resuming a task
 
@@ -985,9 +990,12 @@ its marker in one exact place, and only a shell is looked at: on Windows the
 assignment in the command line (`$env:NEXGEN_SUP_TAB=nexgen-sup:<task>:<role>`),
 on Linux the exported variable in `/proc/<pid>/environ`. A `grep` or an editor
 that merely quotes the marker is not a tab and is never touched. The engine
-closes exactly that tab when the work is done: after `sup publish` for the
-executor, when no other unit of the task can still work, at the end of the round
-for the scout, and never when the tree holds the shared `opencode serve`.
+closes exactly that tab when the work is done: at publication (`sup publish`),
+at retirement (`sup review --approve ... --close`), and during cleanup
+(`sup pulizia --chiudi`). A shared tab stays until the last unit using it is done
+(published, closed, or retired), while separate tabs close with their unit. It is
+tracked by title (`esecutore · <unità>`) and opening pid, closes only tabs opened by
+the engine, and never touches a tree holding the shared `opencode serve`.
 
 On Linux the tab is a terminal window whose shell is the tab: the tree is read
 from `/proc` (stat, cmdline, environ) and stopped deepest first, and the window

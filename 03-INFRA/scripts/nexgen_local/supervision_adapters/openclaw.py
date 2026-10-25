@@ -85,9 +85,10 @@ class OpenClawAdapter(base.Adapter):
         """The OpenClaw agent a unit's turn runs on, from the lane's settings."""
         return policy.openclaw_agent()
 
-    def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "") -> list[str]:
+    def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "",
+                 model: str = "") -> list[str]:
         """The same turn as `send_argv`: there is no window of the engine to open."""
-        return self.send_argv(executable, session, prompt)
+        return self.send_argv(executable, session, prompt, model=model)
 
     def send_argv(self, executable: str, session: str, prompt: str, *, model: str = "") -> list[str]:
         """`openclaw agent --agent <id> --session-key <key> --message <pointer> --json`."""

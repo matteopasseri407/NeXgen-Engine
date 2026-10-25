@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 
 from nexgen_local.config import LaneConfig
-from nexgen_local.engine import LaneResult
 
 
 def _cfg(tmp_path: Path) -> LaneConfig:
@@ -49,19 +48,11 @@ def test_fake_run_returns_outcome(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     from nexgen_local.cmds import run as run_mod
-    import nexgen_local.engine as engine_mod
 
-    cfg = _cfg(tmp_path)
-    monkeypatch.setattr(run_mod, "_config", lambda args: cfg)
-    monkeypatch.setattr(run_mod, "_llm", lambda cfg: _FakeLLM())
-
-    def _fake_lane(llm, tools, cfg, question, **kw) -> LaneResult:
-        assert "finta" in question
-        return LaneResult(task=question, answer="risposta finta run")
-
-    monkeypatch.setattr(engine_mod, "run_lane", _fake_lane)
     assert run_mod.cmd_run(_run_args()) == 0
-    assert "risposta finta run" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "openclaw" in out.lower()
+    assert "ritirato" in out.lower()
 
 
 def test_unknown_command_rejected_with_clear_error(capsys: pytest.CaptureFixture) -> None:

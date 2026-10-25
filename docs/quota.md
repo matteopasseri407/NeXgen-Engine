@@ -6,18 +6,27 @@ It reads what the harnesses on this machine have already written about their own
 
 `nexgen quota` prints one row per provider and window.
 `/quota` prints the same rows inside OpenClaw.
+`nexgen usage` prints the same readings grouped by provider, and `/spend` shows them inside OpenClaw.
 
-## The three surfaces
+## The four surfaces
 
 | Surface | What it gives |
 | --- | --- |
 | `nexgen quota` | one line per row: provider, window, what was used, the percentage when it is a real one, the reset when the provider gave it, and how old the reading is |
 | `nexgen quota --json` | the same rows as data, plus `lines`: the text already rendered, in the machine's language |
 | `/quota` in OpenClaw | the `lines` of the JSON, forwarded to the chat |
+| `nexgen usage` / `nexgen usage --json` | the same readings, one block per provider: the spend of the flat lanes, the tokens Claude Code used, the percentage Codex and Antigravity report, and a sentence where a lane cannot be read |
+| `/spend` in OpenClaw | the `lines` of `nexgen usage`, forwarded to the chat |
 
 The strings are formatted once, by the engine.
 The plugin never turns a number into a sentence and never rounds a percentage, so the chat and the terminal cannot disagree about the same reading.
 The command always exits 0: a source that cannot be read is an answer, not a failure.
+
+## Why the chat command is `/spend` and not `/usage`
+
+OpenClaw has its own `/usage`: the per-response footer, and `/usage cost`, a local summary summed from OpenClaw's own session logs.
+That sum reports `$0` for an agent on a subscription, and it knows nothing about the OpenCode Go spend or a Claude plan window, because neither is in a session log.
+The engine's readings are the answer to that question, so they travel beside OpenClaw's command instead of taking its name: a plugin command is matched before the built-in ones, and registering `/usage` here would remove the footer and the cost summary from the chat.
 
 ## What each provider gives
 
@@ -26,7 +35,7 @@ The command always exits 0: a source that cannot be read is an answer, not a fai
 | Codex | the last `rate_limits` event in the newest `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | `5h`, `7d`, `30d`, as the event declares them | yes, `used_percent`, repeated as given | yes, `resets_at` |
 | OpenCode Go, OpenCode Zen | the harness archive `~/.local/share/opencode/opencode.db`, spend per session split by the provider that was paid | `5h`, `7d`, `30d` | only when `quota.yaml` declares a ceiling for that window | no |
 | Claude Code | `message.usage` in `~/.claude/projects/*/*.jsonl` | `5h`, `7d` | never, the plan's limit is not in any local file | no |
-| Antigravity | nothing is written locally | none | no | no |
+| Antigravity | local quota extension logs `*-Antigravity Quota.log` under `%APPDATA%\Antigravity IDE\logs` (prompt credits) | `30d` | yes, when a local log exists; otherwise not measured | no |
 
 ### Codex
 
@@ -49,7 +58,7 @@ An engine installed without that lane says so in one line and shows the other so
 
 `nexgen quota` sums the `message.usage` counters of the transcripts written in the last seven days, split into a 5h and a 7d window, deduplicated by message id.
 
-It prints token counts and no percentage, because Claude Code's plan usage is not in any local file.
+It prints token counts and no percentage, because Claude Code's plan usage is not in any local file (`~/.claude` settings, cache, or transcripts): `/usage` queries Anthropic's remote plan-usage endpoint dynamically.
 The line says so: `the limit is not readable on this machine`.
 That is the honest answer, and it is deliberately not turned into a guess.
 
@@ -58,8 +67,7 @@ They were 613 MB in eight days on the machine this was written on, which is affo
 
 ### Antigravity
 
-Antigravity writes nothing about its own usage.
-Its row says `not measured`.
+Antigravity's desktop environment logs prompt credits usage via the `ag-quota` extension into local session logs (`*-Antigravity Quota.log` under `%APPDATA%\Antigravity IDE\logs` or `%APPDATA%\Antigravity\logs`). The engine reads the newest log tail and extracts the monthly prompt credits used percentage for the `30d` window, dropping it as stale if older than 30 days. When no local log exists on disk (such as on a machine using only the `agy` CLI, where quota is fetched in-memory from the Google Cloud Code API without being written to disk), its row reports `not measured`.
 It exists so the list is complete and nobody has to wonder whether it was forgotten.
 
 ## A percentage needs a ceiling
@@ -143,4 +151,4 @@ A machine where nothing is readable says so in one sentence instead of an empty 
 - It keeps no history and makes no forecast. Every run reads the present.
 - It does not treat a stale reading as a current one, and does not carry the last known percentage forward.
 - It does not read any credential file to obtain a number.
-- It does not measure Antigravity, and says so rather than showing a zero.
+- It does not call remote quota endpoints (such as Claude Code's plan-usage endpoint or Google Cloud Code's fetchAvailableModels) with user credentials to fetch quotas dynamically.

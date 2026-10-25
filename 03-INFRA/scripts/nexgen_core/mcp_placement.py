@@ -69,13 +69,42 @@ def _targets(srv: dict[str, Any], key: str) -> list[str]:
     return list(CLIS) if raw is None else list(raw)
 
 
-def _place_impl(srv: dict[str, Any], cli: str) -> Placement:
+def _is_gateway(srv: dict[str, Any], name: str | None = None) -> bool:
+    """Whether srv is the gateway server (lazy-mcp)."""
+    if name == GATEWAY or srv.get("name") == GATEWAY:
+        return True
+    cmd = str(srv.get("command") or "")
+    args = [str(a) for a in srv.get("args") or []]
+    return "lazy-mcp" in cmd or any("lazy-mcp" in a for a in args)
+
+
+def _place_openclaw(srv: dict[str, Any], name: str | None = None) -> Placement:
+    """Every enabled server targeting OpenClaw is mounted directly; lazy-mcp is never mounted."""
+    if _is_gateway(srv, name):
+        return Placement(ABSENT, "openclaw: gateway not mounted")
+    exposure = srv.get("exposure")
+    if exposure == "eager":
+        return Placement(DIRECT, "exposure: eager")
+    if exposure == "lazy":
+        return Placement(DIRECT, "openclaw: direct")
+    if exposure is not None:
+        return Placement(ABSENT, f"unknown exposure {exposure!r}")
+    if srv.get("lazy"):
+        return Placement(DIRECT, "openclaw: direct")
+    if _is_active_legacy(srv):
+        return Placement(DIRECT, "legacy: core" if str(srv.get("tier", "")).strip().lower() == "core" else "legacy: enabled")
+    return Placement(ABSENT, "inert (not core, not enabled)")
+
+
+def _place_impl(srv: dict[str, Any], cli: str, name: str | None = None) -> Placement:
     """Where `srv` lives for `cli`. Environment gates (`require_env`) are the caller's: they depend on the shell."""
     targets = _targets(srv, "targets")
     if cli not in targets:
         return Placement(ABSENT, "not in targets")
     if srv.get("enabled") is False:
         return Placement(ABSENT, "disabled")
+    if cli == "openclaw":
+        return _place_openclaw(srv, name)
     exposure = srv.get("exposure")
     if exposure is not None:
         if exposure == "eager":
@@ -100,7 +129,7 @@ def place(srv: dict[str, Any], cli: str) -> Placement:
 
 def _plan_impl(servers: dict[str, dict[str, Any]], clis: tuple[str, ...] = CLIS) -> dict[str, dict[str, Placement]]:
     """name -> cli -> Placement, for every server."""
-    return {name: {cli: _place_impl(srv, cli) for cli in clis} for name, srv in servers.items() if isinstance(srv, dict)}
+    return {name: {cli: _place_impl(srv, cli, name=name) for cli in clis} for name, srv in servers.items() if isinstance(srv, dict)}
 
 
 def plan(servers: dict[str, dict[str, Any]], clis: tuple[str, ...] = CLIS) -> dict[str, dict[str, Placement]]:
@@ -125,7 +154,7 @@ def _problems_impl(servers: dict[str, dict[str, Any]], clis: tuple[str, ...] = C
     for name, srv in servers.items():
         if not isinstance(srv, dict) or not _oauth_only(srv):
             continue
-        behind = [cli for cli in clis if _place_impl(srv, cli).kind == GATEWAY_KIND]
+        behind = [cli for cli in clis if _place_impl(srv, cli, name=name).kind == GATEWAY_KIND]
         if behind:
             found.append(
                 f"{name}: a server that authenticates with OAuth cannot do it behind the gateway (which can only send a bearer "
@@ -145,7 +174,7 @@ def problems(servers: dict[str, dict[str, Any]], clis: tuple[str, ...] = CLIS) -
 
 def _gateway_servers_for_impl(servers: dict[str, dict[str, Any]], cli: str) -> set[str]:
     """The servers the gateway mounted in `cli` must serve: exactly those placed behind it for that CLI."""
-    return {name for name, srv in servers.items() if isinstance(srv, dict) and name != GATEWAY and _place_impl(srv, cli).kind == GATEWAY_KIND}
+    return {name for name, srv in servers.items() if isinstance(srv, dict) and name != GATEWAY and _place_impl(srv, cli, name=name).kind == GATEWAY_KIND}
 
 
 def gateway_servers_for(servers: dict[str, dict[str, Any]], cli: str) -> set[str]:

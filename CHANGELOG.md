@@ -10,6 +10,23 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.21.0] - 2026-10-25
+
+### Changed
+
+- ### Added
+- Every reachable model is selectable from every OpenClaw agent: the setup writes one provider wildcard per login or backend (Claude, Claude Code CLI, Codex, OpenCode Go, local models, the local agy backend), extending any allowlist already in force.
+- The local agy backend keeps a guarded permission mode, and agy inside OpenClaw reads the MCP servers OpenClaw mounts.
+- `sup run --model` reaches the agy tab.
+- `nexgen usage` reports spend per provider, and `/spend` brings it into the OpenClaw chat.
+- The doctor reads the exec approvals of the node an agent runs on, and the node role can align them with `--exec-policy full`.
+
+### Fixed
+- The setup finds the squad in the user's vault and keeps an approved agy backend plugin allowed.
+- The setup plan lists the agents it would really create.
+- Secret HTTP MCP servers are bridged over stdio with token and basic environment references.
+- Antigravity is detected from its own files, not only `settings.json`.
+
 ## [2.20.0] - 2026-10-24
 
 ### Added

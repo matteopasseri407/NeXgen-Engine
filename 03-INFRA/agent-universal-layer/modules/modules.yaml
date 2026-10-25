@@ -94,26 +94,6 @@ modules:
     stack: null
     depends_on: [memory]
 
-  firecrawl:
-    label: "Web scraping (Firecrawl)"
-    kind: connector
-    states: [absent, local, remote]
-    env_gates: [FIRECRAWL_TUNNEL_PORT]
-    mcp_servers: [firecrawl]
-    stack: firecrawl
-    depends_on: []
-    # The MCP client (firecrawl-mcp) is pinned in the MCP manifest; this is the backend it talks to.
-    # Upstream tags a build per merge (~4-5 a day), so plain patch compare would always be stale. `minor`
-    # alone hid three months of drift (2.11.99 -> 2.11.528) until the search API broke the MCP client:
-    # 100 builds is roughly three weeks behind.
-    upstream:
-      - name: firecrawl-api
-        kind: docker
-        image: ghcr.io/firecrawl/firecrawl
-        pinned_in: deploy/firecrawl/docker-compose.yml
-        latest: "git-tags:firecrawl/firecrawl"
-        compare: build:100
-
   ocr:
     label: "Local OCR (vault-ocr)"
     kind: connector
