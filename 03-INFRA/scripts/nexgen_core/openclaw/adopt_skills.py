@@ -105,17 +105,27 @@ def append_entry(
 
 
 def _tag_skill_frontmatter(path: Path, name: str) -> None:
-    """Ensure SKILL.md records its OpenClaw provenance."""
+    """Record the OpenClaw provenance inside the copied skill's frontmatter.
+
+    OpenClaw reads a skill's metadata from `SKILL.md`, and unknowns keys are ignored
+    (`docs/tools/creating-skills.md` lists the optional ones and validates nothing
+    away), so the mark travels with the bytes. It is a second record on purpose: the
+    manifest entry is the one retirement reads, and the skill still says where it came
+    from if that entry is ever hand-edited away.
+    """
     if not path.is_file():
         return
     text = path.read_text(encoding="utf-8")
-    if text.startswith("---"):
-        parts = text.split("---", 2)
-        if len(parts) >= 3:
-            fm = parts[1]
-            tag = f"\norigin: openclaw\nopenclaw_id: {name}"
-            if "openclaw" not in fm:
-                path.write_text(f"---{tag}{fm}---{parts[2]}", encoding="utf-8")
+    if not text.startswith("---"):
+        return
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return
+    frontmatter = parts[1]
+    if re.search(r"(?m)^origin:\s*openclaw\s*$", frontmatter):
+        return
+    tag = f"\norigin: openclaw\nopenclaw_id: {name}"
+    atomic_write_text(path, f"---{tag}{frontmatter}---{parts[2]}")
 
 
 def _copy_into_vault(source: Path, destination: Path) -> None:
