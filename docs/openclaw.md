@@ -688,7 +688,8 @@ adopted skill was copied into the Vault and its Workshop original archived, whic
 a poll of the Workshop would find it gone and delete the copy the library had just taken in. A skill leaves the
 library when its manifest entry is removed, which is a person's edit and not a side effect of a timer. A server is
 different: `openclaw.json` is the person's file, its `mcp.servers` table is the honest record of what OpenClaw has,
-and the engine never writes that table.
+and the engine never writes that table. A name already listed under `retired_servers:` is not adopted back: remove
+it from that list first, the same rule `nexgen mcp add` states, so bringing a server back stays a decided act.
 
 The OpenClaw `nexgen` plugin registers `/adopt` to run a pass from chat and to show what is waiting, and the
 `doctor` prints one line for the last pass: what entered, what left, and what waits for a person.
