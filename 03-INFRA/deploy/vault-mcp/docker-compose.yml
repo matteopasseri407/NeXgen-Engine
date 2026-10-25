@@ -26,6 +26,12 @@ services:
     container_name: vault-mcp
     restart: unless-stopped
     read_only: true
+    # Un init davanti al server (tini, fornito da Docker): senza, il processo
+    # del server e' PID 1 e nessuno raccoglie i nipoti orfani. Git stacca in
+    # background la manutenzione automatica (`gc.autoDetach` vale true di
+    # default), quei processi restano zombie nel contenitore: 1122 misurati il
+    # 2026-10-25 dopo 57 giorni. Vedi tests/test_deploy_vault_mcp.py.
+    init: true
     # Run as the host deploy user so Git sees one consistent owner across
     # the mounted worktree and bare repo (bootstrap-vps.sh pins the real
     # uid/gid into .env on first run).

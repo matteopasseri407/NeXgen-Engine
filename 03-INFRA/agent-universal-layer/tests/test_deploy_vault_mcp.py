@@ -57,6 +57,20 @@ def test_the_compose_image_tag_tracks_the_server_version():
     )
 
 
+def test_the_service_runs_an_init_process_that_reaps_orphans():
+    compose = yaml.safe_load((VAULT_MCP / "docker-compose.yml").read_text(encoding="utf-8"))
+    service = compose["services"]["vault-mcp"]
+    # Il server scrive sul vault con git, e git stacca in background la
+    # manutenzione automatica (`gc.autoDetach` vale true di default). Quei
+    # nipoti restano orfani: se il processo del server e' PID 1, nessuno li
+    # raccoglie e diventano zombie. `init: true` mette un init davanti al
+    # server, ed e' lui a raccoglierli.
+    assert service.get("init") is True, (
+        "il servizio deve girare con init: true, altrimenti i processi git "
+        "staccati restano zombie nel contenitore (misurati 1122 il 2026-10-25)"
+    )
+
+
 @pytest.mark.skipif(os.name == "nt", reason="symlinks require privileges")
 def test_note_writer_never_follows_a_stale_predictable_temp_symlink(tmp_path):
     settings = _settings(tmp_path)
