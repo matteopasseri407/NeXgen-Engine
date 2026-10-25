@@ -284,6 +284,15 @@ def _commit_split_pin(
     data_repo: Path,
     entry: list[str],
 ) -> None:
+    from nexgen_core.vault_readonly import readonly_reason
+
+    if readonly_reason(data_repo):
+        # The pin lives in the Vault, and this machine reads the Vault rather than
+        # writing it: publishing from here is the one thing the role forbids. The
+        # clone that owns the worktree publishes it; this machine still runs the
+        # release it just installed.
+        print("The engine pin is not published from this machine: it reads the Vault, and its notes are written with the vault-library.")
+        return
     try:
         atomic_write_text(pin_file, f"{target_head}\n")
     except OSError as exc:
