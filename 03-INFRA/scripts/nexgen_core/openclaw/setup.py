@@ -58,7 +58,7 @@ from nexgen_core.openclaw_pairing import nodes_pending as pairing_nodes_pending
 from nexgen_core.openclaw_pairing import nodes_status as pairing_nodes_status
 from nexgen_core.openclaw_pairing import pending as pairing_pending
 from nexgen_core.openclaw_service import OpenClawService, RunResult
-from nexgen_core.paths import openclaw_config, resolve_home
+from nexgen_core.paths import openclaw_config, resolve_home, resolve_vault_data
 from nexgen_core.processes import command_line_text
 
 __all__ = ["START_TIMEOUT_SECONDS", "run_pair", "run_restart", "run_setup", "run_stop"]
@@ -119,7 +119,10 @@ def _prepare(
         env=values,
         config_path=config_path,
         engine_root=engine_root,
-        vault_data=vault_data,
+        # The plan already resolves the default vault; the context has to see the
+        # same one or every step that reads the squad (the manuals above all)
+        # works with no squad at all.
+        vault_data=vault_data if vault_data is not None else resolve_vault_data(home_dir),
         pinned=pinned_version(engine_root),
         dry_run=dry_run,
         out=out,

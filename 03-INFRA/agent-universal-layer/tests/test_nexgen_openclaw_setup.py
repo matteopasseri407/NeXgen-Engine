@@ -1159,3 +1159,34 @@ def test_find_engine_hooks_dir_returns_none_when_explicit_root_lacks_hooks(tmp_p
     # An explicit engine root without hooks must return None (no fallback to module hooks)
     assert _find_engine_hooks_dir(empty_engine_root) is None
 
+
+
+def test_the_setup_reads_the_default_vault_when_the_caller_passes_none(tmp_path, monkeypatch):
+    """The plan resolves the default vault; the context must see the same one.
+
+    Without it, the steps that read the squad (the manuals above all) work with no
+    squad at all: the plan still proposes the workspace, no manual is written, and
+    nothing reports an error (measured on the VPS, 2026-10-25).
+    """
+    from nexgen_core.openclaw.setup import _prepare
+
+    monkeypatch.delenv("AGENT_VAULT_DATA", raising=False)
+    monkeypatch.delenv("KNOWLEDGE_VAULT_PATH", raising=False)
+    machine = Machine(tmp_path)
+
+    setup, _snapshot = _prepare(
+        home=machine.home,
+        env={},
+        detected=detection(machine.config),
+        which=which_map().get,
+        run=machine.runner,
+        service=machine.service,
+        dry_run=True,
+        engine_root=ENGINE_ROOT,
+        vault_data=None,
+        stamp="20261025-test",
+        out=machine.lines.append,
+        platform=sys.platform,
+    )
+
+    assert setup.vault_data == machine.home / "KnowledgeVault"
