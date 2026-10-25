@@ -17,6 +17,7 @@ from pathlib import Path
 from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
 from nexgen_core.openclaw_service import RunResult
+from nexgen_core.processes import no_window_kwargs, windows_command_argv
 
 #: Default node attach wait timeout (300 seconds / 5 minutes)
 DEFAULT_NODE_ATTACH_TIMEOUT_S = 300.0
@@ -25,8 +26,22 @@ DEFAULT_REPORT_INTERVAL_S = 3.0
 
 
 def _default_runner(cmd: list[str]) -> RunResult:
-    res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
-    return RunResult(res.returncode, res.stdout, res.stderr)
+    command = windows_command_argv(cmd)
+    try:
+        res = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            **no_window_kwargs(),
+        )
+        return RunResult(res.returncode, res.stdout, res.stderr)
+    except FileNotFoundError as exc:
+        return RunResult(127, "", f"eseguibile non trovato: {exc}")
+    except Exception as exc:  # nexgen: allow reason="fallback returncode when process execution fails"
+        return RunResult(1, "", str(exc))
 
 
 def connect_node_service(

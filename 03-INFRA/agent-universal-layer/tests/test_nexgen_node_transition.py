@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
@@ -32,6 +33,10 @@ from nexgen_core.openclaw.node_transition import (  # noqa: E402
     plan_node_transition,
 )
 from nexgen_core.openclaw_service import RunResult  # noqa: E402
+
+CLEAN_NODE_STATUS_JSON = (
+    '{"service": {"label": "Scheduled Task", "loaded": false, "command": null, "runtime": {"status": "stopped"}}}'
+)
 
 
 class RecordingRunner:
@@ -320,7 +325,7 @@ def _setup_windows_gateway_env(tmp_path: Path) -> tuple[Path, Path, Path, Path, 
     (state_dir / "openclaw.json").write_text('{"mock": true}\n', encoding="utf-8")
     runner = RecordingRunner(default_code=0)
     runner.set_canned(["schtasks.exe", "/Query", "/TN", "OpenClaw Gateway"], code=0, stdout="SUCCESS")
-    runner.set_canned(["openclaw", "node", "status", "--json"], code=1, stdout="")
+    runner.set_canned(["openclaw", "node", "status", "--json"], code=0, stdout=CLEAN_NODE_STATUS_JSON)
     return engine_root, home, appdata, startup_dir, vbs_file, state_dir, runner
 
 
@@ -405,7 +410,7 @@ def test_case_b_linux_systemd_gateway_transition(tmp_path: Path) -> None:
     state_dir.mkdir(parents=True, exist_ok=True)
 
     runner = RecordingRunner(default_code=0)
-    runner.set_canned(["openclaw", "node", "status", "--json"], code=1, stdout="")
+    runner.set_canned(["openclaw", "node", "status", "--json"], code=0, stdout=CLEAN_NODE_STATUS_JSON)
     log_messages: list[str] = []
     fake_update = MagicMock(return_value=0)
     fake_align = MagicMock(return_value=(True, "aligned"))
@@ -437,7 +442,7 @@ def test_case_c_clean_machine_without_openclaw(tmp_path: Path) -> None:
     home = tmp_path / "home"
     runner = RecordingRunner(default_code=0)
     runner.set_canned(["schtasks.exe", "/Query", "/TN", "OpenClaw Gateway"], code=1, stdout="")
-    runner.set_canned(["openclaw", "node", "status", "--json"], code=1, stdout="")
+    runner.set_canned(["openclaw", "node", "status", "--json"], code=0, stdout=CLEAN_NODE_STATUS_JSON)
     log_messages: list[str] = []
     fake_align = MagicMock(return_value=(True, "aligned"))
 
@@ -636,7 +641,7 @@ def test_no_link_stops_before_modifying_anything(tmp_path: Path) -> None:
     engine_root = _init_mock_engine_repo(tmp_path / "engine", version="2026.10.24")
     home = tmp_path / "home"
     runner = RecordingRunner(default_code=0)
-    runner.set_canned(["openclaw", "node", "status", "--json"], code=1, stdout="")
+    runner.set_canned(["openclaw", "node", "status", "--json"], code=0, stdout=CLEAN_NODE_STATUS_JSON)
 
     log_messages: list[str] = []
     fake_align = MagicMock(return_value=(True, "aligned"))
@@ -672,3 +677,81 @@ def test_bootstrap_dispatches_role_node_check(tmp_path: Path, monkeypatch) -> No
     assert called["root"] == engine_root
     assert called["kwargs"]["check"] is True
     assert called["kwargs"]["join"] == "https://gw.test:18789"
+
+
+def test_node_transition_unreadable_status_stops_without_changes(tmp_path: Path) -> None:
+    engine_root = _init_mock_engine_repo(tmp_path / "engine", version="2026.10.24")
+    home = tmp_path / "home"
+    runner = RecordingRunner(default_code=0)
+    runner.set_canned(
+        ["openclaw", "node", "status", "--json"],
+        code=127,
+        stdout="",
+        stderr="openclaw: command not found",
+    )
+    fake_update = MagicMock(return_value=0)
+    fake_align = MagicMock(return_value=(True, "aligned"))
+    messages: list[str] = []
+
+    # 1. Check mode stops and prints unreadable in plan
+    code_check = roles.run_node_role(
+        root=engine_root,
+        home=home,
+        check=True,
+        join="https://server.tailnet:18789/j/token",
+        runner=runner,
+        update_fn=fake_update,
+        align_fn=fake_align,
+        out=messages.append,
+    )
+    assert code_check != 0
+    check_output = "\n".join(messages)
+    assert "Stato del nodo non leggibile" in check_output
+    assert fake_update.call_count == 0
+    assert fake_align.call_count == 0
+
+    # 2. Execution mode aborts before touching anything
+    messages.clear()
+    code_run = roles.run_node_role(
+        root=engine_root,
+        home=home,
+        check=False,
+        join="https://server.tailnet:18789/j/token",
+        runner=runner,
+        update_fn=fake_update,
+        align_fn=fake_align,
+        out=messages.append,
+    )
+    assert code_run != 0
+    run_output = "\n".join(messages)
+    assert "Passaggio a nodo interrotto: stato del nodo non leggibile" in run_output
+    assert fake_update.call_count == 0
+    assert fake_align.call_count == 0
+    assert not any("connect" in c for c in runner.calls)
+
+
+def test_safe_default_runner_resolves_openclaw_shim_on_windows(monkeypatch, tmp_path: Path) -> None:
+    from nexgen_core import processes
+    from nexgen_core.openclaw import node_transition
+
+    shim = tmp_path / "openclaw.cmd"
+    shim.write_text("@echo off\r\n", encoding="utf-8")
+    monkeypatch.setattr(processes, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(processes.shutil, "which", lambda name: str(shim) if name == "openclaw" else None)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+    recorded_cmd: list[str] = []
+
+    def fake_subprocess_run(cmd, **kwargs):
+        recorded_cmd.extend(cmd)
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = "{}"
+        mock_res.stderr = ""
+        return mock_res
+
+    monkeypatch.setattr(node_transition.subprocess, "run", fake_subprocess_run)
+    res = node_transition._safe_default_runner(["openclaw", "node", "status", "--json"])
+
+    assert res.returncode == 0
+    assert recorded_cmd == ["cmd.exe", "/d", "/s", "/c", str(shim), "node", "status", "--json"]

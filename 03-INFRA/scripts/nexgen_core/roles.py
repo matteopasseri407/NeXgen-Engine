@@ -304,6 +304,43 @@ def _show_final_summary(
     out(summary)
 
 
+def _execute_node_transition(
+    root: Path,
+    home: Path | None,
+    inspection: Any,
+    join_target: str,
+    name: str,
+    platform: str | None,
+    runner: Any,
+    appdata: Path | None,
+    startup_dir: Path | None,
+    systemd_user_dir: Path | None,
+    update_fn: Any,
+    align_fn: Any,
+    wait_probe_fn: Any,
+    timeout_s: float,
+    out: Callable[[str], None],
+) -> int:
+    """Executes update, teardown, sync, and attachment steps of node transition."""
+    out(t("NeXgen Engine · passaggio al ruolo nodo (collegamento al gateway centrale)"))
+    if (root / "VERSION").is_file():
+        (update_fn or _default_update)(root=root, out=out)
+
+    stopped = _stop_local_gateway_step(
+        inspection, home, platform, runner, appdata, startup_dir, systemd_user_dir, out,
+    )
+    sync_code = _sync_node_role(root, out, align_fn)
+    if sync_code != 0:
+        return sync_code
+
+    code = _attach_and_wait(join_target, home, runner, wait_probe_fn, name, timeout_s, out)
+    if code != 0:
+        return code
+
+    _show_final_summary(join_target, name, stopped, out)
+    return 0
+
+
 def run_node_role(
     root: Path,
     home: Path | None = None,
@@ -332,7 +369,12 @@ def run_node_role(
     if check:
         for line in plan_node_transition(inspection):
             out(line)
-        return 0
+        return 0 if inspection.node.readable else 1
+
+    if not inspection.node.readable:
+        out(t("Passaggio a nodo interrotto: stato del nodo non leggibile ({reason}).",
+              reason=inspection.node.unreadable_reason))
+        return 1
 
     join_target = join or target or gateway_url or os.environ.get("NEXGEN_JOIN_URL")
     name = node_name or "node"
@@ -343,20 +385,9 @@ def run_node_role(
     if not join_target:
         return _show_no_join_instructions(name, out)
 
-    out(t("NeXgen Engine · passaggio al ruolo nodo (collegamento al gateway centrale)"))
-    if (root / "VERSION").is_file():
-        (update_fn or _default_update)(root=root, out=out)
-
-    stopped = _stop_local_gateway_step(
-        inspection, home, platform, runner, appdata, startup_dir, systemd_user_dir, out,
+    return _execute_node_transition(
+        root=root, home=home, inspection=inspection, join_target=join_target, name=name,
+        platform=platform, runner=runner, appdata=appdata, startup_dir=startup_dir,
+        systemd_user_dir=systemd_user_dir, update_fn=update_fn, align_fn=align_fn,
+        wait_probe_fn=wait_probe_fn, timeout_s=timeout_s, out=out,
     )
-    sync_code = _sync_node_role(root, out, align_fn)
-    if sync_code != 0:
-        return sync_code
-
-    code = _attach_and_wait(join_target, home, runner, wait_probe_fn, name, timeout_s, out)
-    if code != 0:
-        return code
-
-    _show_final_summary(join_target, name, stopped, out)
-    return 0

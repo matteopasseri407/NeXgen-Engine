@@ -1,6 +1,7 @@
 """Tests for node attach connection progress monitoring and timeout recovery."""
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from nexgen_core.openclaw.node_attach import (
@@ -148,3 +149,28 @@ def test_wait_for_node_connection_timeout_cites_only_documented_commands() -> No
     assert "openclaw devices join-code" in full_output
     # Must NOT cite non-existent openclaw node logs
     assert "node logs" not in full_output
+
+
+def test_default_runner_resolves_openclaw_shim_on_windows(monkeypatch, tmp_path) -> None:
+    from nexgen_core import processes
+    from nexgen_core.openclaw import node_attach
+
+    shim = tmp_path / "openclaw.cmd"
+    shim.write_text("@echo off\r\n", encoding="utf-8")
+    monkeypatch.setattr(processes, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(processes.shutil, "which", lambda name: str(shim) if name == "openclaw" else None)
+
+    recorded_cmd: list[str] = []
+
+    def fake_run(cmd, **kwargs):
+        recorded_cmd.extend(cmd)
+        res = MagicMock()
+        res.returncode = 0
+        res.stdout = "ok"
+        res.stderr = ""
+        return res
+
+    monkeypatch.setattr(node_attach.subprocess, "run", fake_run)
+    res = node_attach._default_runner(["openclaw", "node", "status"])
+    assert res.returncode == 0
+    assert recorded_cmd == ["cmd.exe", "/d", "/s", "/c", str(shim), "node", "status"]

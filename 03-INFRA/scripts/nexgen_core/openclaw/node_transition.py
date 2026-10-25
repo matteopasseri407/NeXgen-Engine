@@ -24,6 +24,7 @@ from nexgen_core.openclaw.node_status import (
 )
 from nexgen_core.openclaw_service import RunResult
 from nexgen_core.paths import openclaw_config, resolve_home
+from nexgen_core.processes import no_window_kwargs, windows_command_argv
 
 
 def _safe_default_runner(cmd: list[str]) -> RunResult:
@@ -31,16 +32,20 @@ def _safe_default_runner(cmd: list[str]) -> RunResult:
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return RunResult(1, "", "test mode: real command execution prevented")
     try:
+        command = windows_command_argv(cmd)
         res = subprocess.run(
-            cmd,
+            command,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             check=False,
-            timeout=5.0,
+            timeout=10.0,
+            **no_window_kwargs(),
         )
         return RunResult(res.returncode, res.stdout, res.stderr)
+    except FileNotFoundError as exc:
+        return RunResult(127, "", f"eseguibile non trovato: {exc}")
     except Exception as exc:  # nexgen: allow reason="fallback returncode when process execution fails"
         return RunResult(1, "", str(exc))
 
@@ -79,6 +84,8 @@ class ExistingNodeInfo:
     node_name: str | None = None
     service_status: str | None = None
     connected: bool = False
+    readable: bool = True
+    unreadable_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -193,6 +200,44 @@ def detect_local_gateway(
     )
 
 
+def _query_raw_node_status(
+    run_fn: Callable[[list[str]], RunResult],
+) -> tuple[Any | None, str | None]:
+    """Runs openclaw node status --json and returns parsed JSON or failure reason."""
+    res = run_fn(["openclaw", "node", "status", "--json"])
+    if res.returncode != 0:
+        err = res.stderr.strip() or res.stdout.strip()
+        reason = err or f"codice d'uscita {res.returncode}"
+        if "not found" in reason.lower() or res.returncode == 127:
+            reason = "eseguibile openclaw non trovato"
+        return None, reason
+
+    if not res.stdout.strip():
+        return None, "nessun output da openclaw node status"
+
+    try:
+        return json.loads(res.stdout), None
+    except json.JSONDecodeError:
+        return None, "output JSON non valido da openclaw node status"
+
+
+def _fallback_node_json(
+    st_dir: Path,
+    gw_url: str | None,
+    node_name: str | None,
+) -> tuple[bool, str | None, str | None]:
+    """Reads ~/.openclaw/node.json if gateway_url was not returned by status."""
+    if not gw_url and st_dir.is_dir():
+        node_json = st_dir / "node.json"
+        if node_json.is_file():
+            try:
+                ndata = json.loads(node_json.read_text(encoding="utf-8"))
+                return True, ndata.get("gateway") or ndata.get("host"), node_name or ndata.get("displayName")
+            except Exception:  # nexgen: allow reason="corrupted or unreadable node.json treated as missing node info"
+                pass
+    return bool(gw_url), gw_url, node_name
+
+
 def detect_existing_node(
     runner: Callable[[list[str]], RunResult] | None = None,
     home: Path | None = None,
@@ -203,52 +248,32 @@ def detect_existing_node(
     resolved_home = resolve_home(home)
     st_dir = state_dir or openclaw_config(resolved_home).parent
 
-    if runner is None and not st_dir.is_dir():
+    data, unreadable_reason = _query_raw_node_status(run_fn)
+    if unreadable_reason is not None:
         return ExistingNodeInfo(
-            is_node=False, is_running=False, gateway_url=None, gateway_origin=None, node_name=None,
+            is_node=False,
+            is_running=False,
+            gateway_url=None,
+            gateway_origin=None,
+            readable=False,
+            unreadable_reason=unreadable_reason,
         )
 
-    gw_url: str | None = None
-    node_name: str | None = None
-    is_running = False
-    is_node = False
-    service_status: str | None = None
-
-    res = run_fn(["openclaw", "node", "status", "--json"])
-    if res.returncode == 0 and res.stdout.strip():
-        try:
-            data = json.loads(res.stdout)
-            parsed = parse_node_status_payload(data)
-            if parsed.is_node:
-                is_node = True
-                is_running = parsed.is_running
-                gw_url = parsed.gateway_url
-                service_status = parsed.raw_status
-                if isinstance(data, dict):
-                    node_name = data.get("displayName") or data.get("name")
-        except json.JSONDecodeError:  # nexgen: allow reason="non-json node status output safely handled"
-            pass
-
-    if not gw_url and st_dir.is_dir():
-        node_json = st_dir / "node.json"
-        if node_json.is_file():
-            try:
-                ndata = json.loads(node_json.read_text(encoding="utf-8"))
-                is_node = True
-                gw_url = ndata.get("gateway") or ndata.get("host")
-                node_name = node_name or ndata.get("displayName")
-            except Exception:  # nexgen: allow reason="corrupted or unreadable node.json treated as missing node info"
-                pass
-
+    parsed = parse_node_status_payload(data)
+    node_name = data.get("displayName") or data.get("name") if isinstance(data, dict) else None
+    is_node, gw_url, node_name = _fallback_node_json(st_dir, parsed.gateway_url, node_name)
     origin = normalize_gateway_origin(gw_url) if gw_url else None
+
     return ExistingNodeInfo(
-        is_node=is_node,
-        is_running=is_running,
+        is_node=parsed.is_node or is_node,
+        is_running=parsed.is_running,
         gateway_url=gw_url,
         gateway_origin=origin,
         node_name=node_name,
-        service_status=service_status,
-        connected=is_running,
+        service_status=parsed.raw_status,
+        connected=parsed.is_running,
+        readable=True,
+        unreadable_reason=None,
     )
 
 
@@ -296,7 +321,9 @@ def plan_node_transition(inspection: TransitionInspection) -> list[str]:
     if inspection.gateway.companion_present:
         lines.append(t("- App OpenClaw Companion: rilevata (non verrà toccata nei suoi file)."))
 
-    if inspection.node.is_node and inspection.node.gateway_url:
+    if not inspection.node.readable:
+        lines.append(t("- Stato del nodo non leggibile: {reason}.", reason=inspection.node.unreadable_reason))
+    elif inspection.node.is_node and inspection.node.gateway_url:
         if not inspection.node.is_running:
             lines.append(t("- Stato nodo: già nodo del gateway {gw}, servizio fermo.", gw=inspection.node.gateway_url))
         else:
