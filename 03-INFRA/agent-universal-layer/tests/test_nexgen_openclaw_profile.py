@@ -405,3 +405,17 @@ def test_the_manuals_carry_no_path_of_this_machine():
         assert "C:\\" not in text
         assert "/home/" not in text
         assert "matte" not in text.lower()
+
+
+def test_the_owner_approved_agy_backend_stays_allowed() -> None:
+    """The local agy CLI backend the owner installed survives a setup; no other Google plugin is kept."""
+    current = {"plugins": {
+        "allow": ["google-antigravity-cli", "google"],
+        "entries": {"google-antigravity-cli": {"enabled": True}, "google": {"enabled": True}},
+    }}
+
+    allow = build_config(machine(claude=True), current=current)["plugins"]["allow"]
+
+    assert "google-antigravity-cli" in allow
+    assert "google" not in allow
+    assert "google-antigravity-cli" not in build_config(machine(claude=True))["plugins"]["allow"]

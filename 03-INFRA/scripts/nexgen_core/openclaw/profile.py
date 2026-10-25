@@ -30,6 +30,7 @@ from typing import Any
 
 from nexgen_core.i18n import detect_language
 from nexgen_core.openclaw import background, observation
+from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
 from nexgen_core.openclaw.acp import SVILUPPO_ID, SVILUPPO_NAMES, acp_block, acpx_entry, sviluppo_enabled
 from nexgen_core.openclaw.detect import Detection
 from nexgen_core.openclaw.local_models import local_models, provider_blocks
@@ -128,8 +129,17 @@ def _llama_cpp_enabled(current: dict[str, Any] | None) -> bool:
     return entry.get("enabled") is True or (named and entry.get("enabled") is not False)
 
 
+def _agy_backend_kept(current: dict[str, Any] | None) -> bool:
+    """The local agy CLI backend, the one Google road the owner approved, stays when already allowed."""
+    plugins = (current or {}).get("plugins") or {}
+    allowed = plugins.get("allow") if isinstance(plugins.get("allow"), list) else []
+    entries = plugins.get("entries") if isinstance(plugins.get("entries"), dict) else {}
+    entry = entries.get(LOCAL_AGY_BACKEND) if isinstance(entries.get(LOCAL_AGY_BACKEND), dict) else {}
+    return LOCAL_AGY_BACKEND in {str(item) for item in allowed} and entry.get("enabled") is not False
+
+
 def _plugin_allow(detected: Detection, choices: Choices, current: dict[str, Any] | None = None) -> list[str]:
-    """The plugins this machine can actually use, and never a Google one."""
+    """The plugins this machine can actually use; of Google's, only the approved agy backend already in force."""
     allow = list(BASE_PLUGINS)
     if detected.claude.available:
         allow.append("anthropic")
@@ -143,6 +153,8 @@ def _plugin_allow(detected: Detection, choices: Choices, current: dict[str, Any]
         allow.append("llama-cpp")
     if choices.acpx or sviluppo_enabled(detected, choices.sviluppo):
         allow.append("acpx")
+    if _agy_backend_kept(current):
+        allow.append(LOCAL_AGY_BACKEND)
     return allow
 
 
