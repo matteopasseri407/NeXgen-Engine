@@ -26,6 +26,8 @@ from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
 
 #: The provider every `claude-cli` route and every Anthropic model is named after.
 CLAUDE_PROVIDER = "anthropic"
+#: The catalogue OpenClaw lists the Claude Code models under, apart from the Anthropic ones.
+CLAUDE_CLI_PROVIDER = "claude-cli"
 #: The provider the Codex backend and the `openai` plugin serve.
 CODEX_PROVIDER = "openai"
 #: The provider the flat OpenCode Go key serves.
@@ -97,7 +99,7 @@ def reachable_wildcards(detected: Any, current: dict[str, Any] | None = None) ->
     """One wildcard per provider this machine has a login or a backend for."""
     providers: list[str] = []
     if getattr(detected.claude, "available", False):
-        providers.append(CLAUDE_PROVIDER)
+        providers.extend((CLAUDE_PROVIDER, CLAUDE_CLI_PROVIDER))
     if getattr(detected.codex, "available", False):
         providers.append(CODEX_PROVIDER)
     if getattr(detected, "opencode_go", False):

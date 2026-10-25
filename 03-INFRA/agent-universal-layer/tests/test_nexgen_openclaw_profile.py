@@ -471,8 +471,15 @@ def test_every_reachable_provider_is_selectable_from_any_agent() -> None:
     defaults = build_config(machine(claude=True, codex=True, go=True, ollama=("qwen3:8b",)))["agents"]["defaults"]
 
     assert defaults["modelPolicy"]["allow"] == [
-        "anthropic/*", "openai/*", "opencode-go/*", "ollama/*",
+        "anthropic/*", "claude-cli/*", "openai/*", "opencode-go/*", "ollama/*",
     ]
+
+
+def test_a_claude_login_makes_the_claude_code_models_selectable_too() -> None:
+    """OpenClaw lists the Claude Code models as their own `claude-cli` catalogue."""
+    allow = build_config(machine(claude=True))["agents"]["defaults"]["modelPolicy"]["allow"]
+
+    assert allow == ["anthropic/*", "claude-cli/*"]
 
 
 def test_the_agy_backend_plugin_makes_its_models_selectable() -> None:
