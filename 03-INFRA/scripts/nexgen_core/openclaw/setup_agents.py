@@ -230,9 +230,11 @@ def prepare(
             )
         if souls and agent_id in souls:
             soul_path = directory / "SOUL.md"
-            if fresh or not soul_path.exists():
-                atomic_write_text(soul_path, souls[agent_id])
-                written += 1
+            # Always, because it is generated: a SOUL.md kept "only if missing" is a
+            # second copy of the identity, and whoever edits it inside OpenClaw gets
+            # an agent the other CLIs never see.
+            atomic_write_text(soul_path, souls[agent_id])
+            written += 1
         bootstrap = directory / BOOTSTRAP_FILE
         removed = False
         if fresh and bootstrap.is_file():

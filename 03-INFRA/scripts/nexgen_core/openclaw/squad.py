@@ -8,6 +8,7 @@ provider API keys via stdin.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
@@ -81,8 +82,31 @@ def load_squad(path: Path | None) -> dict[str, Any] | None:
         return None
 
 
-def get_squad_souls(squad: dict[str, Any] | None) -> dict[str, str]:
-    """Returns agent_id -> SOUL.md content only for agents that declare one."""
+#: The YAML header a personal file uses for its own metadata (its status, its name).
+#: `SOUL.md` is the body of that file: the header is the engine's bookkeeping, not
+#: something an agent should read about itself in its own identity.
+_SOUL_HEADER = re.compile(r"\A---\s*\n.*?\n---\s*\n", re.DOTALL)
+
+
+def read_soul_source(path: Path) -> str | None:
+    """The body of a personal file, without its YAML header, or None when it cannot be read."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:  # nexgen: allow reason="a source that cannot be read generates nothing, so the workspace keeps the file it already has instead of an empty identity"
+        return None
+    body = _SOUL_HEADER.sub("", text, count=1).strip()
+    return body + "\n" if body else None
+
+
+def get_squad_souls(squad: dict[str, Any] | None, squad_file: Path | None = None) -> dict[str, str]:
+    """Returns agent_id -> SOUL.md content, generated from its one source.
+
+    An agent may name a file (`soul_from`, relative to the squad file) instead of
+    carrying its identity inline: that is how `agent-self.md`, the canonical home of
+    the name and the character, reaches OpenClaw without being copied into a second
+    file somebody can edit. The inline `soul` stays for agents that have no file of
+    their own.
+    """
     if not squad:
         return {}
     agents = squad.get("agents")
@@ -90,7 +114,15 @@ def get_squad_souls(squad: dict[str, Any] | None) -> dict[str, str]:
         return {}
     souls: dict[str, str] = {}
     for agent_id, spec in agents.items():
-        if isinstance(spec, dict) and "soul" in spec:
+        if not isinstance(spec, dict):
+            continue
+        reference = spec.get("soul_from")
+        if isinstance(reference, str) and reference.strip() and squad_file is not None:
+            body = read_soul_source(Path(squad_file).parent / reference.strip())
+            if body:
+                souls[str(agent_id)] = body
+                continue
+        if "soul" in spec:
             soul_val = spec["soul"]
             if isinstance(soul_val, str) and soul_val.strip():
                 souls[str(agent_id)] = soul_val.strip() + "\n"

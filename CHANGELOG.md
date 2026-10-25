@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.21.2] - 2026-10-25
+
+### Changed
+
+- OpenClaw is a view, not a second source: SOUL.md generated from agent-self.md, only core skills in the prompt, the pin is the only updater, the engine continuity follows its own text, and the gateway environment is regenerated from the secret store.
+
 ## [2.21.1] - 2026-10-25
 
 ### Changed

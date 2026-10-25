@@ -25,6 +25,9 @@ sh install.sh --role server
 - Starts the gateway as a background user service.
 - Applies squad configuration (`squad.yaml`) and registers model provider API keys via standard input.
 - Treats its checkout of the Vault as read-only: the server role is recorded on the machine, `nexgen pull` only fast-forwards that clone, anything local is parked on a `quarantine/diverged-*` branch, and `vault-push` refuses to publish from it. Notes are written with the `vault-library`, which owns the worktree that publishes.
+- Records that role in the machine's own state (`nexgen role`, which prints it) as soon as the setup configures the gateway, and a machine already in service records it with `nexgen role set server` instead of a reinstall.
+
+When you enter this machine as the gateway's user, enter its home too (`sudo -iu <user>`, or `cd` before running anything that talks to OpenClaw). OpenClaw starts a small helper with the directory it was called from, and a directory that user cannot read makes it fail with `spawn <node> EACCES`, which reads like a broken Node installation and is only a wrong working directory.
 
 ---
 

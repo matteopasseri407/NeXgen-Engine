@@ -278,7 +278,7 @@ def workspaces_step(setup: Setup, plan, before: set[str]) -> None:
     created = {agent for agent, path in dirs.items() if created_by_openclaw(path, setup.state_dir, before)}
     squad_file = find_squad_file(setup.vault_data, home=setup.home)
     squad = load_squad(squad_file)
-    souls = get_squad_souls(squad)
+    souls = get_squad_souls(squad, squad_file)
     instructions, unreadable = get_squad_instructions(squad, squad_file)
     for path in unreadable:
         setup.out(t("The squad names an instructions file that cannot be read: {path}", path=path))

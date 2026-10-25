@@ -151,6 +151,24 @@ def _install_phase(setup: Setup, snapshot: Detection) -> tuple[Detection, set[st
     return installed, before
 
 
+def _record_role(*, server: bool, dry_run: bool, home: Path | None, out) -> None:
+    """Records that this machine is the gateway, when that is what is being configured.
+
+    The engine decides some things from the role, and one of them is that the
+    gateway's own clone of the Vault is a reader: a server prepared by hand never
+    ran the installer role that writes this record, so it kept committing in a
+    clone nobody there could push. The setup already knows which machine this is,
+    so it says so. A dry run changes nothing, including this.
+    """
+    if not server or dry_run:
+        return
+    from nexgen_core import roles
+
+    if not roles.declare_role(roles.SERVER_ROLE, home):
+        out(t("The gateway is configured, but this machine could not record that it is the server: run "
+              "'nexgen role set server'."))
+
+
 def _plan_phase(
     setup: Setup,
     installed: Detection,
@@ -182,7 +200,9 @@ def _plan_phase(
     return _Decision(plan, 0)
 
 
-def _apply(setup: Setup, installed: Detection, plan, before: set[str], ask: Callable[[str], bool]) -> int:
+def _apply(
+    setup: Setup, installed: Detection, plan, before: set[str], ask: Callable[[str], bool], *, server: bool,
+) -> int:
     """Steps 4 to 9: write, workspaces, service, module, phone, doctor."""
     _step(setup.out, 4, t("Safe write"))
     if not plugin_step(setup):
@@ -190,6 +210,7 @@ def _apply(setup: Setup, installed: Detection, plan, before: set[str], ask: Call
     outcome = write_step(setup, plan)
     if outcome == "failed":
         return 1
+    _record_role(server=server, dry_run=setup.dry_run, home=setup.home, out=setup.out)
     write_gateway_service_env(setup, plan.config)
     from nexgen_core.openclaw.squad import register_model_keys
 
@@ -263,7 +284,7 @@ def run_setup(
     )
     if decision.plan is None:
         return decision.code
-    return _apply(setup, installed, decision.plan, before, confirm or ask_yes_no)
+    return _apply(setup, installed, decision.plan, before, confirm or ask_yes_no, server=server)
 
 
 def run_restart(

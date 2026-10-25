@@ -193,12 +193,18 @@ def test_the_permissions_phase_never_touches_openclaw_json(tmp_path):
 # ------------------------------------------------------------------- briefing
 
 
-def test_the_briefing_stays_off_when_claude_has_no_checkpoint_hook(tmp_path):
+def test_the_briefing_turns_on_from_its_own_text_alone(tmp_path):
+    """The briefing is the engine's, not a copy of Claude's switch.
+
+    Following Claude Code's registered hook left it off on a machine where OpenClaw
+    is the only assistant, while the text sat right there: the engine's own continuity
+    was off and OpenClaw's native memory was the only one running.
+    """
     home = a_home(tmp_path, OPENCLAW_JSON)
 
     deposit(home, tmp_path)
 
-    assert plugin_config(home)["briefing"] == {"enabled": False}
+    assert plugin_config(home)["briefing"] == {"enabled": True}
 
 
 def test_the_briefing_turns_on_when_claude_registers_the_checkpoint_hook(tmp_path):
@@ -214,7 +220,7 @@ def test_the_briefing_turns_on_when_claude_registers_the_checkpoint_hook(tmp_pat
     assert plugin_config(home)["briefing"] == {"enabled": True}
 
 
-def test_removing_the_checkpoint_hook_from_claude_switches_the_briefing_off(tmp_path):
+def test_removing_the_checkpoint_hook_from_claude_leaves_the_briefing_on(tmp_path):
     home = a_home(tmp_path, OPENCLAW_JSON)
     settings = claude_settings(home)
     settings.parent.mkdir(parents=True)
@@ -227,10 +233,11 @@ def test_removing_the_checkpoint_hook_from_claude_switches_the_briefing_off(tmp_
     settings.write_text(json.dumps({"hooks": {}}), encoding="utf-8")
     deposit(home, tmp_path)
 
-    assert plugin_config(home)["briefing"] == {"enabled": False}
+    # The other runtime changing its hooks says nothing about this one's briefing.
+    assert plugin_config(home)["briefing"] == {"enabled": True}
 
 
-def test_a_corrupt_settings_file_is_read_as_no_briefing(tmp_path):
+def test_a_corrupt_settings_file_does_not_touch_the_briefing(tmp_path):
     home = a_home(tmp_path, OPENCLAW_JSON)
     settings = claude_settings(home)
     settings.parent.mkdir(parents=True)
@@ -238,7 +245,7 @@ def test_a_corrupt_settings_file_is_read_as_no_briefing(tmp_path):
 
     deposit(home, tmp_path)
 
-    assert plugin_config(home)["briefing"] == {"enabled": False}
+    assert plugin_config(home)["briefing"] == {"enabled": True}
 
 
 # ----------------------------------------------------------- event sink cleanup
