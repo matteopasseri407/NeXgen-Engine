@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
+from nexgen_core import release_ship
 from nexgen_core.release_gpg import MsysGpgError, check_windows_msys_gpg
 from nexgen_core.release_ship import Shipper, ShipStop
 
@@ -56,12 +56,17 @@ def test_skipped_on_linux(tmp_path: Path) -> None:
     check_windows_msys_gpg(fake_run, tmp_path, platform="linux", env={})
 
 
-def test_shipper_raises_shipstop_on_msys_gpg(tmp_path: Path) -> None:
+def test_shipper_raises_shipstop_on_msys_gpg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run(argv, cwd):
         if list(argv[:3]) == ["git", "config", "--get"]:
             return subprocess.CompletedProcess(argv, 0, stdout="/usr/bin/gpg\n", stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
+    # The check only fires on Windows; on any other host it would let the shipper go on to the branch check.
+    monkeypatch.setattr(
+        release_ship, "_gpg_check",
+        lambda run, repo: check_windows_msys_gpg(run, repo, platform="win32", env={}),
+    )
     shipper = Shipper(repo=tmp_path, engine_root=tmp_path, run=fake_run)
     with pytest.raises(ShipStop) as exc_info:
         shipper._prepare("patch", "")
