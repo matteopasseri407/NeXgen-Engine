@@ -2,7 +2,8 @@
 
 One job: connect node via --target-file without process arg exposure, monitor
 connection progress, enforce a bounded deadline, and provide clear recovery steps
-citing only documented OpenClaw commands.
+citing only documented OpenClaw commands. Beside it lives the one thing the node
+role may change on this PC's own host: its exec approvals, and only when asked.
 """
 from __future__ import annotations
 
@@ -16,17 +17,53 @@ from pathlib import Path
 
 from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
+from nexgen_core.openclaw.node_approvals import NEVER_PROMPT_BODY
 from nexgen_core.openclaw_service import RunResult
 
 #: Default node attach wait timeout (300 seconds / 5 minutes)
 DEFAULT_NODE_ATTACH_TIMEOUT_S = 300.0
 #: Report interval in seconds
 DEFAULT_REPORT_INTERVAL_S = 3.0
+#: The one exec policy this module applies, when a person asks for it by name.
+FULL_EXEC_POLICY = "full"
 
 
 def _default_runner(cmd: list[str]) -> RunResult:
     res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     return RunResult(res.returncode, res.stdout, res.stderr)
+
+
+def _default_input_runner(cmd: list[str], stdin_text: str) -> RunResult:
+    """The same run, with a body on standard input: `approvals set --stdin` takes its JSON that way."""
+    res = subprocess.run(
+        cmd, input=stdin_text, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+    )
+    return RunResult(res.returncode, res.stdout, res.stderr)
+
+
+def apply_exec_policy(
+    runner: Callable[[list[str], str], RunResult] | None = None,
+    out: Callable[[str], None] = print,
+) -> bool:
+    """Aligns this node's own exec approvals with the policy that never stops on one.
+
+    A node runs the gateway's commands on a PC where nobody is sitting: a prompt
+    raised there is answered by the fallback, and the documented default is `deny`,
+    which the caller sees as `exec denied: request-failed`. The body is the one
+    OpenClaw documents for exactly this host, and it is written locally on purpose:
+    these approvals belong to this machine, not to the gateway's configuration.
+
+    False means nothing was changed, and the sentence names the command to run by hand.
+    """
+    run_fn = runner or _default_input_runner
+    out(t("Aligning this node's exec approvals: full security, no prompt, fallback full..."))
+    res = run_fn(["openclaw", "approvals", "set", "--stdin"], NEVER_PROMPT_BODY + "\n")
+    if res.returncode != 0:
+        out(t("This node's exec approvals were left as they were (exit code {code}). Run 'openclaw approvals "
+              "set --stdin' here with this body: {body}", code=res.returncode, body=NEVER_PROMPT_BODY))
+        return False
+    out(t("This node no longer stops on an exec approval: its commands run without waiting for somebody."))
+    return True
 
 
 def connect_node_service(

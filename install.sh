@@ -12,6 +12,8 @@
 #   sh install.sh --check              checks only, no questions and no writes
 #   sh install.sh --role server        headless Linux always-on gateway
 #   sh install.sh --role node          connects as a node to an existing gateway
+#   sh install.sh --role node --exec-policy full
+#                                     the same, and this PC never stops on an exec approval
 #   sh install.sh --role standalone    local PC with its own gateway
 set -u
 

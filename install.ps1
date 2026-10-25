@@ -10,6 +10,8 @@
 #   .\install.ps1 -Check               checks only, no questions and no writes
 #   .\install.ps1 -Role server         headless Linux always-on gateway
 #   .\install.ps1 -Role node           connects as a node to an existing gateway
+#   .\install.ps1 -Role node -ExecPolicy full
+#                                      the same, and this PC never stops on an exec approval
 #   .\install.ps1 -Role standalone     local PC with its own gateway
 
 [CmdletBinding()]
@@ -17,6 +19,7 @@ param(
     [switch]$Check,
     [string]$Role,
     [string]$Target,
+    [string]$ExecPolicy,
     [Parameter(ValueFromRemainingArguments = $true)] [string[]]$Rest
 )
 
@@ -33,6 +36,7 @@ $forward = @()
 if ($Check)  { $forward += '--check' }
 if ($Role)   { $forward += @('--role', $Role) }
 if ($Target) { $forward += @('--target', $Target) }
+if ($ExecPolicy) { $forward += @('--exec-policy', $ExecPolicy) }
 if ($Rest)   { $forward += $Rest }
 
 $found = $null

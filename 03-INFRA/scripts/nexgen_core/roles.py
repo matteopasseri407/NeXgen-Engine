@@ -23,7 +23,11 @@ from nexgen_core.first_run import (
     write_user_profile,
 )
 from nexgen_core.i18n import t
-from nexgen_core.openclaw.node_attach import DEFAULT_NODE_ATTACH_TIMEOUT_S
+from nexgen_core.openclaw.node_attach import (
+    DEFAULT_NODE_ATTACH_TIMEOUT_S,
+    FULL_EXEC_POLICY,
+    apply_exec_policy,
+)
 from nexgen_core.paths import resolve_home
 
 
@@ -148,10 +152,22 @@ def run_node_role(
     runner: Callable[[list[str]], Any] | None = None,
     wait_probe_fn: Callable[[], bool] | None = None,
     timeout_s: float = DEFAULT_NODE_ATTACH_TIMEOUT_S,
+    exec_policy: str | None = None,
+    exec_runner: Callable[[list[str], str], Any] | None = None,
     out: Callable[[str], None] = print,
 ) -> int:
-    """Node role: connect to an existing gateway as a headless node host."""
+    """Node role: connect to an existing gateway as a headless node host.
+
+    `exec_policy` is the explicit "and this PC never stops on an approval" answer:
+    without it the node's own exec approvals are not touched, because they are the
+    person's. With it, the documented never-prompt body is written locally once the
+    node is attached, and the summary says so.
+    """
     out(t("NeXgen Engine · node role (satellite PC connecting to an existing gateway)"))
+    if exec_policy and exec_policy != FULL_EXEC_POLICY:
+        out(t("Unknown exec policy '{policy}': this role applies only '{only}'.",
+              policy=exec_policy, only=FULL_EXEC_POLICY))
+        return 2
     profile = "MINIMAL"
 
     write_user_profile(
@@ -170,29 +186,53 @@ def run_node_role(
 
     name = node_name or "node"
     join_target = target or gateway_url
-
     if join_target:
-        from nexgen_core.openclaw.node_attach import (
-            check_node_connected,
-            connect_node_service,
-            wait_for_node_connection,
-        )
-
-        ok = connect_node_service(join_target, home=home, runner=runner, out=out)
-        if not ok:
-            return 1
-
-        probe = wait_probe_fn or (lambda: check_node_connected(runner=runner))
-        connected, _ = wait_for_node_connection(probe, node_name=name, timeout_s=timeout_s, emit=out)
-        if not connected:
+        joined = _join_gateway(join_target, name, home, runner, wait_probe_fn, timeout_s, out)
+        if not joined:
             return 1
     else:
-        out(t("No join code passed. Mint a single-use join code on the gateway host:"))
-        out(t("  openclaw devices join-code"))
-        out(t("Then connect this node as a service with:"))
-        out(t("  openclaw connect <join-url> --service --session-host"))
+        _join_instructions(out)
 
-    out(t("To assign work to this node in your squad, add this entry to squad.yaml on the server:"))
-    out(f"  agents:\n    {name}:\n      tools:\n        exec:\n          host: node\n          node: {name}")
+    _squad_hint(name, out)
+    if exec_policy and not apply_exec_policy(runner=exec_runner, out=out):
+        out(t("The node is attached, but its exec approvals still stop on a prompt nobody answers."))
+        return 1
     out(t("Node machine ready."))
     return 0
+
+
+def _join_gateway(
+    join_target: str,
+    name: str,
+    home: Path | None,
+    runner: Callable[[list[str]], Any] | None,
+    wait_probe_fn: Callable[[], bool] | None,
+    timeout_s: float,
+    out: Callable[[str], None],
+) -> bool:
+    """Connects this PC as a service of the gateway, and waits for it to answer."""
+    from nexgen_core.openclaw.node_attach import (
+        check_node_connected,
+        connect_node_service,
+        wait_for_node_connection,
+    )
+
+    if not connect_node_service(join_target, home=home, runner=runner, out=out):
+        return False
+    probe = wait_probe_fn or (lambda: check_node_connected(runner=runner))
+    connected, _ = wait_for_node_connection(probe, node_name=name, timeout_s=timeout_s, emit=out)
+    return connected
+
+
+def _join_instructions(out: Callable[[str], None]) -> None:
+    """No join code: what to run on the gateway, and what to run here once there is one."""
+    out(t("No join code passed. Mint a single-use join code on the gateway host:"))
+    out(t("  openclaw devices join-code"))
+    out(t("Then connect this node as a service with:"))
+    out(t("  openclaw connect <join-url> --service --session-host"))
+
+
+def _squad_hint(name: str, out: Callable[[str], None]) -> None:
+    """The entry the server's squad needs, so work can be assigned to this PC."""
+    out(t("To assign work to this node in your squad, add this entry to squad.yaml on the server:"))
+    out(f"  agents:\n    {name}:\n      tools:\n        exec:\n          host: node\n          node: {name}")

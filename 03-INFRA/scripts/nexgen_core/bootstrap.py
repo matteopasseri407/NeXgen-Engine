@@ -612,13 +612,8 @@ def render(findings: list[Finding], title: str, stream=None) -> int:
     return missing
 
 
-def _main_impl(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="nexgen-bootstrap",
-        description=t("Checks prerequisites, prepares the vault, and says what the next step is."),
-    )
-    parser.add_argument("--check", action="store_true",
-                        help=t("Checks only: no questions and no writes"))
+def _role_args(parser: argparse.ArgumentParser) -> None:
+    """The three roles, and the four answers only the node role reads."""
     parser.add_argument("--role", choices=["server", "node", "standalone"], default=None,
                         help=t("Role for this machine: server, node, or standalone"))
     parser.add_argument("--target", default=None,
@@ -629,6 +624,20 @@ def _main_impl(argv: list[str] | None = None) -> int:
                         help=t("Gateway authentication token (for node role)"))
     parser.add_argument("--node-name", default=None,
                         help=t("Display name for this node (for node role)"))
+    parser.add_argument("--exec-policy", dest="exec_policy", default=None, choices=["full"],
+                        help=t("For the node role: also align this PC's exec approvals with 'full' (no prompt, "
+                               "fallback full), so the gateway's commands are not stopped on a machine where nobody "
+                               "can answer an approval"))
+
+
+def _main_impl(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="nexgen-bootstrap",
+        description=t("Checks prerequisites, prepares the vault, and says what the next step is."),
+    )
+    parser.add_argument("--check", action="store_true",
+                        help=t("Checks only: no questions and no writes"))
+    _role_args(parser)
     parser.add_argument("--local", action="store_true",
                         help=t("Single machine: no questions, no secrets, no remote required. "
                                "Profile MINIMAL, services LOCAL-ONLY, then alignment and doctor"))
@@ -699,6 +708,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
                 target=args.target,
                 gateway_url=args.gateway_url,
                 node_name=args.node_name,
+                exec_policy=args.exec_policy,
                 out=print,
             )
         if args.role == "standalone":
