@@ -17,6 +17,9 @@ param(
     [switch]$Check,
     [string]$Role,
     [string]$Target,
+    [string]$Join,
+    [string]$NodeName,
+    [switch]$Force,
     [Parameter(ValueFromRemainingArguments = $true)] [string[]]$Rest
 )
 
@@ -33,6 +36,9 @@ $forward = @()
 if ($Check)  { $forward += '--check' }
 if ($Role)   { $forward += @('--role', $Role) }
 if ($Target) { $forward += @('--target', $Target) }
+if ($Join)     { $forward += @('--join', $Join) }
+if ($NodeName) { $forward += @('--node-name', $NodeName) }
+if ($Force)    { $forward += '--force' }
 if ($Rest)   { $forward += $Rest }
 
 $found = $null

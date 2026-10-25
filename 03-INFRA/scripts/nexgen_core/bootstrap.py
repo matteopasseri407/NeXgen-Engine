@@ -623,6 +623,10 @@ def _main_impl(argv: list[str] | None = None) -> int:
                         help=t("Role for this machine: server, node, or standalone"))
     parser.add_argument("--target", default=None,
                         help=t("Gateway join URL or setup code (for node role)"))
+    parser.add_argument("--join", default=None,
+                        help=t("Gateway join URL or setup code (for node role)"))
+    parser.add_argument("--force", action="store_true",
+                        help=t("Force role transition, e.g. switching gateway on an enrolled node"))
     parser.add_argument("--gateway-url", default=None,
                         help=t("Gateway WebSocket or join URL (for node role)"))
     parser.add_argument("--gateway-token", default=None,
@@ -683,11 +687,6 @@ def _main_impl(argv: list[str] | None = None) -> int:
         print(f"\n{c['red']}" + t("Something required is missing.") + f"{c['reset']} " + t("Fix it and rerun."))
         return 1
 
-    if args.check:
-        print(f"\n{c['bold']}{c['cyan']}4 · " + t("Next step") + c['reset'])
-        print("  " + t("Everything required is in place. Run the installer without --check."))
-        return 0
-
     if args.role:
         from nexgen_core import roles
 
@@ -697,12 +696,20 @@ def _main_impl(argv: list[str] | None = None) -> int:
             return roles.run_node_role(
                 root,
                 target=args.target,
+                join=args.join,
                 gateway_url=args.gateway_url,
                 node_name=args.node_name,
+                check=args.check,
+                force=args.force,
                 out=print,
             )
         if args.role == "standalone":
             return roles.run_standalone_role(root, out=print)
+
+    if args.check:
+        print(f"\n{c['bold']}{c['cyan']}4 · " + t("Next step") + c['reset'])
+        print("  " + t("Everything required is in place. Run the installer without --check."))
+        return 0
 
     if args.local:
         # The no-conversation install: one machine, no remote, no secrets,
