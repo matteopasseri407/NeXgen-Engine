@@ -140,9 +140,10 @@ def run_server_role(
     The agents' sudo policy belongs to the machine, so it is written before the
     gateway is configured: a policy the person has to add by hand after the
     install is a server that works until the first `docker restart`. The step says
-    what happened and, without sudo, the one command an admin runs instead; only
-    a file `visudo` refuses stops the role, because that file is the engine's own
-    mistake rather than a decision someone else made.
+    what happened and, without sudo, the one command an admin runs instead. A file
+    `visudo` refuses is never installed, and the role reports it at the end with a
+    non-zero code: the gateway still gets configured, and the one promise that did
+    not hold stays visible instead of being swallowed by the summary.
     """
     out(t("NeXgen Engine · server role (always-on headless Linux gateway)"))
     home_dir = resolve_home(home)
@@ -152,10 +153,8 @@ def run_server_role(
     write_remotes(root, profile=profile)
     seed_skill_manifest(root)
     _install_launchers_step(root, out)
-    if (platform or sys.platform).startswith("linux"):
-        if _sudoers_step(sudoers_fn, home_dir, out) == INVALID:
-            out(t("The server role stops here: the sudo policy it writes is not a valid sudoers file."))
-            return 1
+    on_linux = (platform or sys.platform).startswith("linux")
+    policy = _sudoers_step(sudoers_fn, home_dir, out) if on_linux else None
 
     commit_setup(root, [
         root / "99-INDEX" / "USER-PROFILE.md",
@@ -178,6 +177,9 @@ def run_server_role(
     count, _ = checker()
     if count > 0:
         out(t("{count} problem(s) remain: run 'nexgen doctor'", count=count))
+        return 1
+    if policy == INVALID:
+        out(t("The gateway is configured, but the agents' sudo policy is not in force: see the line above."))
         return 1
     out(t("Server gateway ready."))
     return 0

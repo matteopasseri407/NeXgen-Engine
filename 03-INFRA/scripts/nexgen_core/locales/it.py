@@ -398,7 +398,7 @@ MESSAGES: dict[str, str] = {
     "The agents' sudo policy was not installed ({error}).": "La policy sudo degli agenti non è stata installata ({error}).",
     "The agents' sudo policy is in force at {path}: {count} commands, and nothing else.": "La policy sudo degli agenti è in vigore in {path}: {count} comandi, e nient'altro.",
     'exit code {code}': 'codice di uscita {code}',
-    'The server role stops here: the sudo policy it writes is not a valid sudoers file.': "Il ruolo server si ferma qui: la policy sudo che scrive non è un file sudoers valido.",
+    "The gateway is configured, but the agents' sudo policy is not in force: see the line above.": "Il gateway è configurato, ma la policy sudo degli agenti non è in vigore: guarda la riga qui sopra.",
     'How many CLIs will you use?': 'Quante CLI userai?',
     'How many machines do you want kept in sync?': 'Quante macchine vuoi tenere allineate?',
     'Where do the services live?': 'Dove vivono i servizi?',

@@ -229,7 +229,8 @@ def test_the_server_role_installs_the_policy_before_configuring_the_gateway(tmp_
     assert calls == [str(tmp_path / "home")]
 
 
-def test_the_server_role_stops_when_the_file_it_writes_is_not_valid(tmp_path):
+def test_a_policy_visudo_refuses_does_not_block_the_gateway_but_fails_the_role(tmp_path):
+    """The machine still gets its gateway; the promise that did not hold stays visible."""
     lines: list[str] = []
     setup_called = []
 
@@ -244,9 +245,9 @@ def test_the_server_role_stops_when_the_file_it_writes_is_not_valid(tmp_path):
         out=lines.append,
     )
 
+    assert setup_called == [1]
     assert code == 1
-    assert setup_called == []
-    assert any("stops here" in line for line in lines)
+    assert any("the agents' sudo policy is not in force" in line for line in lines)
 
 
 def test_a_machine_that_is_not_the_server_leaves_the_sudoers_file_alone(tmp_path):
