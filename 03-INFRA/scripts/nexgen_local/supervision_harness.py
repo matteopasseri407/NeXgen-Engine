@@ -36,6 +36,9 @@ LIST_TIMEOUT_S = 120.0
 TAB_EVENTS = ("tab_closed", "tab_left_open")
 #: The harnesses this engine drives through OpenCode's own executable resolution.
 _OPENCODE_LIKE = ("opencode", "local")
+#: The one-tab-per-unit close, kept as a name here so a test replaces it and no
+#: test ever reads the real process table on the way to opening a window.
+_close_unit_tab = windows.close_unit_tab
 
 
 class HarnessError(SupervisionError):
@@ -418,6 +421,7 @@ def _open_first_tab(
             runner=runner or _runner_for(adapter), adapter=adapter, measure=measure,
             allowed=allowed, lister=lister, wait_s=wait_s, reason=reason,
         )
+    replaced = _replace_previous_tab(task_id, unit)
     started_ms = int(time.time() * 1000)
     argv = adapter.tab_argv(executable, folder, prompt, session=chosen)
     handle = opener(
@@ -435,7 +439,7 @@ def _open_first_tab(
             "harness": adapter.name,
         }
         result["reason"] = reason or note
-        return result
+        return _with_tab(result, replaced)
     session = found
     model = _model_of(session, measure or _measure_for(adapter), allowed)
     if allowed and not policy.model_allowed(model, allowed):
@@ -445,14 +449,37 @@ def _open_first_tab(
             session=str(session.get("id") or ""), model=model, allowed=list(allowed),
             reason=refusal, folder=str(folder),
         )
-        return {
+        return _with_tab({
             "unit": unit, "mode": "refused", "sent": True, "window": handle,
             "session": session, "model": model, "reason": refusal,
-        }
+        }, replaced)
     _attach(task_id, unit, session, handle, adapter.name, folder)
     result = {"unit": unit, "mode": "tab", "window": handle, "session": session}
     if reason:
         result["reason"] = reason
+    return _with_tab(result, replaced)
+
+
+def _replace_previous_tab(task_id: str, unit: str) -> dict:
+    """One unit, one tab: close the one it already has before the new one opens.
+
+    Asked of the journal first, so a task with no window of its own never pays for a
+    process-table read: `unit_tab_open` in the window layer is what says the old tab
+    was opened here and never closed. The closing itself is `close_unit_tab`, which
+    touches only a shell that carries the engine's marker and names this unit.
+    """
+    if not windows.unit_tab_open(task_id, unit):
+        return {}
+    try:
+        return _close_unit_tab(task_id, unit)
+    except SupervisionError as exc:  # nexgen: allow reason="una scheda vecchia che non si chiude non deve impedire al lavoro nuovo di partire"
+        return {"line": f"scheda precedente non chiusa: {exc}"}
+
+
+def _with_tab(result: dict, replaced: dict) -> dict:
+    """The result plus what happened to the tab this one replaced, when there was one."""
+    if replaced:
+        result["replaced_tab"] = replaced
     return result
 
 

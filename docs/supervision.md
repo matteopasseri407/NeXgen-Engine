@@ -997,6 +997,16 @@ at retirement (`sup review --approve ... --close`), and during cleanup
 tracked by title (`esecutore · <unità>`) and opening pid, closes only tabs opened by
 the engine, and never touches a tree holding the shared `opencode serve`.
 
+One unit has one tab. The marker names the task and the role, so which unit a tab
+serves is what its command line says — the copy it was opened on
+(`23-unita-<unità>`) and the title the engine gave it. When `sup run`,
+`sup review --rework` or `--resend` open a tab for a unit that already has one, the
+old tab is closed first (`close_unit_tab`, same marker rule and same refusal around
+the shared server), and retirement closes the unit's own tab before its copy goes;
+a unit whose tab was never recorded costs no process-table read. Nine forgotten
+tabs of units already published were, measured on the owner's PC, the reason a
+cleanup found nothing to collect.
+
 On Linux the tab is a terminal window whose shell is the tab: the tree is read
 from `/proc` (stat, cmdline, environ) and stopped deepest first, and the window
 follows its shell. The same rule about the shared server applies, so a machine
@@ -1022,6 +1032,15 @@ server. The same collection runs by itself at the end of every `sup publish` and
 of every unit close, so the owner does not have to remember the verb; a
 collection that cannot read the process table is a printed note and never takes
 back a publication that already landed.
+
+A tab is only a session while its unit is alive. `sup pulizia` lists the tabs of
+units whose journal says the work already arrived (`pubblicata`, `pubblicata in
+locale`, `ritirata`) and `--chiudi` closes them even when the task still has other
+units running; such a tab does not count as an active session, so it cannot keep a
+thousand orphan processes alive. A TUI of the owner's own, started outside the
+engine and carrying no marker, is never touched and does count as active: the line
+says so, with the time it started (`una sessione OpenCode senza marcatore, iniziata
+alle HH:MM, blocca la raccolta`), which is why nothing was collected.
 
 It also answers the rule that nothing is left behind. It lists the copies and
 branches of units whose journal says the work arrived (`pubblicata`, `pubblicata

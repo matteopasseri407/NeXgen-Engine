@@ -12,6 +12,7 @@ import pytest
 
 from nexgen_local import supervision_processes as processes
 from nexgen_local import supervision_service as service
+from nexgen_local import supervision_windows as windows
 
 SERVER_PID = 900
 OLD = 600.0
@@ -212,7 +213,22 @@ def test_the_lines_say_the_children_and_the_moment_that_decides():
 
     assert "3 processi diretti" in lines[0] and "2 di sessioni chiuse" in lines[0]
     assert "sessione attiva più vecchia" in lines[1]
-    assert len(lines) == 2
+    assert "senza marcatore" in lines[2], "la sessione del caso è una TUI fuori dal motore"
+    assert len(lines) == 3
+
+
+def test_a_tab_with_the_engine_marker_does_not_block_the_collection():
+    """La scheda del motore è una sessione attiva ma non "senza marcatore": la riga non c'è."""
+    table = _table_with_an_old_and_a_new_child()
+    table = [row for row in table if row["pid"] != 4242]
+    table.append({
+        "pid": 4242, "ppid": 1, "name": "bash", "created": SESSION_START,
+        "command_line": "bash -c ...", "environ": f"{windows.TAB_ENV}={windows.tab_marker('20261025-000000-prova', 'esecutore')}\0",
+    })
+
+    lines = service.lines(service.survey(table))
+
+    assert not any("senza marcatore" in line for line in lines)
 
 
 def test_the_lines_say_when_no_session_is_alive():

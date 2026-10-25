@@ -47,6 +47,8 @@ def cmd_sup_pulizia(args: argparse.Namespace) -> int:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 1
     print("\n".join(cleanup.closed_lines(result)))
+    finished = cleanup.close_finished_tabs(found.get("finished") or [])
+    print("\n".join(cleanup.finished_closed_lines(finished)))
     retired = cleanup.close_leftovers(found.get("leftovers") or [])
     print("\n".join(cleanup.retired_lines(retired)))
     for line in cleanup.evict_locations(found.get("locations") or []):

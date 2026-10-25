@@ -32,8 +32,9 @@ EMPTY = "senza unità"
 OPEN = "aperto"
 #: The scout's two events: a round that opened and did not close is still running.
 SCOUT_EVENTS = ("scout_opened", "scout_finished")
-#: The states a unit reaches when it has no more work in its copy.
-DONE_STATES = ("pubblicata", "pubblicata in locale", "ritirata")
+#: The states a unit reaches when it has no more work in its copy; the rule is the
+#: service module's, which is also what decides that a unit's tab is over.
+DONE_STATES = service.FINISHED_STATES
 
 
 @dataclass(frozen=True)
@@ -93,10 +94,50 @@ def survey(*, table: list[dict] | None = None, deep: bool = False) -> dict:
         "keep": [tab for tab in found if not tab.closable],
         "unmarked": _unmarked(rows, taken),
         "server": _server(rows),
+        "finished": finished_unit_tabs(table=rows),
         "service": service.survey(rows),
         "leftovers": leftovers(),
         "locations": orphan_locations(table=rows) if deep else [],
     }
+
+
+def finished_unit_tabs(*, table: list[dict] | None = None) -> list[dict]:
+    """The tabs of units whose work already arrived: one row each, with its whole tree.
+
+    A task can still have units to run while one of its units is published, and the
+    tab of the published one has no reason to stay: the supervisor found the tab of a
+    unit published in the morning still open hours later. These are listed apart from
+    the stale task tabs because the task itself is not stale.
+    """
+    rows = table if table is not None else processes.rows()
+    found: list[dict] = []
+    for shell in service.finished_tabs(rows):
+        task, role = windows.marker_parts(windows.marker_of(shell))
+        tree = processes.subtree(rows, [shell["pid"]])
+        found.append({
+            "task": task, "unit": windows.unit_of(shell), "role": role,
+            "pids": tuple(row["pid"] for _, row in tree),
+            "shared": next((row["pid"] for _, row in tree if processes.is_shared_server(row)), 0),
+        })
+    return found
+
+
+def close_finished_tabs(items: list[dict], *, killer=None) -> dict:
+    """Close the tabs whose unit is over, deepest first; one holding the shared server stays."""
+    closed: list[dict] = []
+    kept: list[dict] = []
+    for item in items:
+        if item["shared"]:
+            kept.append(item)
+            continue
+        pids = [pid for pid in item["pids"] if pid != os.getpid()]
+        (killer or processes.kill)(pids)
+        closed.append({**item, "pids": tuple(pids)})
+        state.append_event(
+            item["task"], "tab_closed", role=item["role"], unit=item["unit"],
+            pids=pids, why="unità finita",
+        )
+    return {"closed": closed, "kept": kept}
 
 
 def close_tabs(found: list[Tab], *, killer=None) -> dict:
@@ -144,6 +185,7 @@ def lines(found: dict) -> list[str]:
     out += [f"  {_tab_line(tab)}" for tab in found["close"]]
     out.append(f"schede tenute aperte: {len(found['keep'])}")
     out += [f"  {_tab_line(tab)}" for tab in found["keep"]]
+    out += finished_lines(found)
     out.append(f"processi senza marcatore: {len(found['unmarked'])}")
     out += [f"  {_process_line(row)}" for row in found["unmarked"]]
     for item in found["server"]:
@@ -182,6 +224,29 @@ def closed_lines(result: dict) -> list[str]:
     return out
 
 
+def finished_lines(found: dict) -> list[str]:
+    """The tabs of units already over: how many, and which unit each one belongs to."""
+    items = found.get("finished") or []
+    out = [f"schede di unità pubblicate o ritirate ancora aperte: {len(items)}"]
+    out += [
+        f"  {item['task']} · {item['unit'] or 'unità non nominata'} · {len(item['pids'])} processi"
+        + (f" · servizio condiviso {item['shared']}" if item["shared"] else "")
+        for item in items
+    ]
+    return out
+
+
+def finished_closed_lines(result: dict) -> list[str]:
+    """What closing those tabs did, named one by one."""
+    total = sum(len(item["pids"]) for item in result["closed"])
+    out = [f"chiuse schede di unità finite: {len(result['closed'])} ({total} processi)"]
+    out += [
+        f"  tenuta aperta: {item['task']} · {item['unit']} (servizio condiviso)"
+        for item in result["kept"]
+    ]
+    return out
+
+
 def leftovers() -> list[dict]:
     """Copies and branches the journal already closed and the disk still has.
 
@@ -209,9 +274,7 @@ def leftovers() -> list[dict]:
 
 def _closed_by_journal(record: dict) -> bool:
     """Whether this unit's journal says the work arrived somewhere permanent."""
-    return bool(record.get("retired") or record.get("published_head")
-                or record.get("state") in DONE_STATES)
-
+    return service.unit_finished(record)
 
 def close_leftovers(items: list[dict]) -> dict:
     """Finish removing the copies and branches of closed units; a refusal is named, not hidden."""
@@ -344,11 +407,8 @@ def _process_line(row: dict) -> str:
 
 
 def _parse(marker: str) -> tuple[str, str]:
-    """The task and the role a marker names; an unknown shape is not a tab of this engine."""
-    parts = marker.split(":")
-    if len(parts) < 3:
-        return "", ""
-    return parts[1], ":".join(parts[2:])
+    """The task and the role a marker names; the shape is the window layer's rule."""
+    return windows.marker_parts(marker)
 
 
 def _reason(task_id: str, role: str) -> str:

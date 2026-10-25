@@ -26,8 +26,12 @@ from datetime import datetime
 from pathlib import Path
 
 from . import supervision_processes as processes
+from . import supervision_state as state
 from . import supervision_windows as windows
 from .supervision_state import SupervisionError
+
+#: The states that mean a unit has no more work in its copy.
+FINISHED_STATES = ("pubblicata", "pubblicata in locale", "ritirata")
 
 
 def runs_harness(row: dict) -> bool:
@@ -48,12 +52,68 @@ def is_session(row: dict) -> bool:
     return bool(windows.marker_of(row)) or runs_harness(row)
 
 
-def oldest_session(table: list[dict]) -> float | None:
-    """When the oldest live session started, or None when nothing is alive on this machine."""
+def unit_finished(record: dict) -> bool:
+    """Whether this unit's work has arrived somewhere permanent and its tab is over.
+
+    The same rule the cleanup uses for a copy that may go: published, retired, or in
+    one of the states that mean the unit has no more work in its copy. A unit that is
+    only approved is not finished: its tab still belongs to a decision in progress.
+    """
+    if record.get("retired") or record.get("published_head"):
+        return True
+    return str(record.get("state") or "") in FINISHED_STATES
+
+
+def finished_tabs(table: list[dict]) -> list[dict]:
+    """The tab shells whose unit the journal says is already published or retired.
+
+    One unit, one tab, and that tab must not outlive the work: when its unit is done
+    the shell is not a session any more, it is a tab to close. A tab whose command
+    line names no unit is judged by the task instead, and only when every unit of the
+    task is finished.
+    """
+    found: list[dict] = []
+    for row in table:
+        task, _role = windows.marker_parts(windows.marker_of(row))
+        if not task:
+            continue
+        if _finished_shell(task, windows.unit_of(row)):
+            found.append(row)
+    return found
+
+
+def _finished_shell(task: str, unit: str) -> bool:
+    """Whether the journal says this tab's unit, or its whole task, is over."""
+    try:
+        if unit:
+            return unit_finished(state.unit_record(task, unit))
+        records = state.status(task)["units"]
+    except SupervisionError:  # nexgen: allow reason="un compito che la corsia non apre più non dice se la scheda è finita: resta una sessione, e non si tocca"
+        return False
+    return bool(records) and all(unit_finished(record) for record in records)
+
+
+def _inactive_pids(table: list[dict]) -> set[int]:
+    """Every process hanging under a tab whose unit is over: not a session any more."""
+    roots = [row["pid"] for row in finished_tabs(table)]
+    if not roots:
+        return set()
+    return {row["pid"] for _, row in processes.subtree(table, roots)}
+
+
+def oldest_session(table: list[dict], *, skip: set[int] | None = None) -> float | None:
+    """When the oldest live session started, or None when nothing is alive on this machine.
+
+    `skip` is what the journal says is over: the tree of a tab whose unit was
+    published or retired. It is excluded here, so a forgotten tab cannot keep a
+    thousand orphan processes alive for ever, which is exactly what happened.
+    """
     shared = set(servers(table))
+    over = skip or set()
     moments = [
         float(row["created"]) for row in table
         if isinstance(row.get("created"), (int, float))
+        and row["pid"] not in over
         and (is_session(row) or _node_harness(row, shared))
     ]
     return min(moments) if moments else None
@@ -91,9 +151,12 @@ def plan(table: list[dict]) -> tuple[float | None, list[dict]]:
     """The moment that separates old from new, and the processes that moment allows stopping.
 
     A child whose birth time is unknown is not old: a session that started a moment
-    ago would lose its MCP servers over a row Windows refused to describe.
+    ago would lose its MCP servers over a row Windows refused to describe. The tree of
+    a tab whose unit is already published or retired counts as nothing: it is the tab
+    to close, not a reason to keep the machine busy.
     """
-    before = oldest_session(table)
+    over = _inactive_pids(table)
+    before = oldest_session(table, skip=over)
     roots: list[int] = []
     for row in children(table):
         if before is None:
@@ -108,12 +171,16 @@ def plan(table: list[dict]) -> tuple[float | None, list[dict]]:
 def survey(table: list[dict], *, planned: tuple[float | None, list[dict]] | None = None) -> dict:
     """What the collection would do, without doing it: how many children, and since when."""
     before, targets = planned if planned is not None else plan(table)
+    over = _inactive_pids(table)
+    blocker = _unmarked_session(table, before, over)
     return {
         "servers": len(servers(table)),
         "children": len(children(table)),
         "stale": len(targets),
         "since": _when(before),
         "alive": before is not None,
+        "unmarked": bool(blocker),
+        "unmarked_at": _clock(blocker) if blocker else "",
     }
 
 
@@ -149,11 +216,34 @@ def lines(found: dict) -> list[str]:
     if found.get("alive"):
         began = f", iniziata {found['since']}" if found.get("since") else ""
         out.append(f"  si raccolgono quelli nati prima della sessione attiva più vecchia{began}")
+        if found.get("unmarked"):
+            began = f", iniziata alle {found['unmarked_at']}" if found.get("unmarked_at") else ""
+            out.append(
+                f"  una sessione OpenCode senza marcatore{began}, blocca la raccolta"
+            )
     else:
         out.append("  nessuna sessione attiva: si raccolgono tutti i figli diretti del server")
     if found.get("closed"):
         out.append(f"  raccolti: {len(found['closed'])} processi")
     return out
+
+
+def _unmarked_session(table: list[dict], before: float | None, over: set[int]) -> float | None:
+    """The start of the session that blocks the collection and carries no marker, if that is it.
+
+    It is the owner's own OpenCode, started outside the engine: nothing here may close
+    it, and pretending it is not there would collect the MCP servers of a session that
+    is in use. Saying when it started is what tells him why nothing was collected.
+    """
+    shared = set(servers(table))
+    for row in table:
+        if row.get("created") != before or row["pid"] in over:
+            continue
+        if windows.marker_of(row):
+            continue
+        if is_session(row) or _node_harness(row, shared):
+            return before
+    return None
 
 
 def _when(moment: float | None) -> str:
@@ -167,3 +257,10 @@ def _when(moment: float | None) -> str:
     if not isinstance(moment, (int, float)) or moment < 1_600_000_000:
         return ""
     return datetime.fromtimestamp(moment).isoformat(timespec="seconds")
+
+
+def _clock(moment: float | None) -> str:
+    """The same moment as a clock time, or nothing when the table does not report an epoch."""
+    if not isinstance(moment, (int, float)) or moment < 1_600_000_000:
+        return ""
+    return datetime.fromtimestamp(moment).strftime("%H:%M")
