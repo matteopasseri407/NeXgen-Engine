@@ -18,6 +18,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { registerAdopt } from "./adopt.mjs";
 import { registerBriefing } from "./briefing.mjs";
 import { registerCheckpoint } from "./checkpoint.mjs";
 import { registerCouncil } from "./council.mjs";
@@ -49,6 +50,7 @@ export default {
   description: "The NeXgen engine for OpenClaw.",
   register(api) {
     registerGuardrail(api);
+    registerAdopt(api);
     registerBriefing(api);
     registerCheckpoint(api);
     registerQuota(api);
