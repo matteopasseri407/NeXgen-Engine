@@ -204,26 +204,50 @@ def _apply_mcp_isolation(
     project.update(overrides)
 
 
+#: The keys the native encoded entries name besides the switch, and the one each kind
+#: cannot be without. Only the transport is copied: an `environment` or a header can
+#: hold a token, and the copy is a diff the owner reads, so those stay in his global
+#: file. Whitelisting also keeps the deprecated flat layout's `enabled` out of an
+#: entry whose schema refuses keys it does not define.
+_MCP_KEYS = {"local": ("type", "command"), "remote": ("type", "url")}
+
+
 def _mcp_switch(name: str, entry: dict, *, enabled: bool) -> dict:
     """One project entry that reproduces a global server with the switch the unit needs.
 
-    Only what the schema requires is copied: the transport kind and its target.
-    Environment variables, headers and OAuth credentials stay in the owner's
-    global file, which is also why this profile can sit in the copy at all.
+    The switch is `disabled`, which is the key the native definitions actually define
+    (`Mcp.LocalConfigEncoded` and `Mcp.RemoteConfigEncoded` in the schema the engine
+    names in `$schema`, and the same key the owner's global file already uses); the
+    deprecated flat layout spelled it `enabled`, and a key the definition does not
+    define is refused, so it is never written here.
     """
     kind = str(entry.get("type") or "")
-    if kind == "remote":
-        url = entry.get("url")
-        if isinstance(url, str) and url.strip():
-            return {"type": "remote", "url": url.strip(), "disabled": not enabled}
-    elif kind == "local":
-        command = entry.get("command")
-        if isinstance(command, list) and all(isinstance(part, str) for part in command):
-            return {"type": "local", "command": list(command), "disabled": not enabled}
-    raise PermissionProfileError(
-        f"server MCP globale {name!r}: la definizione non ha `type` con `command` o `url`, "
-        "quindi il profilo dell'unità non sa spegnerla"
-    )
+    kept = _MCP_KEYS.get(kind)
+    if kept is None:
+        raise PermissionProfileError(
+            f"server MCP globale {name!r}: la definizione non ha `type` con `command` o `url`, "
+            "quindi il profilo dell'unità non sa spegnerla"
+        )
+    body = {key: entry[key] for key in kept if key in entry}
+    _switchable(name, kind, body)
+    body["disabled"] = not enabled
+    return body
+
+
+def _switchable(name: str, kind: str, body: dict) -> None:
+    """Refuse a definition whose transport the schema would not accept, and copy it clean."""
+    if kind == "local":
+        command = body.get("command")
+        if not (isinstance(command, list) and command
+                and all(isinstance(part, str) for part in command)):
+            raise PermissionProfileError(
+                f"server MCP locale {name!r}: `command` mancante o non una lista di stringhe"
+            )
+        body["command"] = list(command)
+    elif isinstance(body.get("url"), str) and body["url"].strip():
+        body["url"] = body["url"].strip()
+    else:
+        raise PermissionProfileError(f"server MCP remoto {name!r}: `url` mancante")
 
 
 def _mcp_disabled(entry: dict) -> bool:

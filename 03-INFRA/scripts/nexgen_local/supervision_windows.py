@@ -43,6 +43,10 @@ TAB_ENV = "NEXGEN_SUP_TAB"
 TAB_PREFIX = "nexgen-sup:"
 #: The assignment the engine writes into a Windows shell's command line.
 _ASSIGNMENT = re.compile(rf"\$env:{TAB_ENV} = '([^']*)'")
+#: How a tab's command line names the unit it serves: the copy folder it was opened on,
+#: and the window title the engine gave it.
+_UNIT_IN_COPY = re.compile(r"23-unita-([A-Za-z0-9._-]+)")
+_UNIT_IN_TITLE = re.compile(r"esecutore\s*\u00b7\s*([A-Za-z0-9._-]+)")
 #: The table and the kill are the processes module's job; these names stay the injection points here.
 _processes = processes.rows
 _kill = processes.kill
@@ -97,6 +101,14 @@ def tab_marker(task_id: str, role: str) -> str:
     return f"{TAB_PREFIX}{task_id}:{role}"
 
 
+def marker_parts(marker: str) -> tuple[str, str]:
+    """The task and the role a tab marker names; an unknown shape is not a tab of this engine."""
+    parts = marker.split(":")
+    if len(parts) < 3:
+        return "", ""
+    return parts[1], ":".join(parts[2:])
+
+
 def marker_of(row: dict) -> str:
     """The tab marker this process carries, in the exact form this engine wrote, or "".
 
@@ -117,6 +129,80 @@ def marker_of(row: dict) -> str:
                 value = entry.split("=", 1)[1]
                 break
     return value if value.startswith(TAB_PREFIX) else ""
+
+
+def unit_tab_open(task_id: str, unit: str) -> bool:
+    """Whether the journal says a tab of this unit was opened and never closed.
+
+    One unit, one tab: this is the question asked before a new tab replaces the old
+    one and at retirement, and it is what keeps a task with no window of its own from
+    paying for a process-table read. A `tab_closed` row that does not name the unit
+    (the task-wide close in `sup pulizia`) also clears it: the tab it closed may have
+    been this unit's, and looking again is cheaper than opening a second one.
+    """
+    name = state.slug(unit)
+    opened = False
+    for row in state.read_events(task_id):
+        event = str(row.get("event") or "")
+        if event in ("unit_started", "unit_reworked") and row.get("mode") == "tab":
+            if str(row.get("unit") or "") == name:
+                opened = True
+        elif event == "tab_closed":
+            owner = str(row.get("unit") or "")
+            if not owner or owner == name:
+                opened = False
+    return opened
+
+
+def unit_of(row: dict) -> str:
+    """The unit this tab's command line names, from its copy folder or its window title.
+
+    The marker names the task and the role, and a task has one executor marker for
+    every unit: what makes a tab belong to a unit is the folder the tab was opened on
+    and the title the engine gave it. A command line that names neither is not a tab
+    of a unit, and closing one is never based on a guess.
+    """
+    command_line = str(row.get("command_line") or "")
+    for pattern in (_UNIT_IN_COPY, _UNIT_IN_TITLE):
+        found = pattern.search(command_line)
+        if found:
+            return found.group(1)
+    return ""
+
+
+def close_unit_tab(
+    task_id: str, unit: str, *, role: str = "esecutore", lister=None, killer=None,
+) -> dict:
+    """Close the tab this engine opened for one unit, and only that tab.
+
+    One unit, one tab: a new tab for the same unit replaces the old one, and a unit
+    that is retired takes its tab with it. The candidates are the shells that carry
+    the engine's own marker for this task and role and whose command line names this
+    unit; a tree that holds the shared `opencode serve` is left open, exactly as in
+    `close_tab`, and a process without the marker is never a candidate.
+    """
+    marker = tab_marker(task_id, role)
+    wanted = state.slug(unit)
+    try:
+        table = (lister or _processes)()
+    except (processes.ProcessError, WindowError, OSError, ValueError) as exc:
+        return _tab_result(role, [], f"processi non leggibili ({exc})", unit=wanted)
+    roots = [row for row in table if _is_tab_shell(row, marker) and unit_of(row) == wanted]
+    if not roots:
+        return _tab_result(role, [], "", unit=wanted)
+    tree = processes.subtree(table, [row["pid"] for row in roots])
+    shared = [row for _, row in tree if processes.is_shared_server(row)]
+    if shared:
+        reason = (
+            f"la scheda {role} di {wanted} tiene in piedi il servizio condiviso del harness "
+            f"(pid {shared[0]['pid']}): non la chiudo, chiudila a mano"
+        )
+        state.append_event(task_id, "tab_left_open", role=role, unit=wanted, reason=reason)
+        return _tab_result(role, [], reason, found=True, unit=wanted)
+    pids = [row["pid"] for _, row in tree if row["pid"] != os.getpid()]
+    (killer or _kill)(pids)
+    state.append_event(task_id, "tab_closed", role=role, unit=wanted, pids=pids, why="sostituita")
+    return _tab_result(role, pids, "", found=True, unit=wanted)
 
 
 def close_tab(
@@ -169,14 +255,15 @@ def close_tab(
     return _tab_result(role, pids, "", found=True)
 
 
-def _tab_result(role: str, pids: list[int], reason: str, *, found: bool = False) -> dict:
+def _tab_result(role: str, pids: list[int], reason: str, *, found: bool = False, unit: str = "") -> dict:
     """What happened, as one dict and one line the verb can print."""
+    who = f"{role} di {unit}" if unit else role
     if pids:
-        line = f"scheda {role} chiusa ({len(pids)} processi)"
+        line = f"scheda {who} chiusa ({len(pids)} processi)"
     elif reason:
-        line = f"scheda {role} lasciata aperta: {reason}"
+        line = f"scheda {who} lasciata aperta: {reason}"
     else:
-        line = f"nessuna scheda {role} da chiudere"
+        line = f"nessuna scheda {who} da chiudere"
     return {"role": role, "found": found, "closed": list(pids), "reason": reason, "line": line}
 
 
@@ -273,22 +360,15 @@ def _filter_unit_roots(roots: list[dict], table: list[dict], task_id: str, unit:
     target_slug = state.slug(unit)
     events = state.read_events(task_id)
     unit_pids = {row.get("pid") for row in events if row.get("unit") == target_slug and row.get("pid")}
-    unit_title = f"esecutore · {unit}"
-    unit_marker_term = f"23-unita-{unit}"
 
     unit_roots: list[dict] = []
     for root in roots:
         tree = processes.subtree(table, [root["pid"]])
         all_tree_rows = [root] + [r for _, r in tree]
-        matched = False
-        for r in all_tree_rows:
-            if r["pid"] in unit_pids:
-                matched = True
-                break
-            cmd = str(r.get("command_line") or "")
-            if unit_title in cmd or unit_marker_term in cmd:
-                matched = True
-                break
+        matched = any(
+            r["pid"] in unit_pids or unit_of(r) == target_slug
+            for r in all_tree_rows
+        )
         if matched:
             unit_roots.append(root)
     return unit_roots if unit_roots else roots
