@@ -63,7 +63,7 @@ __all__ = [
 #: OpenClaw's and the person's, and a plan names it as "yours, left untouched".
 #: A section is owned even when this machine proposes nothing inside it today:
 #: that is how a key the engine used to write is reported instead of forgotten.
-OWNED_SECTIONS = ("plugins", "models", "agents", "tools", "skills", "gateway", "acp", "bindings")
+OWNED_SECTIONS = ("plugins", "models", "agents", "tools", "skills", "gateway", "update", "acp", "bindings")
 
 #: Plugins every OpenClaw gets: OpenClaw's own, with no subscription behind them.
 BASE_PLUGINS = (
@@ -408,6 +408,15 @@ def _add_machine_rules(
         config["env"] = env
 
 
+def _update_policy() -> dict[str, Any]:
+    """OpenClaw's own updater is off: the pin is the only owner of this version.
+
+    Two updaters on one install is a tug of war, and the release the engine never
+    tested against its plugin is the one that breaks it.
+    """
+    return {"auto": {"enabled": False}, "checkOnStart": False}
+
+
 def build_config(
     detected: Detection,
     choices: Choices | None = None,
@@ -448,6 +457,7 @@ def build_config(
         },
         "tools": tools,
         "gateway": _gateway(chosen, current),
+        "update": _update_policy(),
     }
     # Every model this machine can reach is selectable from any agent's picker; `model`
     # on an agent is only its default, and this changes none of them.
