@@ -159,8 +159,9 @@ def test_an_adopted_skill_lands_in_the_vault_the_manifest_and_the_views(a_machin
     assert outcome.adopted, outcome.note
     copied = vault_skills_dir(a_machine.vault) / "release-notes" / "SKILL.md"
     assert copied.is_file()
+    assert "origin: openclaw" in copied.read_text(encoding="utf-8")
     manifest = a_machine.manifest.read_text(encoding="utf-8")
-    assert "  release-notes:\n    origin: vault\n    exposure: manual\n" in manifest
+    assert "  release-notes:\n    origin: vault\n    openclaw_id: release-notes\n    exposure: manual\n" in manifest
     assert f"    targets: [{', '.join(ADOPTED_TARGETS)}]\n" in manifest
     assert '    description: "writes the release notes"\n' in manifest
     # The view every runtime reads, and OpenClaw reads this one.

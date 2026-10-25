@@ -2278,4 +2278,36 @@ MESSAGES: dict[str, str] = {
         "Avviso: la shell è ritirata a favore di OpenClaw TUI",
     "The interactive shell has been retired: use 'openclaw tui' or the OpenClaw Dashboard instead.":
         "La shell interattiva è stata ritirata: usa 'openclaw tui' o la Dashboard di OpenClaw.",
+    "Adopt safe resources and retire absent ones without asking":
+        "Adotta risorse sicure e ritira quelle assenti senza chiedere",
+    "No auto-adoption pass recorded yet.":
+        "Nessun passaggio di adozione automatica ancora registrato.",
+    "Last adoption pass: {entered} entered, {exited} exited, {pending} waiting for review.":
+        "Ultimo passaggio di adozione: {entered} entrate, {exited} uscite, {pending} in attesa di revisione.",
+    "Run 'nexgen openclaw adopt' to review and decide on pending resources.":
+        "Lancia 'nexgen openclaw adopt' per revisionare e decidere sulle risorse in attesa.",
+    "openclaw.json is not readable ({error})":
+        "openclaw.json non è leggibile ({error})",
+    "OpenClaw gateway RPC unreachable ({error})":
+        "Gateway RPC di OpenClaw non raggiungibile ({error})",
+    "OpenClaw config unavailable ({error})":
+        "Configurazione di OpenClaw non disponibile ({error})",
+    "OpenClaw configuration could not be read: {error}. Nothing adopted or removed.":
+        "Impossibile leggere la configurazione di OpenClaw: {error}. Niente adottato o rimosso.",
+    "Canonical library manifest could not be read; skipping auto pass.":
+        "Impossibile leggere il manifest della libreria canonica; salto il passaggio automatico.",
+    "Everything is aligned: no new safe items to adopt, nothing absent to retire.":
+        "Tutto allineato: nessun nuovo elemento sicuro da adottare, nessun elemento assente da ritirare.",
+    "MCP manifest does not exist":
+        "Il manifest MCP non esiste",
+    "cannot read the manifest ({error}); fix it before modifying":
+        "non riesco a leggere il manifest ({error}); sistemalo prima di modificare",
+    "server '{name}' is not declared in servers":
+        "il server '{name}' non è dichiarato nei servers",
+    "server '{name}' is not origin: openclaw: will not remove automatically":
+        "il server '{name}' non ha origin: openclaw: non verrà rimosso automaticamente",
+    "manifest modification failed validation: {error}":
+        "la modifica del manifest non ha superato la convalida: {error}",
+    "server '{name}' retired from MCP manifest":
+        "server '{name}' ritirato dal manifest MCP",
 }

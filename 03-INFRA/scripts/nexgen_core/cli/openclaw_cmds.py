@@ -95,6 +95,10 @@ def _register_upkeep(psub) -> None:
                    help=t("Show the plan and the checks, and change nothing"))
     q.add_argument("--yes", action="store_true",
                    help=t("Do not ask: adopt what is safe, and leave what needs a person"))
+    q.add_argument("--auto", action="store_true",
+                   help=t("Adopt safe resources and retire absent ones without asking"))
+    q.add_argument("--json", action="store_true",
+                   help=t("Output in JSON format"))
     q.set_defaults(func=cmd_adopt)
 
     q = psub.add_parser("restart", help=t("Restart the gateway and wait for its port"))
@@ -182,6 +186,8 @@ def cmd_adopt(args) -> int:
         mcp=wants_mcp or both,
         dry_run=bool(getattr(args, "dry_run", False)),
         yes=bool(getattr(args, "yes", False)),
+        auto=bool(getattr(args, "auto", False)),
+        as_json=bool(getattr(args, "json", False)),
     )
 
 
@@ -224,6 +230,7 @@ def cmd_node(args) -> int:
 
 def cmd_rpc_health(args) -> int:
     import sys
+
     from nexgen_core.openclaw.gateway_rpc import GatewayRpcError, health
 
     url = getattr(args, "url", None)
