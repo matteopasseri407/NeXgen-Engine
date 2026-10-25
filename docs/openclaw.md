@@ -55,6 +55,9 @@ Vault's copy and never by editing its files by hand, because on a server that co
 made there stays invisible to the other machines.
 The code agent also gets `CLAUDE.md` and `.claude/settings.json`, so Claude Code behaves the same way when it
 is reached directly.
+`nexgen openclaw smoke` is the check a version change owes: it asks OpenClaw for its version, validates the
+configuration, probes the gateway, runs `openclaw mcp doctor`, and sends one short turn to an agent. Five lines,
+one verdict, and the same command works in a terminal and in a release check.
 A gateway machine that was prepared by hand records its role with `nexgen role set server`: the setup does it
 by itself on `--server`, and without that record the engine cannot tell the machine is the server, so the
 Vault's copy beside it keeps committing in a clone nobody can push from. `nexgen role` prints what is

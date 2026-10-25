@@ -106,6 +106,10 @@ def _register_upkeep(psub) -> None:
                    help=t("How long to wait for the port (default: 600)"))
     q.set_defaults(func=cmd_restart)
 
+    q = psub.add_parser("smoke", help=t("Prove the gateway is up and answering, after a version change"))
+    q.add_argument("--agent", default="main", help=t("The agent that answers the short turn"))
+    q.set_defaults(func=cmd_smoke)
+
     q = psub.add_parser("stop", help=t("Stop the gateway before editing its file by hand"))
     q.set_defaults(func=cmd_stop)
 
@@ -202,6 +206,12 @@ def cmd_stop(args) -> int:
     from nexgen_core.openclaw.setup import run_stop
 
     return run_stop()
+
+
+def cmd_smoke(args) -> int:
+    from nexgen_core.openclaw.smoke import run_smoke
+
+    return run_smoke(agent=getattr(args, "agent", "main") or "main")
 
 
 def cmd_pair(args) -> int:
