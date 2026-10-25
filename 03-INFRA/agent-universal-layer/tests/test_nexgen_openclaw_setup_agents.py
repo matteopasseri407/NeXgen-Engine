@@ -13,6 +13,7 @@ import pytest
 from nexgen_core import i18n
 from nexgen_core.openclaw.setup_agents import BOOTSTRAP_FILE, INSTRUCTIONS_FILE, prepare, write_instructions
 from nexgen_core.openclaw.squad import INSTRUCTION_MARK
+from nexgen_core.openclaw.templates import render_workspace
 
 #: The text the squad would have produced through `get_squad_instructions`.
 MARKED = f"{INSTRUCTION_MARK}: written from squad.yaml -->\n# capo\n\nOwn the code.\n"
@@ -50,6 +51,7 @@ def test_the_other_manuals_of_a_squad_agent_are_still_written(tmp_path: Path) ->
 
 
 def test_an_agents_file_without_the_engine_mark_is_left_byte_for_byte(tmp_path: Path) -> None:
+    """Hand-written text is not the engine's, whatever it says."""
     workspace = tmp_path / "workspace-capo"
     workspace.mkdir()
     mine = "# My own notes\n\nDo not touch this.\n"
@@ -59,7 +61,7 @@ def test_an_agents_file_without_the_engine_mark_is_left_byte_for_byte(tmp_path: 
     prepare({"capo": workspace}, set(), "en", lines.append, instructions={"capo": MARKED})
 
     assert (workspace / INSTRUCTIONS_FILE).read_text(encoding="utf-8") == mine
-    assert any("no engine mark" in line for line in lines)
+    assert any("yours" in line for line in lines)
 
 
 def test_a_marked_file_is_replaced_and_the_sync_block_on_top_survives(tmp_path: Path) -> None:
@@ -73,6 +75,49 @@ def test_a_marked_file_is_replaced_and_the_sync_block_on_top_survives(tmp_path: 
     assert text.startswith(SYNC_BLOCK)
     assert text.count("<!-- nexgen:squad:begin") == 1
     assert "old text" not in text
+
+
+def test_the_manual_the_engine_shipped_before_the_squad_declared_one_is_replaced(tmp_path: Path) -> None:
+    """The workspace was prepared before `agents_md` existed: the file is still ours.
+
+    The shipped manual carries no mark, so the ownership test alone would keep it
+    byte for byte and a squad change would never reach that workspace again.
+    """
+    workspace = tmp_path / "workspace-capo"
+    workspace.mkdir()
+    shipped = render_workspace("capo", "en")["AGENTS.md"]
+    (workspace / INSTRUCTIONS_FILE).write_text(shipped, encoding="utf-8")
+
+    prepare({"capo": workspace}, set(), "en", lambda line: None, instructions={"capo": MARKED})
+
+    text = (workspace / INSTRUCTIONS_FILE).read_text(encoding="utf-8")
+    assert text == MARKED
+
+
+def test_the_shipped_manual_is_replaced_under_the_sync_block_too(tmp_path: Path) -> None:
+    """What `nexgen sync` leaves on a workspace the setup prepared earlier."""
+    workspace = tmp_path / "workspace-capo"
+    workspace.mkdir()
+    shipped = render_workspace("capo", "en")["AGENTS.md"]
+    (workspace / INSTRUCTIONS_FILE).write_text(SYNC_BLOCK + shipped, encoding="utf-8")
+
+    prepare({"capo": workspace}, set(), "en", lambda line: None, instructions={"capo": MARKED})
+
+    text = (workspace / INSTRUCTIONS_FILE).read_text(encoding="utf-8")
+    assert text.startswith(SYNC_BLOCK)
+    assert INSTRUCTION_MARK in text
+    assert "You are the agent that writes and changes code." not in text
+
+
+def test_the_shipped_manual_of_another_language_is_still_the_engines(tmp_path: Path) -> None:
+    """The engine may speak a different language than the run that wrote the file."""
+    workspace = tmp_path / "workspace-capo"
+    workspace.mkdir()
+    (workspace / INSTRUCTIONS_FILE).write_text(render_workspace("capo", "it")["AGENTS.md"], encoding="utf-8")
+
+    prepare({"capo": workspace}, set(), "en", lambda line: None, instructions={"capo": MARKED})
+
+    assert (workspace / INSTRUCTIONS_FILE).read_text(encoding="utf-8") == MARKED
 
 
 def test_a_fresh_workspace_is_prepared_and_its_first_run_file_goes(tmp_path: Path) -> None:

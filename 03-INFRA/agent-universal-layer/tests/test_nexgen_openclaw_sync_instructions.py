@@ -22,6 +22,7 @@ from nexgen_core.guard_instructions import (
     openclaw_workspaces,
     with_openclaw_block,
 )
+from nexgen_core.openclaw.templates import render_workspace
 from nexgen_core.report import Severity
 
 CANON_RELATIVE = ("03-INFRA", "agent-universal-layer", "instructions", "AGENTS.md")
@@ -267,7 +268,119 @@ def test_openclaw_workspaces_are_deduplicated(tmp_path):
     assert openclaw_workspaces(config, tmp_path) == [shared]
 
 
-# --------------------------------------------------------------- the doctor
+# ------------------------------------------------------- the squad's own manual
+
+
+def a_squad(vault: Path, text: str, agent: str = "capo") -> None:
+    """`squad.yaml` beside the vault root, with one agent's instructions file."""
+    (vault / "roles").mkdir(parents=True, exist_ok=True)
+    (vault / "roles" / f"{agent}.md").write_text(text, encoding="utf-8")
+    (vault / "squad.yaml").write_text(
+        f"agents:\n  {agent}:\n    agents_md: roles/{agent}.md\n",
+        encoding="utf-8",
+    )
+
+
+def test_sync_writes_the_manual_the_squad_declares(tmp_path):
+    """`nexgen sync` is a command a person runs on its own: the squad text must land."""
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    target = workspace / "AGENTS.md"
+    vault, home = a_machine(tmp_path, {"agents": {"entries": {"capo": {"workspace": str(workspace)}}}})
+    a_squad(vault, "# capo\n\nOwn the code.\n")
+
+    aligns(vault, home)
+
+    written = target.read_text(encoding="utf-8")
+    assert written.startswith(OPENCLAW_BLOCK_BEGIN)
+    assert "Own the code." in written
+
+
+def test_sync_replaces_the_text_the_squad_changed_and_keeps_the_block(tmp_path):
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    target = workspace / "AGENTS.md"
+    vault, home = a_machine(tmp_path, {"agents": {"entries": {"capo": {"workspace": str(workspace)}}}})
+    a_squad(vault, "# capo\n\nOld order.\n")
+    aligns(vault, home)
+    a_squad(vault, "# capo\n\nNew order.\n")
+
+    aligns(vault, home)
+
+    written = target.read_text(encoding="utf-8")
+    assert written.startswith(OPENCLAW_BLOCK_BEGIN)
+    assert "New order." in written and "Old order." not in written
+
+
+def test_a_second_sync_writes_nothing_once_the_squad_text_landed(tmp_path):
+    """Two cycles must not rewrite the file, nor pile up a backup per run."""
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    target = workspace / "AGENTS.md"
+    vault, home = a_machine(tmp_path, {"agents": {"entries": {"capo": {"workspace": str(workspace)}}}})
+    a_squad(vault, "# capo\n\nOwn the code.\n")
+    aligns(vault, home)
+    after_first = read_bytes_of(target)
+    backups_after_first = sorted(workspace.glob("AGENTS.md*"))
+
+    actions = aligns(vault, home)
+
+    assert touching(actions, target) == []
+    assert read_bytes_of(target) == after_first
+    assert sorted(workspace.glob("AGENTS.md*")) == backups_after_first
+
+
+def test_a_persons_manual_is_never_replaced_by_the_squad_text(tmp_path):
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    target = workspace / "AGENTS.md"
+    target.write_text("my own rules\n", encoding="utf-8")
+    vault, home = a_machine(tmp_path, {"agents": {"entries": {"capo": {"workspace": str(workspace)}}}})
+    a_squad(vault, "# capo\n\nOwn the code.\n")
+
+    aligns(vault, home)
+
+    written = target.read_text(encoding="utf-8")
+    assert written.endswith("my own rules\n")
+    assert "Own the code." not in written
+
+
+def test_sync_replaces_the_manual_the_engine_shipped_before_the_squad(tmp_path):
+    """The upgrade path, on the command the person actually runs."""
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    target = workspace / "AGENTS.md"
+    target.write_text(render_workspace("capo", "en")["AGENTS.md"], encoding="utf-8")
+    vault, home = a_machine(tmp_path, {"agents": {"entries": {"capo": {"workspace": str(workspace)}}}})
+    a_squad(vault, "# capo\n\nOwn the code.\n")
+
+    aligns(vault, home)
+
+    written = target.read_text(encoding="utf-8")
+    assert "Own the code." in written
+    assert "You are the agent that writes and changes code." not in written
+
+
+def test_a_workspace_two_agents_share_is_not_guessed(tmp_path):
+    """Two agents, one folder, two different manuals: the file stays as it is."""
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    target = shared / "AGENTS.md"
+    target.write_text("mine\n", encoding="utf-8")
+    vault, home = a_machine(tmp_path, {"agents": {"defaults": {"workspace": str(shared)}}})
+    (vault / "roles").mkdir(parents=True, exist_ok=True)
+    (vault / "roles" / "one.md").write_text("# one\n", encoding="utf-8")
+    (vault / "roles" / "two.md").write_text("# two\n", encoding="utf-8")
+    (vault / "squad.yaml").write_text(
+        "agents:\n  one:\n    agents_md: roles/one.md\n  two:\n    agents_md: roles/two.md\n",
+        encoding="utf-8",
+    )
+
+    actions = aligns(vault, home)
+
+    written = target.read_text(encoding="utf-8")
+    assert "# one" not in written and "# two" not in written
+    assert touching(actions, target)
 
 
 def test_the_check_warns_when_the_block_is_missing_and_names_the_command(tmp_path):

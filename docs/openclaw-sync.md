@@ -100,12 +100,22 @@ agent's working directory, truncated at `agents.defaults.bootstrapMaxChars`
 The block says where the canonical `AGENTS.md` of this machine is and to read and
 follow it at session start. It carries no policy of its own, so the two cannot
 drift apart. Everything outside the markers is yours and is never rewritten; a
-file that does not exist is created with the block alone; a workspace folder that
+file that does not exist is created with the block alone, plus the squad's own
+manual where the squad declares one; a workspace folder that
 does not exist is not created here (the setup command does that). Before a file
 that already exists is changed, a `.pre-instructions-<timestamp>.bak` copy of it is
 left beside it, the same convention the other instruction pointers use — an
 OpenClaw workspace is often a Git repository, and that copy shows up there as an
 untracked file until you delete it.
+
+The same cycle writes the manual a `squad.yaml` declares (`agents_md` plus the
+shared `common_md`) under that block, so editing the squad and running `nexgen
+sync` is enough: waiting for the next `nexgen openclaw setup` is not. Only a file
+the engine wrote is replaced — one carrying the squad's mark, or one that is
+exactly the manual the engine ships for that agent, which is what a workspace
+prepared before the squad declared instructions holds. A hand-written file is
+left byte for byte, and two agents that share one folder and declare different
+manuals are reported instead of guessed. See [Squad as data](squad.md).
 
 The working directories come from OpenClaw's own config:
 `agents.entries.<id>.workspace` per agent, `agents.defaults.workspace` for the

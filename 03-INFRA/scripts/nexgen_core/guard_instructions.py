@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from nexgen_core.action_notes import WARN
@@ -344,13 +345,15 @@ def _openclaw_path(value: str, home: Path, base: Path) -> Path:
     return candidate if candidate.is_absolute() else base / candidate
 
 
-def openclaw_workspaces(config_path: Path, home: Path) -> list[Path]:
-    """Every agent workspace the OpenClaw config declares, deduplicated.
+def openclaw_workspace_owners(config_path: Path, home: Path) -> list[tuple[tuple[str, ...], Path]]:
+    """Every workspace the OpenClaw config declares, with the agents that live in it.
 
     `agents.entries.<id>.workspace` per agent, `agents.defaults.workspace` for
     the agents that pin none, and `<state dir>/workspace` when neither exists --
     the same fallback OpenClaw applies, with the state dir being the folder the
-    config file lives in. An unreadable config yields nothing: this step cannot
+    config file lives in. Two agents may name one folder, and then one
+    `AGENTS.md` is all of it: the caller is told which ids share it rather than
+    silently picking one. An unreadable config yields nothing: this step cannot
     fix it, and the MCP checks already name the file.
     """
     from nexgen_core.mcp_render import load_json_object
@@ -368,27 +371,75 @@ def openclaw_workspaces(config_path: Path, home: Path) -> list[Path]:
         else config_path.parent / "workspace"
     )
     entries = agents.get("entries") if isinstance(agents.get("entries"), dict) else {}
-    found: list[Path] = []
-    for agent in entries.values() or [None]:
+    owners: dict[Path, list[str]] = {}
+    for agent_id, agent in entries.items() or [(None, None)]:
         value = agent.get("workspace") if isinstance(agent, dict) else None
         path = (
             _openclaw_path(value, home, config_path.parent)
             if isinstance(value, str) and value.strip()
             else default_path
         )
-        if path not in found:
-            found.append(path)
-    return found
+        ids = owners.setdefault(path, [])
+        if agent_id is not None:
+            ids.append(str(agent_id))
+    return [(tuple(ids), path) for path, ids in owners.items()]
+
+
+def openclaw_workspaces(config_path: Path, home: Path) -> list[Path]:
+    """Every agent workspace the OpenClaw config declares, deduplicated."""
+    return [path for _, path in openclaw_workspace_owners(config_path, home)]
+
+
+def openclaw_squad_manuals(runner) -> dict[str, str]:
+    """The manuals the squad declares, by agent id, read the way the setup reads them.
+
+    `nexgen sync` writes them too: a person who edits `common_md` or one agent's
+    `agents_md` and then runs only the sync must see the new text in the
+    workspace, because that is the command they run without thinking about it.
+    """
+    from nexgen_core.openclaw.squad import find_squad_file, get_squad_instructions, load_squad
+
+    squad_file = find_squad_file(runner.vault_data, home=runner.home)
+    texts, _unreadable = get_squad_instructions(load_squad(squad_file), squad_file)
+    return texts
+
+
+def _with_squad_manual(
+    target: Path, existing: str, agents: Sequence[str], declared: Mapping[str, str],
+) -> tuple[str | None, str | None]:
+    """The file with the squad's manual in it, or why the text was left as it is.
+
+    One folder holds one `AGENTS.md`, so two agents that share a workspace and
+    declare different manuals are a squad mistake with no safe answer: nothing is
+    replaced and the caller says so.
+    """
+    from nexgen_core.openclaw.setup_agents import next_manual_text
+    from nexgen_core.openclaw.templates import shipped_manuals
+
+    texts = {declared[agent] for agent in agents if agent in declared}
+    if not texts:
+        return None, None
+    if len(texts) > 1:
+        return None, WARN + t(
+            "OpenClaw instructions at {path}: the agents sharing this workspace declare "
+            "different AGENTS.md files, so the manual was left as it is",
+            path=target,
+        )
+    shipped = tuple(manual for agent in agents for manual in shipped_manuals(agent))
+    return next_manual_text(existing, texts.pop(), shipped), None
 
 
 def align_openclaw_instructions(runner) -> list[str]:
-    """Puts the managed block in every OpenClaw agent workspace's `AGENTS.md`.
+    """Puts the managed block, and the squad's own manual, in every agent workspace.
 
     OpenClaw has no instruction pointer file of its own: it reads the
     `AGENTS.md` of the agent's working directory. That file is the person's, so
-    only the delimited block is ever written, only when it is missing or
-    different, and a copy is taken first. A workspace folder that does not
-    exist is left to the setup command that creates it.
+    only the delimited block is written, only when it is missing or different,
+    and a copy is taken first. The squad's own manual is the second thing this
+    cycle writes there, under that block: the setup is not the only command a
+    person runs after editing the squad, and a change that waits for the next
+    setup is a change that looks ignored. A workspace folder that does not exist
+    is left to the setup command that creates it.
     """
     from nexgen_core.paths import openclaw_config
 
@@ -399,16 +450,23 @@ def align_openclaw_instructions(runner) -> list[str]:
     if not canon.is_file():
         return []
     block = openclaw_instruction_block(canon)
+    declared = openclaw_squad_manuals(runner)
     actions: list[str] = []
-    for workspace in openclaw_workspaces(config_path, runner.home):
-        action = _align_openclaw_workspace(workspace, block, canon)
+    for agents, workspace in openclaw_workspace_owners(config_path, runner.home):
+        action = _align_openclaw_workspace(workspace, block, canon, agents, declared)
         if action:
             actions.append(action)
     return actions
 
 
-def _align_openclaw_workspace(workspace: Path, block: str, canon: Path) -> str | None:
-    """One OpenClaw workspace: the block written, or why it was left alone.
+def _align_openclaw_workspace(
+    workspace: Path,
+    block: str,
+    canon: Path,
+    agents: Sequence[str] = (),
+    declared: Mapping[str, str] | None = None,
+) -> str | None:
+    """One OpenClaw workspace: the block and the squad's manual written, or why not.
 
     A dotfiles-managed `AGENTS.md` is a symlink into its repository: it is
     followed, not replaced, except when it points at the canonical file.
@@ -426,15 +484,21 @@ def _align_openclaw_workspace(workspace: Path, block: str, canon: Path) -> str |
                 existing = handle.read()
     except OSError as exc:
         return WARN + t("OpenClaw instructions at {path} left untouched ({error})", path=target, error=exc)
-    file_block = block.replace("\n", openclaw_line_ending(existing))
     state = openclaw_file_state(existing, block)
-    if state == "ok":
-        return None
     if state == "broken":
         return WARN + t(
             "OpenClaw instructions at {path}: the managed block's markers are incomplete, left untouched",
             path=target,
         )
+    updated, warning = _with_squad_manual(target, existing, agents, declared or {})
+    source = existing if updated is None else updated
+    file_block = block.replace("\n", openclaw_line_ending(source))
+    wanted = with_openclaw_block(source, file_block)
+    if state == "ok" and updated is None:
+        return warning
+    if wanted == existing:
+        # The block is aligned and the squad's text is already the one it declares.
+        return warning
     if target.is_file():
         from nexgen_core.files import backup_file
 
@@ -445,7 +509,7 @@ def _align_openclaw_workspace(workspace: Path, block: str, canon: Path) -> str |
                 "OpenClaw instructions at {path} left untouched: safety backup failed ({error})",
                 path=target, error=exc,
             )
-    atomic_write_text(write_target, with_openclaw_block(existing, file_block), newline="")
+    atomic_write_text(write_target, wanted, newline="")
     return t("OpenClaw instructions aligned in {path}", path=target)
 
 

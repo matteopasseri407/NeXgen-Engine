@@ -117,7 +117,9 @@ agents:
 
 Both paths are relative to the squad file, so the two travel together. The setup
 writes the role text and then the common section into `AGENTS.md` in the agent's
-workspace, the file OpenClaw reads at the start of every session. An agent with
+workspace, the file OpenClaw reads at the start of every session, and `nexgen
+sync` writes it again: editing the squad and running the sync is enough, because
+that is the command a person runs without thinking about it. An agent with
 only `common_md` gets that section alone; an agent with neither keeps the manual
 the engine ships.
 
@@ -127,11 +129,16 @@ That file starts with the engine's mark:
 <!-- nexgen:squad:begin: written from squad.yaml by 'nexgen openclaw setup', and rewritten on the next run -->
 ```
 
-A file carrying the mark was written by the engine, so the next setup replaces it
+A file carrying the mark was written by the engine, so the next run replaces it
 and keeps whatever sits above it, which is where `nexgen sync` puts the block
-pointing at the canonical instructions. A file without the mark belongs to the
-person: it is left byte for byte, and the setup says it skipped it. `SOUL.md`
-stays separate and is written only for agents that declare `soul`.
+pointing at the canonical instructions. A file is also the engine's when it is
+exactly the manual this engine ships for that agent, with or without that block
+on top: that is a workspace prepared before the squad declared instructions, and
+treating it as the person's would freeze the old text there forever. Any other
+file belongs to the person: it is left byte for byte, and the run says it skipped
+it. One folder holds one `AGENTS.md`, so two agents that share a workspace and
+declare different manuals are reported instead of guessed. `SOUL.md` stays
+separate and is written only for agents that declare `soul`.
 
 ### Node Execution Delegation
 When machines connect in the `node` role, they act as headless execution hosts. Node agents are not registered from the satellite machine via RPC; instead, all node agents are declared directly in the central `squad.yaml` file evaluated on the gateway server:
