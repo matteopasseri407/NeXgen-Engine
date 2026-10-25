@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from nexgen_core import roles
+from nexgen_core import roles, server_sudo
 from nexgen_core.openclaw_service import RunResult
 
 
@@ -69,6 +69,11 @@ def test_server_role_invokes_setup_server(tmp_path: Path) -> None:
         setup_fn=fake_setup,
         align_fn=fake_align,
         problems_fn=fake_problems,
+        # The role also puts the agents' sudo policy in force on Linux; this test
+        # is about the setup call, so the policy step answers "done" through its seam.
+        sudoers_fn=lambda home, out: server_sudo.INSTALLED,
+        # Linux is named so the sudo-policy step runs wherever this test does.
+        platform="linux",
         out=log_messages.append,
     )
     assert code == 0
