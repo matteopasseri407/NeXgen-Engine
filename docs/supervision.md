@@ -1012,6 +1012,17 @@ and `agy` processes that no tab holds, and the number of processes hanging under
 which is how OpenCode behaves, so the line says whether the service can be
 restarted now.
 
+Under the server it also counts what belongs to a session that is over, and with
+`--chiudi` it collects exactly that: every **direct** child of `opencode serve`
+born before the oldest live session started, together with its whole tree (an MCP
+server and the `conhost` under it). With no live session at all it collects every
+direct child. It never stops the server, a child born after that moment, a row
+whose birth time nobody reports, or any process that does not descend from the
+server. The same collection runs by itself at the end of every `sup publish` and
+of every unit close, so the owner does not have to remember the verb; a
+collection that cannot read the process table is a printed note and never takes
+back a publication that already landed.
+
 It also answers the rule that nothing is left behind. It lists the copies and
 branches of units whose journal says the work arrived (`pubblicata`, `pubblicata
 in locale`, `ritirata`, approved and closed) and the disk still has, and
@@ -1019,6 +1030,10 @@ in locale`, `ritirata`, approved and closed) and the disk still has, and
 it still holds (`opencode api GET /api/debug/location`): a folder that no longer
 exists is listed with the start time of its oldest process, taken from the
 process table, and `--chiudi` evicts it through the same API the retirement uses.
+Retiring a unit asks the server to dispose that folder's instance first
+(`POST /instance/dispose`, the endpoint the installed SDK names) and only then
+evicts the location, because a copy deleted under a live instance leaves its MCP
+servers running until the machine is restarted.
 A folder that still exists is never in that list, so an active session and the
 owner's own server are out of reach. The local-models bench is not the engine's:
 no verb stops it except the local unit that started it.
