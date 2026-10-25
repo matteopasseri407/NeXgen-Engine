@@ -85,31 +85,50 @@ def extract_mounted_mcp_env_vars(config_path: Path) -> set[str]:
     return found
 
 
-def _parse_existing_keys(content: str) -> set[str]:
-    keys: set[str] = set()
-    for raw_line in content.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[7:].strip()
-        if "=" in line:
-            key = line.split("=", 1)[0].strip()
-            if key:
-                keys.add(key)
-    return keys
-
-
 def _format_env_line(key: str, value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
     return f'{key}="{escaped}"'
+
+
+def _align_values(content: str, values: Mapping[str, str]) -> tuple[str, list[str], list[str]]:
+    """The file with every named key at its current value.
+
+    Returns the new content, the keys that were rewritten, and the keys that were
+    added. A line the engine does not know is left exactly as it is: this file also
+    carries keys a person put there by hand, and they are not the engine's.
+    """
+    rewritten: list[str] = []
+    present: set[str] = set()
+    out: list[str] = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        key = stripped.split("=", 1)[0].strip() if "=" in stripped and not stripped.startswith("#") else ""
+        if key and key in values:
+            present.add(key)
+            new_line = _format_env_line(key, values[key])
+            if line != new_line:
+                rewritten.append(key)
+            out.append(new_line)
+        else:
+            out.append(line)
+    added = [key for key in values if key not in present]
+    for key in added:
+        out.append(_format_env_line(key, values[key]))
+    return "\n".join(out).rstrip() + "\n", rewritten, added
 
 
 def write_gateway_service_env(
     setup: Setup,
     config: dict[str, Any],
 ) -> Path:
-    """Updates $OPENCLAW_STATE_DIR/.env preserving existing keys; never logs values."""
+    """Regenerates $OPENCLAW_STATE_DIR/.env from the values in force; never logs them.
+
+    The keys this file carries are references the configuration and the mounted MCP
+    servers make. They are regenerated every run, not filled in once: a token rotated
+    in the engine's secret store used to stay alive here at its old value, and a second
+    copy of a secret is exactly what the store exists to prevent. Keys the engine does
+    not reference are the person's and stay untouched.
+    """
     referenced = extract_referenced_env_vars(config) | extract_mounted_mcp_env_vars(setup.config_path)
     env_source: Mapping[str, str] = setup.env or os.environ
     active_vars = {k: env_source[k] for k in sorted(referenced) if k in env_source and env_source[k]}
@@ -118,35 +137,18 @@ def write_gateway_service_env(
     env_file.parent.mkdir(parents=True, exist_ok=True)
 
     existing_content = ""
-    existing_keys: set[str] = set()
     if env_file.is_file():
         existing_content = env_file.read_text(encoding="utf-8")
-        existing_keys = _parse_existing_keys(existing_content)
-
-    missing_vars = {k: v for k, v in active_vars.items() if k not in existing_keys}
-
-    if not env_file.is_file():
-        lines = [
-            "# OpenClaw environment file",
-            "# Variables referenced in configuration and mounted MCP servers",
-            *[_format_env_line(k, v) for k, v in missing_vars.items()],
-            "",
-        ]
-        atomic_write_text(env_file, "\n".join(lines), preserve_mode=False)
-        setup.out(t("OpenClaw environment written to {path} ({count} variables added).",
-                    path=env_file, count=len(missing_vars)))
-    elif missing_vars:
-        new_lines = [existing_content.rstrip()]
-        new_lines.append("")
-        new_lines.append("# Variables added by NeXgen Engine")
-        for k, v in missing_vars.items():
-            new_lines.append(_format_env_line(k, v))
-        new_lines.append("")
-        atomic_write_text(env_file, "\n".join(new_lines), preserve_mode=False)
-        setup.out(t("OpenClaw environment updated at {path} ({added} added, {count} preserved).",
-                    path=env_file, added=", ".join(sorted(missing_vars.keys())), count=len(existing_keys)))
     else:
-        setup.out(t("OpenClaw environment at {path} already up to date ({count} preserved).",
-                    path=env_file, count=len(existing_keys)))
+        existing_content = "# OpenClaw environment file\n# Variables referenced in configuration and mounted MCP servers\n"
 
+    content, rewritten, added = _align_values(existing_content, active_vars)
+    if content != existing_content or not env_file.is_file():
+        atomic_write_text(env_file, content, preserve_mode=False)
+
+    if rewritten or added:
+        setup.out(t("OpenClaw environment regenerated at {path} ({rewritten} updated, {added} added).",
+                    path=env_file, rewritten=len(rewritten), added=len(added)))
+    else:
+        setup.out(t("OpenClaw environment at {path} already carries the current values.", path=env_file))
     return env_file

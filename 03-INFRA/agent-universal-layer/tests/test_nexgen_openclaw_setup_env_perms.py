@@ -102,7 +102,13 @@ def test_write_gateway_service_env_new_file(tmp_path: Path) -> None:
         assert "secret-never-written" not in msg
 
 
-def test_write_gateway_service_env_preserves_existing_keys(tmp_path: Path) -> None:
+def test_write_gateway_service_env_realigns_the_keys_it_owns(tmp_path: Path) -> None:
+    """A referenced key is a derivative of the secret store, not a value frozen at install time.
+
+    The old contract preserved whatever the file already held, so a token rotated in
+    the encrypted store stayed alive here at its previous value: two copies of one
+    secret. Keys the engine does not reference are the person's and stay.
+    """
     setup = _make_dummy_setup(tmp_path, platform="linux")
     env_file = setup.state_dir / ".env"
     env_file.write_text('ANTHROPIC_API_KEY="user-own-custom-key"\nCUSTOM_VAR="preserved"\n', encoding="utf-8")
@@ -116,8 +122,10 @@ def test_write_gateway_service_env_preserves_existing_keys(tmp_path: Path) -> No
     assert res_file == env_file
 
     content = env_file.read_text(encoding="utf-8")
-    # User-defined key was preserved and NOT overwritten
-    assert 'ANTHROPIC_API_KEY="user-own-custom-key"' in content
+    # The referenced key carries the value in force, and the old one is gone.
+    assert 'ANTHROPIC_API_KEY="sk-ant-test1234"' in content
+    assert "user-own-custom-key" not in content
+    # A key the engine knows nothing about is the person's and is left alone.
     assert 'CUSTOM_VAR="preserved"' in content
     # Missing referenced key was appended
     assert 'BRAVE_API_KEY="brave-test1234"' in content
