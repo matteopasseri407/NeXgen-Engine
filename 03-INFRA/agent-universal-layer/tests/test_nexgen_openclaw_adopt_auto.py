@@ -204,6 +204,30 @@ def test_second_consecutive_absence_retires_openclaw_resource(a_machine: Machine
     assert "mcp:safe-server" in state.get("last_pass", {}).get("exited", [])
 
 
+def test_retirement_deletes_the_adopted_row_itself_and_leaves_the_library_alone(a_machine: Machine):
+    """The row goes, not just its name: the writer quotes the key it wrote.
+
+    `_emit_manifest_stub` writes `"safe-server":`, so a remover that only looks for
+    an unquoted `safe-server:` finds nothing, lists the name under `retired_servers`
+    and leaves a dead row in the document for good.
+    """
+    a_machine.auto_adopt()
+    adopted = a_machine.mcp_manifest.read_text(encoding="utf-8")
+    assert '"safe-server":' in adopted
+
+    a_machine.config_path.write_text(json.dumps({
+        "agents": {"entries": {"main": {}}},
+        "mcp": {"servers": {"lazy-mcp": {"command": "python3"}}},
+    }), encoding="utf-8")
+    a_machine.auto_adopt()
+    a_machine.auto_adopt()
+
+    after = a_machine.mcp_manifest.read_text(encoding="utf-8")
+    assert '"safe-server":' not in after
+    assert "- safe-server" in after
+    assert "lazy-mcp:" in after and "lazy-mcp.py" in after
+
+
 def test_reappearance_resets_absence_counter(a_machine: Machine):
     a_machine.auto_adopt()
 

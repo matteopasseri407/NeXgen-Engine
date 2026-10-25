@@ -18,10 +18,13 @@ from __future__ import annotations
 import os
 import re
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
 from nexgen_core.config import load_mcp_manifest, load_skills_manifest
+from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
+from nexgen_core.manifest_text import entry_span
 from nexgen_core.paths import (
     mcp_manifest,
     resolve_engine_root,
@@ -32,26 +35,19 @@ from nexgen_core.paths import (
 from nexgen_core.skills import SkillMaterializer
 
 
-def _remove_server_yaml_block(text: str, name: str) -> str:
-    """Remove a server entry from the `servers:` mapping in manifest text."""
-    lines = text.splitlines(keepends=True)
-    out: list[str] = []
-    in_target = False
-    target_prefix = f"  {name}:"
+def _without_entry(text: str, name: str) -> str:
+    """The manifest text with one entry's block gone, every other byte untouched.
 
-    for line in lines:
-        stripped = line.rstrip("\r\n")
-        if stripped == target_prefix or stripped.startswith(f"  {name}: "):
-            in_target = True
-            continue
-        if in_target:
-            if line.startswith("    "):
-                continue
-            if stripped == "" or line.strip().startswith("#"):
-                continue
-            in_target = False
-        out.append(line)
-    return "".join(out)
+    The block is found by `manifest_text.entry_span`, the reader every manifest edit
+    already uses: it knows the key may be quoted and that the block ends at a blank
+    line or the next entry. Two hand-rolled copies of that rule lived here and
+    disagreed with it about quoted keys and blank lines.
+    """
+    span = entry_span(text, name)
+    if span is None:
+        return text
+    start, end = span
+    return text[:start] + text[end:]
 
 
 def _add_retired_server_yaml(text: str, name: str) -> str:
@@ -66,6 +62,25 @@ def _add_retired_server_yaml(text: str, name: str) -> str:
         pos = match_header.end()
         return text[:pos] + f"\n  - {name}" + text[pos:]
     return f"retired_servers:\n  - {name}\n\n" + text
+
+
+def _publish(path: Path, updated: str, validate: Callable[[Path], object], failure: str) -> str | None:
+    """Replace a manifest with `updated` only once the loader has accepted it.
+
+    The candidate is written with the one writer (`files.atomic_write_text`), the
+    same loader the sync will use reads it, and only then is it moved into place:
+    a manifest that would no longer parse never exists on the canonical path.
+    Returns the reason it was put back, or None.
+    """
+    candidate = path.with_name(f"{path.name}.{os.getpid()}.candidate")
+    try:
+        atomic_write_text(candidate, updated)
+        validate(candidate)
+    except Exception as exc:  # noqa: BLE001 - nexgen: allow reason="a candidate that does not parse is put back"
+        candidate.unlink(missing_ok=True)
+        return t(failure, error=exc)
+    os.replace(candidate, path)
+    return None
 
 
 def retire_adopted_server(name: str, *, vault_data: Path | None = None) -> tuple[bool, str]:
@@ -85,39 +100,11 @@ def retire_adopted_server(name: str, *, vault_data: Path | None = None) -> tuple
     if target_srv.get("origin") != "openclaw":
         return False, t("server '{name}' is not origin: openclaw: will not remove automatically", name=name)
 
-    updated = _add_retired_server_yaml(_remove_server_yaml_block(raw_before, name), name)
-    temp_path = path.with_suffix(".tmp")
-    temp_path.write_text(updated, encoding="utf-8")
-    try:
-        load_mcp_manifest(temp_path)
-    except Exception as exc:  # noqa: BLE001 - nexgen: allow reason="unreadable manifest is reported as failure"
-        temp_path.unlink(missing_ok=True)
-        return False, t("manifest modification failed validation: {error}", error=exc)
-
-    os.replace(temp_path, path)
+    updated = _add_retired_server_yaml(_without_entry(raw_before, name), name)
+    problem = _publish(path, updated, load_mcp_manifest, "manifest modification failed validation: {error}")
+    if problem:
+        return False, problem
     return True, t("server '{name}' retired from MCP manifest", name=name)
-
-
-def _remove_skill_yaml_block(text: str, name: str) -> str:
-    """Remove a skill entry from skills.manifest.yaml."""
-    lines = text.splitlines(keepends=True)
-    out: list[str] = []
-    in_target = False
-    target_prefix = f"  {name}:"
-
-    for line in lines:
-        stripped = line.rstrip("\r\n")
-        if stripped == target_prefix or stripped.startswith(f"  {name}: "):
-            in_target = True
-            continue
-        if in_target:
-            if line.startswith("    "):
-                continue
-            if stripped == "" or line.strip().startswith("#"):
-                continue
-            in_target = False
-        out.append(line)
-    return "".join(out)
 
 
 def is_openclaw_skill(skill_entry: dict, skill_dir: Path) -> bool:
@@ -162,17 +149,13 @@ def retire_adopted_skill(
     if not is_openclaw_skill(skills[name], skill_dir):
         return False, t("skill '{name}' has no openclaw provenance: will not remove automatically", name=name)
 
-    updated = _remove_skill_yaml_block(raw_before, name)
+    updated = _without_entry(raw_before, name)
     materializer = SkillMaterializer(vault_data=vault, engine_root=engine, home=resolved_home)
-    temp_path = path.with_suffix(".tmp")
-    temp_path.write_text(updated, encoding="utf-8")
-    try:
-        load_skills_manifest(temp_path)
-    except Exception as exc:  # noqa: BLE001 - nexgen: allow reason="unreadable manifest is reported as failure"
-        temp_path.unlink(missing_ok=True)
-        return False, t("skills manifest modification failed validation: {error}", error=exc)
-
-    os.replace(temp_path, path)
+    problem = _publish(
+        path, updated, load_skills_manifest, "skills manifest modification failed validation: {error}",
+    )
+    if problem:
+        return False, problem
     if skill_dir.is_dir():
         shutil.rmtree(skill_dir, ignore_errors=True)
     materializer.materialize(apply=True)
