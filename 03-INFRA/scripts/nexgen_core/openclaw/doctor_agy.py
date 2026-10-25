@@ -12,14 +12,14 @@ from __future__ import annotations
 from typing import Any
 
 from nexgen_core.i18n import t
+from nexgen_core.openclaw.agy_backend import AUTO_APPROVING_MODE, GUARDED_MODES
 from nexgen_core.openclaw.terms import local_agy_backend
 from nexgen_core.report import CheckOutcome, Severity
 
 #: The plugin's own permission modes for `agy`. `skip` is the one that hands tool
 #: approval to the CLI, and it is the plugin's default when none is declared;
-#: `sandbox` and `settings` leave a boundary in place.
-AUTO_APPROVING_MODE = "skip"
-GUARDED_MODES = ("sandbox", "settings")
+#: `sandbox` and `settings` leave a boundary in place. The vocabulary is
+#: `agy_backend`'s: the setup writes one of these, this file judges it.
 
 CHECK_ID = "openclaw.google.cli_backend"
 

@@ -13,6 +13,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
@@ -419,3 +421,48 @@ def test_the_owner_approved_agy_backend_stays_allowed() -> None:
     assert "google-antigravity-cli" in allow
     assert "google" not in allow
     assert "google-antigravity-cli" not in build_config(machine(claude=True))["plugins"]["allow"]
+
+
+def test_the_approved_agy_backend_gets_a_guarded_permission_mode() -> None:
+    """`agy` approves its own tool calls unless the plugin is told to keep a boundary."""
+    current = {"plugins": {
+        "allow": ["google-antigravity-cli"],
+        "entries": {"google-antigravity-cli": {"enabled": True}},
+    }}
+
+    entries = build_config(machine(), current=current)["plugins"]["entries"]
+
+    assert entries["google-antigravity-cli"] == {"config": {"permissionMode": "sandbox"}}
+    assert "enabled" not in entries["google-antigravity-cli"], "the engine never turns a plugin on or off"
+
+
+@pytest.mark.parametrize("declared", ["sandbox", "settings"])
+def test_a_guarded_mode_the_person_chose_is_kept(declared: str) -> None:
+    current = {"plugins": {
+        "allow": ["google-antigravity-cli"],
+        "entries": {"google-antigravity-cli": {"enabled": True, "config": {"permissionMode": declared}}},
+    }}
+
+    entries = build_config(machine(), current=current)["plugins"]["entries"]
+
+    assert entries["google-antigravity-cli"]["config"]["permissionMode"] == declared
+
+
+def test_a_skip_permission_mode_is_never_carried_into_the_proposal() -> None:
+    """The one mode that lets `agy` approve every tool call is replaced, not preserved."""
+    current = {"plugins": {
+        "allow": ["google-antigravity-cli"],
+        "entries": {"google-antigravity-cli": {"enabled": True, "config": {"permissionMode": "skip"}}},
+    }}
+
+    entries = build_config(machine(), current=current)["plugins"]["entries"]
+
+    assert entries["google-antigravity-cli"]["config"]["permissionMode"] == "sandbox"
+
+
+def test_a_backend_nobody_approved_gets_no_entry_and_no_mode() -> None:
+    entries = build_config(machine())["plugins"]["entries"]
+
+    assert "google-antigravity-cli" not in entries
+
+

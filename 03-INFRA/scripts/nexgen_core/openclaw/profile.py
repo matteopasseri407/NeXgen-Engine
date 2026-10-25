@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import detect_language
-from nexgen_core.openclaw import background, observation
+from nexgen_core.openclaw import agy_backend, background, observation
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
 from nexgen_core.openclaw.acp import SVILUPPO_ID, SVILUPPO_NAMES, acp_block, acpx_entry, sviluppo_enabled
 from nexgen_core.openclaw.detect import Detection
@@ -131,11 +131,7 @@ def _llama_cpp_enabled(current: dict[str, Any] | None) -> bool:
 
 def _agy_backend_kept(current: dict[str, Any] | None) -> bool:
     """The local agy CLI backend, the one Google road the owner approved, stays when already allowed."""
-    plugins = (current or {}).get("plugins") or {}
-    allowed = plugins.get("allow") if isinstance(plugins.get("allow"), list) else []
-    entries = plugins.get("entries") if isinstance(plugins.get("entries"), dict) else {}
-    entry = entries.get(LOCAL_AGY_BACKEND) if isinstance(entries.get(LOCAL_AGY_BACKEND), dict) else {}
-    return LOCAL_AGY_BACKEND in {str(item) for item in allowed} and entry.get("enabled") is not False
+    return agy_backend.approved(current, LOCAL_AGY_BACKEND)
 
 
 def _plugin_allow(detected: Detection, choices: Choices, current: dict[str, Any] | None = None) -> list[str]:
@@ -183,6 +179,12 @@ def _plugin_entries(
         entries["llama-cpp"] = {"enabled": True}
     if chosen.acpx or sviluppo_enabled(detected, chosen.sviluppo):
         entries["acpx"] = acpx_entry(detected)
+    if _agy_backend_kept(current):
+        # The owner already approved this backend: the engine aligns the one setting it
+        # owns, and never enables or disables a plugin that is not its own.
+        entries[LOCAL_AGY_BACKEND] = {
+            "config": {"permissionMode": agy_backend.mode_for_engine(current, LOCAL_AGY_BACKEND)},
+        }
     return entries
 
 
