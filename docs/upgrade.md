@@ -9,6 +9,8 @@ A split installation keeps them in separate clones, selected by `AGENT_ENGINE_RO
 The updater supports both arrangements.
 The split installation records its engine version in `99-INDEX/ENGINE-PIN.txt`.
 
+If you are updating an existing PC that already has NeXgen installed to connect it as a satellite node to a central gateway, see the transition guide in [Machine Roles: Hai già NeXgen su questo PC](roles.md#hai-già-nexgen-su-questo-pc).
+
 ## Why track your version at all
 
 Your data (manifests, instructions, skills) is written against a known

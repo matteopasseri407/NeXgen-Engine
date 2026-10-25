@@ -53,6 +53,40 @@ On Windows:
 - On timeout, emits clear diagnosis with documented recovery commands (`openclaw node status`, `openclaw node restart`, `openclaw node run --session-host`, or minting a new code via `openclaw devices join-code` on the gateway).
 - Instructs the operator on the exact entry to declare in the central `squad.yaml` on the server (`tools.exec: host: node, node: <name>`), keeping agent definition centralized without RPC mutation from nodes.
 
+#### Hai già NeXgen su questo PC?
+
+Se questo computer ha già NeXgen installato (ad esempio come standalone o con un gateway OpenClaw locale):
+
+1. **Prima guarda, poi tocca (`--check` / `-Check`):**
+   Su Linux / macOS:
+   ```bash
+   sh install.sh --role node --check
+   ```
+   Su Windows (PowerShell):
+   ```powershell
+   .\install.ps1 -Role node -Check
+   ```
+   Stampa il piano dettagliato riga per riga senza scrivere nulla: versione attuale e in arrivo del motore, presenza di gateway o attività pianificate, stato del nodo, cosa verrà fermato e cosa rimarrà invariato.
+
+2. **Passaggio a nodo:**
+   Crea un codice di aggancio monouso sul server (`openclaw devices join-code`), poi esegui sul PC:
+   Su Linux / macOS:
+   ```bash
+   sh install.sh --role node --join <join-url>
+   ```
+   Su Windows (PowerShell):
+   ```powershell
+   .\install.ps1 -Role node -Join <join-url>
+   ```
+   (In alternativa puoi impostare la variabile d'ambiente `NEXGEN_JOIN_URL`.)
+
+**Cosa aspettarsi:**
+- **Aggiornamento motore:** il PC viene prima aggiornato all'ultima versione del motore tramite il canale esistente (`docs/upgrade.md`), poi sincronizzato; mai una seconda copia del motore accanto alla prima.
+- **Gateway locale fermato in sicurezza:** se era attivo un gateway OpenClaw locale, viene fermato e disattivato all'avvio con i comandi documentati (`openclaw gateway stop` e disinstallazione del servizio; le vecchie attività pianificate di Windows o file `.vbs` del gateway vengono rimossi).
+- **Stato preservato intatto:** la cartella `~/.openclaw` (configurazione, cronologia sessioni, memoria), agenti, skill e MCP rimangono intatti. Nessuna cancellazione di cartelle né comandi distruttivi.
+- **Rilanciabile e reversibile:** se rilanciato con lo stesso gateway, rileva che il PC è già nodo ed esegue solo il sync. Per tornare a standalone con il gateway locale riattivato, basta eseguire `sh install.sh --role standalone` / `.\install.ps1 -Role standalone`.
+- **Riepilogo finale:** una schermata con gateway collegato, nome del nodo, servizi fermati, dati conservati e il frammento da inserire in `squad.yaml` sul server.
+
 ---
 
 ### 3. Standalone PC (`standalone`)
