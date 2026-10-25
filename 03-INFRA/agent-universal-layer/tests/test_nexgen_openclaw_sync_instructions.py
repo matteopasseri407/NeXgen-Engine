@@ -361,6 +361,25 @@ def test_sync_replaces_the_manual_the_engine_shipped_before_the_squad(tmp_path):
     assert "You are the agent that writes and changes code." not in written
 
 
+def test_sync_replaces_a_shipped_manual_the_block_is_already_on_top_of(tmp_path):
+    """The exact file shape the server was in: a sync had run, so the block was there."""
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    target = workspace / "AGENTS.md"
+    vault, home = a_machine(tmp_path, {"agents": {"entries": {"capo": {"workspace": str(workspace)}}}})
+    block = openclaw_instruction_block(vault.joinpath(*CANON_RELATIVE))
+    target.write_text(f"{block}\n{render_workspace('capo', 'en')['AGENTS.md']}", encoding="utf-8")
+    a_squad(vault, "# capo\n\nOwn the code.\n")
+
+    aligns(vault, home)
+
+    written = target.read_text(encoding="utf-8")
+    assert written.startswith(OPENCLAW_BLOCK_BEGIN)
+    assert written.count(OPENCLAW_BLOCK_BEGIN) == 1
+    assert "Own the code." in written
+    assert "You are the agent that writes and changes code." not in written
+
+
 def test_a_workspace_two_agents_share_is_not_guessed(tmp_path):
     """Two agents, one folder, two different manuals: the file stays as it is."""
     shared = tmp_path / "shared"
