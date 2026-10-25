@@ -23,6 +23,7 @@ from nexgen_core.checks.git_checks import (  # noqa: E402 - sys.path shim for cl
     check_git_alignment,
     check_mirror_alignment,
     check_quarantine_branches,
+    check_readonly_clone,
     check_remotes_config,
     check_vault_remote_privacy,
 )
@@ -100,6 +101,7 @@ from nexgen_core.paths import (  # noqa: E402 - sys.path shim for cloned checkou
     resolve_vault_data,
 )
 from nexgen_core.report import CheckOutcome, Report, Severity  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.vault_readonly import readonly_reason  # noqa: E402 - sys.path shim for cloned checkout
 
 #: How long `doctor --fix` waits for the host lock before giving up on remedies.
 REMEDY_LOCK_WAIT_SECONDS = 10.0
@@ -207,9 +209,17 @@ def _environment_checks(run, doc: Doctor) -> None:
 def _git_checks(run, doc: Doctor) -> None:
     """The vault's own repository, and the engine checkout's lane."""
     vault = doc.vault_data
+
+    def alignment():
+        """A clone that may only read is judged as a reader, not as a publisher."""
+        reason = readonly_reason(vault, home=doc.home, engine_root=doc.engine_root)
+        if reason:
+            return check_readonly_clone(vault, reason)
+        return check_git_alignment(vault)
+
     # The two that fetch share one repository lock: run together they contend
     # for `.git/FETCH_HEAD.lock`, and one fails for no reason.
-    run("git.alignment", lambda: check_git_alignment(vault), "vault-git-remote")
+    run("git.alignment", alignment, "vault-git-remote")
     run("git.remotes_config", lambda: check_remotes_config(vault))
     run("git.vault_remote_privacy", lambda: check_vault_remote_privacy(vault))
     run("git.engine_lane", lambda: check_engine_lane(doc.engine_root))

@@ -20,6 +20,9 @@ param(
     [string]$Role,
     [string]$Target,
     [string]$ExecPolicy,
+    [string]$Join,
+    [string]$NodeName,
+    [switch]$Force,
     [Parameter(ValueFromRemainingArguments = $true)] [string[]]$Rest
 )
 
@@ -37,6 +40,9 @@ if ($Check)  { $forward += '--check' }
 if ($Role)   { $forward += @('--role', $Role) }
 if ($Target) { $forward += @('--target', $Target) }
 if ($ExecPolicy) { $forward += @('--exec-policy', $ExecPolicy) }
+if ($Join)     { $forward += @('--join', $Join) }
+if ($NodeName) { $forward += @('--node-name', $NodeName) }
+if ($Force)    { $forward += '--force' }
 if ($Rest)   { $forward += $Rest }
 
 $found = $null

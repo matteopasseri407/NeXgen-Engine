@@ -208,27 +208,69 @@ def _write_and_report(
     return failed
 
 
-def run_adopt(
+def _run_auto(
     *,
-    skills: bool = True,
-    mcp: bool = True,
-    dry_run: bool = False,
-    yes: bool = False,
-    home: Path | None = None,
-    vault_data: Path | None = None,
-    engine_root: Path | None = None,
-    state_dir: Path | None = None,
-    config_path: Path | None = None,
-    out: Emit | None = None,
-    run: Run | None = None,
-    which: Which | None = None,
-    confirm: Confirm | None = None,
+    skills: bool,
+    mcp: bool,
+    dry_run: bool,
+    as_json: bool,
+    home: Path | None,
+    vault_data: Path | None,
+    engine_root: Path | None,
+    state_dir: Path | None,
+    config_path: Path | None,
+    out: Emit | None,
+    run: Run | None,
+    which: Which | None,
 ) -> int:
-    """Show the plan, ask once, adopt what may be adopted, and name what was not.
+    """Execute the non-interactive automatic pass."""
+    import json
 
-    Exit code 1 only when an adoption the person asked for failed: a refusal,
-    a blocked resource and a resource left for a person are answers, not errors.
-    """
+    from nexgen_core.openclaw.adopt_auto import run_auto_adopt
+
+    res = run_auto_adopt(
+        skills=skills,
+        mcp=mcp,
+        dry_run=dry_run,
+        home=home,
+        vault_data=vault_data,
+        engine_root=engine_root,
+        state_dir=state_dir,
+        config_path=config_path,
+        out=(lambda s: None) if as_json else out,
+        run=run,
+        which=which,
+    )
+    if as_json:
+        payload = {
+            "ok": res.ok,
+            "entered": res.entered,
+            "exited": res.exited,
+            "pending_review": res.pending_review,
+            "notes": res.notes,
+            "lines": res.lines,
+        }
+        (out or print)(json.dumps(payload, ensure_ascii=False))
+    return 0 if res.ok else 1
+
+
+def _run_interactive(
+    *,
+    skills: bool,
+    mcp: bool,
+    dry_run: bool,
+    yes: bool,
+    home: Path | None,
+    vault_data: Path | None,
+    engine_root: Path | None,
+    state_dir: Path | None,
+    config_path: Path | None,
+    out: Emit | None,
+    run: Run | None,
+    which: Which | None,
+    confirm: Confirm | None,
+) -> int:
+    """Interactive adoption pass asking confirmation when needed."""
     emit = out or print
     home_dir = resolve_home(home)
     vault = resolve_vault_data(home_dir, vault_data)
@@ -265,3 +307,39 @@ def run_adopt(
         emit(t("Left alone: {items}. A person decides; run 'nexgen openclaw adopt' to be asked.",
                items="; ".join(_left_alone(item) for item in left)))
     return 1 if failed else 0
+
+
+def run_adopt(
+    *,
+    skills: bool = True,
+    mcp: bool = True,
+    dry_run: bool = False,
+    yes: bool = False,
+    auto: bool = False,
+    as_json: bool = False,
+    home: Path | None = None,
+    vault_data: Path | None = None,
+    engine_root: Path | None = None,
+    state_dir: Path | None = None,
+    config_path: Path | None = None,
+    out: Emit | None = None,
+    run: Run | None = None,
+    which: Which | None = None,
+    confirm: Confirm | None = None,
+) -> int:
+    """Show the plan, ask once, adopt what may be adopted, and name what was not.
+
+    Exit code 1 only when an adoption the person asked for failed: a refusal,
+    a blocked resource and a resource left for a person are answers, not errors.
+    """
+    if auto:
+        return _run_auto(
+            skills=skills, mcp=mcp, dry_run=dry_run, as_json=as_json, home=home,
+            vault_data=vault_data, engine_root=engine_root, state_dir=state_dir,
+            config_path=config_path, out=out, run=run, which=which,
+        )
+    return _run_interactive(
+        skills=skills, mcp=mcp, dry_run=dry_run, yes=yes, home=home,
+        vault_data=vault_data, engine_root=engine_root, state_dir=state_dir,
+        config_path=config_path, out=out, run=run, which=which, confirm=confirm,
+    )

@@ -18,6 +18,7 @@ from pathlib import Path
 from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
 from nexgen_core.openclaw.node_approvals import NEVER_PROMPT_BODY
+from nexgen_core.openclaw.node_cli import READ_TIMEOUT_S, SERVICE_TIMEOUT_S, Run, run_command
 from nexgen_core.openclaw_service import RunResult
 
 #: Default node attach wait timeout (300 seconds / 5 minutes)
@@ -26,11 +27,6 @@ DEFAULT_NODE_ATTACH_TIMEOUT_S = 300.0
 DEFAULT_REPORT_INTERVAL_S = 3.0
 #: The one exec policy this module applies, when a person asks for it by name.
 FULL_EXEC_POLICY = "full"
-
-
-def _default_runner(cmd: list[str]) -> RunResult:
-    res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
-    return RunResult(res.returncode, res.stdout, res.stderr)
 
 
 def _default_input_runner(cmd: list[str], stdin_text: str) -> RunResult:
@@ -69,11 +65,11 @@ def apply_exec_policy(
 def connect_node_service(
     target: str,
     home: Path | None = None,
-    runner: Callable[[list[str]], RunResult] | None = None,
+    runner: Run | None = None,
     out: Callable[[str], None] = print,
 ) -> bool:
     """Connects node as an OS service using --target-file to protect secrets."""
-    run_fn = runner or _default_runner
+    run_fn = runner or run_command
     temp_dir = Path(tempfile.gettempdir())
     target_file = temp_dir / f"openclaw-connect-{os.getpid()}-{int(time.time())}.tmp"
 
@@ -82,7 +78,7 @@ def connect_node_service(
 
         out(t("Connecting node to gateway via 'openclaw connect --service --session-host' (protected target file)..."))
         cmd = ["openclaw", "connect", "--service", "--session-host", "--target-file", str(target_file)]
-        res = run_fn(cmd)
+        res = run_fn(cmd, SERVICE_TIMEOUT_S)
         if res.returncode != 0:
             out(t("Node connect failed (exit code {code}).", code=res.returncode))
             return False
@@ -93,30 +89,27 @@ def connect_node_service(
 
 
 def check_node_connected(
-    runner: Callable[[list[str]], RunResult] | None = None,
+    runner: Run | None = None,
     cmd: list[str] | None = None,
 ) -> bool:
     """Queries node status via documented 'openclaw node status --json'."""
-    run_fn = runner or _default_runner
+    run_fn = runner or run_command
     run_cmd = cmd or ["openclaw", "node", "status", "--json"]
     try:
-        res = run_fn(run_cmd)
+        res = run_fn(run_cmd, READ_TIMEOUT_S)
         if res.returncode != 0 or not res.stdout.strip():
             return False
         try:
             data = json.loads(res.stdout)
-            if isinstance(data, dict):
-                status = str(data.get("status") or "").strip().lower()
-                connected = data.get("connected")
-                if connected is not None:
-                    return bool(connected)
-                return status in ("connected", "running", "online")
+            from nexgen_core.openclaw.node_status import parse_node_status_payload
+
+            parsed = parse_node_status_payload(data)
+            return parsed.is_running
         except json.JSONDecodeError:
             out_lower = res.stdout.lower()
-            return ("connected" in out_lower or "running" in out_lower) and "not connected" not in out_lower
+            return ("running" in out_lower or "connected" in out_lower) and "stopped" not in out_lower
     except Exception:  # nexgen: allow reason="node status query error is safely treated as not connected"
         return False
-    return False
 
 
 def wait_for_node_connection(

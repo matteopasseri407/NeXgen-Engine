@@ -36,7 +36,28 @@ class ServerAdoption:
     note: str
 
 
-def _http_row(name: str, live: Mapping[str, Any]) -> dict[str, Any]:
+#: The mark that says where an adopted row came from, and what OpenClaw calls it.
+#: It rides beside the row the shared writer produces, not inside it: `nexgen mcp add`
+#: writes library entries, and provenance is the adopter's own knowledge.
+PROVENANCE = "openclaw"
+
+
+def _stamped(entry: dict[str, Any], origin: str, openclaw_id: str | None) -> dict[str, Any]:
+    """The row plus its provenance, so a later pass can retire what it adopted."""
+    if origin:
+        entry["origin"] = origin
+    if openclaw_id:
+        entry["openclaw_id"] = openclaw_id
+    return entry
+
+
+def _http_row(
+    name: str,
+    live: Mapping[str, Any],
+    *,
+    origin: str = PROVENANCE,
+    openclaw_id: str | None = None,
+) -> dict[str, Any]:
     """The manifest row of a remote server, or a refusal when its token is a literal."""
     from nexgen_core.renderer_cli import LITERAL_SECRET
 
@@ -53,26 +74,32 @@ def _http_row(name: str, live: Mapping[str, Any]) -> dict[str, Any]:
     url = live.get("url")
     if not isinstance(url, str) or not url:
         raise ValueError(t("'{name}' has no usable URL to adopt", name=name))
-    return build_entry(
+    return _stamped(build_entry(
         name=name, targets=list(CLIS), command=None, args=None, url=url,
         auth_env=auth_env if isinstance(auth_env, str) else None,
         env=None, lazy=True, readonly=False,
-    )
+    ), origin, openclaw_id or name)
 
 
-def _stdio_row(name: str, live: Mapping[str, Any]) -> dict[str, Any]:
+def _stdio_row(
+    name: str,
+    live: Mapping[str, Any],
+    *,
+    origin: str = PROVENANCE,
+    openclaw_id: str | None = None,
+) -> dict[str, Any]:
     """The manifest row of a locally launched server, its shapes checked by the writer."""
     command = live.get("command")
     args = live.get("args")
     env = live.get("env")
-    return build_entry(
+    return _stamped(build_entry(
         name=name, targets=list(CLIS),
         command=command if isinstance(command, str) else None,
         args=args if isinstance(args, list) else None,
         url=None, auth_env=None,
         env=env if isinstance(env, Mapping) else None,
         lazy=True, readonly=False,
-    )
+    ), origin, openclaw_id or name)
 
 
 def _refuse_what_the_inverse_would_drop(server: UnmanagedServer) -> None:
@@ -93,7 +120,12 @@ def _refuse_what_the_inverse_would_drop(server: UnmanagedServer) -> None:
         ))
 
 
-def manifest_entry(server: UnmanagedServer) -> dict[str, Any]:
+def manifest_entry(
+    server: UnmanagedServer,
+    *,
+    origin: str = PROVENANCE,
+    openclaw_id: str | None = None,
+) -> dict[str, Any]:
     """The canonical row for one live entry, in the renderer's own vocabulary.
 
     The translation is the renderer's inverse, not a second dialect: a live
@@ -106,9 +138,10 @@ def manifest_entry(server: UnmanagedServer) -> dict[str, Any]:
 
     _refuse_what_the_inverse_would_drop(server)
     live = _adopt_entry("openclaw", dict(server.spec))
+    effective_id = openclaw_id or getattr(server, "openclaw_id", None) or getattr(server, "plugin_id", None) or server.name
     if live.get("transport") == "http":
-        return _http_row(server.name, live)
-    return _stdio_row(server.name, live)
+        return _http_row(server.name, live, origin=origin, openclaw_id=effective_id)
+    return _stdio_row(server.name, live, origin=origin, openclaw_id=effective_id)
 
 
 def adopt_server(server: UnmanagedServer, *, home=None, vault_data=None) -> ServerAdoption:

@@ -49,6 +49,10 @@ That is a decision taken once, at setup; what happens when the chosen plan runs 
 Each agent gets an `AGENTS.md` in the engine's language: who it is, what it does and does not do, when to
 hand work to another agent with `sessions_send`, that the Council is called with `nexgen council`, and that
 the Vault is read and written with the `vault-library__*` tools.
+Every manual also carries the one write path in so many words: a note is created or changed with
+`create_note`, `append_note`, `update_section` or `update_note`, never with `git commit` or `git push` in the
+Vault's copy and never by editing its files by hand, because on a server that copy is read-only and a write
+made there stays invisible to the other machines.
 The code agent also gets `CLAUDE.md` and `.claude/settings.json`, so Claude Code behaves the same way when it
 is reached directly.
 
@@ -666,7 +670,7 @@ service, declares the module and runs the doctor. What the plan promises is what
 both are computed by the same pure function. On a Windows machine it also ends by pointing the app at this
 gateway and offering the request the app leaves, in the paragraph that follows the summary the doctor prints.
 
-`nexgen openclaw adopt [--skills] [--mcp] [--dry-run] [--yes]` takes what was created inside OpenClaw and
+`nexgen openclaw adopt [--skills] [--mcp] [--dry-run] [--yes] [--auto] [--json]` takes what was created inside OpenClaw and
 makes it canonical: the skills the Skill Workshop learned, the servers in `mcp.servers` that no manifest
 declares, and ClawHub plugins wrapping MCP servers (detected from plugin manifests `openclaw.plugin.json`,
 `package.json`, bundled `mcp.json`/`.mcp.json`, or catalog descriptions matching official/hosted MCP services).
@@ -675,11 +679,47 @@ preserved as references. Installed plugins that are not MCP wrappers (such as ch
 providers) are omitted from adoption with a one-line explanatory note. It prints the plan with every check before writing anything. A name already taken is a refusal and
 never an overwrite, a plaintext credential blocks, and a skill holding a script, an executable or an unknown
 file is a question: `--yes` adopts only what the checks cleared and names what it left. An adopted skill is
-copied into `03-INFRA/agent-universal-layer/skills/<name>/`, declared `origin: vault` in the skills manifest,
-built into every view and archived in the Workshop through `openclaw skills workshop archive`, so OpenClaw
-loads the canonical copy like every other CLI; an adopted server enters the MCP manifest lazily, through the
-same writer `nexgen mcp add` uses. The doctor says how much is still waiting and adopts nothing by itself:
-adoption is a person's act.
+copied into `03-INFRA/agent-universal-layer/skills/<name>/`, declared `origin: vault` with `openclaw_id` in the
+skills manifest, built into every view and archived in the Workshop through `openclaw skills workshop archive`, so
+OpenClaw loads the canonical copy like every other CLI; an adopted server enters the MCP manifest lazily, through
+the same writer `nexgen mcp add` uses, stamped with `origin: openclaw` and its OpenClaw identifier.
+Canonical resources without a provenance mark are never removed by adoption.
+
+The mark differs per manifest because the key `origin` already means something else in the skills one: there it
+names where the bytes are materialized from (`engine`, `vault`, `github`, `installer`, `upstream`), and an adopted
+skill is a vault skill -- the copy lives in the Vault like any other. Its OpenClaw provenance is the `openclaw_id`
+it carries, and the skill's own `SKILL.md` frontmatter records the same pair; the MCP manifest had no such key, so
+`origin: openclaw` is the mark there. Either way, an entry without a mark belongs to the library and this
+mechanism never touches it.
+
+When executed with `--auto`, adoption runs non-interactively: resources verified as SAFE enter the canonical library
+immediately, while everything else -- a resource that needs a person and one the checks refuse -- stays outside and
+is recorded in machine-local state (`openclaw-adopt-state.json`, under the engine's state directory, never the Vault
+and never the repository) with the reason, for the plugin to show. In addition, `--auto` tracks absences for MCP
+servers: a server adopted from OpenClaw and absent from it for two consecutive passes is retired from the manifest,
+listed under `retired_servers`, and unmounted by the next sync. A single missed pass, a broken configuration or an
+unreachable gateway removes nothing and says so, and a retirement whose write fails is reported as a failure, never
+as an exit.
+
+Skills are admitted by the same pass and are **not** retired by absence, because absence there means nothing: an
+adopted skill was copied into the Vault and its Workshop original archived, which is exactly what adoption does, so
+a poll of the Workshop would find it gone and delete the copy the library had just taken in. A skill leaves the
+library when its manifest entry is removed, which is a person's edit and not a side effect of a timer. A server is
+different: `openclaw.json` is the person's file, its `mcp.servers` table is the honest record of what OpenClaw has,
+and the engine never writes that table. A name already listed under `retired_servers:` is not adopted back: remove
+it from that list first, the same rule `nexgen mcp add` states, so bringing a server back stays a decided act.
+
+The OpenClaw `nexgen` plugin registers `/adopt` to run a pass from chat and to show what is waiting, and the
+`doctor` prints one line for the last pass: what entered, what left, and what waits for a person.
+
+The pass runs from three places, all of them in the plugin that OpenClaw already loads: `/adopt` in chat, the
+`skill_changed` hook (the only lifecycle event OpenClaw announces for what the Workshop and ClawHub create), and
+the gateway's own clock -- one bounded pass every 30 minutes while the gateway is up, the same cadence as the
+engine's guard cycle, armed on `gateway_start` and cleared on `gateway_stop`, one pass at a time. That is what
+covers a removed MCP server: OpenClaw's hook catalog (`docs/plugins/hooks/reference.md` in the installed release)
+has no equivalent for `mcp.servers`, so the tick is the pass that notices. A tick that could not start the engine
+writes the sentence to the gateway log; a skill change stays quiet, so the Workshop's own notice reads alone.
+
 
 `nexgen openclaw package [--json]` builds the plugin's npm tarball in the engine's state folder and prints
 the file and its sha256, which is the pair an install on another gateway is checked against. It installs

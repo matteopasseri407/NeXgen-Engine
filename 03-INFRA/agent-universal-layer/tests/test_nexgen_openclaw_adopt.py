@@ -238,8 +238,11 @@ def test_a_yes_run_adopts_both_and_archives_the_workshop_copy(a_machine):
 
     assert code == 0
     manifest = a_machine.manifest.read_text(encoding="utf-8")
-    assert "  release-notes:\n    origin: vault\n" in manifest
-    assert "posted-by-hand" in declared_servers(a_machine)
+    assert "  release-notes:\n    origin: vault\n    openclaw_id: release-notes\n" in manifest
+    servers = declared_servers(a_machine)
+    assert "posted-by-hand" in servers
+    assert servers["posted-by-hand"]["origin"] == "openclaw"
+    assert servers["posted-by-hand"]["openclaw_id"] == "posted-by-hand"
     for target in ("claude", "codex", "antigravity", "opencode"):
         assert (a_machine.home / {"claude": ".claude", "codex": ".codex",
                                  "antigravity": ".gemini/antigravity-cli", "opencode": ".opencode"}[target]

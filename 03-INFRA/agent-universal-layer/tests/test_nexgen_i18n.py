@@ -92,6 +92,29 @@ def test_every_catalog_entry_is_a_string_pair():
             assert isinstance(translation, str) and translation, f"{language}: '{source}' senza traduzione"
 
 
+def test_no_catalog_declares_the_same_key_twice():
+    """Una chiave ripetuta nel sorgente è invisibile a runtime: il dizionario tiene l'ultima.
+
+    Ruff la segnala (F601) solo quando gira, e una traduzione duplicata cambia in
+    silenzio il testo di un comando che nessuno stava toccando. Il catalogo deve
+    rompersi qui, dove si legge il sorgente.
+    """
+    import ast
+
+    locales = Path(__file__).resolve().parents[2] / "scripts" / "nexgen_core" / "locales"
+    for file in sorted(locales.glob("*.py")):
+        tree = ast.parse(file.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Dict):
+                continue
+            counts: dict[str, int] = {}
+            for key in node.keys:
+                if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                    counts[key.value] = counts.get(key.value, 0) + 1
+            repeated = sorted(key for key, count in counts.items() if count > 1)
+            assert not repeated, f"{file.name}: chiave ripetuta: {repeated}"
+
+
 def test_no_translation_invents_a_field_the_source_lacks():
     """I campi di una traduzione devono esistere nella sorgente.
 

@@ -47,7 +47,8 @@ def retire(
     if record.get("retired") and not copy.exists() and not _branch_exists(repo, branch):
         return {"unit": name, "retired": False, "reason": "unità già ritirata, niente è rimasto sul disco"}
     kept = _keep_history(task_id, name, record, repo, commits, archive)
-    notes = _release_local(task_id, name, record)
+    notes = _close_tab(task_id, name)
+    notes += _release_local(task_id, name, record)
     notes += _dispose(record, copy)
     _remove_copy(repo, copy, name)
     _delete_branch(repo, branch, notes)
@@ -130,6 +131,21 @@ def _has_commit(repo: Path, sha: str) -> bool:
     if not repo.is_dir():
         return False
     return bool(git(repo, "rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}", check=False).strip())
+
+
+def _close_tab(task_id: str, unit: str) -> list[str]:
+    """Close the tab that ran this unit, before its copy goes.
+
+    A published or retired unit must not leave a window of its own behind: the
+    supervisor found the tab of a unit published in the morning still open hours
+    later. Only a tab the journal says was opened and never closed is looked for,
+    so a unit that never had one costs no process-table read.
+    """
+    from . import supervision_windows as windows  # noqa: PLC0415  the window layer reads this module's state
+
+    if not windows.unit_tab_open(task_id, unit):
+        return []
+    return [windows.close_unit_tab(task_id, unit)["line"]]
 
 
 def _release_local(task_id: str, unit: str, record: dict) -> list[str]:

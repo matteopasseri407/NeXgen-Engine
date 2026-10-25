@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from nexgen_core import roles
+from nexgen_core import roles, server_sudo
 from nexgen_core.openclaw_service import RunResult
 
 
@@ -24,6 +24,8 @@ def test_install_ps1_contains_uv_user_fallback_and_role() -> None:
     assert "UV_NO_CONFIG" in content
     assert "uv python" in content
     assert "-Role" in content or "Role" in content
+    assert "Join" in content
+    assert "Force" in content
 
 
 def test_standalone_role_sets_up_local(tmp_path: Path) -> None:
@@ -67,6 +69,11 @@ def test_server_role_invokes_setup_server(tmp_path: Path) -> None:
         setup_fn=fake_setup,
         align_fn=fake_align,
         problems_fn=fake_problems,
+        # The role also puts the agents' sudo policy in force on Linux; this test
+        # is about the setup call, so the policy step answers "done" through its seam.
+        sudoers_fn=lambda home, out: server_sudo.INSTALLED,
+        # Linux is named so the sudo-policy step runs wherever this test does.
+        platform="linux",
         out=log_messages.append,
     )
     assert code == 0
@@ -95,7 +102,9 @@ def test_node_role_connects_service_and_prints_squad_instruction(tmp_path: Path)
     assert code == 0
     # Verifies runner called connect with --target-file
     assert fake_runner.called
-    cmd = fake_runner.call_args_list[0][0][0]
+    connect_calls = [c[0][0] for c in fake_runner.call_args_list if c[0] and c[0][0][:2] == ["openclaw", "connect"]]
+    assert connect_calls, f"Expected openclaw connect call, got {fake_runner.call_args_list}"
+    cmd = connect_calls[0]
     assert cmd[0:4] == ["openclaw", "connect", "--service", "--session-host"]
     assert "--target-file" in cmd
 
@@ -108,12 +117,15 @@ def test_node_role_connects_service_and_prints_squad_instruction(tmp_path: Path)
 def test_node_role_without_target_shows_join_instructions(tmp_path: Path) -> None:
     log_messages = []
     fake_align = MagicMock(return_value=(True, "aligned"))
+    clean_status = '{"service": {"loaded": false, "command": null, "runtime": {"status": "stopped"}}}'
+    fake_runner = MagicMock(return_value=RunResult(0, clean_status, ""))
 
     code = roles.run_node_role(
         root=tmp_path,
         home=tmp_path / "home",
         target=None,
         node_name="test-node",
+        runner=fake_runner,
         align_fn=fake_align,
         out=log_messages.append,
     )
@@ -139,10 +151,14 @@ def test_node_role_default_timeout_is_300s(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("nexgen_core.openclaw.node_attach.wait_for_node_connection", fake_wait)
     monkeypatch.setattr("nexgen_core.openclaw.node_attach.connect_node_service", lambda *args, **kwargs: True)
 
+    clean_status = '{"service": {"loaded": false, "command": null, "runtime": {"status": "stopped"}}}'
+    fake_runner = MagicMock(return_value=RunResult(0, clean_status, ""))
+
     code = roles.run_node_role(
         root=tmp_path,
         home=tmp_path / "home",
         target="https://gateway.tailnet:18789/j/sample-join-code-123",
+        runner=fake_runner,
         align_fn=lambda: (True, "ok"),
         out=lambda _: None,
     )

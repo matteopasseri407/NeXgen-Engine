@@ -42,11 +42,23 @@ from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.doctor_install import check_config, check_declaration, check_installed
 from nexgen_core.openclaw.evidence import check_evidence
 from nexgen_core.openclaw.governor import check_fallbacks
-from nexgen_core.openclaw.model_checks import check_agent_models, check_cage, check_ollama_latest
+from nexgen_core.openclaw.model_checks import (
+    check_agent_models,
+    check_cage,
+    check_model_overrides,
+    check_ollama_latest,
+)
 from nexgen_core.openclaw.pin import pinned_version, required_node_version
 from nexgen_core.openclaw.profile import PENDING_TOKEN
 from nexgen_core.openclaw.server_gateway import exposure
-from nexgen_core.paths import is_machine_home, mcp_manifest, openclaw_config, resolve_home, resolve_vault_data
+from nexgen_core.paths import (
+    is_machine_home,
+    mcp_manifest,
+    openclaw_config,
+    resolve_home,
+    resolve_state_dir,
+    resolve_vault_data,
+)
 from nexgen_core.report import CheckOutcome, Severity
 
 
@@ -222,6 +234,7 @@ def _config_outcomes(
         doctor_config.check_mcp_lazy(config),
         doctor_mcp.check_mcp_secret_url(config, manifest_p, env or os.environ),
         check_agent_models(config, snapshot),
+        check_model_overrides(config),
         background.report(config),
         observation.report(config, path, home_dir, platform),
         check_fallbacks(config, policy),
@@ -256,29 +269,26 @@ def _speaking_snapshot(
     detected: Detection | None,
     *,
     declared: bool,
-    app_gateway: companion.Companion,
     home_dir: Path,
     values: Mapping[str, str],
     system: str,
     engine_root: Path | None,
     vault_data: Path | None,
     wsl_distributions: Callable[[], list[str]] | None,
-) -> Detection | None:
-    """The snapshot, or None when this machine has nothing to say about OpenClaw.
-
-    Two reasons to speak, and the cheap one is asked first: the module is
-    declared or a configuration exists, and the Windows app's own gateway. An
-    app that is installed and has no gateway here says nothing, and a machine
-    that says nothing pays for no probe.
-    """
+) -> tuple[companion.Companion, Detection | None]:
+    """The companion probe and snapshot, or None when this machine has nothing to say."""
+    app_gateway = detected.companion if detected is not None else companion.probe(
+        home_dir, values, system, wsl_distributions,
+    )
     if detected is not None:
-        return detected
+        return app_gateway, detected
     if not declared and not _has_trace(home_dir, values) and app_gateway.situation(False) == companion.NONE:
-        return None
-    return detect(
+        return app_gateway, None
+    return app_gateway, detect(
         home=home_dir, env=values, engine_root=engine_root, vault_data=vault_data, platform=system,
         wsl_distributions=wsl_distributions,
     )
+
 
 def collect(
     detected: Detection | None = None,
@@ -306,11 +316,8 @@ def collect(
     home_dir = resolve_home(home)
     system = platform or sys.platform
     declared = _declared(vault_data, home_dir)
-    app_gateway = detected.companion if detected is not None else companion.probe(
-        home_dir, values, system, wsl_distributions,
-    )
-    snapshot = _speaking_snapshot(
-        detected, declared=declared, app_gateway=app_gateway, home_dir=home_dir, values=values,
+    app_gateway, snapshot = _speaking_snapshot(
+        detected, declared=declared, home_dir=home_dir, values=values,
         system=system, engine_root=engine_root, vault_data=vault_data, wsl_distributions=wsl_distributions,
     )
     if snapshot is None:
@@ -337,6 +344,8 @@ def collect(
     if app_outcome is not None:
         outcomes.append(app_outcome)
     outcomes.extend(_host_outcomes(snapshot, engine_root, values, system, node_version, linger_dir))
+    from nexgen_core.openclaw.adopt_auto import check_adopt_doctor
+    outcomes.append(check_adopt_doctor(resolve_state_dir(home_dir)))
     return outcomes
 
 

@@ -75,6 +75,8 @@ def test_a_live_stdio_server_becomes_a_lazy_row_for_every_cli():
     assert entry["lazy"] is True
     assert entry["tier"] == "core"
     assert entry["targets"] == list(CLIS)
+    assert entry["origin"] == "openclaw"
+    assert entry["openclaw_id"] == "github"
 
 
 def test_a_live_http_server_keeps_a_reference_and_never_the_token():
@@ -118,6 +120,8 @@ def test_adopting_a_server_declares_it_lazily_and_touches_nothing_else(a_vault):
     servers = load_mcp_manifest(a_vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml")["servers"]
     assert sorted(servers) == ["github", "lazy-mcp"]
     assert servers["github"]["exposure"] == "lazy"
+    assert servers["github"]["origin"] == "openclaw"
+    assert servers["github"]["openclaw_id"] == "github"
     assert servers["github"]["targets"] == list(CLIS)
     assert servers["lazy-mcp"] == A_MANIFEST["servers"]["lazy-mcp"]
     assert (a_vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml").read_text("utf-8").count("servers:") == 1

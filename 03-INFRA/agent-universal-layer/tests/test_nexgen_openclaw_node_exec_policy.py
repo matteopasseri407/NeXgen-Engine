@@ -30,6 +30,11 @@ class Recorder:
         return RunResult(self.returncode, "", "boom" if self.returncode else "")
 
 
+def _finished(output: str) -> bool:
+    """Whether the role reached its closing summary for this test's node."""
+    return "node: test-node" in output
+
+
 def role_inputs(tmp_path: Path) -> dict:
     """Everything `run_node_role` needs that is not the option under test."""
     return {
@@ -38,7 +43,7 @@ def role_inputs(tmp_path: Path) -> dict:
         "target": "https://gateway.tailnet:18789/j/sample-join-code-123",
         "node_name": "test-node",
         "align_fn": lambda: (True, "aligned"),
-        "runner": lambda cmd: RunResult(0, '{"connected": true}\n', ""),
+        "runner": lambda cmd, timeout: RunResult(0, '{"connected": true}\n', ""),
         "wait_probe_fn": lambda: True,
     }
 
@@ -78,7 +83,7 @@ def test_the_role_aligns_the_policy_after_attaching_and_says_so(tmp_path):
     assert len(recorder.calls) == 1
     output = "\n".join(said)
     assert "no longer stops on an exec approval" in output
-    assert "Node machine ready." in output
+    assert _finished(output)
 
 
 def test_without_the_option_nothing_on_the_node_is_changed(tmp_path):
@@ -90,7 +95,7 @@ def test_without_the_option_nothing_on_the_node_is_changed(tmp_path):
     assert code == 0
     assert recorder.calls == []
     assert "exec approval" not in "\n".join(said)
-    assert "Node machine ready." in "\n".join(said)
+    assert _finished("\n".join(said))
 
 
 def test_a_refused_alignment_fails_the_role_instead_of_pretending(tmp_path):
@@ -103,7 +108,7 @@ def test_a_refused_alignment_fails_the_role_instead_of_pretending(tmp_path):
     assert code == 1
     output = "\n".join(said)
     assert "still stop on a prompt nobody answers" in output
-    assert "Node machine ready." not in output
+    assert not _finished(output)
 
 
 def test_an_unknown_policy_is_refused_before_anything_runs(tmp_path):

@@ -16,6 +16,7 @@ sh install.sh --role server
 **What it does:**
 - Verifies system requirements and obtains Python 3.11+ via user-mode `uv` if missing.
 - Refuses unsafe headless configurations (e.g. passwordless `sudo` or user in `docker` group).
+- Writes the agents' sudo policy to `/etc/sudoers.d/nexgen-agents`: fifteen named commands (container logs and restarts, the compose file in your home, `systemctl` status and the two restarts, `journalctl`, `apt`), never root, and never wider than that list. `visudo -cf` reads the file before anything privileged happens. Without passwordless `sudo` it prints the file and the one `sudo install` command, because an unattended install that stops for a password is an install that hangs.
 - Enables systemd user lingering (`loginctl enable-linger`).
 - Configures OpenClaw gateway on loopback (`127.0.0.1:18789`) and exposes it securely across your tailnet via Tailscale Serve over HTTPS. No external ports are opened.
 - Hardens state directory permissions (`chmod 0700` / clears group and world write).
@@ -23,6 +24,7 @@ sh install.sh --role server
 - Generates or updates `$OPENCLAW_STATE_DIR/.env` (`~/.openclaw/.env`, permissions `0600`), preserving existing user-defined keys and adding only missing variables referenced by configuration and mounted MCP servers. Never logs secret values.
 - Starts the gateway as a background user service.
 - Applies squad configuration (`squad.yaml`) and registers model provider API keys via standard input.
+- Treats its checkout of the Vault as read-only: the server role is recorded on the machine, `nexgen pull` only fast-forwards that clone, anything local is parked on a `quarantine/diverged-*` branch, and `vault-push` refuses to publish from it. Notes are written with the `vault-library`, which owns the worktree that publishes.
 
 ---
 
@@ -69,6 +71,40 @@ The command then fails with `exec denied: request-failed`, which says nothing ab
 
 Without the flag nothing is changed: those approvals belong to the person, and a node whose approvals are meant to stay strict must keep them.
 `nexgen openclaw doctor --nodes`, run on the gateway, reads them instead of writing them, and warns when the node is stricter than what an agent asks for; the two commands are the same body, from opposite sides.
+
+#### Hai già NeXgen su questo PC?
+
+Se questo computer ha già NeXgen installato (ad esempio come standalone o con un gateway OpenClaw locale):
+
+1. **Prima guarda, poi tocca (`--check` / `-Check`):**
+   Su Linux / macOS:
+   ```bash
+   sh install.sh --role node --check
+   ```
+   Su Windows (PowerShell):
+   ```powershell
+   .\install.ps1 -Role node -Check
+   ```
+   Stampa il piano dettagliato riga per riga senza scrivere nulla: versione attuale e in arrivo del motore, presenza di gateway o attività pianificate, stato del nodo, cosa verrà fermato e cosa rimarrà invariato.
+
+2. **Passaggio a nodo:**
+   Crea un codice di aggancio monouso sul server (`openclaw devices join-code`), poi esegui sul PC:
+   Su Linux / macOS:
+   ```bash
+   sh install.sh --role node --join <join-url>
+   ```
+   Su Windows (PowerShell):
+   ```powershell
+   .\install.ps1 -Role node -Join <join-url>
+   ```
+   (In alternativa puoi impostare la variabile d'ambiente `NEXGEN_JOIN_URL`.)
+
+**Cosa aspettarsi:**
+- **Aggiornamento motore:** il PC viene prima aggiornato all'ultima versione del motore tramite il canale esistente (`docs/upgrade.md`), poi sincronizzato; mai una seconda copia del motore accanto alla prima.
+- **Gateway locale fermato in sicurezza:** se era attivo un gateway OpenClaw locale, viene fermato e disattivato all'avvio con i comandi documentati (`openclaw gateway stop` e disinstallazione del servizio; le vecchie attività pianificate di Windows o file `.vbs` del gateway vengono rimossi).
+- **Stato preservato intatto:** la cartella `~/.openclaw` (configurazione, cronologia sessioni, memoria), agenti, skill e MCP rimangono intatti. Nessuna cancellazione di cartelle né comandi distruttivi.
+- **Rilanciabile e reversibile:** se rilanciato con lo stesso gateway, rileva che il PC è già nodo (riavviando il servizio con `openclaw node start` se fermo) ed esegue solo il sync. Per tornare a standalone con il gateway locale riattivato, basta eseguire `sh install.sh --role standalone` / `.\install.ps1 -Role standalone`.
+- **Riepilogo finale:** una schermata con gateway collegato, nome del nodo, servizi fermati, dati conservati e il frammento da inserire in `squad.yaml` sul server.
 
 ---
 

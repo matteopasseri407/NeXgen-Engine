@@ -89,6 +89,7 @@ def test_the_deposit_lands_in_the_new_folder_with_every_job(tmp_path):
         "index.mjs", "guardrail.mjs", "briefing.mjs", "checkpoint.mjs", "quota.mjs", "spend.mjs",
         "workshop.mjs", "governor.mjs", "engine-run.mjs", "council.mjs", "sup.mjs",
         "sup-tools.mjs", "evidence.mjs", "engine-config.mjs", "session.mjs",
+        "adopt.mjs",
     ):
         assert (plugin_dir(home) / name).read_bytes() == (PLUGIN_SOURCE / name).read_bytes(), name
 

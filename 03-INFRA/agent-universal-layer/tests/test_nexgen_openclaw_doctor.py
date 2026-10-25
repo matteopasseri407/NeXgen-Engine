@@ -436,6 +436,46 @@ def test_an_agent_on_a_subscription_this_machine_lacks_is_a_warning(tmp_path):
     assert "anthropic/claude-opus-5-5" in agent_models.message
 
 
+def test_a_model_map_with_no_policy_is_named_as_the_only_models_an_agent_may_pick(tmp_path):
+    """`agents.defaults.models` doubles as the override allowlist without a policy."""
+    config = clean_config()
+    config["agents"]["defaults"]["models"] = {
+        "anthropic/claude-opus-5-5": {"alias": "opus"},
+        "openai/gpt-6-luna": {},
+    }
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, config))
+    overrides = by_id(outcomes)["openclaw.model_overrides"]
+    assert overrides.severity == Severity.WARN
+    assert "agents.defaults.models" in overrides.message
+    assert "anthropic/claude-opus-5-5" in overrides.message
+    assert "agents.defaults.modelPolicy.allow" in (overrides.action or "")
+
+
+def test_an_empty_model_map_is_not_an_allowlist(tmp_path):
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()))
+
+    assert by_id(outcomes)["openclaw.model_overrides"].severity == Severity.OK
+
+
+def test_an_explicit_policy_lifts_the_legacy_list(tmp_path):
+    config = clean_config()
+    config["agents"]["defaults"]["models"] = {"anthropic/claude-opus-5-5": {}}
+    config["agents"]["defaults"]["modelPolicy"] = {"allow": ["anthropic/*", "openai/*"]}
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, config))
+
+    assert by_id(outcomes)["openclaw.model_overrides"].severity == Severity.OK
+
+
+def test_an_empty_policy_is_still_a_policy(tmp_path):
+    """`modelPolicy: {}` is the documented way to keep the map from restricting anything."""
+    config = clean_config()
+    config["agents"]["defaults"]["models"] = {"anthropic/claude-opus-5-5": {}}
+    config["agents"]["defaults"]["modelPolicy"] = {}
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, config))
+
+    assert by_id(outcomes)["openclaw.model_overrides"].severity == Severity.OK
+
+
 def test_a_stopped_gateway_is_only_information(tmp_path):
     outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()))
     listening = by_id(outcomes)["openclaw.gateway.listening"]

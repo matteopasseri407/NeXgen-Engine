@@ -359,6 +359,7 @@ MESSAGES: dict[str, str] = {
     'OpenClaw configuration not present: nothing rendered for it': 'Configurazione OpenClaw assente: non ho scritto nulla per lei',
     'OpenClaw instructions at {path} left untouched ({error})': 'Istruzioni OpenClaw in {path} lasciate come sono ({error})',
     "OpenClaw instructions at {path}: the managed block's markers are incomplete, left untouched": 'Istruzioni OpenClaw in {path}: i marcatori del blocco gestito sono incompleti, ho lasciato tutto come sta',
+    "OpenClaw instructions at {path}: the agents sharing this workspace declare different AGENTS.md files, so the manual was left as it is": "Istruzioni OpenClaw in {path}: gli agenti che condividono questa cartella dichiarano AGENTS.md diversi, quindi ho lasciato il manuale com'era",
     'OpenClaw instructions at {path} left untouched: safety backup failed ({error})': 'Istruzioni OpenClaw in {path} lasciate come sono: la copia di sicurezza non e\' riuscita ({error})',
     'OpenClaw instructions aligned in {path}': 'Istruzioni OpenClaw allineate in {path}',
     "Could not read OpenClaw's instructions at {path}: {error}": 'Non ho potuto leggere le istruzioni OpenClaw in {path}: {error}',
@@ -389,6 +390,15 @@ MESSAGES: dict[str, str] = {
     'the clone looks incomplete: double-check you cloned the whole repository': 'il clone sembra incompleto: ricontrolla di aver clonato tutto il repository',
     '{count} commands installed in ~/.local/bin': '{count} comandi installati in ~/.local/bin',
     'commands not installed ({error})': 'comandi non installati ({error})',
+    "The agents' sudo policy was not installed: visudo refuses this file ({error}).": "La policy sudo degli agenti non è stata installata: visudo rifiuta questo file ({error}).",
+    "This install has no sudo without a password, so the agents' sudo policy was not installed.": "Questa installazione non ha sudo senza password, quindi la policy sudo degli agenti non è stata installata.",
+    'The file is written and checked at {path}. As an admin, run this one command:': 'Il file è scritto e controllato in {path}. Come amministratore lancia questo unico comando:',
+    'The file says:': 'Il file dice:',
+    "The agents' sudo policy is already in force at {path}: nothing to change.": "La policy sudo degli agenti è già in vigore in {path}: non c'è niente da cambiare.",
+    "The agents' sudo policy was not installed ({error}).": "La policy sudo degli agenti non è stata installata ({error}).",
+    "The agents' sudo policy is in force at {path}: {count} commands, and nothing else.": "La policy sudo degli agenti è in vigore in {path}: {count} comandi, e nient'altro.",
+    'exit code {code}': 'codice di uscita {code}',
+    "The gateway is configured, but the agents' sudo policy is not in force: see the line above.": "Il gateway è configurato, ma la policy sudo degli agenti non è in vigore: guarda la riga qui sopra.",
     'How many CLIs will you use?': 'Quante CLI userai?',
     'How many machines do you want kept in sync?': 'Quante macchine vuoi tenere allineate?',
     'Where do the services live?': 'Dove vivono i servizi?',
@@ -1594,6 +1604,14 @@ MESSAGES: dict[str, str] = {
         "Fai il login dell'abbonamento, oppure lancia 'nexgen openclaw plan' per vedere il modello che sceglierebbe il motore.",
     "Every agent uses a model this machine can reach.":
         "Ogni agente usa un modello che questa macchina raggiunge.",
+    "The model override policy is explicit, so the model map does not restrict it.":
+        "La policy di scelta del modello è esplicita, quindi la mappa dei modelli non la limita.",
+    "No model override allowlist is in force: any model this machine reaches can be chosen.":
+        "Non c'è nessuna lista bianca attiva: si può scegliere qualsiasi modello che questa macchina raggiunge.",
+    "`agents.defaults.models` carries no `agents.defaults.modelPolicy`, so OpenClaw treats its {count} entries as the only models an agent may switch to: {refs}":
+        "`agents.defaults.models` non ha nessuna `agents.defaults.modelPolicy`, quindi OpenClaw tratta le sue {count} voci come gli unici modelli a cui un agente può passare: {refs}",
+    "Write `agents.defaults.modelPolicy.allow` with the exact refs or the `provider/*` entries a person may choose, or an empty `modelPolicy: {}` to lift the list.":
+        "Scrivi `agents.defaults.modelPolicy.allow` con i riferimenti esatti o le voci `provider/*` che una persona può scegliere, oppure una `modelPolicy: {}` vuota per togliere la lista.",
     "No background job runs on a local model.":
         "Nessun lavoro di fondo gira su un modello locale.",
     "These background jobs would run on the local model {models}: {jobs}.":
@@ -2034,8 +2052,8 @@ MESSAGES: dict[str, str] = {
         "Salto il manuale di {agent}: {error}",
     "Skipping {path}: it cannot be read ({error}).":
         "Salto {path}: non riesco a leggerlo ({error}).",
-    "Skipping {path}: it carries no engine mark, so it is yours and stays as it is.":
-        "Salto {path}: non porta il segno del motore, quindi è tuo e resta com'è.",
+    "Skipping {path}: the engine did not write it, so it is yours and stays as it is.":
+        "Salto {path}: non l'ha scritto il motore, quindi è tuo e resta com'è.",
     "The squad names an instructions file that cannot be read: {path}":
         "La squadra indica un file di istruzioni che non riesco a leggere: {path}",
     "The squad names {agent} as the default agent but does not declare it: no default was written.":
@@ -2278,4 +2296,74 @@ MESSAGES: dict[str, str] = {
         "Avviso: la shell è ritirata a favore di OpenClaw TUI",
     "The interactive shell has been retired: use 'openclaw tui' or the OpenClaw Dashboard instead.":
         "La shell interattiva è stata ritirata: usa 'openclaw tui' o la Dashboard di OpenClaw.",
+    "Adopt safe resources and retire absent ones without asking":
+        "Adotta risorse sicure e ritira quelle assenti senza chiedere",
+    "No auto-adoption pass recorded yet.":
+        "Nessun passaggio di adozione automatica ancora registrato.",
+    "Last adoption pass: {entered} entered, {exited} exited, {pending} waiting for review.":
+        "Ultimo passaggio di adozione: {entered} entrate, {exited} uscite, {pending} in attesa di revisione.",
+    "Run 'nexgen openclaw adopt' to review and decide on pending resources.":
+        "Lancia 'nexgen openclaw adopt' per revisionare e decidere sulle risorse in attesa.",
+    "openclaw.json is not readable ({error})":
+        "openclaw.json non è leggibile ({error})",
+    "OpenClaw gateway RPC unreachable ({error})":
+        "Gateway RPC di OpenClaw non raggiungibile ({error})",
+    "OpenClaw config unavailable ({error})":
+        "Configurazione di OpenClaw non disponibile ({error})",
+    "OpenClaw configuration could not be read: {error}. Nothing adopted or removed.":
+        "Impossibile leggere la configurazione di OpenClaw: {error}. Niente adottato o rimosso.",
+    "Canonical library manifest could not be read; skipping auto pass.":
+        "Impossibile leggere il manifest della libreria canonica; salto il passaggio automatico.",
+    "Everything is aligned: no new safe items to adopt, nothing absent to retire.":
+        "Tutto allineato: nessun nuovo elemento sicuro da adottare, nessun elemento assente da ritirare.",
+    "MCP manifest does not exist":
+        "Il manifest MCP non esiste",
+    "cannot read the manifest ({error}); fix it before modifying":
+        "non riesco a leggere il manifest ({error}); sistemalo prima di modificare",
+    "server '{name}' is not declared in servers":
+        "il server '{name}' non è dichiarato nei servers",
+    "server '{name}' is not origin: openclaw: will not remove automatically":
+        "il server '{name}' non ha origin: openclaw: non verrà rimosso automaticamente",
+    "manifest modification failed validation: {error}":
+        "la modifica del manifest non ha superato la convalida: {error}",
+    "server '{name}' retired from MCP manifest":
+        "server '{name}' ritirato dal manifest MCP",
+    "the server role owns this machine, and its notes are written with the vault-library":
+        "questa macchina ha il ruolo server, e le sue note si scrivono col vault-library",
+    "the vault-library here serves {path}, which is another checkout":
+        "il vault-library di questa macchina serve {path}, che è un'altra copia",
+    "Vault clone updated with a fast-forward from {ref}":
+        "Copia del Vault aggiornata con un fast-forward da {ref}",
+    "Vault clone not updated ({detail}): the notes it reads may be stale":
+        "Copia del Vault non aggiornata ({detail}): le note che legge possono essere vecchie",
+    "Nothing local to quarantine":
+        "Non c'è niente di locale da mettere in quarantena",
+    "Local changes could not be recorded on {branch}; nothing was lost and the working tree is unchanged":
+        "Le modifiche locali non sono state registrate su {branch}; non si è perso niente e la cartella di lavoro è com'era",
+    "Local changes are safe on '{branch}', but realigning {target} failed: {error}":
+        "Le modifiche locali sono al sicuro su '{branch}', ma il riallineamento a {target} non è riuscito: {error}",
+    "Local changes parked on quarantine branch '{branch}': notes are written with the vault-library, not with git.":
+        "Modifiche locali messe da parte sul ramo di quarantena '{branch}': le note si scrivono col vault-library, non con git.",
+    "Vault clone read-only ({reason}): there is no remote to pull from":
+        "Copia del Vault in sola lettura ({reason}): non c'è un remoto da cui scaricare",
+    "Vault clone read-only, and it could not be realigned: {message}":
+        "Copia del Vault in sola lettura, e non è stato possibile riallinearla: {message}",
+    "Vault clone read-only ({reason}); no remote is configured":
+        "Copia del Vault in sola lettura; non c'è nessun remoto configurato",
+    "Could not check the read-only vault clone: {message}":
+        "Non ho potuto controllare la copia del Vault in sola lettura: {message}",
+    "Check the connection and the remote, then run 'nexgen doctor' again.":
+        "Controlla la connessione e il remoto, poi lancia di nuovo 'nexgen doctor'.",
+    "Run 'nexgen pull': it parks them on a 'quarantine/diverged-*' branch and realigns the clone.":
+        "Lancia 'nexgen pull': mette le modifiche da parte su un ramo 'quarantine/diverged-*' e riallinea la copia.",
+    "The gateway's vault clone has {count} unpublished change(s): notes are written with the vault-library, not with git.":
+        "Nel clone del gateway ci sono {count} modifiche non pubblicate: le note si scrivono col vault-library, non con git.",
+    "{commits} commit(s) not published, {files} file(s) modified":
+        "{commits} commit non pubblicati, {files} file modificati",
+    "The gateway's vault clone is read-only and aligned; notes are written with the vault-library.":
+        "Il clone del gateway è in sola lettura e allineato; le note si scrivono col vault-library.",
+    "Refusing to publish from this vault clone ({reason}). Notes are written with the vault-library.":
+        "Mi rifiuto di pubblicare da questa copia del Vault ({reason}). Le note si scrivono col vault-library.",
+    "read-only vault clone: the pins are not committed here":
+        "copia del Vault in sola lettura: i pin non vengono committati qui",
 }

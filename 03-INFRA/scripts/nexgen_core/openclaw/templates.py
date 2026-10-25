@@ -361,6 +361,34 @@ _CLAUDE_POINTER = {
     "en": "# CLAUDE.md\n\nThis agent's instructions are in `AGENTS.md`: read them before working.\n",
 }
 
+#: The rule that keeps one write path for the Vault, appended to every manual.
+#: It is one text for every agent because it is one rule: what changes between
+#: agents is what they own, not how the shared memory is written.
+_VAULT_WRITE_RULE = {
+    "it": """
+## Il Vault si scrive da una strada sola
+
+- Per creare o cambiare una nota usi i tool del server MCP `vault-library`:
+  `create_note`, `append_note`, `update_section`, `update_note`.
+- Nella copia del Vault non usi `git commit` e non usi `git push`.
+- Non modifichi i file del Vault direttamente: quella copia è in sola lettura, e
+  una scrittura fatta lì resta invisibile alle altre macchine.
+- Se un tool del Vault risponde con un errore, lo dici alla persona: non aggiri
+  il server MCP scrivendo il file a mano.
+""",
+    "en": """
+## The Vault is written one way only
+
+- To create or change a note, use the `vault-library` MCP server's tools:
+  `create_note`, `append_note`, `update_section`, `update_note`.
+- In the Vault's copy, do not run `git commit` and do not run `git push`.
+- Do not change the Vault's files directly: that copy is read-only, and a write
+  made there stays invisible to the other machines.
+- If a Vault tool answers with an error, tell the person: do not go around the
+  MCP server by editing the file by hand.
+""",
+}
+
 
 def render_workspace(agent: str, lang: str | None = None) -> dict[str, str]:
     """The files one agent's workspace holds, path -> text.
@@ -373,8 +401,23 @@ def render_workspace(agent: str, lang: str | None = None) -> dict[str, str]:
     if name is None:
         raise ValueError(f"unknown agent {agent!r}; expected one of {sorted(AGENTS)}")
     language = _language(lang)
-    files = {"AGENTS.md": _MANUALS[language][name]}
+    files = {"AGENTS.md": _MANUALS[language][name] + _VAULT_WRITE_RULE[language]}
     if name == "capo":
         files["CLAUDE.md"] = _CLAUDE_POINTER[language]
         files[".claude/settings.json"] = json.dumps(CLAUDE_SETTINGS, indent=2) + "\n"
     return files
+
+
+def shipped_manuals(agent: str) -> tuple[str, ...]:
+    """The `AGENTS.md` this engine ships for one agent, in every language it writes.
+
+    All of them, not the language of the run: this is the text an ownership test
+    compares against, and a workspace prepared while the engine spoke another
+    language is still the engine's file. An agent the engine knows no manual for
+    (one a squad declares for itself) has none, and nothing is ever replaced on
+    that account.
+    """
+    name = AGENTS.get(agent)
+    if name is None:
+        return ()
+    return tuple(render_workspace(agent, language)["AGENTS.md"] for language in _MANUALS)
