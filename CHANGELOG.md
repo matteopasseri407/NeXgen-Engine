@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.21.1] - 2026-10-25
+
+### Changed
+
+- The Vault clone on a server is a reader, the agents sudo policy is written by the engine, node transition for PCs already installed, automatic adoption of OpenClaw servers and skills, one write path for the Vault in every agent manual.
+
 ## [2.21.0] - 2026-10-25
 
 ### Changed
