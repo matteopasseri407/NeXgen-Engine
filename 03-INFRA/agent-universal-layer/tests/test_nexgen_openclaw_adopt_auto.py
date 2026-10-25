@@ -320,7 +320,15 @@ def test_doctor_adoption_check_reflects_last_pass_and_warns_on_review(a_machine:
     assert outcome.action is not None
 
 
-def test_cli_adopt_auto_json_output(a_machine: Machine, capsys):
+def test_cli_adopt_auto_json_output(a_machine: Machine, capsys, monkeypatch):
+    # The parser carries no --home: the command reads the environment, so the fixture
+    # has to be the environment. Without this the pass runs against the real home and
+    # the real Vault of whoever runs the suite.
+    monkeypatch.setenv("NEXGEN_HOME", str(a_machine.home))
+    monkeypatch.setenv("AGENT_VAULT_DATA", str(a_machine.vault))
+    monkeypatch.setenv("AGENT_ENGINE_ROOT", str(a_machine.engine))
+    monkeypatch.setenv("AGENT_STATE_DIR", str(a_machine.state))
+
     parser = build_parser()
     args = parser.parse_args(["openclaw", "adopt", "--auto", "--json"])
     cmd_adopt(args)
@@ -331,3 +339,6 @@ def test_cli_adopt_auto_json_output(a_machine: Machine, capsys):
     assert "exited" in payload
     assert "pending_review" in payload
     assert "lines" in payload
+    # It acted on the fixture, not on the machine running the suite.
+    assert "safe-server" in (load_mcp_manifest(a_machine.mcp_manifest).get("servers") or {})
+    assert (a_machine.state / "openclaw-adopt-state.json").is_file()
