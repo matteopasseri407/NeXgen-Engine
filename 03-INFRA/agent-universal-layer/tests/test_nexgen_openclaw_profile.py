@@ -25,7 +25,7 @@ from nexgen_core.openclaw.templates import render_workspace  # noqa: E402 - sys.
 
 BASE_PLUGINS = [
     "browser", "canvas", "device-pair", "document-extract", "file-transfer",
-    "memory-core", "web-readability", "talk-voice", "tts-local-cli",
+    "web-readability", "talk-voice", "tts-local-cli",
 ]
 
 STATE = Path("/state")
