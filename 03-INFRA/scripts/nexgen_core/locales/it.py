@@ -2258,8 +2258,6 @@ MESSAGES: dict[str, str] = {
         "La shell interattiva è stata ritirata: usa 'openclaw tui' o la Dashboard di OpenClaw.",
     "Adopt safe resources and retire absent ones without asking":
         "Adotta risorse sicure e ritira quelle assenti senza chiedere",
-    "Output in JSON format":
-        "Output in formato JSON",
     "No auto-adoption pass recorded yet.":
         "Nessun passaggio di adozione automatica ancora registrato.",
     "Last adoption pass: {entered} entered, {exited} exited, {pending} waiting for review.":
