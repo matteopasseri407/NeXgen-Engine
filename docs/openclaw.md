@@ -55,6 +55,10 @@ Vault's copy and never by editing its files by hand, because on a server that co
 made there stays invisible to the other machines.
 The code agent also gets `CLAUDE.md` and `.claude/settings.json`, so Claude Code behaves the same way when it
 is reached directly.
+A gateway machine that was prepared by hand records its role with `nexgen role set server`: the setup does it
+by itself on `--server`, and without that record the engine cannot tell the machine is the server, so the
+Vault's copy beside it keeps committing in a clone nobody can push from. `nexgen role` prints what is
+recorded without changing anything.
 
 Agents may write to each other only along the pairs that exist: `main` with `capo`, `main` with
 `automazioni`, and `sviluppo` with both. Without a second agent the block is not written at all, because an
