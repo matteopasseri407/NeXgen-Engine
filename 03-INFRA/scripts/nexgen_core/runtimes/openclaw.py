@@ -258,17 +258,14 @@ class OpenClawRuntime(Runtime):
             return f"openclaw: the old {LEGACY_PLUGIN_ID} plugin was removed from {plugin_dir.parent}"
         return f"openclaw: plugin deposited in {plugin_dir}"
 
-    @staticmethod
-    def _briefing_installed(home: Path) -> bool:
-        """Does Claude Code already receive this briefing?
+    def _briefing_installed(self, home: Path) -> bool:
+        """Is the briefing text here, beside the plugin that injects it?
 
-        The engine deploys no copy of the checkpoint hook, so its registration in Claude's own
-        settings is the observable fact. OpenClaw's plugin follows that fact rather than
-        inventing its own trigger, so the two hosts brief the same sessions.
+        It used to follow Claude Code's registered checkpoint hook, which on a machine
+        with OpenClaw alone is never true: the text was deposited, the plugin was there
+        and the briefing stayed off. The text itself is the fact, and it is the engine's.
         """
-        from nexgen_core.runtimes.claude import checkpoint_registered
-
-        return checkpoint_registered(home)
+        return (self._plugin_dir(home) / BRIEFING_NAME).is_file()
 
     # ---- governor -------------------------------------------------------
 
@@ -298,14 +295,13 @@ class OpenClawRuntime(Runtime):
         self.atomic_write(path, json.dumps(current, indent=2, sort_keys=True) + "\n")
         return True
 
-    @staticmethod
-    def _checkpoint_installed(home: Path) -> bool:
+    def _checkpoint_installed(self, home: Path) -> bool:
         """Does OpenClaw participate in session continuity checkpointing?
 
-        Enabled by default like the briefing, following the observable fact of whether
-        the vault hook is registered in Claude's settings.
+        Enabled by default like the briefing: both are the engine's own continuity, and
+        both follow the same fact, the text being deposited beside the plugin.
         """
-        return OpenClawRuntime._briefing_installed(home)
+        return self._briefing_installed(home)
 
     # ---- event sink -----------------------------------------------------
 

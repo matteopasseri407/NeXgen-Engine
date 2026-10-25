@@ -68,7 +68,7 @@ OWNED_SECTIONS = ("plugins", "models", "agents", "tools", "skills", "gateway", "
 #: Plugins every OpenClaw gets: OpenClaw's own, with no subscription behind them.
 BASE_PLUGINS = (
     "browser", "canvas", "device-pair", "document-extract", "file-transfer",
-    "memory-core", "web-readability", "talk-voice", "tts-local-cli",
+    "web-readability", "talk-voice", "tts-local-cli",
 )
 
 CLAUDE_MODEL = "anthropic/claude-opus-5-5"
