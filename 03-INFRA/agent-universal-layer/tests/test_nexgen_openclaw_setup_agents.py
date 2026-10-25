@@ -7,10 +7,12 @@ directly: no setup, no OpenClaw, no home of anybody's.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 from nexgen_core import i18n
+from nexgen_core.guard import GuardRunner
 from nexgen_core.openclaw.setup_agents import BOOTSTRAP_FILE, INSTRUCTIONS_FILE, prepare, write_instructions
 from nexgen_core.openclaw.squad import INSTRUCTION_MARK
 from nexgen_core.openclaw.templates import render_workspace
@@ -190,3 +192,63 @@ def test_the_setup_step_reads_the_squad_from_the_vault_and_writes_the_manual(tmp
     assert INSTRUCTION_MARK in text
     assert "Own the code." in text
     assert not any("cannot be read" in line for line in lines)
+
+
+def test_a_common_section_reaches_every_workspace_on_setup_and_on_sync(tmp_path: Path) -> None:
+    """The proof the brief asks for: `common_md` and every agent, on both commands.
+
+    Two agents, one with its own `agents_md` and one with nothing but the shared
+    section: both manuals carry it after the setup step, and both carry the new
+    text after the sync that follows an edit. The agent without a file of its own
+    is the case worth pinning: it is the one a role file silently skips.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from nexgen_core.openclaw.setup_steps import workspaces_step
+
+    vault = tmp_path / "vault"
+    canon = vault / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
+    canon.parent.mkdir(parents=True)
+    canon.write_text("# canonical instructions\n", encoding="utf-8")
+    squad = vault / "squad"
+    squad.mkdir()
+    (squad / "capo.md").write_text("# capo\n\nOwn the code.\n", encoding="utf-8")
+    (squad / "common.md").write_text("## Common\n\nFirst rule.\n", encoding="utf-8")
+    (vault / "squad.yaml").write_text(
+        "common_md: squad/common.md\nagents:\n  capo:\n    agents_md: squad/capo.md\n  main: {}\n",
+        encoding="utf-8",
+    )
+    home = tmp_path / "home"
+    (home / ".openclaw").mkdir(parents=True)
+    workspaces = {"capo": tmp_path / "workspace-capo", "main": tmp_path / "workspace-main"}
+    (home / ".openclaw" / "openclaw.json").write_text(
+        json.dumps({"agents": {"entries": {name: {"workspace": str(path)} for name, path in workspaces.items()}}}),
+        encoding="utf-8",
+    )
+    setup = MagicMock()
+    setup.vault_data = vault
+    setup.home = home
+    setup.state_dir = tmp_path / "state"
+    setup.out = lambda _line: None
+    plan = SimpleNamespace(
+        config={"agents": {"entries": {name: {"workspace": str(path)} for name, path in workspaces.items()}}},
+        choices=SimpleNamespace(lang="en"),
+    )
+
+    workspaces_step(setup, plan, set())
+
+    for name, workspace in workspaces.items():
+        text = (workspace / INSTRUCTIONS_FILE).read_text(encoding="utf-8")
+        assert "First rule." in text, name
+    assert "Own the code." in (workspaces["capo"] / INSTRUCTIONS_FILE).read_text(encoding="utf-8")
+
+    (squad / "common.md").write_text("## Common\n\nSecond rule.\n", encoding="utf-8")
+
+    GuardRunner(vault_data=vault, home=home).align_instructions()
+
+    for name, workspace in workspaces.items():
+        text = (workspace / INSTRUCTIONS_FILE).read_text(encoding="utf-8")
+        assert "Second rule." in text, name
+        assert "First rule." not in text, name
+        assert text.startswith("<!-- nexgen:instructions:begin -->"), name
