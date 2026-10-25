@@ -46,7 +46,7 @@ def test_the_header_is_bookkeeping_and_never_reaches_the_agent(tmp_path):
 
 
 def test_a_squad_that_names_a_file_gets_its_body_not_a_copy(tmp_path):
-    vault = _vault_with_identity(tmp_path)
+    _vault_with_identity(tmp_path)
     squad_file = tmp_path / "squad.yaml"
     squad = {
         "agents": {
@@ -69,7 +69,7 @@ def test_a_missing_source_is_not_an_empty_soul(tmp_path):
 
 
 def test_the_workspace_soul_is_rewritten_when_the_source_changes(tmp_path):
-    vault = _vault_with_identity(tmp_path)
+    _vault_with_identity(tmp_path)
     squad_file = tmp_path / "squad.yaml"
     squad = {"agents": {"main": {"soul_from": "vault/03-INFRA/agent-universal-layer/agent-self.md"}}}
     souls = get_squad_souls(squad, squad_file)
