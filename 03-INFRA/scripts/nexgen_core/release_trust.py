@@ -33,9 +33,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+
+from nexgen_core.release_gpg import is_msys_gpg
 
 TRUST_RELPATH = Path("03-INFRA") / "agent-universal-layer" / "trust"
 SIGNERS_FILE = "release-signers.txt"
@@ -215,8 +217,28 @@ def _gnupg_scratch_base() -> str:
     return base
 
 
+def gpg_binary(which: Callable[[str], str | None] = shutil.which, program_files: str | None = None) -> str | None:
+    """The gpg to verify signatures with: the real one, not the one Git for Windows ships.
+
+    On Windows `gpg` on PATH is usually `C:/Program Files/Git/usr/bin/gpg.exe`, an MSYS
+    build that cannot start the agent or import a keyring outside its own tree, so every
+    verification comes back "unverifiable" and a nightly channel refuses every commit.
+    The native GnuPG is the one that verifies, and it installs where this looks first.
+    """
+    if os.name == "nt":
+        base = program_files if program_files is not None else os.environ.get("ProgramFiles", r"C:\Program Files")
+        known = Path(base) / "GnuPG" / "bin" / "gpg.exe"
+        if known.is_file():
+            return str(known)
+    found = [path for path in (which("gpg"), which("gpg2")) if path]
+    for candidate in found:
+        if not is_msys_gpg(candidate):
+            return candidate
+    return found[0] if found else None
+
+
 def _verify_openpgp(repo: Path, ref: str, anchor: TrustAnchor, *, verb: str = "verify-tag") -> TagVerdict:
-    gpg = shutil.which("gpg")
+    gpg = gpg_binary()
     if not gpg:
         return TagVerdict(UNVERIFIABLE, "gpg is not installed, so an OpenPGP signature cannot be checked",
                           no_verifier=True)
