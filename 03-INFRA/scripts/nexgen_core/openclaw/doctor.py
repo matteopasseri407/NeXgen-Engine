@@ -46,7 +46,6 @@ from nexgen_core.openclaw.model_checks import check_agent_models, check_cage, ch
 from nexgen_core.openclaw.pin import pinned_version, required_node_version
 from nexgen_core.openclaw.profile import PENDING_TOKEN
 from nexgen_core.openclaw.server_gateway import exposure
-from nexgen_core.openclaw.terms import google_subscriptions
 from nexgen_core.paths import (
     is_machine_home,
     mcp_manifest,

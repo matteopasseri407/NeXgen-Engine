@@ -1,0 +1,847 @@
+"""Tests for node role transition on existing machines.
+
+Covers:
+(a) Engine installed + local npm gateway active on Windows with old scheduled task and vbs;
+(b) Same on Linux with systemd user unit;
+(c) Engine installed without OpenClaw;
+(d) Already node of the same gateway;
+(e) Already node of another gateway (stops and asks confirmation with flag);
+(f) Return to standalone.
+
+All commands (openclaw, systemctl, schtasks, nexgen) are replaced by recorders.
+No real processes or files outside tmp_path are touched.
+"""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from nexgen_core import roles  # noqa: E402
+from nexgen_core.openclaw.node_transition import (  # noqa: E402
+    EngineVersionInfo,
+    ExistingNodeInfo,
+    LocalGatewayInfo,
+    TransitionInspection,
+    normalize_gateway_origin,
+    plan_node_transition,
+)
+from nexgen_core.openclaw_service import RunResult  # noqa: E402
+
+CLEAN_NODE_STATUS_JSON = (
+    '{"service": {"label": "Scheduled Task", "loaded": false, "command": null, "runtime": {"status": "stopped"}}}'
+)
+
+
+class RecordingRunner:
+    """Fake command runner that records invocations and returns canned responses."""
+
+    def __init__(self, default_code: int = 0, default_stdout: str = "", default_stderr: str = ""):
+        self.calls: list[list[str]] = []
+        self.timeouts: list[float | None] = []
+        self.default_code = default_code
+        self.default_stdout = default_stdout
+        self.default_stderr = default_stderr
+        self.canned: dict[tuple[str, ...], RunResult] = {}
+
+    def set_canned(self, argv: list[str], code: int = 0, stdout: str = "", stderr: str = "") -> None:
+        self.canned[tuple(argv)] = RunResult(code, stdout, stderr)
+
+    def __call__(self, argv: list[str], timeout: float | None = None) -> RunResult:
+        self.calls.append(list(argv))
+        self.timeouts.append(timeout)
+        key = tuple(argv)
+        if key in self.canned:
+            return self.canned[key]
+        for canned_key, result in self.canned.items():
+            if len(canned_key) == len(argv) and all(ck == "*" or ck == a for ck, a in zip(canned_key, argv)):
+                return result
+        return RunResult(self.default_code, self.default_stdout, self.default_stderr)
+
+
+def _init_mock_engine_repo(repo_path: Path, version: str = "2026.10.23") -> Path:
+    """Creates minimal scaffold for an engine repository."""
+    repo_path.mkdir(parents=True, exist_ok=True)
+    for d in ("01-NOTES", "02-PROJECTS", "04-NOW", "99-INDEX", "99-SECRETS"):
+        (repo_path / d).mkdir(parents=True, exist_ok=True)
+    (repo_path / "VERSION").write_text(f"{version}\n", encoding="utf-8")
+    (repo_path / "00-START-HERE.md").write_text("# Start\n", encoding="utf-8")
+    (repo_path / "INIT.md").write_text("# Init\n", encoding="utf-8")
+    idx = repo_path / "99-INDEX"
+    (idx / "USER-PROFILE.md").write_text("- **clis**: `[openclaw, claude]`\n- **profile**: `MULTI`\n", encoding="utf-8")
+    sync_dir = repo_path / "03-INFRA" / "agent-universal-layer" / "sync"
+    sync_dir.mkdir(parents=True, exist_ok=True)
+    (sync_dir / "remotes.yaml").write_text("remotes: {}\n", encoding="utf-8")
+    skills_dir = repo_path / "03-INFRA" / "agent-universal-layer" / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    (skills_dir / "skills.manifest.yaml").write_text("skills: {}\n", encoding="utf-8")
+    instr_dir = repo_path / "03-INFRA" / "agent-universal-layer" / "instructions"
+    instr_dir.mkdir(parents=True, exist_ok=True)
+    (instr_dir / "AGENTS.md").write_text("# Agents\n", encoding="utf-8")
+    scripts = repo_path / "03-INFRA" / "scripts" / "nexgen_core"
+    scripts.mkdir(parents=True, exist_ok=True)
+    return repo_path
+
+
+def test_normalize_gateway_origin() -> None:
+    assert normalize_gateway_origin("https://gateway.example.com:18789/j/code123") == "gateway.example.com:18789"
+    assert normalize_gateway_origin("http://127.0.0.1:18789") == "127.0.0.1:18789"
+    assert normalize_gateway_origin("gateway.tailnet:18789") == "gateway.tailnet:18789"
+    assert normalize_gateway_origin("gateway.tailnet") == "gateway.tailnet"
+    assert normalize_gateway_origin("wss://nexgen-vps.tailnet:443") == "nexgen-vps.tailnet"
+    assert normalize_gateway_origin("https://nexgen-vps.tailnet") == "nexgen-vps.tailnet"
+
+
+def test_plan_node_transition_not_a_node() -> None:
+    inspection = TransitionInspection(
+        engine=EngineVersionInfo(installed_version="2026.10.23", target_version="2026.10.24"),
+        gateway=LocalGatewayInfo(
+            present=True,
+            mechanism="schtasks",
+            service_active=True,
+            scheduled_task_present=True,
+            startup_vbs_present=True,
+            companion_present=True,
+            companion_detail="Store app detected",
+            state_dir=Path("/mock/.openclaw"),
+            state_dir_exists=True,
+        ),
+        node=ExistingNodeInfo(
+            is_node=False,
+            is_running=False,
+            gateway_url=None,
+            gateway_origin=None,
+            node_name=None,
+        ),
+    )
+    lines = plan_node_transition(inspection)
+    plan_text = "\n".join(lines)
+    assert "2026.10.23" in plan_text
+    assert "2026.10.24" in plan_text
+    assert "Gateway OpenClaw locale: presente" in plan_text
+    assert "Companion" in plan_text
+    assert "non ancora collegato come nodo" in plan_text
+    assert "Cosa verrà fermato" in plan_text
+    assert "Cosa resta com'è" in plan_text
+    assert "~/.openclaw" in plan_text
+
+
+def test_plan_node_transition_existing_node_stopped_and_running() -> None:
+    # Plan when already node but service stopped (real owner machine case)
+    stopped_inspection = TransitionInspection(
+        engine=EngineVersionInfo(installed_version="2026.10.24", target_version="2026.10.24"),
+        gateway=LocalGatewayInfo(
+            present=False, mechanism=None, service_active=False,
+            scheduled_task_present=False, startup_vbs_present=False,
+            companion_present=False, companion_detail=None,
+            state_dir=Path("/mock/.openclaw"), state_dir_exists=False,
+        ),
+        node=ExistingNodeInfo(
+            is_node=True,
+            is_running=False,
+            gateway_url="wss://nexgen-vps.tail5517e9.ts.net",
+            gateway_origin="nexgen-vps.tail5517e9.ts.net",
+        ),
+    )
+    stopped_text = "\n".join(plan_node_transition(stopped_inspection))
+    assert "già nodo del gateway wss://nexgen-vps.tail5517e9.ts.net, servizio fermo" in stopped_text
+
+    # Plan when already node and service running
+    running_inspection = TransitionInspection(
+        engine=EngineVersionInfo(installed_version="2026.10.24", target_version="2026.10.24"),
+        gateway=LocalGatewayInfo(
+            present=False, mechanism=None, service_active=False,
+            scheduled_task_present=False, startup_vbs_present=False,
+            companion_present=False, companion_detail=None,
+            state_dir=Path("/mock/.openclaw"), state_dir_exists=False,
+        ),
+        node=ExistingNodeInfo(
+            is_node=True,
+            is_running=True,
+            gateway_url="wss://nexgen-vps.tail5517e9.ts.net",
+            gateway_origin="nexgen-vps.tail5517e9.ts.net",
+        ),
+    )
+    running_text = "\n".join(plan_node_transition(running_inspection))
+    assert "già nodo del gateway wss://nexgen-vps.tail5517e9.ts.net." in running_text
+
+
+def test_parse_node_status_windows_stopped() -> None:
+    from nexgen_core.openclaw.node_status import parse_node_status_payload
+
+    # Real Windows stopped output (from prompt / real owner machine)
+    win_stopped_payload = {
+        "service": {
+            "label": "Scheduled Task",
+            "loaded": True,
+            "loadedText": "registered",
+            "command": {
+                "programArguments": [
+                    r"C:\Program Files\nodejs\node.exe",
+                    r"C:\MockProfile\AppData\Roaming\npm\node_modules\openclaw\dist\index.js",
+                    "node",
+                    "run",
+                    "--host",
+                    "nexgen-vps.tail5517e9.ts.net",
+                    "--port",
+                    "443",
+                    "--tls",
+                ],
+                "sourcePath": r"C:\MockProfile\.openclaw\node.cmd",
+            },
+            "runtime": {
+                "status": "stopped",
+                "state": "Ready",
+                "lastRunTime": "2026-10-25T08:00:00",
+                "lastRunResult": "267014",
+            },
+        }
+    }
+    res = parse_node_status_payload(win_stopped_payload)
+    assert res.is_node is True
+    assert res.is_running is False
+    assert res.gateway_url == "wss://nexgen-vps.tail5517e9.ts.net"
+    assert res.gateway_origin == "nexgen-vps.tail5517e9.ts.net"
+    assert res.raw_status == "stopped"
+
+
+def test_parse_node_status_windows_running() -> None:
+    from nexgen_core.openclaw.node_status import parse_node_status_payload
+
+    win_running_payload = {
+        "service": {
+            "label": "Scheduled Task",
+            "loaded": True,
+            "loadedText": "registered",
+            "command": {
+                "programArguments": [
+                    "node.exe",
+                    "dist/index.js",
+                    "node",
+                    "run",
+                    "--host",
+                    "nexgen-vps.tail5517e9.ts.net",
+                    "--port",
+                    "443",
+                    "--tls",
+                ],
+            },
+            "runtime": {"status": "running"},
+        }
+    }
+    res_run = parse_node_status_payload(win_running_payload)
+    assert res_run.is_node is True
+    assert res_run.is_running is True
+    assert res_run.gateway_url == "wss://nexgen-vps.tail5517e9.ts.net"
+
+
+def test_parse_node_status_linux_shapes() -> None:
+    from nexgen_core.openclaw.node_status import parse_node_status_payload
+
+    linux_payload = {
+        "service": {
+            "label": "systemd",
+            "loaded": True,
+            "loadedText": "enabled",
+            "command": {
+                "programArguments": [
+                    "/usr/bin/node",
+                    "/usr/lib/node_modules/openclaw/dist/index.js",
+                    "node",
+                    "run",
+                    "--host",
+                    "linux-gw.tailnet",
+                    "--port",
+                    "18789",
+                ],
+            },
+            "runtime": {"status": "running"},
+        }
+    }
+    res_linux = parse_node_status_payload(linux_payload)
+    assert res_linux.is_node is True
+    assert res_linux.is_running is True
+    assert res_linux.gateway_url == "ws://linux-gw.tailnet:18789"
+    assert res_linux.gateway_origin == "linux-gw.tailnet:18789"
+
+    linux_stopped_payload = {
+        "service": {
+            "label": "systemd",
+            "loaded": True,
+            "loadedText": "enabled",
+            "command": {
+                "programArguments": [
+                    "/usr/bin/node",
+                    "/usr/lib/node_modules/openclaw/dist/index.js",
+                    "node",
+                    "run",
+                    "--host",
+                    "linux-gw.tailnet",
+                    "--port",
+                    "18789",
+                ],
+            },
+            "runtime": {"status": "stopped"},
+        }
+    }
+    res_linux_stopped = parse_node_status_payload(linux_stopped_payload)
+    assert res_linux_stopped.is_node is True
+    assert res_linux_stopped.is_running is False
+
+
+def test_parse_node_status_missing_shape() -> None:
+    from nexgen_core.openclaw.node_status import parse_node_status_payload
+
+    missing_payload = {
+        "service": {
+            "label": "Scheduled Task",
+            "loaded": False,
+            "loadedText": "missing",
+            "command": None,
+            "runtime": {"status": "stopped"},
+        }
+    }
+    res_missing = parse_node_status_payload(missing_payload)
+    assert res_missing.is_node is False
+    assert res_missing.is_running is False
+    assert res_missing.gateway_url is None
+
+
+def _setup_windows_gateway_env(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path, Path, RecordingRunner]:
+    """Helper to prepare Windows environment with scheduled task and VBS."""
+    engine_root = _init_mock_engine_repo(tmp_path / "engine", version="2026.10.23")
+    home = tmp_path / "home"
+    appdata = home / "AppData" / "Roaming"
+    startup_dir = appdata / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+    startup_dir.mkdir(parents=True, exist_ok=True)
+    vbs_file = startup_dir / "OpenClaw Gateway.vbs"
+    vbs_file.write_text("' mock vbs\n", encoding="utf-8")
+    state_dir = home / ".openclaw"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "openclaw.json").write_text('{"mock": true}\n', encoding="utf-8")
+    runner = RecordingRunner(default_code=0)
+    runner.set_canned(["schtasks.exe", "/Query", "/TN", "OpenClaw Gateway"], code=0, stdout="SUCCESS")
+    runner.set_canned(["openclaw", "node", "status", "--json"], code=0, stdout=CLEAN_NODE_STATUS_JSON)
+    return engine_root, home, appdata, startup_dir, vbs_file, state_dir, runner
+
+
+def test_case_a_windows_gateway_check_mode(tmp_path: Path) -> None:
+    """Case (a) part 1: Windows check mode dry run prints plan without writes."""
+    engine_root, home, appdata, startup_dir, vbs_file, _, runner = _setup_windows_gateway_env(tmp_path)
+    log_messages: list[str] = []
+    fake_update = MagicMock(return_value=0)
+    fake_align = MagicMock(return_value=(True, "aligned"))
+
+    check_code = roles.run_node_role(
+        root=engine_root,
+        home=home,
+        check=True,
+        platform="win32",
+        appdata=appdata,
+        startup_dir=startup_dir,
+        runner=runner,
+        align_fn=fake_align,
+        update_fn=fake_update,
+        out=log_messages.append,
+    )
+    assert check_code == 0
+    assert fake_update.call_count == 0
+    assert fake_align.call_count == 0
+    assert vbs_file.exists()
+    check_output = "\n".join(log_messages)
+    assert "Piano" in check_output or "piano" in check_output.lower()
+    assert "2026.10.23" in check_output
+    assert "Gateway OpenClaw locale" in check_output
+    assert "Cosa verrà fermato" in check_output
+
+
+def test_case_a_windows_gateway_transition_execute(tmp_path: Path) -> None:
+    """Case (a) part 2: Windows gateway teardown and node service attachment."""
+    engine_root, home, appdata, startup_dir, vbs_file, state_dir, runner = _setup_windows_gateway_env(tmp_path)
+    log_messages: list[str] = []
+    fake_update = MagicMock(return_value=0)
+    fake_align = MagicMock(return_value=(True, "aligned"))
+    join_target = "https://server.tailnet:18789/j/secret-join-code-123"
+
+    run_code = roles.run_node_role(
+        root=engine_root,
+        home=home,
+        join=join_target,
+        platform="win32",
+        appdata=appdata,
+        startup_dir=startup_dir,
+        runner=runner,
+        align_fn=fake_align,
+        update_fn=fake_update,
+        wait_probe_fn=lambda: True,
+        out=log_messages.append,
+    )
+    assert run_code == 0
+    assert fake_update.call_count == 1
+    assert fake_align.call_count == 1
+    recorded_cmds = runner.calls
+    assert ["openclaw", "gateway", "stop"] in recorded_cmds
+    assert ["openclaw", "gateway", "uninstall"] in recorded_cmds
+    assert ["schtasks.exe", "/Delete", "/TN", "OpenClaw Gateway", "/F"] in recorded_cmds
+    assert not vbs_file.exists()
+    assert state_dir.exists()
+    assert (state_dir / "openclaw.json").exists()
+    for cmd in recorded_cmds:
+        assert "taskkill" not in cmd[0].lower()
+    full_output = "\n".join(log_messages)
+    assert "secret-join-code-123" not in full_output
+    assert "Riepilogo" in full_output or "riepilogo" in full_output.lower()
+    assert "server.tailnet:18789" in full_output
+
+
+def test_case_b_linux_systemd_gateway_transition(tmp_path: Path) -> None:
+    """Case (b): Engine installed + Linux systemd user service."""
+    engine_root = _init_mock_engine_repo(tmp_path / "engine", version="2026.10.23")
+    home = tmp_path / "home"
+    systemd_user_dir = home / ".config" / "systemd" / "user"
+    systemd_user_dir.mkdir(parents=True, exist_ok=True)
+    unit_file = systemd_user_dir / "openclaw-gateway.service"
+    unit_file.write_text("[Unit]\nDescription=Mock\n", encoding="utf-8")
+    state_dir = home / ".openclaw"
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    runner = RecordingRunner(default_code=0)
+    runner.set_canned(["openclaw", "node", "status", "--json"], code=0, stdout=CLEAN_NODE_STATUS_JSON)
+    log_messages: list[str] = []
+    fake_update = MagicMock(return_value=0)
+    fake_align = MagicMock(return_value=(True, "aligned"))
+
+    run_code = roles.run_node_role(
+        root=engine_root,
+        home=home,
+        join="https://server.tailnet:18789/j/secret-join-456",
+        platform="linux",
+        systemd_user_dir=systemd_user_dir,
+        runner=runner,
+        align_fn=fake_align,
+        update_fn=fake_update,
+        wait_probe_fn=lambda: True,
+        out=log_messages.append,
+    )
+    assert run_code == 0
+    assert fake_update.call_count == 1
+    assert ["openclaw", "gateway", "stop"] in runner.calls
+    assert ["openclaw", "gateway", "uninstall"] in runner.calls
+    assert state_dir.exists()
+    for cmd in runner.calls:
+        assert "taskkill" not in cmd[0].lower()
+
+
+def test_case_c_clean_machine_without_openclaw(tmp_path: Path) -> None:
+    """Case (c): Engine installed, but no pre-existing OpenClaw gateway."""
+    engine_root = _init_mock_engine_repo(tmp_path / "engine", version="2026.10.24")
+    home = tmp_path / "home"
+    runner = RecordingRunner(default_code=0)
+    runner.set_canned(["schtasks.exe", "/Query", "/TN", "OpenClaw Gateway"], code=1, stdout="")
+    runner.set_canned(["openclaw", "node", "status", "--json"], code=0, stdout=CLEAN_NODE_STATUS_JSON)
+    log_messages: list[str] = []
+    fake_align = MagicMock(return_value=(True, "aligned"))
+
+    run_code = roles.run_node_role(
+        root=engine_root,
+        home=home,
+        join="https://server.tailnet:18789/j/secret-join-789",
+        platform="win32",
+        runner=runner,
+        align_fn=fake_align,
+        wait_probe_fn=lambda: True,
+        out=log_messages.append,
+    )
+    assert run_code == 0
+    assert ["openclaw", "gateway", "stop"] not in runner.calls
+    assert ["openclaw", "gateway", "uninstall"] not in runner.calls
+    assert any("connect" in cmd for cmd in runner.calls)
+
+
+def test_case_d_already_node_same_gateway_stopped_restarts_service(tmp_path: Path) -> None:
+    """Case (d1): Machine is already a node of the same gateway but stopped; restarts service."""
+    engine_root = _init_mock_engine_repo(tmp_path / "engine", version="2026.10.24")
+    home = tmp_path / "home"
+    runner = RecordingRunner(default_code=0)
+    stopped_json = json.dumps({
+        "service": {
+            "label": "Scheduled Task",
+            "loaded": True,
+            "loadedText": "registered",
+            "command": {
+                "programArguments": [
+                    "node.exe", "index.js", "node", "run",
+                    "--host", "server.tailnet", "--port", "18789",
+                ],
+                "sourcePath": "node.cmd",
+            },
+            "runtime": {"status": "stopped", "state": "Ready"},
+        }
+    })
+    runner.set_canned(["openclaw", "node", "status", "--json"], code=0, stdout=stopped_json)
+    log_messages: list[str] = []
+    fake_align = MagicMock(return_value=(True, "aligned"))
+
+    run_code = roles.run_node_role(
+        root=engine_root,
+        home=home,
+        join="https://server.tailnet:18789/j/another-join-token",
+        runner=runner,
+        align_fn=fake_align,
+        # The already-node path must answer here. If it breaks, this test has to
+        # fail at once instead of waiting the five real minutes of a connection
+        # that is not being made.
+        wait_probe_fn=lambda: True,
+        out=log_messages.append,
+    )
+    assert run_code == 0
+    assert fake_align.call_count == 1
+    assert ["openclaw", "node", "start"] in runner.calls
+    for cmd in runner.calls:
+        assert "connect" not in cmd
+    full_output = "\n".join(log_messages)
+    assert "già nodo" in full_output.lower()
+    assert "server.tailnet:18789" in full_output
+
+
+def test_case_d_already_node_same_gateway_running_syncs_only(tmp_path: Path) -> None:
+    """Case (d2): Machine is already a node of the same gateway and running; only sync runs."""
+    engine_root = _init_mock_engine_repo(tmp_path / "engine", version="2026.10.24")
+    home = tmp_path / "home"
+    runner = RecordingRunner(default_code=0)
+    running_json = json.dumps({
+        "service": {
+            "label": "Scheduled Task",
+            "loaded": True,
+            "loadedText": "registered",
+            "command": {
+                "programArguments": [
+                    "node.exe", "index.js", "node", "run",
+                    "--host", "server.tailnet", "--port", "18789",
+                ],
+                "sourcePath": "node.cmd",
+            },
+            "runtime": {"status": "running"},
+        }
+    })
+    runner.set_canned(["openclaw", "node", "status", "--json"], code=0, stdout=running_json)
+    log_messages: list[str] = []
+    fake_align = MagicMock(return_value=(True, "aligned"))
+
+    run_code = roles.run_node_role(
+        root=engine_root,
+        home=home,
+        join="https://server.tailnet:18789/j/another-join-token",
+        runner=runner,
+        align_fn=fake_align,
+        wait_probe_fn=lambda: True,
+        out=log_messages.append,
+    )
+    assert run_code == 0
+    assert fake_align.call_count == 1
+    assert ["openclaw", "node", "start"] not in runner.calls
+    for cmd in runner.calls:
+        assert "connect" not in cmd
+
+
+def test_case_e_already_node_of_different_gateway(tmp_path: Path) -> None:
+    """Case (e): Already node of another gateway; stops and asks for --force."""
+    engine_root = _init_mock_engine_repo(tmp_path / "engine", version="2026.10.24")
+    home = tmp_path / "home"
+    runner = RecordingRunner(default_code=0)
+    status_json = json.dumps({
+        "service": {
+            "label": "Scheduled Task",
+            "loaded": True,
+            "loadedText": "registered",
+            "command": {
+                "programArguments": [
+                    "node.exe", "index.js", "node", "run",
+                    "--host", "old-server.tailnet", "--port", "18789",
+                ],
+                "sourcePath": "node.cmd",
+            },
+            "runtime": {"status": "running"},
+        }
+    })
+    runner.set_canned(["openclaw", "node", "status", "--json"], code=0, stdout=status_json)
+    log_messages: list[str] = []
+    fake_align = MagicMock(return_value=(True, "aligned"))
+
+    run_code = roles.run_node_role(
+        root=engine_root,
+        home=home,
+        join="https://new-server.tailnet:18789/j/new-token",
+        force=False,
+        runner=runner,
+        align_fn=fake_align,
+        wait_probe_fn=lambda: True,
+        out=log_messages.append,
+    )
+    assert run_code != 0
+    full_output = "\n".join(log_messages)
+    assert "--force" in full_output
+    assert "old-server.tailnet:18789" in full_output
+    assert fake_align.call_count == 0
+
+    log_messages.clear()
+    force_code = roles.run_node_role(
+        root=engine_root,
+        home=home,
+        join="https://new-server.tailnet:18789/j/new-token",
+        force=True,
+        runner=runner,
+        align_fn=fake_align,
+        wait_probe_fn=lambda: True,
+        out=log_messages.append,
+    )
+    assert force_code == 0
+    assert fake_align.call_count == 1
+    assert any("connect" in cmd for cmd in runner.calls)
+
+
+def test_case_f_return_to_standalone(tmp_path: Path) -> None:
+    """Case (f): Returning from node to standalone re-activates local gateway."""
+    engine_root = _init_mock_engine_repo(tmp_path / "engine", version="2026.10.24")
+    home = tmp_path / "home"
+    state_dir = home / ".openclaw"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "openclaw.json").write_text('{"preserved_config": true}\n', encoding="utf-8")
+
+    runner = RecordingRunner(default_code=0)
+    log_messages: list[str] = []
+    fake_setup = MagicMock(return_value=0)
+    fake_align = MagicMock(return_value=(True, "aligned"))
+    fake_problems = MagicMock(return_value=(0, []))
+
+    run_code = roles.run_standalone_role(
+        root=engine_root,
+        home=home,
+        runner=runner,
+        setup_fn=fake_setup,
+        align_fn=fake_align,
+        problems_fn=fake_problems,
+        out=log_messages.append,
+    )
+    assert run_code == 0
+    assert ["openclaw", "node", "stop"] in runner.calls
+    assert ["openclaw", "node", "uninstall"] in runner.calls
+    assert fake_setup.call_count == 1
+    assert (state_dir / "openclaw.json").exists()
+    profile = (engine_root / "99-INDEX" / "USER-PROFILE.md").read_text(encoding="utf-8")
+    assert "openclaw" in profile
+
+
+def test_no_link_stops_before_modifying_anything(tmp_path: Path) -> None:
+    """Without join link, stops before touching anything and prints instructions."""
+    engine_root = _init_mock_engine_repo(tmp_path / "engine", version="2026.10.24")
+    home = tmp_path / "home"
+    runner = RecordingRunner(default_code=0)
+    runner.set_canned(["openclaw", "node", "status", "--json"], code=0, stdout=CLEAN_NODE_STATUS_JSON)
+
+    log_messages: list[str] = []
+    fake_align = MagicMock(return_value=(True, "aligned"))
+
+    roles.run_node_role(
+        root=engine_root,
+        home=home,
+        join=None,
+        target=None,
+        runner=runner,
+        align_fn=fake_align,
+        out=log_messages.append,
+    )
+    assert fake_align.call_count == 0
+    output = "\n".join(log_messages)
+    assert "openclaw devices join-code" in output
+
+
+def test_bootstrap_dispatches_role_node_check(tmp_path: Path, monkeypatch) -> None:
+    engine_root = _init_mock_engine_repo(tmp_path / "engine", version="2026.10.24")
+    from nexgen_core import bootstrap
+
+    called: dict = {}
+
+    def fake_run_node(root, **kwargs):
+        called["root"] = root
+        called["kwargs"] = kwargs
+        return 0
+
+    monkeypatch.setattr("nexgen_core.roles.run_node_role", fake_run_node)
+    code = bootstrap.main(["--role", "node", "--check", "--root", str(engine_root), "--join", "https://gw.test:18789"])
+    assert code == 0
+    assert called["root"] == engine_root
+    assert called["kwargs"]["check"] is True
+    assert called["kwargs"]["join"] == "https://gw.test:18789"
+
+
+def test_node_transition_unreadable_status_stops_without_changes(tmp_path: Path) -> None:
+    engine_root = _init_mock_engine_repo(tmp_path / "engine", version="2026.10.24")
+    home = tmp_path / "home"
+    runner = RecordingRunner(default_code=0)
+    runner.set_canned(
+        ["openclaw", "node", "status", "--json"],
+        code=127,
+        stdout="",
+        stderr="openclaw: command not found",
+    )
+    fake_update = MagicMock(return_value=0)
+    fake_align = MagicMock(return_value=(True, "aligned"))
+    messages: list[str] = []
+
+    # 1. Check mode stops and prints unreadable in plan
+    code_check = roles.run_node_role(
+        root=engine_root,
+        home=home,
+        check=True,
+        join="https://server.tailnet:18789/j/token",
+        runner=runner,
+        update_fn=fake_update,
+        align_fn=fake_align,
+        out=messages.append,
+    )
+    assert code_check != 0
+    check_output = "\n".join(messages)
+    assert "Stato del nodo non leggibile" in check_output
+    assert fake_update.call_count == 0
+    assert fake_align.call_count == 0
+
+    # 2. Execution mode aborts before touching anything
+    messages.clear()
+    code_run = roles.run_node_role(
+        root=engine_root,
+        home=home,
+        check=False,
+        join="https://server.tailnet:18789/j/token",
+        runner=runner,
+        update_fn=fake_update,
+        align_fn=fake_align,
+        out=messages.append,
+    )
+    assert code_run != 0
+    run_output = "\n".join(messages)
+    assert "Passaggio a nodo interrotto: stato del nodo non leggibile" in run_output
+    assert fake_update.call_count == 0
+    assert fake_align.call_count == 0
+    assert not any("connect" in c for c in runner.calls)
+
+
+def test_openclaw_status_read_never_goes_through_cmd_exe(tmp_path: Path) -> None:
+    """npm's Windows shim is started as `node <entry>`, never handed to a command interpreter."""
+    from nexgen_core.openclaw import node_cli
+
+    npm_dir = tmp_path / "npm"
+    entry = npm_dir / "node_modules" / "openclaw" / "openclaw.mjs"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("// openclaw\n", encoding="utf-8")
+    shim = npm_dir / "openclaw.CMD"
+    shim.write_text("@echo off\r\n", encoding="utf-8")
+    node = tmp_path / "nodejs" / "node.exe"
+    node.parent.mkdir()
+    node.write_text("", encoding="utf-8")
+
+    def which(name: str) -> str | None:
+        return {"openclaw": str(shim), "node": str(node)}.get(name)
+
+    argv = node_cli.launch_argv(["openclaw", "node", "status", "--json"], which=which)
+
+    assert argv == [str(node), str(entry), "node", "status", "--json"]
+    assert not any("cmd" in token.lower() for token in argv)
+
+
+def test_launch_argv_leaves_platform_commands_as_they_are() -> None:
+    """`schtasks.exe` and `systemctl` are real programs: only the npm shim is rewritten."""
+    from nexgen_core.openclaw import node_cli
+
+    def which(name: str) -> str | None:
+        raise AssertionError(f"{name} must not be looked up")
+
+    schtasks = ["schtasks.exe", "/Query", "/TN", "OpenClaw Gateway"]
+    systemctl = ["systemctl", "--user", "stop", "openclaw-gateway.service"]
+
+    assert node_cli.launch_argv(schtasks, which=which) == schtasks
+    assert node_cli.launch_argv(systemctl, which=which) == systemctl
+
+
+def test_openclaw_shim_without_its_entry_is_a_sentence_not_a_crash(monkeypatch, tmp_path: Path) -> None:
+    """An npm shim with no package beside it cannot start: the person reads why."""
+    from nexgen_core.openclaw import node_cli
+
+    shim = tmp_path / "npm" / "openclaw.cmd"
+    shim.parent.mkdir(parents=True)
+    shim.write_text("@echo off\r\n", encoding="utf-8")
+
+    def which(name: str) -> str | None:
+        return str(shim) if name == "openclaw" else None
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    assert node_cli.launch_argv(["openclaw", "node", "status"], which=which) is None
+    res = node_cli.run_command(["openclaw", "node", "status"], node_cli.READ_TIMEOUT_S, which=which)
+    assert res.returncode != 0
+    assert "non avviabile" in res.stderr
+
+
+def test_run_command_hands_the_read_timeout_to_the_process(monkeypatch, tmp_path: Path) -> None:
+    """A cold `openclaw node status` answers in 15-25 seconds: the deadline is 60, not 10."""
+    from nexgen_core.openclaw import node_cli
+
+    npm_dir = tmp_path / "npm"
+    entry = npm_dir / "node_modules" / "openclaw" / "openclaw.mjs"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("// openclaw\n", encoding="utf-8")
+    shim = npm_dir / "openclaw.cmd"
+    shim.write_text("@echo off\r\n", encoding="utf-8")
+    node = tmp_path / "nodejs" / "node.exe"
+    node.parent.mkdir()
+    node.write_text("", encoding="utf-8")
+
+    def which(name: str) -> str | None:
+        return {"openclaw": str(shim), "node": str(node)}.get(name)
+
+    seen: dict = {}
+
+    def fake_subprocess_run(argv, **kwargs):
+        seen["argv"] = list(argv)
+        seen["timeout"] = kwargs.get("timeout")
+        return SimpleNamespace(returncode=0, stdout="{}", stderr="")
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setattr(node_cli.subprocess, "run", fake_subprocess_run)
+
+    res = node_cli.run_command(["openclaw", "node", "status", "--json"], node_cli.READ_TIMEOUT_S, which=which)
+
+    assert res.returncode == 0
+    assert node_cli.READ_TIMEOUT_S == 60.0
+    assert seen["timeout"] == 60.0
+    assert seen["argv"][:2] == [str(node), str(entry)]
+
+
+def test_check_says_it_is_reading_node_status_before_the_plan(tmp_path: Path) -> None:
+    """The pause comes with a sentence, so a slow first answer does not look like a hang."""
+    engine_root = _init_mock_engine_repo(tmp_path / "engine")
+    runner = RecordingRunner(default_code=0)
+    runner.set_canned(["openclaw", "node", "status", "--json"], code=0, stdout=CLEAN_NODE_STATUS_JSON)
+    messages: list[str] = []
+
+    code = roles.run_node_role(
+        root=engine_root,
+        home=tmp_path / "home",
+        check=True,
+        runner=runner,
+        out=messages.append,
+    )
+
+    assert code == 0
+    reading = next(i for i, line in enumerate(messages) if "Leggo lo stato del nodo" in line)
+    plan = next(i for i, line in enumerate(messages) if line.startswith("Piano"))
+    assert reading < plan
+    status_reads = [t for argv, t in zip(runner.calls, runner.timeouts)
+                    if argv == ["openclaw", "node", "status", "--json"]]
+    assert status_reads == [60.0]
+
