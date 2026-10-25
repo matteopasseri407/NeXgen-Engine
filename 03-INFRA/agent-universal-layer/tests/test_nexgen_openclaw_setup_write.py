@@ -166,6 +166,42 @@ def test_an_agent_the_person_added_to_the_agent_to_agent_allow_list_stays():
     assert allow == ["main", "capo", "personale", "sviluppo"]
 
 
+def test_the_allow_list_drops_the_agent_this_run_leaves_out():
+    """`--no-sviluppo` creates no such agent: an id nothing declares is unroutable."""
+    current = {"tools": {"agentToAgent": {"enabled": True, "allow": ["main", "capo", "personale", "sviluppo"]}}}
+    proposed = {
+        "agents": {"entries": {"main": {}, "capo": {}}},
+        "tools": {"agentToAgent": {"enabled": True, "allow": ["main", "capo"]}},
+    }
+
+    allow = setup_write.merged_document(current, proposed)["tools"]["agentToAgent"]["allow"]
+
+    assert allow == ["main", "capo", "personale"]
+
+
+def test_the_allow_list_keeps_the_agent_this_run_creates():
+    """The rule is about an agent that does not exist, not about the id itself."""
+    current = {"tools": {"agentToAgent": {"enabled": True, "allow": ["main", "sviluppo"]}}}
+    proposed = {
+        "agents": {"entries": {"main": {}, "sviluppo": {}}},
+        "tools": {"agentToAgent": {"enabled": True, "allow": ["main", "sviluppo"]}},
+    }
+
+    allow = setup_write.merged_document(current, proposed)["tools"]["agentToAgent"]["allow"]
+
+    assert allow == ["main", "sviluppo"]
+
+
+def test_a_send_target_the_run_leaves_out_goes_too():
+    """The same dead reference in the per-agent partner list, and only that one."""
+    current = {"agents": {"entries": {"main": {"tools": {"agentToAgent": {"send": ["*", "sviluppo", "personale"]}}}}}}
+    proposed = {"agents": {"entries": {"main": {"tools": {"agentToAgent": {"send": ["capo"]}}}}}}
+
+    send = setup_write.merged_document(current, proposed)["agents"]["entries"]["main"]["tools"]["agentToAgent"]["send"]
+
+    assert send == ["*", "personale", "capo"]
+
+
 def test_the_persons_bindings_are_kept_and_the_new_one_added():
     person = {"agentId": "support", "match": {"channel": "discord", "accountId": "*"}}
     new = {"agentId": "main", "match": {"channel": "telegram", "accountId": "*"}}

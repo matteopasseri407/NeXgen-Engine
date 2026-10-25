@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.files import atomic_write_text
+from nexgen_core.openclaw.acp import SVILUPPO_ID
 from nexgen_core.openclaw.profile import PENDING_TOKEN
 
 #: The suffix a backup carries, so the file it protects is still recognisable.
@@ -205,6 +206,7 @@ def merged_document(current: dict[str, Any] | None, proposed: dict[str, Any]) ->
         merged_models["providers"] = providers
         merged["models"] = merged_models
     _keep_model_fallbacks(base, merged)
+    _drop_uncreated_agent(merged)
     _retire(merged)
     return merged
 
@@ -236,8 +238,36 @@ def _keep_model_fallbacks(base: dict[str, Any], merged: dict[str, Any]) -> None:
             target["model"] = {"primary": model, "fallbacks": list(chain)}
 
 
+def _without_agent(block: Any, key: str) -> None:
+    """`block[key]` without the agent this run does not create, edited in place."""
+    values = block.get(key) if isinstance(block, dict) else None
+    if isinstance(values, list):
+        block[key] = [value for value in values if str(value) != SVILUPPO_ID]
+
+
+def _drop_uncreated_agent(document: dict[str, Any]) -> None:
+    """Takes the OpenCode agent out of the permission lists while no entry declares it.
+
+    `sviluppo` is the one agent the engine can decide not to create (`--no-sviluppo`,
+    no `opencode` command, or no Go key), and an earlier run or the squad's own
+    `send` may still name it. OpenClaw cannot route an id no `agents.entries`
+    declares, so the id goes; an agent the person added to the same list, and the
+    `*` pattern a person may write, are not the engine's to remove.
+    """
+    agents = document.get("agents")
+    entries = agents.get("entries") if isinstance(agents, dict) else None
+    if not isinstance(entries, dict) or SVILUPPO_ID in entries:
+        return
+    tools = document.get("tools")
+    _without_agent(tools.get("agentToAgent") if isinstance(tools, dict) else None, "allow")
+    for entry in entries.values():
+        inner = entry.get("tools") if isinstance(entry, dict) else None
+        _without_agent(inner.get("agentToAgent") if isinstance(inner, dict) else None, "send")
+
+
 def _retire(document: dict[str, Any]) -> None:
     """Drops what an earlier engine wrote and no longer proposes, if still untouched."""
+
     for path, value in RETIRED_VALUES:
         parent: Any = document
         for key in path[:-1]:

@@ -30,7 +30,7 @@ A map of agent IDs to agent configuration:
 - `exec`: Optional execution policy for this agent, written to `agents.entries.<id>.tools.exec`. See [`exec` and the tool policy](#exec-and-the-tool-policy).
 - `tools`:
   - `agentToAgent`:
-    - `send`: List of target agent IDs this agent is permitted to message. The engine automatically enables `tools.agentToAgent.allow` for all participating agents.
+    - `send`: List of target agent IDs this agent is permitted to message. The engine automatically enables `tools.agentToAgent.allow` for all participating agents. An agent this run does not create is left out of both lists: `--no-sviluppo`, a missing `opencode` command or a missing Go key means no `sviluppo` entry, and an id no entry declares is one OpenClaw cannot route.
   - `exec`:
     - `host`: `"node"` or `"gateway"`.
     - `node`: Name of the satellite node machine executing commands for this agent.
