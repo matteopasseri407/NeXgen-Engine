@@ -2366,4 +2366,22 @@ MESSAGES: dict[str, str] = {
         "Mi rifiuto di pubblicare da questa copia del Vault ({reason}). Le note si scrivono col vault-library.",
     "read-only vault clone: the pins are not committed here":
         "copia del Vault in sola lettura: i pin non vengono committati qui",
+    "Which role this machine runs, and how to record it":
+        "Che ruolo ha questa macchina, e come registrarlo",
+    "Record the role this machine runs":
+        "Registra il ruolo di questa macchina",
+    "The role to record":
+        "Il ruolo da registrare",
+    "This machine is recorded as: {role}":
+        "Questa macchina risulta: {role}",
+    "The record lives in {path}":
+        "Il registro è in {path}",
+    "No role is recorded on this machine.":
+        "Su questa macchina non è registrato nessun ruolo.",
+    "If this is the always-on gateway, record it with 'nexgen role set server'.":
+        "Se questa è il gateway sempre acceso, registralo con 'nexgen role set server'.",
+    "The role could not be recorded in {path}":
+        "Non sono riuscito a registrare il ruolo in {path}",
+    "Recorded the role: {role}":
+        "Ruolo registrato: {role}",
 }
