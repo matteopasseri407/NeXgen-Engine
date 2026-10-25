@@ -81,6 +81,29 @@ def test_run_opens_the_harness_on_the_unit_and_attaches_its_session(task, unit, 
     ]
 
 
+def test_run_puts_the_model_the_owner_asked_for_on_the_tab(task, lane, monkeypatch, tmp_path):
+    """`sup run --model` arriva davvero sulla scheda di agy, non solo fino al motore."""
+    folder = lane / task / "23-unita-prova"
+    folder.mkdir(parents=True)
+    (lane / task / "20-brief-prova.md").write_text("# Brief\n", encoding="utf-8")
+    state.append_event(
+        task, "unit_created", unit="prova", worktree=str(folder), branch=f"sup/{task}/prova",
+        base="0" * 40, allow=["docs/*.md"], verify="", repo=str(tmp_path),
+    )
+    monkeypatch.setattr(harness.shutil, "which", lambda name: f"{name}-finto")
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path / "antigravity"))
+    opened: list = []
+
+    result = harness.run_unit(
+        task, "prova", harness="agy", model="gemini-3.8-flash", wait_s=0,
+        opener=lambda title, argv, *, cwd, marker="": opened.append(list(argv)) or {"title": title, "pid": 9},
+        lister=lambda: [],
+    )
+
+    assert opened[0][opened[0].index("--model") + 1] == "gemini-3.8-flash"
+    assert result["model_applied"] is True
+
+
 def test_run_writes_the_profile_with_only_the_mcp_the_unit_was_given(task, lane, tmp_path, monkeypatch):
     """La copia di un lavoratore nasce senza MCP: il profilo spegne i globali che il supervisore non ha assegnato."""
     folder = lane / task / "23-unita-mcp"
