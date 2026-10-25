@@ -252,3 +252,18 @@ def test_a_common_section_reaches_every_workspace_on_setup_and_on_sync(tmp_path:
         assert "Second rule." in text, name
         assert "First rule." not in text, name
         assert text.startswith("<!-- nexgen:instructions:begin -->"), name
+
+
+def test_the_shipped_manual_is_exactly_what_the_render_writes(tmp_path: Path) -> None:
+    """A rule added to every manual must not make the engine's own file look like the person's.
+
+    The ownership test compares a workspace against the text this engine ships. It
+    has to be the same text `render_workspace` produces, or a section appended to
+    every manual makes every workspace the engine wrote look hand-written, and the
+    squad's instructions stop reaching it.
+    """
+    from nexgen_core.openclaw.templates import shipped_manuals
+
+    for agent in ("main", "assistente", "capo", "automazioni", "sviluppo"):
+        for language in ("it", "en"):
+            assert render_workspace(agent, language)["AGENTS.md"] in shipped_manuals(agent), (agent, language)

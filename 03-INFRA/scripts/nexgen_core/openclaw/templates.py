@@ -418,4 +418,6 @@ def shipped_manuals(agent: str) -> tuple[str, ...]:
     that account.
     """
     name = AGENTS.get(agent)
-    return tuple() if name is None else tuple(_MANUALS[language][name] for language in _MANUALS)
+    if name is None:
+        return ()
+    return tuple(render_workspace(agent, language)["AGENTS.md"] for language in _MANUALS)
