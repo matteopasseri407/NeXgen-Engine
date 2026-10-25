@@ -1,8 +1,8 @@
 """Global environment file for OpenClaw gateway.
 
-One job: calculate variables referenced in OpenClaw config and mounted MCP
-servers, and update $OPENCLAW_STATE_DIR/.env (mode 0600), preserving user-defined
-keys and never logging secret values.
+One job: calculate variables referenced in OpenClaw config and the MCP servers
+mounted in the file in force, and update $OPENCLAW_STATE_DIR/.env (mode 0600),
+preserving user-defined keys and never logging secret values.
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
+from nexgen_core.mcp_render import load_json_object
 
 if TYPE_CHECKING:
     from nexgen_core.openclaw.setup_steps import Setup
@@ -64,6 +65,26 @@ def extract_referenced_env_vars(config: dict[str, Any]) -> set[str]:
     return found
 
 
+def extract_mounted_mcp_env_vars(config_path: Path) -> set[str]:
+    """The variables cited by the MCP servers mounted in the file in force.
+
+    The server table is written into `openclaw.json` by `nexgen mcp render`, not
+    by the setup, so it never reaches the proposal this writer is handed. A stdio
+    server names its variables in its arguments and in its `env` block (the
+    bridge scripts included); one missing from the gateway's environment makes
+    that server start with an empty value, or not start at all.
+    """
+    try:
+        data = load_json_object(config_path)
+    except ValueError:  # nexgen: allow reason="a config that cannot be read adds no server variable; the write step names the file"
+        return set()
+    mcp = data.get("mcp") if isinstance(data, dict) else None
+    servers = mcp.get("servers") if isinstance(mcp, dict) else None
+    found: set[str] = set()
+    _extract_vars_from_val(servers, found)
+    return found
+
+
 def _parse_existing_keys(content: str) -> set[str]:
     keys: set[str] = set()
     for raw_line in content.splitlines():
@@ -89,7 +110,7 @@ def write_gateway_service_env(
     config: dict[str, Any],
 ) -> Path:
     """Updates $OPENCLAW_STATE_DIR/.env preserving existing keys; never logs values."""
-    referenced = extract_referenced_env_vars(config)
+    referenced = extract_referenced_env_vars(config) | extract_mounted_mcp_env_vars(setup.config_path)
     env_source: Mapping[str, str] = setup.env or os.environ
     active_vars = {k: env_source[k] for k in sorted(referenced) if k in env_source and env_source[k]}
 

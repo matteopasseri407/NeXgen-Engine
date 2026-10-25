@@ -1,10 +1,12 @@
 """Tests for OpenClaw state permissions, plugin deposit verification, and .env."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
 from nexgen_core.openclaw.setup_service_env import (
+    extract_mounted_mcp_env_vars,
     extract_referenced_env_vars,
     write_gateway_service_env,
 )
@@ -125,6 +127,65 @@ def test_write_gateway_service_env_preserves_existing_keys(tmp_path: Path) -> No
         msg = str(call[0][0])
         assert "user-own-custom-key" not in msg
         assert "brave-test1234" not in msg
+
+
+def test_the_gateway_env_covers_the_variables_of_the_mounted_mcp_servers(tmp_path: Path) -> None:
+    """A stdio server names its variables in its arguments and its `env` block.
+
+    The MCP table is written into `openclaw.json` by `nexgen mcp render`, not by
+    the setup, so the proposal this writer receives does not carry it: without
+    reading the file in force, a bridge or a connector starts with an empty
+    value and the gateway never notices.
+    """
+    setup = _make_dummy_setup(tmp_path, platform="linux")
+    setup.env.update({
+        "AGENT_ENGINE_ROOT": "/opt/engine",
+        "BRIDGE_TOKEN": "bridge-secret",
+        "MCP_CLIENT_ID": "client-id",
+        "NOT_AN_MCP_VAR": "read-from-somewhere-else",
+    })
+    setup.config_path.write_text(
+        json.dumps({
+            "mcp": {
+                "servers": {
+                    "playwright": {
+                        "command": "node",
+                        "args": ["${AGENT_ENGINE_ROOT}/agent-universal-layer/mcp/playwright-human-safe.mjs"],
+                    },
+                    "bridge": {
+                        "command": "node",
+                        "args": [
+                            "${AGENT_ENGINE_ROOT}/agent-universal-layer/mcp/mcp-http-bridge.mjs",
+                            "https://bridge.example/mcp",
+                        ],
+                        "env": {"AUTH_HEADER": "${BRIDGE_TOKEN}", "MCP_CLIENT_ID": "${MCP_CLIENT_ID}"},
+                    },
+                },
+            },
+            "agents": {"entries": {"main": {"prompt": "${NOT_AN_MCP_VAR}"}}},
+        }),
+        encoding="utf-8",
+    )
+
+    env_file = write_gateway_service_env(setup, {"agents": {"entries": {}}})
+
+    content = env_file.read_text(encoding="utf-8")
+    assert 'AGENT_ENGINE_ROOT="/opt/engine"' in content
+    assert 'BRIDGE_TOKEN="bridge-secret"' in content
+    assert 'MCP_CLIENT_ID="client-id"' in content
+    # Only the mounted server table is read: the rest of the file is not a variable source.
+    assert "NOT_AN_MCP_VAR" not in content
+
+
+def test_a_corrupt_config_adds_no_server_variable_instead_of_crashing(tmp_path: Path) -> None:
+    setup = _make_dummy_setup(tmp_path, platform="linux")
+    setup.config_path.write_text("{not json", encoding="utf-8")
+
+    env_file = write_gateway_service_env(setup, {"tools": {"web": "${BRAVE_API_KEY}"}})
+
+    content = env_file.read_text(encoding="utf-8")
+    assert 'BRAVE_API_KEY="brave-test1234"' in content
+    assert extract_mounted_mcp_env_vars(setup.config_path) == set()
 
 
 def test_fix_state_permissions(tmp_path: Path) -> None:
