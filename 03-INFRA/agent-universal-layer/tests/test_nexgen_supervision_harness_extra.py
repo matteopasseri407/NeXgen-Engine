@@ -139,6 +139,30 @@ def test_the_run_verb_passes_the_chosen_harness_only_when_the_owner_names_it(mon
     assert seen[1] == {"task": "t", "unit": "u", "harness": "claude"}
 
 
+def test_the_run_verb_passes_the_model_only_when_the_owner_names_it(monkeypatch):
+    seen: list[dict] = []
+
+    def fake_run(task_id, unit, **kwargs):
+        seen.append({"task": task_id, "unit": unit, **kwargs})
+        return {"mode": "tab", "window": {}, "session": None, "unit": unit}
+
+    monkeypatch.setattr(harness, "run_unit", fake_run)
+
+    sup_cmd._run_unit(SimpleNamespace(id="t", unit="u", harness="agy", model=""))
+    sup_cmd._run_unit(SimpleNamespace(id="t", unit="u", harness="agy", model="gemini-3.8-flash"))
+
+    assert seen[0] == {"task": "t", "unit": "u", "harness": "agy"}
+    assert seen[1] == {"task": "t", "unit": "u", "harness": "agy", "model": "gemini-3.8-flash"}
+
+
+def test_the_run_parser_offers_the_model_flag(capsys):
+    with pytest.raises(SystemExit):
+        cli.main(["sup", "run", "--help"])
+
+    out = capsys.readouterr().out
+    assert "--model" in out
+
+
 def test_the_scout_verb_accepts_a_harness_and_resolves_it_before_the_copy(lane):
     (lane / "config.json").write_text(
         json.dumps({"supervision": {"roles": {"ricognitore": "opencode"}}}), encoding="utf-8",

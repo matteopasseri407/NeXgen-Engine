@@ -127,8 +127,15 @@ class Adapter:
         if not self.capabilities.has(operation):
             raise Unsupported(self.name, operation, why)
 
-    def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "") -> list[str]:
-        """The command that opens a visible tab on this folder, with the prompt as a pointer."""
+    def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "",
+                 model: str = "") -> list[str]:
+        """The command that opens a visible tab on this folder, with the prompt as a pointer.
+
+        `model` is the model the owner asked for on this run. A harness whose tab
+        takes one states it on the command line; one that chooses its model from
+        its own configuration ignores it, and the caller reads the argv back to
+        report whether it was applied instead of assuming it was.
+        """
         raise Unsupported(self.name, "open_tab")
 
     def send_argv(self, executable: str, session: str, prompt: str, *, model: str = "") -> list[str]:

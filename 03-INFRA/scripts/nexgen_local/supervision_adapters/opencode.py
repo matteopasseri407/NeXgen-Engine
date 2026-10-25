@@ -49,8 +49,13 @@ class OpenCodeAdapter(base.Adapter):
         deny_push="profilo del progetto (opencode.json) e pushurl bloccata della copia",
     )
 
-    def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "") -> list[str]:
-        """`opencode <folder> [--session <id>] --prompt <pointer>`: never `--auto`."""
+    def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "",
+                 model: str = "") -> list[str]:
+        """`opencode <folder> [--session <id>] --prompt <pointer>`: never `--auto`.
+
+        `model` is accepted and not used: an OpenCode tab picks the model from the
+        owner's configuration, and the caller reports it as not applied.
+        """
         argv = [executable, str(folder)]
         if session:
             argv.extend(["-s", session])

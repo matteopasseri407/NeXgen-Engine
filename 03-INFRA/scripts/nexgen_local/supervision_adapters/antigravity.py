@@ -81,9 +81,16 @@ class AntigravityAdapter(base.Adapter):
         deny_push="solo pushurl bloccata della copia (agy non ha un profilo di progetto)",
     )
 
-    def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "") -> list[str]:
-        """A visible executor tab: edits allowed, the prompt as a pointer, never skip-permissions."""
+    def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "",
+                 model: str = "") -> list[str]:
+        """A visible executor tab: edits allowed, the prompt as a pointer, never skip-permissions.
+
+        `agy --model <id>` is the only way this CLI chooses a model, so a model the
+        owner named for this run travels on the tab itself.
+        """
         argv = [executable, "--mode", "accept-edits"]
+        if model:
+            argv.extend(["--model", model])
         if session:
             argv.extend(["--conversation", session])
         argv.extend(["--prompt-interactive", prompt])

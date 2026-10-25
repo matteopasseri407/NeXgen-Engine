@@ -566,6 +566,18 @@ def test_agy_is_a_scout_and_an_executor_with_find_session(tmp_path):
         adapter.send_argv("agy", "c1", "correggi")
 
 
+def test_agy_states_on_the_tab_the_model_the_owner_asked_for(tmp_path):
+    """`--model` is the only way to choose agy's model, so the tab that opens declares it."""
+    adapter = antigravity.AntigravityAdapter()
+    assert adapter.tab_argv("agy", tmp_path, "leggi", session="c1", model="gemini-3.8-flash") == [
+        "agy", "--mode", "accept-edits", "--model", "gemini-3.8-flash",
+        "--conversation", "c1", "--prompt-interactive", "leggi",
+    ]
+    assert adapter.tab_argv("agy", tmp_path, "leggi") == [
+        "agy", "--mode", "accept-edits", "--prompt-interactive", "leggi",
+    ]
+
+
 def test_agy_find_session_finds_conversation_by_copy_or_brief(tmp_path, monkeypatch):
     conv_dir = tmp_path / "conversations"
     monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path))

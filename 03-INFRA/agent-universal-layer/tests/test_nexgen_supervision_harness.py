@@ -737,6 +737,33 @@ def test_open_first_tab_records_pid_in_event(task, unit, monkeypatch, harness_cl
     assert events[0]["pid"] == 9876
 
 
+def test_a_tab_states_the_model_it_was_asked_for_and_says_so(task, unit, harness_cli):
+    """agy ha solo la scheda per scegliere il modello: l'argv lo dichiara e il motivo lo dice."""
+    opened: list = []
+    result = harness._open_first_tab(
+        task, "prova", unit, "prompt",
+        opener=lambda title, argv, cwd, marker="": opened.append(list(argv)) or {"title": title, "pid": 11},
+        lister=lambda: [], wait_s=0, adapter=harness.adapters.get("agy"), model="gemini-3.8-flash",
+    )
+
+    assert opened[0][opened[0].index("--model") + 1] == "gemini-3.8-flash"
+    assert result["model_requested"] == "gemini-3.8-flash"
+    assert result["model_applied"] is True
+
+
+def test_a_harness_without_a_model_on_the_tab_never_claims_it_was_applied(task, unit, harness_cli):
+    """Claude Code sceglie il modello nella configurazione, non sulla scheda: il motore non mente."""
+    result = harness._open_first_tab(
+        task, "prova", unit, "prompt",
+        opener=lambda title, argv, cwd, marker="": {"title": title, "pid": 12},
+        lister=lambda: [], wait_s=0, adapter=harness.adapters.get("claude"),
+        model="anthropic/claude-opus-5-5",
+    )
+
+    assert result["model_requested"] == "anthropic/claude-opus-5-5"
+    assert result["model_applied"] is False
+
+
 def test_agy_tab_finds_and_attaches_session_after_tab_open(task, unit, tmp_path, monkeypatch, harness_cli):
     """Con agy, la conversazione nel DB sqlite viene cercata e agganciata."""
     conv_dir = tmp_path / "conversations"

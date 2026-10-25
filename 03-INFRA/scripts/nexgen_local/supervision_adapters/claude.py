@@ -55,8 +55,13 @@ class ClaudeAdapter(base.Adapter):
         """The id the engine hands to `--session-id`, so finding the session is not a bet."""
         return str(uuid.uuid4())
 
-    def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "") -> list[str]:
-        """`claude --session-id <uuid> --permission-mode acceptEdits <pointer>`."""
+    def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "",
+                 model: str = "") -> list[str]:
+        """`claude --session-id <uuid> --permission-mode acceptEdits <pointer>`.
+
+        The model is Claude Code's own configuration, not a tab flag, so `model`
+        is accepted and left out: the caller reports it as not applied.
+        """
         argv = [executable]
         if session:
             argv.extend(["--session-id", session])

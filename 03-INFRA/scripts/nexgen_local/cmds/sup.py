@@ -75,13 +75,7 @@ def register_sup(sub) -> None:
     unit.set_defaults(func=cmd_sup_unit)
 
     run = sup_sub.add_parser("run", help="apre l'esecutore nella sua finestra e aggancia la sua sessione")
-    run.add_argument("id", help="id del compito")
-    run.add_argument("unit", help="nome dell'unità")
-    run.add_argument(
-        "--harness", default="",
-        help="harness di questa esecuzione (default: quello del ruolo esecutore nella lane)",
-    )
-    run.set_defaults(func=cmd_sup_run)
+    _register_run(run)
 
     collect = sup_sub.add_parser("collect", help="esegue i cancelli del motore e scrive il pacchetto di revisione")
     collect.add_argument("id", help="id del compito")
@@ -109,6 +103,21 @@ def _register_attach(attach) -> None:
     attach.add_argument("--harness", default="", help="harness della sessione (default: opencode)")
     attach.add_argument("--window", default="", help="titolo della finestra in cui gira la sessione")
     attach.set_defaults(func=cmd_sup_attach)
+
+
+def _register_run(run) -> None:
+    """The run verb: which unit, which harness, and the model of the tab it opens."""
+    run.add_argument("id", help="id del compito")
+    run.add_argument("unit", help="nome dell'unità")
+    run.add_argument(
+        "--harness", default="",
+        help="harness di questa esecuzione (default: quello del ruolo esecutore nella lane)",
+    )
+    run.add_argument(
+        "-m", "--model", default="",
+        help="modello di questa scheda, quando l'harness lo accetta sulla riga di comando (agy)",
+    )
+    run.set_defaults(func=cmd_sup_run)
 
 
 def _register_review(sup_sub) -> None:
@@ -331,6 +340,7 @@ def cmd_sup_run(args: argparse.Namespace) -> int:
         row = result.get("row") or {}
         print(f"costo all'invio: {row['cost_usd']:.4f} $" if isinstance(row.get("cost_usd"), (int, float))
               else "costo all'invio: non disponibile")
+        _print_model(result)
         _board("running", args.id, result["unit"])
         return 0
     handle = result["window"]
@@ -338,6 +348,7 @@ def cmd_sup_run(args: argparse.Namespace) -> int:
           f"dell'unità {result['unit']}")
     if result.get("reason"):
         print(f"perché una scheda nuova: {result['reason']}")
+    _print_model(result)
     _board("running", args.id, result["unit"])
     session = result["session"]
     if session is None:
@@ -348,15 +359,29 @@ def cmd_sup_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_model(result: dict) -> None:
+    """Say which model this tab took, and when the harness took none, say that instead."""
+    requested = result.get("model_requested")
+    if not requested:
+        return
+    if result.get("model_applied"):
+        print(f"modello della scheda: {requested}")
+    else:
+        print(f"modello {requested} non applicato: questo harness sceglie il modello nella sua configurazione")
+
+
 def _run_unit(args: argparse.Namespace) -> dict:
-    """Call the engine with the harness only when the owner named one.
+    """Call the engine with only the keywords the owner actually gave.
 
     The callers and the tests replace `run_unit` with a two-argument function; a
     keyword nobody asked for would make that replacement unreachable.
     """
+    options: dict[str, str] = {}
     if getattr(args, "harness", ""):
-        return harness.run_unit(args.id, args.unit, harness=args.harness)
-    return harness.run_unit(args.id, args.unit)
+        options["harness"] = args.harness
+    if getattr(args, "model", ""):
+        options["model"] = args.model
+    return harness.run_unit(args.id, args.unit, **options)
 
 
 def cmd_sup_collect(args: argparse.Namespace) -> int:

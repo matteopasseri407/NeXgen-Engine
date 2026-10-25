@@ -50,13 +50,16 @@ class CodexAdapter(base.Adapter):
         limits="su Windows il sandbox scrive come un utente separato: il motore non legge né cancella il lavoro, quindi l'esecutore non è utilizzabile end-to-end",
     )
 
-    def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "") -> list[str]:
+    def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "",
+                 model: str = "") -> list[str]:
         """`codex -C <folder> -s workspace-write -a never <pointer>`: a visible tab.
 
         The unit's brief and report live in the task folder, and a worktree keeps
         its git objects in the checkout: both are outside the copy Codex takes as
         its workspace, so they are added as writable roots. Without them the model
         cannot read the brief, cannot write the report, and cannot commit.
+        `model` is accepted and not used: a Codex tab opens on the model of the
+        owner's own configuration.
         """
         argv = [executable, "-C", str(folder), "-s", SANDBOX, "-a", APPROVAL]
         for root in _extra_roots(folder):
