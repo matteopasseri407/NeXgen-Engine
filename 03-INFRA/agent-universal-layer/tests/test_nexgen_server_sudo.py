@@ -189,7 +189,7 @@ def test_an_install_that_fails_is_reported_and_not_claimed(tmp_path):
 
     outcome = server_sudo.install(home, "nexgen", runner=sudo, out=lines.append)
 
-    assert outcome == server_sudo.INVALID
+    assert outcome == server_sudo.FAILED
     assert any("was not installed" in line for line in lines)
 
 
@@ -229,7 +229,8 @@ def test_the_server_role_installs_the_policy_before_configuring_the_gateway(tmp_
     assert calls == [str(tmp_path / "home")]
 
 
-def test_a_policy_visudo_refuses_does_not_block_the_gateway_but_fails_the_role(tmp_path):
+@pytest.mark.parametrize("outcome", sorted(server_sudo.FAILURES))
+def test_a_policy_that_is_not_in_force_does_not_block_the_gateway_but_fails_the_role(tmp_path, outcome):
     """The machine still gets its gateway; the promise that did not hold stays visible."""
     lines: list[str] = []
     setup_called = []
@@ -240,7 +241,7 @@ def test_a_policy_visudo_refuses_does_not_block_the_gateway_but_fails_the_role(t
         setup_fn=lambda **kwargs: setup_called.append(1) or 0,
         align_fn=lambda: (True, "aligned"),
         problems_fn=lambda: (0, []),
-        sudoers_fn=lambda home, out: server_sudo.INVALID,
+        sudoers_fn=lambda home, out: outcome,
         platform="linux",
         out=lines.append,
     )

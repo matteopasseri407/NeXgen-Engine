@@ -32,7 +32,7 @@ from nexgen_core.openclaw.node_attach import (
     apply_exec_policy,
 )
 from nexgen_core.paths import resolve_home
-from nexgen_core.server_sudo import INVALID, install as _install_sudo_policy
+from nexgen_core.server_sudo import FAILURES, install as _install_sudo_policy
 
 
 def installing_user() -> str:
@@ -178,7 +178,7 @@ def run_server_role(
     if count > 0:
         out(t("{count} problem(s) remain: run 'nexgen doctor'", count=count))
         return 1
-    if policy == INVALID:
+    if policy in FAILURES:
         out(t("The gateway is configured, but the agents' sudo policy is not in force: see the line above."))
         return 1
     out(t("Server gateway ready."))

@@ -57,12 +57,18 @@ DEFAULT_PATHS = {
 }
 
 #: What `install` can say. The caller reads these instead of a bool, because
-#: "installed", "already there", "no sudo here" and "the engine wrote something
-#: visudo refuses" are four different answers for the person reading the output.
+#: "installed", "already there", "no sudo here", "the engine wrote something
+#: visudo refuses" and "the install command itself failed" are five different
+#: answers for the person reading the output.
 INSTALLED = "installed"
 UNCHANGED = "unchanged"
 NO_SUDO = "no-sudo"
 INVALID = "invalid"
+FAILED = "failed"
+
+#: The answers that mean the policy is not in force and nothing else will change
+#: that today: the server role fails its run on these and succeeds on the others.
+FAILURES = frozenset({INVALID, FAILED})
 
 _HEADER = (
     "# Written by the NeXgen Engine server role from its fixed list of privileged",
@@ -186,7 +192,7 @@ def install(
     written = run(["sudo", "-n", "install", "-m", "0440", "-C", candidate, target])
     if written.returncode != 0:
         out(t("The agents' sudo policy was not installed ({error}).", error=_reason(written)))
-        return INVALID
+        return FAILED
     out(t("The agents' sudo policy is in force at {path}: {count} commands, and nothing else.",
           path=target, count=len(commands)))
     return INSTALLED
