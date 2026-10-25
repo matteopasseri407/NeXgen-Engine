@@ -63,6 +63,66 @@ Overlapping engine code that duplicates capabilities covered by OpenClaw is reti
 
 ---
 
+## Operating decisions for the local agy backend
+
+`agy` runs in two places at once: the supervision lane starts it directly, and OpenClaw
+starts the same CLI through the `google-antigravity-cli` CLI backend plugin.
+The two must hand it the same posture, the same tools and the same model list.
+
+| Fact | Outside OpenClaw | Inside OpenClaw |
+|---|---|---|
+| Executor mode | `agy --mode accept-edits` | the plugin owns its own argv |
+| Read-only round | `agy --mode plan` | one turn per message: no scout mode |
+| Model | `agy --model <id>`, from `sup run --model` | the route `google-antigravity-cli/<id>` |
+| MCP servers | `~/.gemini/antigravity-cli/mcp_config.json` | the same file: the plugin starts `agy` in the user's home |
+
+### `permissionMode` is not `--mode`
+
+The plugin declares three permission modes, and none of them is an execution mode.
+`skip` is `agy`'s own self-approval (`--dangerously-skip-permissions`), `sandbox` turns on
+the CLI's terminal sandbox (`--sandbox`), and `settings` leaves approval to `agy`'s settings
+file.
+`--mode accept-edits|auto|plan` is a different axis: it says whether the CLI may edit files,
+not whether a person approves a tool call.
+
+The setup therefore writes `permissionMode: "sandbox"`, keeps a guarded mode already in
+force (`sandbox` or `settings`), and never writes `skip`.
+`nexgen openclaw doctor` warns when it finds `skip`, or no mode at all, because `skip` is
+the plugin's default.
+The engine never enables or disables the plugin itself: it aligns the one setting inside an
+entry the owner already approved.
+
+One difference remains, and it is stated rather than hidden.
+The supervision lane passes `--mode accept-edits` on the tab it opens, while the plugin
+leaves the execution mode to its own argv, where the engine does not guess.
+Both sides keep the same rule, `agy` never approves its own tool calls, and the mode the
+engine can verify is the one it writes.
+
+### One MCP file, and no gateway inside OpenClaw
+
+`agy` reads `~/.gemini/antigravity-cli/mcp_config.json`, and the engine writes that file from
+the canonical manifest (`~/.gemini/antigravity/mcp_config.json`, fanned out to the folders
+Antigravity reads).
+
+When OpenClaw drives the local `agy` backend, the antigravity renderer writes the servers
+OpenClaw mounts directly and leaves `lazy-mcp` out.
+OpenClaw never mounts the engine's gateway, because it has its own Tool Search, so a server
+behind that gateway would be dead there; and the plugin starts the same CLI from the same
+home, so one file has to serve both lives.
+This is the one dialect where a server declared `exposure: lazy` is not served by the
+gateway: of the two contexts reading the file, the one that cannot see a gateway wins.
+
+### The model picker on every agent
+
+`model` on an agent is only its default.
+`nexgen openclaw setup` registers one wildcard per reachable provider in
+`agents.defaults.modelPolicy.allow`, and the squad registers each model it names, so every
+agent's picker lists every model this machine can run, the local `agy` backend included.
+The rule and its reasons live in `nexgen_core/openclaw/model_policy.py`; what the owner sees
+is in [Squad as data](squad.md#model-choice-per-agent).
+
+---
+
 ## Retirements Executed in This Task
 
 - **`nexgen shell` (and aliases `interactive`, `repl`)**:
