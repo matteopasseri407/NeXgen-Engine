@@ -267,6 +267,13 @@ clients. The engine never writes a `google` plugin, and `nexgen openclaw doctor`
 has one, including an OAuth entry under another name. A `gemini` seat in `acp.allowedAgents` is a warning,
 because it is allowed by the protocol and not by the terms.
 
+One road stays open, and it is Google's own client doing the work: a CLI backend plugin that runs the
+official `agy` CLI as a local process. `agy` keeps the login and the session, OpenClaw holds only the
+synthetic marker and never a Google token, and the route is `google-antigravity-cli/*` or an `agentRuntime.id`
+with the same id. `nexgen openclaw doctor` gives that backend its own line and names the permission mode the
+plugin was given: `skip` is a warning, because it lets `agy` approve every tool call by itself, while
+`sandbox` and `settings` keep an approval boundary.
+
 ## Windows, the traps that cost an afternoon
 
 - `openclaw gateway restart` does not restart on Windows. Stop the processes and relaunch the service, or
@@ -625,11 +632,12 @@ which keys are the person's and stay. It writes nothing; `--server` is the read-
 validity, `:latest` ids, caged local models, whether the evidence check runs and for which local models, the
 heartbeat, the gateway's bind and authentication, how the gateway is exposed (loopback, the home network,
 every interface, a direct tailnet listener, Tailscale Serve or Funnel, with a failure when a gateway published
-through Serve also listens on a network address), Google entries, ACP seats, agents on subscriptions this
-machine does not have, which background job would wake a local model, whether the gateway watches the whole
-home recursively, whether the gateway is listening, whether every agent has a fallback chain, a second
-gateway from the Microsoft Store, the OpenClaw Companion's own gateway, which it reports without configuring
-it, and how many skills and servers OpenClaw created that the canonical library does not declare yet.
+through Serve also listens on a network address), Google entries, the local `agy` backend and the permission
+mode its plugin was given, ACP seats, agents on subscriptions this machine does not have, which background
+job would wake a local model, whether the gateway watches the whole home recursively, whether the gateway is
+listening, whether every agent has a fallback chain, a second gateway from the Microsoft Store, the OpenClaw
+Companion's own gateway, which it reports without configuring it, and how many skills and servers OpenClaw
+created that the canonical library does not declare yet.
 When the app is installed, one line answers the two questions a person has: whether the app's settings point at
 this PC's gateway, and whether the gateway's own device list knows the app. `nexgen openclaw doctor` reads that
 list with `openclaw devices list --json`, on that line only and only when the app says it is on this gateway;
