@@ -1,8 +1,9 @@
 """The models a configuration declares, judged by the doctor.
 
 One job: read what the configuration says about models and say whether OpenClaw can
-use it — ids it recognises, the cage around every local one, and the subscription
-behind a cloud one. These checks were part of `doctor.py` until that file was full;
+use it — ids it recognises, the cage around every local one, the subscription
+behind a cloud one, and whether a person may pick a model other than the ones the
+map already names. These checks were part of `doctor.py` until that file was full;
 they are the model half of the same judgement, and they stay separate so the rules
 about the gateway and about subscriptions do not have to share one file.
 
@@ -135,4 +136,51 @@ def check_agent_models(config: dict[str, Any], snapshot: Detection) -> CheckOutc
         id="openclaw.agent_models",
         severity=Severity.OK,
         message=t("Every agent uses a model this machine can reach."),
+    )
+
+
+def check_model_overrides(config: dict[str, Any]) -> CheckOutcome:
+    """Whether a person may pick any model this machine reaches, on any agent.
+
+    `agents.defaults.models` is a model map: aliases, per-model settings, the
+    runtime behind a subscription model. OpenClaw also reads it as an explicit
+    override allowlist when `agents.defaults.modelPolicy` is absent, and then
+    `/model`, a session override and every picker offer only those refs, on every
+    agent that declares no policy of its own. The engine writes that map, so this
+    is the shape most of its machines are in, and the refusal a person meets
+    names the agent ("not allowed for this agent") while the cause is the map.
+
+    Verified on the installed OpenClaw 2026.10.6: the legacy allowlist is built
+    by `computeModelPolicyAllowlist` in `dist/agent-scope-config-CtLA1__T.mjs`,
+    lines 71-81, and is replaced by the per-agent policy, then the default
+    policy, then the map itself; `docs/concepts/models.md` lines 60, 73 and
+    208-212 say the same thing, and an empty `modelPolicy: {}` keeps the policy
+    unrestricted.
+    """
+    agents = config.get("agents") if isinstance(config.get("agents"), dict) else {}
+    defaults = agents.get("defaults") if isinstance(agents.get("defaults"), dict) else {}
+    if isinstance(defaults.get("modelPolicy"), dict):
+        return CheckOutcome(
+            id="openclaw.model_overrides",
+            severity=Severity.OK,
+            message=t("The model override policy is explicit, so the model map does not restrict it."),
+        )
+    models = defaults.get("models") if isinstance(defaults.get("models"), dict) else {}
+    refs = sorted(str(key).strip() for key in models if str(key).strip())
+    if not refs:
+        return CheckOutcome(
+            id="openclaw.model_overrides",
+            severity=Severity.OK,
+            message=t("No model override allowlist is in force: any model this machine reaches can be chosen."),
+        )
+    return CheckOutcome(
+        id="openclaw.model_overrides",
+        severity=Severity.WARN,
+        message=t(
+            "`agents.defaults.models` carries no `agents.defaults.modelPolicy`, so OpenClaw treats its "
+            "{count} entries as the only models an agent may switch to: {refs}",
+            count=len(refs), refs=", ".join(refs),
+        ),
+        action=t("Write `agents.defaults.modelPolicy.allow` with the exact refs or the `provider/*` entries a "
+                 "person may choose, or an empty `modelPolicy: {}` to lift the list."),
     )
