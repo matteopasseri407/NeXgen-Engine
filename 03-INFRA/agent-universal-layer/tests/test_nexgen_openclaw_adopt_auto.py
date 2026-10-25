@@ -413,6 +413,30 @@ def test_unreadable_openclaw_config_removes_nothing_and_touches_no_counter(a_mac
     assert state.get("consecutive_absent", {}).get("mcp:safe-server") == 1
 
 
+def test_an_unreachable_gateway_removes_nothing_and_touches_no_counter(a_machine: Machine, monkeypatch):
+    """No `openclaw.json` here: the gateway is asked, and an unreachable one is not an absence."""
+    from nexgen_core.openclaw.gateway_rpc import GatewayRpcError
+
+    a_machine.auto_adopt()
+    (a_machine.state / "openclaw-adopt-state.json").write_text(
+        json.dumps({"consecutive_absent": {"mcp:safe-server": 1}}), encoding="utf-8",
+    )
+    a_machine.config_path.unlink()
+
+    def no_gateway(**_kwargs):
+        raise GatewayRpcError("connection refused")
+
+    monkeypatch.setattr("nexgen_core.openclaw.gateway_rpc.config_get", no_gateway)
+
+    code = a_machine.auto_adopt()
+
+    assert code == 0
+    assert "safe-server" in (load_mcp_manifest(a_machine.mcp_manifest).get("servers") or {})
+    state = load_adopt_state(a_machine.state)
+    assert state.get("consecutive_absent", {}).get("mcp:safe-server") == 1
+    assert any("could not be read" in line for line in a_machine.printed)
+
+
 def test_doctor_adoption_check_reflects_last_pass_and_warns_on_review(a_machine: Machine):
     # Before pass
     outcome = check_adopt_doctor(a_machine.state)
