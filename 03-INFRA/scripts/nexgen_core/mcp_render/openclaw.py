@@ -8,8 +8,10 @@ are not guessable from the shape of the file, and each one is enforced here
 because ignoring it turns into a connector that silently never starts:
 
 - the URL is validated before `${VAR}` substitution, so an unresolved
-  reference is refused at write time: the URL is written resolved, and a
-  server whose variable is missing is left alone instead;
+  reference is refused at write time: an HTTP server with a secret URL
+  (`${VAR}` in manifest or `url_env`) is routed as stdio through
+  `mcp-http-bridge.mjs` where OpenClaw safely expands `${VAR}` in args;
+  literal HTTP URLs are written resolved with `"transport": "streamable-http"`;
 - an http server needs `"transport": "streamable-http"`, or the handshake
   times out with nothing in the log;
 - a Python server on Windows dies with `UnicodeEncodeError` on the first
@@ -25,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import t
-from nexgen_core.mcp_render import load_json_object, write_json_config
+from nexgen_core.mcp_render import IS_WINDOWS, MCP_REMOTE_PACKAGE, load_json_object, write_json_config
 from nexgen_core.paths import openclaw_config
 
 logger = logging.getLogger("nexgen.mcp.openclaw")
@@ -176,46 +178,6 @@ def _bridged_entry(name: str, srv: dict[str, Any], bridge_spec: Any) -> dict[str
     return _build_entry(bridged)
 
 
-def is_engine_lazy_mcp(entry: Any) -> bool:
-    """Whether an mcp.servers entry for lazy-mcp was written by the engine."""
-    if not isinstance(entry, dict):
-        return False
-    args = [str(a) for a in entry.get("args") or []]
-    cmd = str(entry.get("command") or "")
-    env = entry.get("env") if isinstance(entry.get("env"), dict) else {}
-    if "LAZY_MCP_CLI" in env:
-        return True
-    return any("lazy-mcp.py" in a for a in args) or "lazy-mcp.py" in cmd
-
-
-def _apply_servers(
-    renderer,
-    servers_table: dict[str, Any],
-    servers: dict[str, dict[str, Any]],
-    references: dict[str, dict[str, str]] | None = None,
-    http_servers: dict[str, Any] | None = None,
-) -> None:
-    """Mounts every resolved server and drops the ones this engine retired."""
-    for retired in renderer.retired_server_names():
-        servers_table.pop(retired, None)
-    servers_table.pop("openclaw", None)
-    if "lazy-mcp" in servers_table and is_engine_lazy_mcp(servers_table["lazy-mcp"]):
-        servers_table.pop("lazy-mcp", None)
-    renderer._drop_unmounted(servers_table, servers, cli_target="openclaw")
-    for name, srv in servers.items():
-        if name in ("openclaw", "lazy-mcp"):
-            continue
-        bridge_spec = (http_servers or {}).get(name) if http_servers else None
-        if bridge_spec is not None:
-            servers_table[name] = _bridged_entry(name, srv, bridge_spec)
-            continue
-        is_http = srv.get("transport") == "http" or bool(srv.get("url"))
-        if is_http and _resolved_url(srv) is None:
-            logger.warning("OpenClaw connector %r has a URL this machine cannot resolve, skipped", name)
-            continue
-        servers_table[name] = _build_entry(srv, (references or {}).get(name))
-
-
 #: The variables the engine itself resolves to a path or a port. Their value
 #: must arrive in `openclaw.json` already written: the gateway's environment is
 #: not the engine's, so an unresolved path would break the server it configures.
@@ -231,6 +193,146 @@ ENGINE_RESOLVED_VARS = frozenset({
 _REFERENCE_NAME = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-[^}]*)?\}")
 
 
+def is_engine_lazy_mcp(entry: Any) -> bool:
+    """Whether an mcp.servers entry for lazy-mcp was written by the engine."""
+    if not isinstance(entry, dict):
+        return False
+    args = [str(a) for a in entry.get("args") or []]
+    cmd = str(entry.get("command") or "")
+    env = entry.get("env") if isinstance(entry.get("env"), dict) else {}
+    if "LAZY_MCP_CLI" in env:
+        return True
+    return any("lazy-mcp.py" in a for a in args) or "lazy-mcp.py" in cmd
+
+
+def is_engine_bridge(entry: Any) -> bool:
+    """Whether an mcp.servers entry is an HTTP bridge written by the engine."""
+    if not isinstance(entry, dict):
+        return False
+    args = [str(a) for a in entry.get("args") or []]
+    cmd = str(entry.get("command") or "")
+    return any("mcp-http-bridge.mjs" in a for a in args) or "mcp-http-bridge.mjs" in cmd
+
+
+def _secret_bridge_url(name: str, srv: dict[str, Any], raw_servers: dict[str, Any]) -> str | None:
+    """The manifest's URL reference when an HTTP server has a secret or variable URL.
+
+    OpenClaw validates `mcp.servers.*.url` before substituting environment variables,
+    so `${VAR}` directly in that field is rejected. A secret URL declared as an
+    environment variable (in `url_env` or as `${VAR}`) must not be written in cleartext
+    into `openclaw.json`. The engine instead routes it through `mcp-http-bridge.mjs`,
+    where OpenClaw performs safe runtime variable substitution on stdio arguments.
+    A server whose URL variable is missing in this environment is skipped the same
+    way require_env skips one.
+    """
+    import os
+
+    raw_srv = raw_servers.get(name) or {}
+    if IS_WINDOWS and isinstance(raw_srv.get("windows"), dict):
+        win_override = raw_srv["windows"]
+        if isinstance(win_override, dict):
+            raw_srv = {**raw_srv, **win_override}
+
+    url_env = raw_srv.get("url_env")
+    if isinstance(url_env, str) and url_env.strip():
+        var_name = url_env.strip()
+        if not os.environ.get(var_name):
+            return None
+        return f"${{{var_name}}}"
+
+    raw_url = str(raw_srv.get("url") or srv.get("url") or "").strip()
+    if "${" in raw_url:
+        refs = set(_REFERENCE_NAME.findall(raw_url))
+        if refs and not (refs <= ENGINE_RESOLVED_VARS):
+            if any(not os.environ.get(r) for r in refs if r not in ENGINE_RESOLVED_VARS):
+                return None
+            return raw_url
+    return None
+
+
+def _bridge_stdio_entry(
+    renderer,
+    url_arg: str,
+    srv: dict[str, Any],
+) -> dict[str, Any]:
+    """A remote server routed via the local mcp-http-bridge stdio script.
+
+    The shape mirrors Antigravity's bridge configuration: node launcher, bridge script,
+    URL reference, token environment variable name (if bearer auth), and the pinned
+    mcp-remote package. OpenClaw substitutes `${VAR}` in arguments at child spawn time.
+    """
+    bridge_script = renderer.engine_root / "agent-universal-layer" / "mcp" / "mcp-http-bridge.mjs"
+    auth = srv.get("auth") if isinstance(srv.get("auth"), dict) else {}
+    auth_type = auth.get("type", "bearer")
+    auth_env = str(auth.get("env") or "") if auth_type == "bearer" else ""
+    node_cmd = "node.exe" if IS_WINDOWS else "node"
+    entry: dict[str, Any] = {
+        "command": node_cmd,
+        "args": [str(bridge_script), url_arg, auth_env, MCP_REMOTE_PACKAGE],
+    }
+    raw_env = srv.get("env") if isinstance(srv.get("env"), dict) else {}
+    if raw_env:
+        entry["env"] = {str(k): str(v) for k, v in raw_env.items()}
+    deny = srv.get("tools_deny")
+    if isinstance(deny, list) and deny:
+        entry["toolFilter"] = {"exclude": [str(tool) for tool in deny]}
+    return entry
+
+
+def _raw_manifest_servers(renderer) -> dict[str, dict[str, Any]]:
+    """The raw manifest server definitions before environment expansion."""
+    if hasattr(renderer, "_manifest_servers"):
+        try:
+            return renderer._manifest_servers()
+        except (OSError, ValueError):  # nexgen: allow reason="a broken manifest is reported by mcp.manifest; raw servers fallback to empty dict"
+            pass
+    if hasattr(renderer, "manifest_path") and renderer.manifest_path.is_file():
+        try:
+            from nexgen_core.config import load_mcp_manifest
+
+            data = load_mcp_manifest(renderer.manifest_path)
+            if isinstance(data.get("servers"), dict):
+                return data["servers"]
+        except (OSError, ValueError):  # nexgen: allow reason="a broken manifest is reported by mcp.manifest; raw servers fallback to empty dict"
+            pass
+    return {}
+
+
+def _apply_servers(
+    renderer,
+    servers_table: dict[str, Any],
+    servers: dict[str, dict[str, Any]],
+    references: dict[str, dict[str, str]] | None = None,
+    http_servers: dict[str, Any] | None = None,
+    raw_servers: dict[str, Any] | None = None,
+) -> None:
+    """Mounts every resolved server and drops the ones this engine retired."""
+    for retired in renderer.retired_server_names():
+        servers_table.pop(retired, None)
+    servers_table.pop("openclaw", None)
+    if "lazy-mcp" in servers_table and is_engine_lazy_mcp(servers_table["lazy-mcp"]):
+        servers_table.pop("lazy-mcp", None)
+    renderer._drop_unmounted(servers_table, servers, cli_target="openclaw")
+    manifest_map = raw_servers if raw_servers is not None else _raw_manifest_servers(renderer)
+    for name, srv in servers.items():
+        if name in ("openclaw", "lazy-mcp"):
+            continue
+        bridge_spec = (http_servers or {}).get(name) if http_servers else None
+        if bridge_spec is not None:
+            servers_table[name] = _bridged_entry(name, srv, bridge_spec)
+            continue
+        is_http = srv.get("transport") == "http" or bool(srv.get("url"))
+        if is_http:
+            bridge_url = _secret_bridge_url(name, srv, manifest_map)
+            if bridge_url is not None:
+                servers_table[name] = _bridge_stdio_entry(renderer, bridge_url, srv)
+                continue
+            if _resolved_url(srv) is None:
+                logger.warning("OpenClaw connector %r has a URL this machine cannot resolve, skipped", name)
+                continue
+        servers_table[name] = _build_entry(srv, (references or {}).get(name))
+
+
 def _env_references(renderer) -> dict[str, dict[str, str]]:
     """The manifest env values OpenClaw must receive exactly as written.
 
@@ -243,7 +345,6 @@ def _env_references(renderer) -> dict[str, dict[str, str]]:
     missing.
     """
     from nexgen_core.config import load_mcp_manifest
-    from nexgen_core.mcp_render import IS_WINDOWS
 
     if not renderer.manifest_path.is_file():
         return {}

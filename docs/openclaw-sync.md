@@ -58,6 +58,15 @@ engine-owned paths or ports (`AGENT_VAULT_DATA`, `AGENT_ENGINE_ROOT`,
 gateway's environment is not the engine's. A value that mixes the two stays a
 reference: a missing port is a better outcome than a leaked secret.
 
+For remote HTTP servers whose manifest URL contains `${VAR}` or declares `url_env`
+(such as the Vault library's secret endpoint), OpenClaw cannot accept `${VAR}` in the
+`url` field because it validates URLs before variable substitution. To ensure secrets
+never land in plaintext in `openclaw.json`, the renderer writes these connectors as
+stdio child processes through `03-INFRA/agent-universal-layer/mcp/mcp-http-bridge.mjs`
+(via `mcp-remote`), passing `"${VAR}"` and the token variable name in `args` where
+OpenClaw performs safe runtime substitution. Connectors with literal non-secret URLs
+continue to be written as native HTTP (`streamable-http`).
+
 ### When the gateway is in WSL
 
 The app-owned WSL distro cannot launch the Windows commands the manifest declares for

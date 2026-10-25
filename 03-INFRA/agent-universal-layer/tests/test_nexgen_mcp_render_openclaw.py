@@ -57,6 +57,19 @@ servers:
     url: "${DEMO_URL}/mcp"
     auth: {type: bearer, env: DEMO_TOKEN}
     timeouts: {startup: 12, tool: 90}
+  literal-remote:
+    tier: core
+    transport: http
+    url: "https://demo.invalid/mcp"
+    auth: {type: bearer, env: DEMO_TOKEN}
+    timeouts: {startup: 12, tool: 90}
+  vault-library:
+    tier: core
+    transport: http
+    url: "${VAULT_LIBRARY_URL}"
+    url_env: VAULT_LIBRARY_URL
+    auth: {type: bearer, env: VAULT_LIBRARY_TOKEN}
+    timeouts: {startup: 12, tool: 90}
   unresolved:
     tier: core
     transport: http
@@ -91,6 +104,8 @@ def renderer(tmp_path: Path, monkeypatch) -> McpRenderer:
     monkeypatch.setenv("DEMO_URL", "https://demo.invalid")
     monkeypatch.setenv("DEMO_TOKEN", "tok-should-never-be-written")
     monkeypatch.setenv("DEMO_SECRET", "super-secret-value")
+    monkeypatch.setenv("VAULT_LIBRARY_URL", "http://127.0.0.1:5678/mcp-deadbeef")
+    monkeypatch.setenv("VAULT_LIBRARY_TOKEN", "vault-tok-secret")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIA-SECRET-EXAMPLE")
     monkeypatch.setenv("DATABASE_URL", "postgres://example.invalid/db")
     vault = tmp_path / "vault"
@@ -133,8 +148,8 @@ def test_an_http_server_carries_a_resolved_url_and_the_transport(renderer) -> No
     _install_openclaw(renderer)
     assert renderer.render_openclaw(write=True)[0]
 
-    remote = _servers(renderer)["remote"]
-    assert remote["url"] == "https://demo.invalid/mcp", "OpenClaw validates the URL before substituting ${VAR}"
+    remote = _servers(renderer)["literal-remote"]
+    assert remote["url"] == "https://demo.invalid/mcp", "literal URLs are written as http"
     assert remote["transport"] == "streamable-http", "without it the handshake times out"
     assert "${" not in remote["url"]
 
@@ -143,7 +158,7 @@ def test_a_secret_stays_an_environment_reference(renderer) -> None:
     cfg = _install_openclaw(renderer)
     assert renderer.render_openclaw(write=True)[0]
 
-    assert _servers(renderer)["remote"]["headers"] == {"Authorization": "Bearer ${DEMO_TOKEN}"}
+    assert _servers(renderer)["literal-remote"]["headers"] == {"Authorization": "Bearer ${DEMO_TOKEN}"}
     assert "tok-should-never-be-written" not in cfg.read_text(encoding="utf-8")
 
 
@@ -198,7 +213,7 @@ def test_timeouts_become_milliseconds(renderer) -> None:
     _install_openclaw(renderer)
     assert renderer.render_openclaw(write=True)[0]
 
-    remote = _servers(renderer)["remote"]
+    remote = _servers(renderer)["literal-remote"]
     assert remote["connectionTimeoutMs"] == 12000
     assert remote["requestTimeoutMs"] == 90000
 
@@ -463,5 +478,70 @@ def test_renderer_preserves_user_written_lazy_mcp(renderer) -> None:
     servers = _servers(renderer)
     assert "lazy-mcp" in servers
     assert servers["lazy-mcp"] == user_entry
+
+
+def test_secret_url_rendered_as_stdio_bridge_with_variable_args(renderer) -> None:
+    """A server with ${VAR} in url or url_env is rendered as stdio bridge with ${VAR} in args."""
+    from nexgen_core.mcp_render.openclaw import is_engine_bridge
+
+    cfg = _install_openclaw(renderer)
+    assert renderer.render_openclaw(write=True)[0]
+
+    servers = _servers(renderer)
+    vault = servers["vault-library"]
+    assert vault["command"] in ("node", "node.exe")
+    assert any("mcp-http-bridge.mjs" in str(a) for a in vault["args"])
+    assert vault["args"][1] == "${VAULT_LIBRARY_URL}"
+    assert vault["args"][2] == "VAULT_LIBRARY_TOKEN"
+    assert vault["args"][3] == "mcp-remote@0.1.38"
+    assert "url" not in vault
+    assert "transport" not in vault
+    assert is_engine_bridge(vault) is True
+
+    # No secret in the rendered file
+    content = cfg.read_text(encoding="utf-8")
+    assert "http://127.0.0.1:5678/mcp-deadbeef" not in content
+    assert "vault-tok-secret" not in content
+
+
+def test_render_replaces_old_http_entry_with_bridge_stdio(renderer) -> None:
+    """When openclaw.json already has an old http entry with resolved URL, sync replaces it."""
+    cfg = openclaw_config(renderer.home)
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    old_file = {
+        "gateway": {"port": 18789},
+        "mcp": {
+            "servers": {
+                "vault-library": {
+                    "url": "http://127.0.0.1:5678/mcp-deadbeef",
+                    "transport": "streamable-http",
+                    "headers": {"Authorization": "Bearer ${VAULT_LIBRARY_TOKEN}"},
+                }
+            }
+        },
+    }
+    cfg.write_text(json.dumps(old_file, indent=2), encoding="utf-8")
+
+    assert renderer.render_openclaw(write=True)[0]
+
+    servers = _servers(renderer)
+    vault = servers["vault-library"]
+    assert vault["command"] in ("node", "node.exe")
+    assert "url" not in vault
+    assert "transport" not in vault
+    assert vault["args"][1] == "${VAULT_LIBRARY_URL}"
+    content = cfg.read_text(encoding="utf-8")
+    assert "http://127.0.0.1:5678/mcp-deadbeef" not in content
+
+
+def test_is_engine_bridge_distinguishes_bridge_from_other_servers() -> None:
+    from nexgen_core.mcp_render.openclaw import is_engine_bridge
+
+    assert is_engine_bridge({
+        "command": "node",
+        "args": ["/path/to/mcp-http-bridge.mjs", "${VAR}", "TOKEN", "mcp-remote@0.1.38"],
+    }) is True
+    assert is_engine_bridge({"command": "node", "args": ["mine.mjs"]}) is False
+    assert is_engine_bridge({"url": "http://example.com"}) is False
 
 
