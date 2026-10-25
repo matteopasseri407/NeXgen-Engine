@@ -359,6 +359,7 @@ MESSAGES: dict[str, str] = {
     'OpenClaw configuration not present: nothing rendered for it': 'Configurazione OpenClaw assente: non ho scritto nulla per lei',
     'OpenClaw instructions at {path} left untouched ({error})': 'Istruzioni OpenClaw in {path} lasciate come sono ({error})',
     "OpenClaw instructions at {path}: the managed block's markers are incomplete, left untouched": 'Istruzioni OpenClaw in {path}: i marcatori del blocco gestito sono incompleti, ho lasciato tutto come sta',
+    "OpenClaw instructions at {path}: the agents sharing this workspace declare different AGENTS.md files, so the manual was left as it is": "Istruzioni OpenClaw in {path}: gli agenti che condividono questa cartella dichiarano AGENTS.md diversi, quindi ho lasciato il manuale com'era",
     'OpenClaw instructions at {path} left untouched: safety backup failed ({error})': 'Istruzioni OpenClaw in {path} lasciate come sono: la copia di sicurezza non e\' riuscita ({error})',
     'OpenClaw instructions aligned in {path}': 'Istruzioni OpenClaw allineate in {path}',
     "Could not read OpenClaw's instructions at {path}: {error}": 'Non ho potuto leggere le istruzioni OpenClaw in {path}: {error}',
@@ -1594,6 +1595,14 @@ MESSAGES: dict[str, str] = {
         "Fai il login dell'abbonamento, oppure lancia 'nexgen openclaw plan' per vedere il modello che sceglierebbe il motore.",
     "Every agent uses a model this machine can reach.":
         "Ogni agente usa un modello che questa macchina raggiunge.",
+    "The model override policy is explicit, so the model map does not restrict it.":
+        "La policy di scelta del modello è esplicita, quindi la mappa dei modelli non la limita.",
+    "No model override allowlist is in force: any model this machine reaches can be chosen.":
+        "Non c'è nessuna lista bianca attiva: si può scegliere qualsiasi modello che questa macchina raggiunge.",
+    "`agents.defaults.models` carries no `agents.defaults.modelPolicy`, so OpenClaw treats its {count} entries as the only models an agent may switch to: {refs}":
+        "`agents.defaults.models` non ha nessuna `agents.defaults.modelPolicy`, quindi OpenClaw tratta le sue {count} voci come gli unici modelli a cui un agente può passare: {refs}",
+    "Write `agents.defaults.modelPolicy.allow` with the exact refs or the `provider/*` entries a person may choose, or an empty `modelPolicy: {}` to lift the list.":
+        "Scrivi `agents.defaults.modelPolicy.allow` con i riferimenti esatti o le voci `provider/*` che una persona può scegliere, oppure una `modelPolicy: {}` vuota per togliere la lista.",
     "No background job runs on a local model.":
         "Nessun lavoro di fondo gira su un modello locale.",
     "These background jobs would run on the local model {models}: {jobs}.":
@@ -2034,8 +2043,8 @@ MESSAGES: dict[str, str] = {
         "Salto il manuale di {agent}: {error}",
     "Skipping {path}: it cannot be read ({error}).":
         "Salto {path}: non riesco a leggerlo ({error}).",
-    "Skipping {path}: it carries no engine mark, so it is yours and stays as it is.":
-        "Salto {path}: non porta il segno del motore, quindi è tuo e resta com'è.",
+    "Skipping {path}: the engine did not write it, so it is yours and stays as it is.":
+        "Salto {path}: non l'ha scritto il motore, quindi è tuo e resta com'è.",
     "The squad names an instructions file that cannot be read: {path}":
         "La squadra indica un file di istruzioni che non riesco a leggere: {path}",
     "The squad names {agent} as the default agent but does not declare it: no default was written.":
