@@ -64,13 +64,13 @@ def _add_retired_server_yaml(text: str, name: str) -> str:
     return f"retired_servers:\n  - {name}\n\n" + text
 
 
-def _publish(path: Path, updated: str, validate: Callable[[Path], object], failure: str) -> str | None:
+def _publish(path: Path, updated: str, validate: Callable[[Path], object]) -> str | None:
     """Replace a manifest with `updated` only once the loader has accepted it.
 
     The candidate is written with the one writer (`files.atomic_write_text`), the
     same loader the sync will use reads it, and only then is it moved into place:
     a manifest that would no longer parse never exists on the canonical path.
-    Returns the reason it was put back, or None.
+    Returns the loader's complaint, or None when the new text is in place.
     """
     candidate = path.with_name(f"{path.name}.{os.getpid()}.candidate")
     try:
@@ -78,7 +78,7 @@ def _publish(path: Path, updated: str, validate: Callable[[Path], object], failu
         validate(candidate)
     except Exception as exc:  # noqa: BLE001 - nexgen: allow reason="a candidate that does not parse is put back"
         candidate.unlink(missing_ok=True)
-        return t(failure, error=exc)
+        return str(exc)
     os.replace(candidate, path)
     return None
 
@@ -101,9 +101,9 @@ def retire_adopted_server(name: str, *, vault_data: Path | None = None) -> tuple
         return False, t("server '{name}' is not origin: openclaw: will not remove automatically", name=name)
 
     updated = _add_retired_server_yaml(_without_entry(raw_before, name), name)
-    problem = _publish(path, updated, load_mcp_manifest, "manifest modification failed validation: {error}")
-    if problem:
-        return False, problem
+    error = _publish(path, updated, load_mcp_manifest)
+    if error:
+        return False, t("manifest modification failed validation: {error}", error=error)
     return True, t("server '{name}' retired from MCP manifest", name=name)
 
 
@@ -151,11 +151,9 @@ def retire_adopted_skill(
 
     updated = _without_entry(raw_before, name)
     materializer = SkillMaterializer(vault_data=vault, engine_root=engine, home=resolved_home)
-    problem = _publish(
-        path, updated, load_skills_manifest, "skills manifest modification failed validation: {error}",
-    )
-    if problem:
-        return False, problem
+    error = _publish(path, updated, load_skills_manifest)
+    if error:
+        return False, t("skills manifest modification failed validation: {error}", error=error)
     if skill_dir.is_dir():
         shutil.rmtree(skill_dir, ignore_errors=True)
     materializer.materialize(apply=True)
