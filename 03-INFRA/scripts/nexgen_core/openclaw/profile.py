@@ -63,7 +63,7 @@ __all__ = [
 #: OpenClaw's and the person's, and a plan names it as "yours, left untouched".
 #: A section is owned even when this machine proposes nothing inside it today:
 #: that is how a key the engine used to write is reported instead of forgotten.
-OWNED_SECTIONS = ("plugins", "models", "agents", "tools", "gateway", "acp", "bindings")
+OWNED_SECTIONS = ("plugins", "models", "agents", "tools", "skills", "gateway", "acp", "bindings")
 
 #: Plugins every OpenClaw gets: OpenClaw's own, with no subscription behind them.
 BASE_PLUGINS = (

@@ -30,6 +30,7 @@ from nexgen_core.openclaw.profile import (
     agent_models,
     build_config,
 )
+from nexgen_core.openclaw.skills_policy import with_skill_policy
 from nexgen_core.openclaw.squad import apply_squad, find_squad_file, load_squad, unresolved_default
 from nexgen_core.paths import openclaw_config, resolve_home, resolve_vault_data
 from nexgen_core.runtimes.openclaw import PLUGIN_ID
@@ -349,7 +350,9 @@ def build_plan(
         # The setup command passes no vault: the squad still lives in the user's one.
         vault_data if vault_data is not None else resolve_vault_data(home), home_dir, current,
     )
-    config = _with_engine_plugin(with_chains(proposed, failover), _plugin_deposited(path, plugin_deposited))
+    config = _with_engine_plugin(
+        with_chains(with_skill_policy(proposed, vault_data), failover), _plugin_deposited(path, plugin_deposited),
+    )
     changes = _diff(config, current)
     notes = [
         *_wanted_notes(config, snapshot, chosen, squad_data),
