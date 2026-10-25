@@ -355,11 +355,68 @@ def test_the_gemini_cli_runtime_is_a_failure(tmp_path):
     assert by_id(outcomes)["openclaw.plugins.google"].severity == Severity.BROKEN
 
 
+def test_a_gemini_cli_model_route_is_a_failure(tmp_path):
+    """No agentRuntime: the route's own prefix is what selects the backend."""
+    config = clean_config()
+    config["agents"]["defaults"]["models"]["google-gemini-cli/gemini-3-pro"] = {}
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, config))
+    assert by_id(outcomes)["openclaw.plugins.google"].severity == Severity.BROKEN
+
+
 def test_a_google_oauth_profile_is_a_failure(tmp_path):
     config = clean_config()
     config["auth"] = {"profiles": {"google-gemini-cli:me": {"provider": "google-gemini-cli", "mode": "oauth"}}}
     outcomes = run_doctor(tmp_path, write_config(tmp_path, config))
     assert by_id(outcomes)["openclaw.plugins.google"].severity == Severity.BROKEN
+
+
+def local_agy_config(mode: str | None = "sandbox") -> dict:
+    """The file that drives the local agy CLI, with the mode the plugin was given."""
+    config = clean_config()
+    config["plugins"]["allow"].append("google-antigravity-cli")
+    entry: dict = {"config": {} if mode is None else {"permissionMode": mode}}
+    config["plugins"]["entries"]["google-antigravity-cli"] = entry
+    config["agents"]["defaults"]["models"]["google/gemini-3-pro"] = {
+        "agentRuntime": {"id": "google-antigravity-cli"},
+    }
+    return config
+
+
+def test_the_local_agy_cli_backend_is_not_a_subscription(tmp_path):
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, local_agy_config())))
+
+    assert outcomes["openclaw.plugins.google"].severity == Severity.OK
+    assert outcomes["openclaw.google.cli_backend"].severity == Severity.OK
+
+
+def test_the_local_agy_cli_backend_approving_its_own_tools_is_a_warning(tmp_path):
+    config = local_agy_config("skip")
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, config)))
+
+    line = outcomes["openclaw.google.cli_backend"]
+    assert line.severity == Severity.WARN
+    assert "'skip'" in line.message
+    assert "sandbox" in (line.action or "") and "settings" in (line.action or "")
+    assert exit_code(list(outcomes.values())) == 0
+
+
+@pytest.mark.parametrize("mode", ["sandbox", "settings", None])
+def test_a_guarded_agy_permission_mode_passes(tmp_path, mode):
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, local_agy_config(mode))))
+
+    assert outcomes["openclaw.google.cli_backend"].severity == Severity.OK
+
+
+def test_an_agy_permission_mode_the_doctor_does_not_know_is_a_warning(tmp_path):
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, local_agy_config("auto"))))
+
+    assert outcomes["openclaw.google.cli_backend"].severity == Severity.WARN
+
+
+def test_the_local_agy_cli_backend_has_no_line_when_nobody_names_it(tmp_path):
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, clean_config())))
+
+    assert "openclaw.google.cli_backend" not in outcomes
 
 
 def test_a_gemini_seat_through_acp_is_a_warning(tmp_path):

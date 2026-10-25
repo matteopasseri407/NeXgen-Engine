@@ -25,7 +25,7 @@ from typing import Any
 
 from nexgen_core import quota_policy
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import background, companion, doctor_runtime, node_checks, observation
+from nexgen_core.openclaw import background, companion, doctor_agy, doctor_runtime, node_checks, observation
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.doctor_install import check_config, check_declaration, check_installed
@@ -339,6 +339,7 @@ def _config_outcomes(
         *_check_gateway(config),
         exposure(config),
         _check_google(config),
+        doctor_agy.check_local_agy(config),
         _check_acp(config),
         _check_tool_search(config),
         _check_mcp_lazy(config),
