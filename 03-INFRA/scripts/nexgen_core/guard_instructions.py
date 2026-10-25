@@ -491,11 +491,11 @@ def _align_openclaw_workspace(
             path=target,
         )
     updated, warning = _with_squad_manual(target, existing, agents, declared or {})
+    if state == "ok" and updated is None:
+        return warning
     source = existing if updated is None else updated
     file_block = block.replace("\n", openclaw_line_ending(source))
     wanted = with_openclaw_block(source, file_block)
-    if state == "ok" and updated is None:
-        return warning
     if wanted == existing:
         # The block is aligned and the squad's text is already the one it declares.
         return warning
