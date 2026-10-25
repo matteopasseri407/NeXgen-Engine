@@ -481,7 +481,8 @@ def test_renderer_preserves_user_written_lazy_mcp(renderer) -> None:
 
 
 def test_secret_url_rendered_as_stdio_bridge_with_variable_args(renderer) -> None:
-    """A server with ${VAR} in url or url_env is rendered as stdio bridge with ${VAR} in args."""
+    """A server with ${VAR} in url or url_env is rendered as stdio bridge with ${VAR} in args and env."""
+    from nexgen_core.mcp_render import IS_WINDOWS
     from nexgen_core.mcp_render.openclaw import is_engine_bridge
 
     cfg = _install_openclaw(renderer)
@@ -497,6 +498,16 @@ def test_secret_url_rendered_as_stdio_bridge_with_variable_args(renderer) -> Non
     assert "url" not in vault
     assert "transport" not in vault
     assert is_engine_bridge(vault) is True
+
+    # Child process receives token and runtime environment as references
+    env = vault["env"]
+    assert env["VAULT_LIBRARY_TOKEN"] == "${VAULT_LIBRARY_TOKEN}"
+    assert env["PATH"] == "${PATH}"
+    assert env["HOME"] == "${HOME}"
+    if IS_WINDOWS:
+        assert env["USERPROFILE"] == "${USERPROFILE}"
+        assert env["APPDATA"] == "${APPDATA}"
+        assert env["SystemRoot"] == "${SYSTEMROOT}"
 
     # No secret in the rendered file
     content = cfg.read_text(encoding="utf-8")
@@ -530,6 +541,7 @@ def test_render_replaces_old_http_entry_with_bridge_stdio(renderer) -> None:
     assert "url" not in vault
     assert "transport" not in vault
     assert vault["args"][1] == "${VAULT_LIBRARY_URL}"
+    assert vault["env"]["VAULT_LIBRARY_TOKEN"] == "${VAULT_LIBRARY_TOKEN}"
     content = cfg.read_text(encoding="utf-8")
     assert "http://127.0.0.1:5678/mcp-deadbeef" not in content
 

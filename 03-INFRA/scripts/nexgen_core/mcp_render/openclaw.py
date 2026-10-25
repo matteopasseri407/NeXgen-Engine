@@ -254,12 +254,14 @@ def _bridge_stdio_entry(
     renderer,
     url_arg: str,
     srv: dict[str, Any],
+    references: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """A remote server routed via the local mcp-http-bridge stdio script.
 
     The shape mirrors Antigravity's bridge configuration: node launcher, bridge script,
     URL reference, token environment variable name (if bearer auth), and the pinned
     mcp-remote package. OpenClaw substitutes `${VAR}` in arguments at child spawn time.
+    The child process receives the token and runtime path without exposing secrets.
     """
     bridge_script = renderer.engine_root / "agent-universal-layer" / "mcp" / "mcp-http-bridge.mjs"
     auth = srv.get("auth") if isinstance(srv.get("auth"), dict) else {}
@@ -270,9 +272,23 @@ def _bridge_stdio_entry(
         "command": node_cmd,
         "args": [str(bridge_script), url_arg, auth_env, MCP_REMOTE_PACKAGE],
     }
+    env: dict[str, str] = {
+        "PATH": "${PATH}",
+        "HOME": "${HOME}",
+    }
+    if IS_WINDOWS:
+        env["USERPROFILE"] = "${USERPROFILE}"
+        env["APPDATA"] = "${APPDATA}"
+        env["SystemRoot"] = "${SYSTEMROOT}"  # OpenClaw substitutes upper-case names only
     raw_env = srv.get("env") if isinstance(srv.get("env"), dict) else {}
-    if raw_env:
-        entry["env"] = {str(k): str(v) for k, v in raw_env.items()}
+    for k, v in raw_env.items():
+        env[str(k)] = str(v)
+    for key, reference in (references or {}).items():
+        if key in env:
+            env[key] = reference
+    if auth_env:
+        env[auth_env] = f"${{{auth_env}}}"
+    entry["env"] = env
     deny = srv.get("tools_deny")
     if isinstance(deny, list) and deny:
         entry["toolFilter"] = {"exclude": [str(tool) for tool in deny]}
@@ -325,7 +341,9 @@ def _apply_servers(
         if is_http:
             bridge_url = _secret_bridge_url(name, srv, manifest_map)
             if bridge_url is not None:
-                servers_table[name] = _bridge_stdio_entry(renderer, bridge_url, srv)
+                servers_table[name] = _bridge_stdio_entry(
+                    renderer, bridge_url, srv, (references or {}).get(name)
+                )
                 continue
             if _resolved_url(srv) is None:
                 logger.warning("OpenClaw connector %r has a URL this machine cannot resolve, skipped", name)
