@@ -53,7 +53,7 @@ def test_the_turn_really_reaches_the_agent(capsys):
 
     run_smoke(run=recorder, health_fn=lambda: {"status": "ok"})
 
-    assert ["openclaw", "agent", "main", "--message", PROBE_MESSAGE] in recorder.calls
+    assert ["openclaw", "agent", "--agent", "main", "--message", PROBE_MESSAGE] in recorder.calls
 
 
 def test_an_invalid_configuration_fails_the_run(capsys):

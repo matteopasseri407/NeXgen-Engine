@@ -73,7 +73,7 @@ def run_smoke(
           mcp_detail if isinstance(mcp_detail, str) else " ".join(mcp_detail))
     failures += 0 if ok else 1
 
-    turn = runner(["openclaw", "agent", agent, "--message", PROBE_MESSAGE], TURN_TIMEOUT_S)
+    turn = runner(["openclaw", "agent", "--agent", agent, "--message", PROBE_MESSAGE], TURN_TIMEOUT_S)
     answer = (turn.stdout or "").strip()
     ok = turn.returncode == 0 and bool(answer)
     _line(out, ok, t("agent {agent} answers a short turn", agent=agent),
