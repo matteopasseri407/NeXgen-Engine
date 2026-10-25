@@ -27,6 +27,8 @@ LIST_TIMEOUT_S = 120.0
 API_TIMEOUT_S = 120.0
 #: How long the service gets to release a location before its children are checked.
 DISPOSE_WAIT_S = 1.5
+#: The endpoint the installed SDK names for disposing one folder's instance.
+INSTANCE_DISPOSE = "instance/dispose"
 #: How long a new tab gets to open its session before the attach is left manual.
 SESSION_WAIT_S = 30.0
 POLL_S = 2.0
@@ -144,6 +146,48 @@ class OpenCodeAdapter(base.Adapter):
 
     def dispose_location(self, folder: str | Path) -> tuple[bool, str]:
         """Free everything the shared server holds for this folder.
+
+        Two steps, in this order, because the second is what actually reclaims the
+        memory: the instance OpenCode keeps for the folder is disposed through the
+        server's own `instance/dispose` endpoint, and then the location is evicted.
+        A note from the first step never hides the answer of the second.
+        """
+        note = self._dispose_instance(Path(folder))
+        worked, reason = self._evict_location(Path(folder))
+        return worked, f"{note}; {reason}" if note else reason
+
+    def _dispose_instance(self, folder: Path) -> str:
+        """Ask the server to dispose the instance it keeps for this folder.
+
+        The endpoint is the installed SDK's own, not a guess:
+        `@opencode-ai/sdk/dist/v2/gen/sdk.gen.js`, class `Instance`, method `dispose`,
+        `POST /instance/dispose` with `directory` in the query. Disposing the instance
+        releases the MCP servers and shells that folder's session started, which is
+        the only thing that stops them: deleting the copy leaves the instance holding
+        a directory that no longer exists and its children running until reboot.
+        It is called before the copy is deleted, and its refusal is a note that the
+        caller prints: the retirement still reports what the eviction did.
+        """
+        argv = windows_command_argv([
+            "opencode", "api", "POST", INSTANCE_DISPOSE, "--param", f"directory={folder}",
+        ])
+        try:
+            done = subprocess.run(
+                argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                stdin=subprocess.DEVNULL, timeout=API_TIMEOUT_S, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return f"istanza di {folder} non smaltita ({type(exc).__name__})"
+        if done.returncode:
+            detail = ((done.stdout or "") + (done.stderr or "")).strip()[:200]
+            return (
+                f"istanza di {folder} non smaltita: `opencode api {INSTANCE_DISPOSE}` "
+                f"esce con {done.returncode} {detail}"
+            )
+        return ""
+
+    def _evict_location(self, folder: Path) -> tuple[bool, str]:
+        """Evict the folder's location and stop what the server kept for it.
 
         The server exposes `debug.location.evict` for this, and on a server
         started for one client it releases the MCP servers of that directory.
