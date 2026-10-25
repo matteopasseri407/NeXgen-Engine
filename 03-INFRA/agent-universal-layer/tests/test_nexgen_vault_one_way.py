@@ -212,6 +212,8 @@ def test_the_server_role_is_read_back_from_the_machine_and_from_the_old_profile(
     assert roles.declared_role(home=home) is None
     _declare_server(home)
     assert roles.declared_role(home=home) == roles.SERVER_ROLE
+    assert roles.declare_role(roles.NODE_ROLE, home) is True
+    assert roles.declared_role(home=home) == roles.NODE_ROLE
 
     legacy_home, legacy_vault = tmp_path / "legacy-home", tmp_path / "legacy-vault"
     profile = legacy_vault / "99-INDEX" / "USER-PROFILE.md"

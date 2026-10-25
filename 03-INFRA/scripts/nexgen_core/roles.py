@@ -58,11 +58,11 @@ def role_record_path(home: Path | None = None) -> Path:
     return resolve_state_dir(home) / "nexgen" / "role.json"
 
 
-def declare_role(role: str, home: Path | None = None) -> None:
-    """Records the role that configured this machine.
+def declare_role(role: str, home: Path | None = None) -> bool:
+    """Records the role that configured this machine, and says whether it could.
 
-    Failing to write it must not fail the install: the role still ran, and the
-    profile carries the older marker for the server one.
+    A failed write is not a failed install: the role did run, and the profile
+    carries the older marker the rest of the engine falls back on.
     """
     if role not in ROLES:
         raise ValueError(f"unknown role {role!r}; expected one of {ROLES}")
@@ -70,8 +70,9 @@ def declare_role(role: str, home: Path | None = None) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(path, json.dumps({"role": role}, indent=2) + "\n")
-    except OSError as exc:  # nexgen: allow reason="a machine that cannot record its role still finished the role; the profile is the fallback"
-        raise OSError(f"cannot record the role in {path} ({type(exc).__name__})") from exc
+    except OSError:  # nexgen: allow reason="a machine that cannot record its role still finished the role, and the profile marker is the fallback"
+        return False
+    return True
 
 
 def declared_role(home: Path | None = None, vault_root: Path | None = None) -> str | None:
