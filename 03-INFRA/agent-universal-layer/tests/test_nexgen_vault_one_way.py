@@ -273,6 +273,30 @@ def test_the_doctor_judges_a_reader_clone_as_a_reader(tmp_path):
     assert outcome.severity is Severity.OK
 
 
+def test_the_heartbeat_does_not_bump_pins_in_a_reader_clone(tmp_path, monkeypatch):
+    """The unattended pin bump is the other automatic commit: a reader skips it."""
+    from nexgen_core import beat as beat_mod
+    from nexgen_core import thirdparty_bump, thirdparty_guard
+
+    home, vault, state, engine = (tmp_path / name for name in ("home", "vault", "state", "engine"))
+    for directory in (home, vault, state, engine):
+        directory.mkdir(parents=True, exist_ok=True)
+    _declare_server(home)
+    monkeypatch.setattr(beat_mod, "run_depwatch", lambda **_kw: SimpleNamespace(wrote=False, findings=[]))
+    monkeypatch.setattr(thirdparty_guard, "run_guardian", lambda *_a, **_kw: {"ok": True})
+    monkeypatch.setattr(
+        thirdparty_bump, "auto_apply",
+        lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("a reader clone must not commit pins")),
+    )
+
+    answer = beat_mod.Heartbeat(
+        state_dir=state, vault_data=vault, engine_root=engine, home=home,
+    ).run_dependency_watch()
+
+    assert answer["auto_applied"]["ok"] is True
+    assert "skipped" in answer["auto_applied"]
+
+
 @pytest.mark.parametrize("language", ["it", "en"])
 def test_every_agent_manual_carries_the_one_write_path(language):
     for agent in ("main", "assistente", "capo", "automazioni", "sviluppo"):

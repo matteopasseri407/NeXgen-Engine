@@ -2314,4 +2314,6 @@ MESSAGES: dict[str, str] = {
         "Il clone del gateway è in sola lettura e allineato; le note si scrivono col vault-library.",
     "Refusing to publish from this vault clone ({reason}). Notes are written with the vault-library.":
         "Mi rifiuto di pubblicare da questa copia del Vault ({reason}). Le note si scrivono col vault-library.",
+    "read-only vault clone: the pins are not committed here":
+        "copia del Vault in sola lettura: i pin non vengono committati qui",
 }
