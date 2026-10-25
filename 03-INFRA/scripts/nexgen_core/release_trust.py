@@ -37,7 +37,6 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from nexgen_core.release_gpg import is_msys_gpg
 
 TRUST_RELPATH = Path("03-INFRA") / "agent-universal-layer" / "trust"
 SIGNERS_FILE = "release-signers.txt"
@@ -217,6 +216,16 @@ def _gnupg_scratch_base() -> str:
     return base
 
 
+def _is_msys_gpg(path: str) -> bool:
+    """Whether this path is the gpg Git for Windows ships inside its own tree.
+
+    Repeated here on purpose: this module runs standalone, from a copy taken out of
+    the repository, so it may not import from `nexgen_core`.
+    """
+    norm = path.replace("\\", "/").lower()
+    return "usr/bin/gpg" in norm or "msys" in norm or norm.startswith("/usr/bin") or "/git/usr/bin" in norm
+
+
 def gpg_binary(which: Callable[[str], str | None] = shutil.which, program_files: str | None = None) -> str | None:
     """The gpg to verify signatures with: the real one, not the one Git for Windows ships.
 
@@ -232,7 +241,7 @@ def gpg_binary(which: Callable[[str], str | None] = shutil.which, program_files:
             return str(known)
     found = [path for path in (which("gpg"), which("gpg2")) if path]
     for candidate in found:
-        if not is_msys_gpg(candidate):
+        if not _is_msys_gpg(candidate):
             return candidate
     return found[0] if found else None
 

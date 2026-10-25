@@ -39,3 +39,15 @@ def test_a_machine_with_only_msys_still_gets_an_answer():
     paths = {"gpg": r"C:\Program Files\Git\usr\bin\gpg.exe"}
 
     assert gpg_binary(which=paths.get, program_files=r"C:\nessuno") == paths["gpg"]
+
+
+def test_the_verifier_stays_standalone():
+    """The release workflow runs this file from a copy outside the repository.
+
+    An import from `nexgen_core` makes it fail there with ModuleNotFoundError, which
+    is how a verifier stops verifying anything at all.
+    """
+    source = (SCRIPTS_DIR / "nexgen_core" / "release_trust.py").read_text(encoding="utf-8")
+
+    assert "from nexgen_core" not in source
+    assert "import nexgen_core" not in source
