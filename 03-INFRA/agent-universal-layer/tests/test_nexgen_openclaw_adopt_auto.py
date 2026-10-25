@@ -157,6 +157,47 @@ def test_auto_adopt_leaves_review_candidates_and_saves_to_review_list(a_machine:
     assert any(item["name"] == "risky-skill" and item["kind"] == "skill" for item in pending)
 
 
+def test_a_blocked_candidate_is_named_and_never_written(a_machine: Machine):
+    """A live server carrying a literal credential: no adoption, no silence.
+
+    `vet_server` blocks it, and a pass that runs unattended must say so -- an item
+    the engine will not write is exactly what a person has to see.
+    """
+    a_machine.config_path.write_text(json.dumps({
+        "agents": {"entries": {"main": {}}},
+        "mcp": {"servers": {
+            "lazy-mcp": {"command": "python3"},
+            "token-server": {"command": "npx", "env": {"API_KEY": "abcd1234efgh5678ijkl9012"}},
+        }},
+    }), encoding="utf-8")
+
+    code = a_machine.auto_adopt()
+
+    assert code == 0
+    manifest_text = a_machine.mcp_manifest.read_text(encoding="utf-8")
+    assert "token-server" not in manifest_text
+    assert "abcd1234efgh5678ijkl9012" not in manifest_text
+    pending = load_adopt_state(a_machine.state).get("last_pass", {}).get("pending_review", [])
+    blocked = [item for item in pending if item["name"] == "token-server"]
+    assert blocked and blocked[0]["status"] == "blocked"
+    assert any("token-server" in line and "cannot be adopted" in line for line in a_machine.printed)
+
+
+def test_a_blocked_skill_is_named_and_never_written(a_machine: Machine):
+    skill_dir = a_machine.home / ".openclaw" / "agents" / "main" / "agent" / "workshop-skills" / "no-frontmatter"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("Just prose, no frontmatter at all.", encoding="utf-8")
+
+    code = a_machine.auto_adopt()
+
+    assert code == 0
+    assert "no-frontmatter" not in a_machine.skills_manifest.read_text(encoding="utf-8")
+    pending = load_adopt_state(a_machine.state).get("last_pass", {}).get("pending_review", [])
+    blocked = [item for item in pending if item["name"] == "no-frontmatter"]
+    assert blocked and blocked[0]["status"] == "blocked"
+    assert any("no-frontmatter" in line and "cannot be adopted" in line for line in a_machine.printed)
+
+
 def test_first_pass_absence_increments_counter_and_preserves_resource(a_machine: Machine):
     # Pass 1: Adopts safe-server
     a_machine.auto_adopt()

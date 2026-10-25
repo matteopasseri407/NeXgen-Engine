@@ -26,7 +26,7 @@ from nexgen_core.openclaw.adopt_retirement import (
     retire_adopted_skill,
 )
 from nexgen_core.openclaw.adopt_skills import adopt_skill
-from nexgen_core.openclaw.adopt_vetting import REVIEW, SAFE, skill_description, vet_server, vet_skill
+from nexgen_core.openclaw.adopt_vetting import BLOCKED, REVIEW, SAFE, skill_description, vet_server, vet_skill
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.paths import (
     openclaw_config,
@@ -136,7 +136,7 @@ def _process_candidate_servers(
     vault: Path,
     emit: Callable[[str], None],
 ) -> tuple[list[str], list[dict[str, Any]], list[str]]:
-    """Admit SAFE unmanaged servers, hold REVIEW for human."""
+    """Admit SAFE unmanaged servers; hold REVIEW and BLOCKED for a person."""
     entered: list[str] = []
     review: list[dict[str, Any]] = []
     lines: list[str] = []
@@ -154,9 +154,19 @@ def _process_candidate_servers(
                 line = t("  + [dry-run] mcp {name}", name=srv.name)
             emit(line)
             lines.append(line)
-        elif verdict.status == REVIEW:
-            review.append({"kind": "mcp", "name": srv.name, "reasons": list(verdict.reasons)})
-            line = t("  * mcp {name} left for review ({reasons})", name=srv.name, reasons=verdict.joined())
+        elif verdict.status in (REVIEW, BLOCKED):
+            # Unattended pass: what it will not write is still news. A blocked entry is
+            # left out for the same reason a review one is, and the person is the only
+            # one who can fix it (a literal credential, a name that cannot be a key).
+            review.append({
+                "kind": "mcp", "name": srv.name, "status": verdict.status,
+                "reasons": list(verdict.reasons),
+            })
+            line = (
+                t("  * mcp {name} left for review ({reasons})", name=srv.name, reasons=verdict.joined())
+                if verdict.status == REVIEW
+                else t("  x mcp {name} cannot be adopted ({reasons})", name=srv.name, reasons=verdict.joined())
+            )
             emit(line)
             lines.append(line)
     return entered, review, lines
@@ -173,7 +183,7 @@ def _process_candidate_skills(
     run: Callable[..., Any] | None,
     which: Callable[[str], str | None] | None,
 ) -> tuple[list[str], list[dict[str, Any]], list[str]]:
-    """Admit SAFE workshop skills, hold REVIEW for human."""
+    """Admit SAFE workshop skills; hold REVIEW and BLOCKED for a person."""
     entered: list[str] = []
     review: list[dict[str, Any]] = []
     lines: list[str] = []
@@ -195,9 +205,16 @@ def _process_candidate_skills(
                 line = t("  + [dry-run] skill {name}", name=sk.name)
             emit(line)
             lines.append(line)
-        elif verdict.status == REVIEW:
-            review.append({"kind": "skill", "name": sk.name, "reasons": list(verdict.reasons)})
-            line = t("  * skill {name} left for review ({reasons})", name=sk.name, reasons=verdict.joined())
+        elif verdict.status in (REVIEW, BLOCKED):
+            review.append({
+                "kind": "skill", "name": sk.name, "status": verdict.status,
+                "reasons": list(verdict.reasons),
+            })
+            line = (
+                t("  * skill {name} left for review ({reasons})", name=sk.name, reasons=verdict.joined())
+                if verdict.status == REVIEW
+                else t("  x skill {name} cannot be adopted ({reasons})", name=sk.name, reasons=verdict.joined())
+            )
             emit(line)
             lines.append(line)
     return entered, review, lines
