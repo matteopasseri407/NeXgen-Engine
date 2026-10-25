@@ -675,12 +675,22 @@ it carries, and the skill's own `SKILL.md` frontmatter records the same pair; th
 mechanism never touches it.
 
 When executed with `--auto`, adoption runs non-interactively: resources verified as SAFE enter the canonical library
-immediately, whereas items classified as REVIEW remain outside and are recorded in machine-local state
-(`openclaw-adopt-state.json`, under the engine's state directory -- never the Vault, never the repository) for review.
-In addition, `--auto` tracks absences: an adopted resource absent from OpenClaw for two consecutive passes is retired
-from the manifest/library and unmounted on subsequent sync. A single missed pass, broken configuration, or
-unreachable gateway removes nothing and produces an explanatory warning.
-The OpenClaw `nexgen` plugin registers `/adopt` to view pending items and trigger auto-adoption from chat, and the
+immediately, while everything else -- a resource that needs a person and one the checks refuse -- stays outside and
+is recorded in machine-local state (`openclaw-adopt-state.json`, under the engine's state directory, never the Vault
+and never the repository) with the reason, for the plugin to show. In addition, `--auto` tracks absences for MCP
+servers: a server adopted from OpenClaw and absent from it for two consecutive passes is retired from the manifest,
+listed under `retired_servers`, and unmounted by the next sync. A single missed pass, a broken configuration or an
+unreachable gateway removes nothing and says so, and a retirement whose write fails is reported as a failure, never
+as an exit.
+
+Skills are admitted by the same pass and are **not** retired by absence, because absence there means nothing: an
+adopted skill was copied into the Vault and its Workshop original archived, which is exactly what adoption does, so
+a poll of the Workshop would find it gone and delete the copy the library had just taken in. A skill leaves the
+library when its manifest entry is removed, which is a person's edit and not a side effect of a timer. A server is
+different: `openclaw.json` is the person's file, its `mcp.servers` table is the honest record of what OpenClaw has,
+and the engine never writes that table.
+
+The OpenClaw `nexgen` plugin registers `/adopt` to run a pass from chat and to show what is waiting, and the
 `doctor` prints one line for the last pass: what entered, what left, and what waits for a person.
 
 The pass runs from three places, all of them in the plugin that OpenClaw already loads: `/adopt` in chat, the

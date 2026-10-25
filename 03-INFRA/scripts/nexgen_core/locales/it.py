@@ -2288,16 +2288,4 @@ MESSAGES: dict[str, str] = {
         "la modifica del manifest non ha superato la convalida: {error}",
     "server '{name}' retired from MCP manifest":
         "server '{name}' ritirato dal manifest MCP",
-    "skills manifest does not exist":
-        "il manifest delle skill non esiste",
-    "cannot read skills manifest ({error})":
-        "non riesco a leggere il manifest delle skill ({error})",
-    "skill '{name}' is not in skills manifest":
-        "la skill '{name}' non è nel manifest delle skill",
-    "skill '{name}' has no openclaw provenance: will not remove automatically":
-        "la skill '{name}' non ha provenienza openclaw: non verrà rimossa automaticamente",
-    "skills manifest modification failed validation: {error}":
-        "la modifica del manifest delle skill non ha superato la convalida: {error}",
-    "skill '{name}' retired from library":
-        "skill '{name}' ritirata dalla libreria",
 }

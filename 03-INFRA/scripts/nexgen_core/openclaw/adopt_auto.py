@@ -1,11 +1,15 @@
-# nexgen: one-job reason="manage automatic OpenClaw adoption: safe auto-admission, local review tracking, and two-pass absence retirement"
-"""Automatic OpenClaw adoption: SAFE auto-admitted, REVIEW kept local, two-pass retirement.
+# nexgen: one-job reason="manage automatic OpenClaw adoption: safe auto-admission, local review tracking, and two-pass absence retirement for MCP servers"
+"""Automatic OpenClaw adoption: SAFE auto-admitted, the rest kept local, absent servers retired.
 
 One job: run the non-interactive upkeep pass between OpenClaw and the canonical
-library. SAFE candidates enter immediately without asking; candidates marked
-REVIEW are kept in a local review list for the person to inspect; resources
-previously adopted with `origin: openclaw` that remain absent from OpenClaw for
-two consecutive passes are retired from the canonical library.
+library. SAFE candidates enter immediately without asking; everything else is
+kept in a local review list for the person to inspect; MCP servers that entered
+with `origin: openclaw` and stay absent from OpenClaw for two consecutive passes
+are retired from the canonical manifest.
+
+Skills are admitted but never retired here: adoption archives the Workshop copy
+they came from, so the OpenClaw side of an adopted skill is gone by design. See
+`adopt_retirement` for the whole reason.
 """
 from __future__ import annotations
 
@@ -20,11 +24,7 @@ from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
 from nexgen_core.openclaw import adopt_scan
 from nexgen_core.openclaw.adopt_mcp import adopt_server
-from nexgen_core.openclaw.adopt_retirement import (
-    is_openclaw_skill,
-    retire_adopted_server,
-    retire_adopted_skill,
-)
+from nexgen_core.openclaw.adopt_retirement import retire_adopted_server
 from nexgen_core.openclaw.adopt_skills import adopt_skill
 from nexgen_core.openclaw.adopt_vetting import BLOCKED, REVIEW, SAFE, skill_description, vet_server, vet_skill
 from nexgen_core.openclaw.config_file import read_config
@@ -228,7 +228,14 @@ def _reconcile_absent_servers(
     dry_run: bool,
     emit: Callable[[str], None],
 ) -> tuple[list[str], list[str]]:
-    """Reconcile servers with origin: openclaw against live OpenClaw servers."""
+    """Reconcile servers with origin: openclaw against live OpenClaw servers.
+
+    Only servers take part in absence-based retirement. A skill cannot: adoption archives
+    the Workshop copy it came from, so the only OpenClaw-side signal a skill still has is
+    the one this pass would have to read after destroying it -- two absences would then
+    delete the skill the library had just adopted. A skill the person no longer wants is
+    removed from the skills manifest, which is where the library's ownership lives.
+    """
     if not mcp_manifest_data:
         return [], []
     raw_servers = mcp_manifest_data.get("servers") or {}
@@ -245,57 +252,21 @@ def _reconcile_absent_servers(
         else:
             count = consecutive_absent.get(key, 0) + 1
             if count >= 2:
-                if not dry_run:
-                    retire_adopted_server(s_name, vault_data=vault)
-                consecutive_absent.pop(key, None)
-                exited.append(key)
-                line = t("  - mcp {name}: absent for 2 consecutive passes; retired", name=s_name)
+                retired, note = (True, "") if dry_run else retire_adopted_server(s_name, vault_data=vault)
+                if retired:
+                    consecutive_absent.pop(key, None)
+                    exited.append(key)
+                    line = t("  - mcp {name}: absent for 2 consecutive passes; retired", name=s_name)
+                else:
+                    # The write did not happen: say so and keep asking, never report an exit.
+                    consecutive_absent[key] = count
+                    line = t(
+                        "  ! mcp {name}: absent for 2 consecutive passes but could not be retired ({note})",
+                        name=s_name, note=note,
+                    )
             else:
                 consecutive_absent[key] = count
                 line = t("  ? mcp {name}: absent from OpenClaw (pass 1/2; kept)", name=s_name)
-            emit(line)
-            lines.append(line)
-    return exited, lines
-
-
-def _reconcile_absent_skills(
-    skills_manifest_data: Mapping[str, Any] | None,
-    live_skill_names: set[str],
-    consecutive_absent: dict[str, int],
-    vault: Path,
-    engine: Path,
-    home_dir: Path,
-    dry_run: bool,
-    emit: Callable[[str], None],
-) -> tuple[list[str], list[str]]:
-    """Reconcile skills with OpenClaw provenance against live OpenClaw skills."""
-    if not skills_manifest_data:
-        return [], []
-    raw_skills = skills_manifest_data.get("skills") or {}
-    exited: list[str] = []
-    lines: list[str] = []
-    for sk_name, sk_spec in raw_skills.items():
-        if not isinstance(sk_spec, Mapping):
-            continue
-        sk_dir = vault / "03-INFRA" / "agent-universal-layer" / "skills" / sk_name
-        if not is_openclaw_skill(dict(sk_spec), sk_dir):
-            continue
-        key = f"skill:{sk_name}"
-        openclaw_id = sk_spec.get("openclaw_id") or sk_name
-        is_present = (sk_name in live_skill_names) or (openclaw_id in live_skill_names)
-        if is_present:
-            consecutive_absent.pop(key, None)
-        else:
-            count = consecutive_absent.get(key, 0) + 1
-            if count >= 2:
-                if not dry_run:
-                    retire_adopted_skill(sk_name, vault_data=vault, engine_root=engine, home=home_dir)
-                consecutive_absent.pop(key, None)
-                exited.append(key)
-                line = t("  - skill {name}: absent for 2 consecutive passes; retired", name=sk_name)
-            else:
-                consecutive_absent[key] = count
-                line = t("  ? skill {name}: absent from OpenClaw (pass 1/2; kept)", name=sk_name)
             emit(line)
             lines.append(line)
     return exited, lines
@@ -337,34 +308,19 @@ def _reconcile_absent(
     known: Any,
     loaded_cfg: Mapping[str, Any],
     cfg_file: Path,
-    home_dir: Path,
     mcp: bool,
-    skills: bool,
     consecutive_absent: dict[str, int],
     vault: Path,
-    engine: Path,
     dry_run: bool,
     emit: Callable[[str], None],
 ) -> tuple[list[str], list[str]]:
-    """Reconcile all absent resources across MCP and skills."""
+    """Reconcile the servers OpenClaw no longer has against the manifest."""
+    if not mcp:
+        return [], []
     from nexgen_core.openclaw.adopt_plugins import scan_plugins
     plugin_srvs, _ = scan_plugins(cfg_file.parent, loaded_cfg, set())
     live_srv_names = set(adopt_scan.live_servers(loaded_cfg).keys()) | {s.name for s in plugin_srvs}
-    live_sk_names = {s.name for s in adopt_scan.workshop_skills(loaded_cfg, cfg_file.parent, home_dir, set())}
-
-    exited: list[str] = []
-    lines: list[str] = []
-    if mcp:
-        ex_m, l_m = _reconcile_absent_servers(known.mcp, live_srv_names, consecutive_absent, vault, dry_run, emit)
-        exited.extend(ex_m)
-        lines.extend(l_m)
-    if skills:
-        ex_s, l_s = _reconcile_absent_skills(
-            known.skills, live_sk_names, consecutive_absent, vault, engine, home_dir, dry_run, emit,
-        )
-        exited.extend(ex_s)
-        lines.extend(l_s)
-    return exited, lines
+    return _reconcile_absent_servers(known.mcp, live_srv_names, consecutive_absent, vault, dry_run, emit)
 
 
 def _save_run_state(
@@ -431,7 +387,7 @@ def run_auto_adopt(
     state = load_adopt_state(state_d)
     consecutive_absent = dict(state.get("consecutive_absent") or {})
     exited, rec_lines = _reconcile_absent(
-        known, loaded_cfg, cfg_file, home_dir, mcp, skills, consecutive_absent, vault, engine, dry_run, emit,
+        known, loaded_cfg, cfg_file, mcp, consecutive_absent, vault, dry_run, emit,
     )
     lines.extend(rec_lines)
 

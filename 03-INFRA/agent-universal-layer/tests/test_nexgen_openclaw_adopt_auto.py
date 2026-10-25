@@ -12,6 +12,7 @@ Verifies:
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -198,6 +199,32 @@ def test_a_blocked_skill_is_named_and_never_written(a_machine: Machine):
     assert any("no-frontmatter" in line and "cannot be adopted" in line for line in a_machine.printed)
 
 
+def test_an_adopted_skill_is_never_retired_by_absence(a_machine: Machine):
+    """Adoption archives the Workshop copy, so absence is what adoption itself creates.
+
+    Round one counted that absence and retired the skill on the second pass: the vault
+    copy deleted and the manifest entry gone, one hour after it had been adopted.
+    """
+    safe_skill = a_machine.home / ".openclaw" / "agents" / "main" / "agent" / "workshop-skills" / "release-notes"
+    safe_skill.mkdir(parents=True)
+    (safe_skill / "SKILL.md").write_text(
+        "---\nname: release-notes\ndescription: Writes the release notes\n---\nBody.",
+        encoding="utf-8",
+    )
+    a_machine.auto_adopt()
+    manifest = a_machine.skills_manifest.read_text(encoding="utf-8")
+    assert "  release-notes:" in manifest
+
+    # What `openclaw skills workshop archive` does to the adopted copy.
+    shutil.rmtree(safe_skill)
+
+    a_machine.auto_adopt()
+    a_machine.auto_adopt()
+
+    assert "  release-notes:" in a_machine.skills_manifest.read_text(encoding="utf-8")
+    assert (a_machine.vault / "03-INFRA" / "agent-universal-layer" / "skills" / "release-notes").is_dir()
+
+
 def test_first_pass_absence_increments_counter_and_preserves_resource(a_machine: Machine):
     # Pass 1: Adopts safe-server
     a_machine.auto_adopt()
@@ -321,6 +348,28 @@ def test_reappearance_resets_absence_counter(a_machine: Machine):
     a_machine.auto_adopt()
     state = load_adopt_state(a_machine.state)
     assert "mcp:safe-server" not in state.get("consecutive_absent", {})
+
+
+def test_a_retirement_that_cannot_be_written_is_not_reported_as_an_exit(a_machine: Machine, monkeypatch):
+    """The pass must not say 'retired' when the manifest refused the write."""
+    a_machine.auto_adopt()
+    a_machine.config_path.write_text(json.dumps({
+        "agents": {"entries": {"main": {}}},
+        "mcp": {"servers": {"lazy-mcp": {"command": "python3"}}},
+    }), encoding="utf-8")
+    a_machine.auto_adopt()
+    monkeypatch.setattr(
+        "nexgen_core.openclaw.adopt_auto.retire_adopted_server",
+        lambda name, **kwargs: (False, "the manifest is read-only"),
+    )
+
+    a_machine.auto_adopt()
+
+    state = load_adopt_state(a_machine.state)
+    assert "mcp:safe-server" not in state.get("last_pass", {}).get("exited", [])
+    assert state.get("consecutive_absent", {}).get("mcp:safe-server") == 2
+    assert any("could not be retired" in line and "read-only" in line for line in a_machine.printed)
+    assert "safe-server" in (load_mcp_manifest(a_machine.mcp_manifest).get("servers") or {})
 
 
 def test_canonical_resource_without_openclaw_origin_is_never_removed(a_machine: Machine):

@@ -213,9 +213,9 @@ so both are silent.
 ### Automatic adoption and retirement
 
 `nexgen openclaw adopt --auto` automates canonical library synchronization:
-- **SAFE Ingress**: SAFE resources enter the canonical manifest/library without prompting. REVIEW resources remain held in machine-local state (`openclaw-adopt-state.json`, under the engine's state directory) and are displayed in the `/adopt` command.
+- **SAFE Ingress**: SAFE resources enter the canonical manifest/library without prompting. Everything else -- needing a person or refused by the checks -- stays outside and is held in machine-local state (`openclaw-adopt-state.json`, under the engine's state directory) with its reason, and the `/adopt` command shows it.
 - **Provenance**: an MCP row entered from OpenClaw carries `origin: openclaw` plus its OpenClaw identifier (`openclaw_id`); an adopted skill carries `openclaw_id` and records the same pair in its `SKILL.md` frontmatter (its manifest `origin` stays `vault`, the key that names where a skill is materialized from). An entry without a mark belongs to the library and is never touched.
-- **Two-Pass Exit**: Adopted resources absent from OpenClaw for two consecutive passes are retired from the manifest/library and unmounted during sync. A single missing pass, unreadable configuration, or offline gateway removes nothing and is logged.
+- **Two-Pass Exit (MCP servers)**: a server adopted from OpenClaw and absent from `mcp.servers` for two consecutive passes is retired from the manifest (listed under `retired_servers`, unmounted by the next sync). A single missing pass, unreadable configuration, or offline gateway removes nothing and is logged; a retirement that cannot be written is reported as a failure, not as an exit. Skills are never retired this way: adoption archives the Workshop original, so absence would delete what the library just adopted.
 - **Plugin Job**: `adopt.mjs` registers the `/adopt` command, listens to `skill_changed`, and keeps one bounded pass every 30 minutes on the gateway's own clock (`gateway_start` arms it, `gateway_stop` clears it, one pass at a time). OpenClaw announces no hook for `mcp.servers`, so that tick is what notices a removed server.
 
 ### Evidence
