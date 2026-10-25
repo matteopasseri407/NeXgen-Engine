@@ -80,7 +80,21 @@ def test_after_work_says_nothing_was_collected_when_there_was_nothing(task, monk
     assert not [row for row in state.read_events(task) if row.get("event") == "service_collected"]
 
 
-def test_pulizia_chiudi_collects_the_shared_servers_old_children(lane, capsys, monkeypatch):
+def test_after_work_does_not_fall_over_when_the_journal_will_not_be_written(task, monkeypatch):
+    monkeypatch.setattr(sup_cmd.service, "collect", lambda **kwargs: dict(COLLECTED))
+
+    def refuse(*args, **kwargs):
+        raise SupervisionError("cartella del compito sparita")
+
+    monkeypatch.setattr(sup_cmd.state, "append_event", refuse)
+
+    lines = sup_cmd._after_work(task, "prova")
+
+    assert "raccolti: 1 processi" in lines[-2], "la raccolta è avvenuta lo stesso"
+    assert "non scritta nel diario" in lines[-1]
+
+
+def test_pulizia_chiudi_collects_the_shared_servers_old_children(lane, capsys, monkeypatch, harness_cli):
     killed: list[int] = []
     monkeypatch.setattr(service.processes, "rows", _table)
     monkeypatch.setattr(service.processes, "kill", lambda pids: killed.extend(pids))
@@ -93,7 +107,7 @@ def test_pulizia_chiudi_collects_the_shared_servers_old_children(lane, capsys, m
     assert "raccolti: 1 processi" in out
 
 
-def test_pulizia_without_the_flag_does_not_collect(lane, capsys, monkeypatch):
+def test_pulizia_without_the_flag_does_not_collect(lane, capsys, monkeypatch, harness_cli):
     killed: list[int] = []
     monkeypatch.setattr(service.processes, "rows", _table)
     monkeypatch.setattr(service.processes, "kill", lambda pids: killed.extend(pids))

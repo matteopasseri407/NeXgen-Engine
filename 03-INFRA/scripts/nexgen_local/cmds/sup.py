@@ -319,6 +319,8 @@ def cmd_sup_run(args: argparse.Namespace) -> int:
         return 1
     for note in result.get("notes") or []:
         print(f"nota: {note}")
+    if result.get("replaced_tab"):
+        print(result["replaced_tab"]["line"])
     if result["mode"] == "refused":
         return _print_refusal(result)
     if result["mode"] == "queued":
@@ -542,6 +544,8 @@ def _delivery_line(delivery: dict) -> str:
         line = f"correzioni inviate alla sessione {session_id} (pid {delivery['pid']})"
     else:
         line = f"finestra aperta per le correzioni sulla sessione {session_id}"
+    if delivery.get("replaced_tab"):
+        line += f" · {delivery['replaced_tab']['line']}"
     if delivery.get("model"):
         line += f" · modello {delivery['model']}"
     elif delivery.get("model_requested"):
@@ -621,12 +625,16 @@ def _after_work(task_id: str, unit: str) -> list[str]:
         collected = service.collect()
     except SupervisionError as exc:  # nexgen: allow reason="la pubblicazione è già avvenuta: una raccolta che non parte è una nota, non un errore"
         return [f"processi del server condiviso non raccolti: {exc}"]
+    lines = service.lines(collected)
     if collected.get("closed"):
-        state.append_event(
-            task_id, "service_collected", unit=unit,
-            pids=list(collected["closed"]), since=collected.get("since") or "",
-        )
-    return service.lines(collected)
+        try:
+            state.append_event(
+                task_id, "service_collected", unit=unit,
+                pids=list(collected["closed"]), since=collected.get("since") or "",
+            )
+        except SupervisionError as exc:  # nexgen: allow reason="un diario che non si scrive non annulla una raccolta già fatta né una pubblicazione già avvenuta"
+            lines.append(f"  raccolta non scritta nel diario: {exc}")
+    return lines
 
 
 def _close_work(task_id: str, unit: str) -> str:
