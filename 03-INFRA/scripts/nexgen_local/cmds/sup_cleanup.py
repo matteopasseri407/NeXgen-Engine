@@ -10,6 +10,7 @@ import argparse
 import sys
 
 from .. import supervision_cleanup as cleanup
+from .. import supervision_service as service
 from ..supervision_state import SupervisionError
 
 
@@ -27,9 +28,10 @@ def cmd_sup_pulizia(args: argparse.Namespace) -> int:
     """Print the survey, then close the stale tabs when the owner asked for it.
 
     Closing is deepest first: stale tabs, then the copies and branches of closed
-    units, then the server folders whose copy no longer exists. A folder that
-    still exists is never evicted, which is what keeps an active session and the
-    owner's own server out of this verb.
+    units, then the server folders whose copy no longer exists, and last the
+    shared server's children that belong to sessions that are already over. A
+    folder that still exists is never evicted, which is what keeps an active
+    session and the owner's own server out of this verb.
     """
     try:
         found = cleanup.survey(deep=True)
@@ -49,4 +51,5 @@ def cmd_sup_pulizia(args: argparse.Namespace) -> int:
     print("\n".join(cleanup.retired_lines(retired)))
     for line in cleanup.evict_locations(found.get("locations") or []):
         print(line)
+    print("\n".join(service.lines(service.collect())))
     return 0

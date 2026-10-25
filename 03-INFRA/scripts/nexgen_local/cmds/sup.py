@@ -21,6 +21,7 @@ from .. import supervision_policy as policy
 from .. import supervision_publish as publish_module
 from .. import supervision_review as review
 from .. import supervision_requests as requests
+from .. import supervision_service as service
 from .. import supervision_spend as spend
 from .. import supervision_stall as stall
 from .. import supervision_state as state
@@ -448,6 +449,7 @@ def cmd_sup_review(args: argparse.Namespace) -> int:
         _print_close(closing)
         if closing and closing.get("retired"):
             print(_close_work(args.id, result["unit"]))
+            print("\n".join(_after_work(args.id, result["unit"])))
             _board("blocked", args.id, result["unit"], reason="approvata e chiusa senza pubblicazione")
     else:
         print(_delivery_line(result["delivery"]))
@@ -488,6 +490,7 @@ def cmd_sup_publish(args: argparse.Namespace) -> int:
     print(result["signing"])
     print(_close_work(args.id, result["unit"]))
     _print_retirement(result.get("retirement"))
+    print("\n".join(_after_work(args.id, result["unit"])))
     if result["pushed"]:
         print(f"spinta eseguita: {result['command']}")
         _board("done", args.id, result["unit"])
@@ -602,6 +605,28 @@ def _window_less(harness_name: str) -> bool:
         return not adapters.get(harness_name).capabilities.window
     except SupervisionError:  # nexgen: allow reason="un nome che il registro non conosce non ha una finestra da chiudere: la chiusura resta quella delle schede, che è il comportamento di prima"
         return False
+
+
+def _after_work(task_id: str, unit: str) -> list[str]:
+    """The pass the brief asks for at the end of every publication and every close.
+
+    Two different leavings: the tab goes with the unit where the work ended, and the
+    shared server's children born before the oldest live session go here. A machine
+    that ends a task with a thousand orphan processes is not finished with anything,
+    and the owner should not have to type `sup pulizia` to get his memory back.
+    A collection that cannot run is a note: the publication already landed, and
+    nothing here may take it back.
+    """
+    try:
+        collected = service.collect()
+    except SupervisionError as exc:  # nexgen: allow reason="la pubblicazione è già avvenuta: una raccolta che non parte è una nota, non un errore"
+        return [f"processi del server condiviso non raccolti: {exc}"]
+    if collected.get("closed"):
+        state.append_event(
+            task_id, "service_collected", unit=unit,
+            pids=list(collected["closed"]), since=collected.get("since") or "",
+        )
+    return service.lines(collected)
 
 
 def _close_work(task_id: str, unit: str) -> str:

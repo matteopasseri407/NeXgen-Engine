@@ -20,6 +20,7 @@ from datetime import datetime
 from . import supervision_adapters as adapters
 from . import supervision_processes as processes
 from . import supervision_retire as retire
+from . import supervision_service as service
 from . import supervision_state as state
 from . import supervision_windows as windows
 from .supervision_state import SupervisionError
@@ -92,6 +93,7 @@ def survey(*, table: list[dict] | None = None, deep: bool = False) -> dict:
         "keep": [tab for tab in found if not tab.closable],
         "unmarked": _unmarked(rows, taken),
         "server": _server(rows),
+        "service": service.survey(rows),
         "leftovers": leftovers(),
         "locations": orphan_locations(table=rows) if deep else [],
     }
@@ -150,6 +152,7 @@ def lines(found: dict) -> list[str]:
         )
     if found["server"]:
         out.append(_restart_advice(found))
+    out += service.lines(found.get("service") or {})
     out += leftover_lines(found)
     return out
 
@@ -384,14 +387,7 @@ def _scout_running(task_id: str) -> bool:
 
 def _unmarked(rows: list[dict], taken: set[int]) -> list[dict]:
     """Harness processes that no tab of this engine holds."""
-    found: list[dict] = []
-    for row in rows:
-        if row["pid"] in taken or processes.is_shared_server(row):
-            continue
-        name = str(row.get("name") or "").lower()
-        if name.startswith("opencode") or name.startswith("agy"):
-            found.append(row)
-    return found
+    return [row for row in rows if row["pid"] not in taken and service.runs_harness(row)]
 
 
 def _server(rows: list[dict]) -> list[dict]:
