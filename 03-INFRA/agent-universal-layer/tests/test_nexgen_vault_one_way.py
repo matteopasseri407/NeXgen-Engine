@@ -194,17 +194,29 @@ def test_the_served_worktree_itself_is_the_writer(tmp_path):
     assert vault_readonly.readonly_reason(vault, home=tmp_path / "home", engine_root=engine) is None
 
 
-def test_a_deployed_stack_with_no_declaration_still_serves_the_documented_path(tmp_path):
-    """`bootstrap-vps.sh` writes the tokens, not the worktree: the default is the served one."""
+def test_a_server_bootstrapped_stack_serves_the_documented_path(tmp_path):
+    """`bootstrap-vps.sh` writes the host uid, not the worktree: the default is served."""
     engine = tmp_path / "engine"
     (engine / "deploy").mkdir(parents=True)
-    (engine / "deploy" / ".env").write_text("VAULT_LIBRARY_TOKEN=secret\n", encoding="utf-8")
+    (engine / "deploy" / ".env").write_text(
+        "VAULT_LIBRARY_TOKEN=secret\nVAULT_MCP_UID=1000\n", encoding="utf-8",
+    )
     vault = tmp_path / "home" / "KnowledgeVault"
 
     reason = vault_readonly.readonly_reason(vault, home=tmp_path / "home", engine_root=engine)
 
     assert reason
     assert "vault-library" in reason
+
+
+def test_a_workstation_that_only_started_the_stack_stays_a_writer(tmp_path):
+    """`nexgen stack up` writes the secrets and not the server's uid: no conclusion."""
+    engine = tmp_path / "engine"
+    (engine / "deploy").mkdir(parents=True)
+    (engine / "deploy" / ".env").write_text("VAULT_LIBRARY_TOKEN=secret\n", encoding="utf-8")
+    vault = tmp_path / "home" / "KnowledgeVault"
+
+    assert vault_readonly.readonly_reason(vault, home=tmp_path / "home", engine_root=engine) is None
 
 
 def test_the_server_role_is_read_back_from_the_machine_and_from_the_old_profile(tmp_path):

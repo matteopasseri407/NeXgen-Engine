@@ -32,19 +32,24 @@ from nexgen_core.stack.services import env_file as stack_env_file
 QUARANTINE_MESSAGE = "quarantine: local changes found in a read-only vault clone"
 
 #: The worktree the stack mounts when nothing overrides it, from
-#: `03-INFRA/deploy/vault-mcp/provision-vault-repo.sh` and its compose file. A
-#: machine with the stack but no declaration still serves that path, which is
-#: never a person's home: every other checkout beside it is a reader.
+#: `03-INFRA/deploy/vault-mcp/provision-vault-repo.sh` and its compose file.
 DEFAULT_STACK_WORKTREE = Path("/opt/knowledge-vault")
+
+#: What only `bootstrap-vps.sh` writes into the stack's `.env`: the host uid the
+#: container runs as. A workstation that started the stack with `nexgen stack up`
+#: writes the secrets and not this, so the documented default is trusted only on
+#: the machine that was bootstrapped to serve the Vault.
+STACK_SERVER_FINGERPRINT = "VAULT_MCP_UID"
 
 
 def served_worktree(engine_root: Path | None = None, env: Mapping[str, str] | None = None) -> Path | None:
     """The checkout this machine's vault-library serves, when it serves one here.
 
     Declared by the stack's own `.env` (the variable docker compose mounts) or
-    by the environment, and the documented default when the stack is deployed
-    without naming one. None means "no vault-library on this machine", which is
-    the ordinary PC and must keep behaving as it always did.
+    by the environment; on a machine bootstrapped to serve the Vault, the
+    documented default when the file names no path. None means "no vault-library
+    serves the Vault from here", which is the ordinary PC and must keep behaving
+    as it always did.
     """
     values = os.environ if env is None else env
     declared: dict[str, str] = {}
@@ -57,7 +62,7 @@ def served_worktree(engine_root: Path | None = None, env: Mapping[str, str] | No
         value = declared.get(key) or values.get(key) or ""
         if value.strip():
             return Path(value.strip()).expanduser()
-    if engine_root is not None and stack_env_file(engine_root).is_file():
+    if declared.get(STACK_SERVER_FINGERPRINT):
         return DEFAULT_STACK_WORKTREE
     return None
 
