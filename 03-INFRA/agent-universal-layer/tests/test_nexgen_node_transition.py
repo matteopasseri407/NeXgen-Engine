@@ -44,6 +44,7 @@ class RecordingRunner:
 
     def __init__(self, default_code: int = 0, default_stdout: str = "", default_stderr: str = ""):
         self.calls: list[list[str]] = []
+        self.timeouts: list[float | None] = []
         self.default_code = default_code
         self.default_stdout = default_stdout
         self.default_stderr = default_stderr
@@ -52,8 +53,9 @@ class RecordingRunner:
     def set_canned(self, argv: list[str], code: int = 0, stdout: str = "", stderr: str = "") -> None:
         self.canned[tuple(argv)] = RunResult(code, stdout, stderr)
 
-    def __call__(self, argv: list[str]) -> RunResult:
+    def __call__(self, argv: list[str], timeout: float | None = None) -> RunResult:
         self.calls.append(list(argv))
+        self.timeouts.append(timeout)
         key = tuple(argv)
         if key in self.canned:
             return self.canned[key]
@@ -730,28 +732,116 @@ def test_node_transition_unreadable_status_stops_without_changes(tmp_path: Path)
     assert not any("connect" in c for c in runner.calls)
 
 
-def test_safe_default_runner_resolves_openclaw_shim_on_windows(monkeypatch, tmp_path: Path) -> None:
-    from nexgen_core import processes
-    from nexgen_core.openclaw import node_transition
+def test_openclaw_status_read_never_goes_through_cmd_exe(tmp_path: Path) -> None:
+    """npm's Windows shim is started as `node <entry>`, never handed to a command interpreter."""
+    from nexgen_core.openclaw import node_cli
 
-    shim = tmp_path / "openclaw.cmd"
+    npm_dir = tmp_path / "npm"
+    entry = npm_dir / "node_modules" / "openclaw" / "openclaw.mjs"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("// openclaw\n", encoding="utf-8")
+    shim = npm_dir / "openclaw.CMD"
     shim.write_text("@echo off\r\n", encoding="utf-8")
-    monkeypatch.setattr(processes, "os", SimpleNamespace(name="nt"))
-    monkeypatch.setattr(processes.shutil, "which", lambda name: str(shim) if name == "openclaw" else None)
+    node = tmp_path / "nodejs" / "node.exe"
+    node.parent.mkdir()
+    node.write_text("", encoding="utf-8")
+
+    def which(name: str) -> str | None:
+        return {"openclaw": str(shim), "node": str(node)}.get(name)
+
+    argv = node_cli.launch_argv(["openclaw", "node", "status", "--json"], which=which)
+
+    assert argv == [str(node), str(entry), "node", "status", "--json"]
+    assert not any("cmd" in token.lower() for token in argv)
+
+
+def test_launch_argv_leaves_platform_commands_as_they_are() -> None:
+    """`schtasks.exe` and `systemctl` are real programs: only the npm shim is rewritten."""
+    from nexgen_core.openclaw import node_cli
+
+    def which(name: str) -> str | None:
+        raise AssertionError(f"{name} must not be looked up")
+
+    schtasks = ["schtasks.exe", "/Query", "/TN", "OpenClaw Gateway"]
+    systemctl = ["systemctl", "--user", "stop", "openclaw-gateway.service"]
+
+    assert node_cli.launch_argv(schtasks, which=which) == schtasks
+    assert node_cli.launch_argv(systemctl, which=which) == systemctl
+
+
+def test_openclaw_shim_without_its_entry_is_a_sentence_not_a_crash(monkeypatch, tmp_path: Path) -> None:
+    """An npm shim with no package beside it cannot start: the person reads why."""
+    from nexgen_core.openclaw import node_cli
+
+    shim = tmp_path / "npm" / "openclaw.cmd"
+    shim.parent.mkdir(parents=True)
+    shim.write_text("@echo off\r\n", encoding="utf-8")
+
+    def which(name: str) -> str | None:
+        return str(shim) if name == "openclaw" else None
+
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    assert node_cli.launch_argv(["openclaw", "node", "status"], which=which) is None
+    res = node_cli.run_command(["openclaw", "node", "status"], node_cli.READ_TIMEOUT_S, which=which)
+    assert res.returncode != 0
+    assert "non avviabile" in res.stderr
 
-    recorded_cmd: list[str] = []
 
-    def fake_subprocess_run(cmd, **kwargs):
-        recorded_cmd.extend(cmd)
-        mock_res = MagicMock()
-        mock_res.returncode = 0
-        mock_res.stdout = "{}"
-        mock_res.stderr = ""
-        return mock_res
+def test_run_command_hands_the_read_timeout_to_the_process(monkeypatch, tmp_path: Path) -> None:
+    """A cold `openclaw node status` answers in 15-25 seconds: the deadline is 60, not 10."""
+    from nexgen_core.openclaw import node_cli
 
-    monkeypatch.setattr(node_transition.subprocess, "run", fake_subprocess_run)
-    res = node_transition._safe_default_runner(["openclaw", "node", "status", "--json"])
+    npm_dir = tmp_path / "npm"
+    entry = npm_dir / "node_modules" / "openclaw" / "openclaw.mjs"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("// openclaw\n", encoding="utf-8")
+    shim = npm_dir / "openclaw.cmd"
+    shim.write_text("@echo off\r\n", encoding="utf-8")
+    node = tmp_path / "nodejs" / "node.exe"
+    node.parent.mkdir()
+    node.write_text("", encoding="utf-8")
+
+    def which(name: str) -> str | None:
+        return {"openclaw": str(shim), "node": str(node)}.get(name)
+
+    seen: dict = {}
+
+    def fake_subprocess_run(argv, **kwargs):
+        seen["argv"] = list(argv)
+        seen["timeout"] = kwargs.get("timeout")
+        return SimpleNamespace(returncode=0, stdout="{}", stderr="")
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setattr(node_cli.subprocess, "run", fake_subprocess_run)
+
+    res = node_cli.run_command(["openclaw", "node", "status", "--json"], node_cli.READ_TIMEOUT_S, which=which)
 
     assert res.returncode == 0
-    assert recorded_cmd == ["cmd.exe", "/d", "/s", "/c", str(shim), "node", "status", "--json"]
+    assert node_cli.READ_TIMEOUT_S == 60.0
+    assert seen["timeout"] == 60.0
+    assert seen["argv"][:2] == [str(node), str(entry)]
+
+
+def test_check_says_it_is_reading_node_status_before_the_plan(tmp_path: Path) -> None:
+    """The pause comes with a sentence, so a slow first answer does not look like a hang."""
+    engine_root = _init_mock_engine_repo(tmp_path / "engine")
+    runner = RecordingRunner(default_code=0)
+    runner.set_canned(["openclaw", "node", "status", "--json"], code=0, stdout=CLEAN_NODE_STATUS_JSON)
+    messages: list[str] = []
+
+    code = roles.run_node_role(
+        root=engine_root,
+        home=tmp_path / "home",
+        check=True,
+        runner=runner,
+        out=messages.append,
+    )
+
+    assert code == 0
+    reading = next(i for i, line in enumerate(messages) if "Leggo lo stato del nodo" in line)
+    plan = next(i for i, line in enumerate(messages) if line.startswith("Piano"))
+    assert reading < plan
+    status_reads = [t for argv, t in zip(runner.calls, runner.timeouts)
+                    if argv == ["openclaw", "node", "status", "--json"]]
+    assert status_reads == [60.0]
+

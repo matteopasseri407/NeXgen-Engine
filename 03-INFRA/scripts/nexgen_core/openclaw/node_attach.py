@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import tempfile
 import time
 from collections.abc import Callable
@@ -16,8 +15,7 @@ from pathlib import Path
 
 from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
-from nexgen_core.openclaw_service import RunResult
-from nexgen_core.processes import no_window_kwargs, windows_command_argv
+from nexgen_core.openclaw.node_cli import READ_TIMEOUT_S, SERVICE_TIMEOUT_S, Run, run_command
 
 #: Default node attach wait timeout (300 seconds / 5 minutes)
 DEFAULT_NODE_ATTACH_TIMEOUT_S = 300.0
@@ -25,33 +23,14 @@ DEFAULT_NODE_ATTACH_TIMEOUT_S = 300.0
 DEFAULT_REPORT_INTERVAL_S = 3.0
 
 
-def _default_runner(cmd: list[str]) -> RunResult:
-    command = windows_command_argv(cmd)
-    try:
-        res = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-            **no_window_kwargs(),
-        )
-        return RunResult(res.returncode, res.stdout, res.stderr)
-    except FileNotFoundError as exc:
-        return RunResult(127, "", f"eseguibile non trovato: {exc}")
-    except Exception as exc:  # nexgen: allow reason="fallback returncode when process execution fails"
-        return RunResult(1, "", str(exc))
-
-
 def connect_node_service(
     target: str,
     home: Path | None = None,
-    runner: Callable[[list[str]], RunResult] | None = None,
+    runner: Run | None = None,
     out: Callable[[str], None] = print,
 ) -> bool:
     """Connects node as an OS service using --target-file to protect secrets."""
-    run_fn = runner or _default_runner
+    run_fn = runner or run_command
     temp_dir = Path(tempfile.gettempdir())
     target_file = temp_dir / f"openclaw-connect-{os.getpid()}-{int(time.time())}.tmp"
 
@@ -60,7 +39,7 @@ def connect_node_service(
 
         out(t("Connecting node to gateway via 'openclaw connect --service --session-host' (protected target file)..."))
         cmd = ["openclaw", "connect", "--service", "--session-host", "--target-file", str(target_file)]
-        res = run_fn(cmd)
+        res = run_fn(cmd, SERVICE_TIMEOUT_S)
         if res.returncode != 0:
             out(t("Node connect failed (exit code {code}).", code=res.returncode))
             return False
@@ -71,14 +50,14 @@ def connect_node_service(
 
 
 def check_node_connected(
-    runner: Callable[[list[str]], RunResult] | None = None,
+    runner: Run | None = None,
     cmd: list[str] | None = None,
 ) -> bool:
     """Queries node status via documented 'openclaw node status --json'."""
-    run_fn = runner or _default_runner
+    run_fn = runner or run_command
     run_cmd = cmd or ["openclaw", "node", "status", "--json"]
     try:
-        res = run_fn(run_cmd)
+        res = run_fn(run_cmd, READ_TIMEOUT_S)
         if res.returncode != 0 or not res.stdout.strip():
             return False
         try:

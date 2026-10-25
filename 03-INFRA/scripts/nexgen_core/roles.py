@@ -25,6 +25,7 @@ from nexgen_core.first_run import (
 )
 from nexgen_core.i18n import t
 from nexgen_core.openclaw.node_attach import DEFAULT_NODE_ATTACH_TIMEOUT_S
+from nexgen_core.openclaw.node_cli import Run
 from nexgen_core.openclaw.node_transition import (
     detect_existing_node,
     format_final_summary,
@@ -94,7 +95,7 @@ def run_standalone_role(
     setup_fn: Callable[..., int] | None = None,
     align_fn: Callable[[], tuple[bool, str]] | None = None,
     problems_fn: Callable[[], tuple[int, list[str]]] | None = None,
-    runner: Callable[[list[str]], Any] | None = None,
+    runner: Run | None = None,
     platform: str | None = None,
     out: Callable[[str], None] = print,
 ) -> int:
@@ -194,7 +195,7 @@ def _handle_existing_node(
     root: Path,
     out: Callable[[str], None],
     align_fn: Callable[[], tuple[bool, str]] | None,
-    runner: Callable[[list[str]], Any] | None = None,
+    runner: Run | None = None,
 ) -> tuple[bool, int]:
     """Handles existing node checks. Returns (handled, exit_code)."""
     if not (inspection.node.is_node and inspection.node.gateway_origin):
@@ -239,7 +240,7 @@ def _stop_local_gateway_step(
     inspection: Any,
     home: Path | None,
     platform: str | None,
-    runner: Any,
+    runner: Run | None,
     appdata: Path | None,
     startup_dir: Path | None,
     systemd_user_dir: Path | None,
@@ -263,7 +264,7 @@ def _stop_local_gateway_step(
 def _attach_and_wait(
     join_target: str,
     home: Path | None,
-    runner: Any,
+    runner: Run | None,
     wait_probe_fn: Callable[[], bool] | None,
     name: str,
     timeout_s: float,
@@ -311,7 +312,7 @@ def _execute_node_transition(
     join_target: str,
     name: str,
     platform: str | None,
-    runner: Any,
+    runner: Run | None,
     appdata: Path | None,
     startup_dir: Path | None,
     systemd_user_dir: Path | None,
@@ -352,7 +353,7 @@ def run_node_role(
     force: bool = False,
     update_fn: Callable[..., int] | None = None,
     align_fn: Callable[[], tuple[bool, str]] | None = None,
-    runner: Callable[[list[str]], Any] | None = None,
+    runner: Run | None = None,
     wait_probe_fn: Callable[[], bool] | None = None,
     timeout_s: float = DEFAULT_NODE_ATTACH_TIMEOUT_S,
     platform: str | None = None,
@@ -365,6 +366,7 @@ def run_node_role(
     inspection = inspect_node_transition(
         root=root, home=home, platform=platform, runner=runner,
         appdata=appdata, startup_dir=startup_dir, systemd_user_dir=systemd_user_dir,
+        out=out,
     )
     if check:
         for line in plan_node_transition(inspection):

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -18,36 +17,12 @@ from typing import Any
 
 from nexgen_core.i18n import t
 from nexgen_core.openclaw.companion import probe as probe_companion
+from nexgen_core.openclaw.node_cli import READ_TIMEOUT_S, SERVICE_TIMEOUT_S, Run, run_command
 from nexgen_core.openclaw.node_status import (
     normalize_gateway_origin,
     parse_node_status_payload,
 )
-from nexgen_core.openclaw_service import RunResult
 from nexgen_core.paths import openclaw_config, resolve_home
-from nexgen_core.processes import no_window_kwargs, windows_command_argv
-
-
-def _safe_default_runner(cmd: list[str]) -> RunResult:
-    """Runner that never executes external commands during pytest, and uses bounded timeout."""
-    if os.environ.get("PYTEST_CURRENT_TEST"):
-        return RunResult(1, "", "test mode: real command execution prevented")
-    try:
-        command = windows_command_argv(cmd)
-        res = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-            timeout=10.0,
-            **no_window_kwargs(),
-        )
-        return RunResult(res.returncode, res.stdout, res.stderr)
-    except FileNotFoundError as exc:
-        return RunResult(127, "", f"eseguibile non trovato: {exc}")
-    except Exception as exc:  # nexgen: allow reason="fallback returncode when process execution fails"
-        return RunResult(1, "", str(exc))
 
 
 @dataclass(frozen=True)
@@ -120,8 +95,8 @@ def _detect_win_artifacts(
     plat: str,
     resolved_startup: Path,
     state_dir: Path,
-    runner: Callable[[list[str]], RunResult] | None,
-    run_fn: Callable[[list[str]], RunResult],
+    runner: Run | None,
+    run_fn: Run,
 ) -> tuple[bool, bool]:
     """Detects Windows startup VBS file and scheduled task."""
     if plat != "win32":
@@ -130,7 +105,7 @@ def _detect_win_artifacts(
     startup_vbs_present = vbs.is_file()
     scheduled_task_present = False
     if startup_vbs_present or state_dir.is_dir() or runner is not None:
-        sch_res = run_fn(["schtasks.exe", "/Query", "/TN", "OpenClaw Gateway"])
+        sch_res = run_fn(["schtasks.exe", "/Query", "/TN", "OpenClaw Gateway"], READ_TIMEOUT_S)
         scheduled_task_present = sch_res.returncode == 0
     return scheduled_task_present, startup_vbs_present
 
@@ -158,13 +133,13 @@ def _detect_companion_safe(
 def detect_local_gateway(
     home: Path | None = None,
     platform: str | None = None,
-    runner: Callable[[list[str]], RunResult] | None = None,
+    runner: Run | None = None,
     appdata: Path | None = None,
     startup_dir: Path | None = None,
     systemd_user_dir: Path | None = None,
 ) -> LocalGatewayInfo:
     """Detects local gateway services, scheduled tasks, and companion app."""
-    run_fn = runner or _safe_default_runner
+    run_fn = runner or run_command
     plat = platform if platform is not None else sys.platform
     resolved_home = resolve_home(home)
     state_dir = openclaw_config(resolved_home).parent
@@ -182,7 +157,7 @@ def detect_local_gateway(
     is_present = bool(sch_present or vbs_present or systemd_present)
 
     if not is_present and state_dir.is_dir() and (state_dir / "openclaw.json").is_file():
-        stat_res = run_fn(["openclaw", "gateway", "status", "--json"])
+        stat_res = run_fn(["openclaw", "gateway", "status", "--json"], READ_TIMEOUT_S)
         if stat_res.returncode == 0 and "installed" in stat_res.stdout.lower():
             is_present = True
             mechanism = "npm"
@@ -201,10 +176,10 @@ def detect_local_gateway(
 
 
 def _query_raw_node_status(
-    run_fn: Callable[[list[str]], RunResult],
+    run_fn: Run,
 ) -> tuple[Any | None, str | None]:
     """Runs openclaw node status --json and returns parsed JSON or failure reason."""
-    res = run_fn(["openclaw", "node", "status", "--json"])
+    res = run_fn(["openclaw", "node", "status", "--json"], READ_TIMEOUT_S)
     if res.returncode != 0:
         err = res.stderr.strip() or res.stdout.strip()
         reason = err or f"codice d'uscita {res.returncode}"
@@ -239,12 +214,12 @@ def _fallback_node_json(
 
 
 def detect_existing_node(
-    runner: Callable[[list[str]], RunResult] | None = None,
+    runner: Run | None = None,
     home: Path | None = None,
     state_dir: Path | None = None,
 ) -> ExistingNodeInfo:
     """Checks whether this machine is already configured or connected as a node."""
-    run_fn = runner or _safe_default_runner
+    run_fn = runner or run_command
     resolved_home = resolve_home(home)
     st_dir = state_dir or openclaw_config(resolved_home).parent
 
@@ -281,10 +256,11 @@ def inspect_node_transition(
     root: Path,
     home: Path | None = None,
     platform: str | None = None,
-    runner: Callable[[list[str]], RunResult] | None = None,
+    runner: Run | None = None,
     appdata: Path | None = None,
     startup_dir: Path | None = None,
     systemd_user_dir: Path | None = None,
+    out: Callable[[str], None] = print,
 ) -> TransitionInspection:
     """Collects complete machine facts before transitioning to node role."""
     engine_info = detect_engine_versions(root)
@@ -296,6 +272,8 @@ def inspect_node_transition(
         startup_dir=startup_dir,
         systemd_user_dir=systemd_user_dir,
     )
+    # A cold OpenClaw takes seconds to answer; say so before the pause, not after it.
+    out(t("Leggo lo stato del nodo: a freddo OpenClaw può impiegare qualche secondo."))
     node_info = detect_existing_node(runner=runner, home=home, state_dir=gateway_info.state_dir)
     return TransitionInspection(engine=engine_info, gateway=gateway_info, node=node_info)
 
@@ -343,23 +321,23 @@ def plan_node_transition(inspection: TransitionInspection) -> list[str]:
 def stop_local_gateway_safe(
     home: Path | None = None,
     platform: str | None = None,
-    runner: Callable[[list[str]], RunResult] | None = None,
+    runner: Run | None = None,
     appdata: Path | None = None,
     startup_dir: Path | None = None,
     systemd_user_dir: Path | None = None,
     out: Callable[[str], None] = print,
 ) -> dict[str, Any]:
     """Gracefully stops and decommissions local gateway without touching state directory."""
-    run_fn = runner or _safe_default_runner
+    run_fn = runner or run_command
     plat = platform if platform is not None else sys.platform
     resolved_home = resolve_home(home)
 
     out(t("Disattivazione gateway OpenClaw locale..."))
-    run_fn(["openclaw", "gateway", "stop"])
-    run_fn(["openclaw", "gateway", "uninstall"])
+    run_fn(["openclaw", "gateway", "stop"], SERVICE_TIMEOUT_S)
+    run_fn(["openclaw", "gateway", "uninstall"], SERVICE_TIMEOUT_S)
 
     if plat == "win32":
-        run_fn(["schtasks.exe", "/Delete", "/TN", "OpenClaw Gateway", "/F"])
+        run_fn(["schtasks.exe", "/Delete", "/TN", "OpenClaw Gateway", "/F"], SERVICE_TIMEOUT_S)
         resolved_appdata = appdata or (resolved_home / "AppData" / "Roaming")
         resolved_startup = startup_dir or (
             resolved_appdata / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
@@ -370,10 +348,10 @@ def stop_local_gateway_safe(
         resolved_systemd = systemd_user_dir or (resolved_home / ".config" / "systemd" / "user")
         unit = resolved_systemd / "openclaw-gateway.service"
         if unit.is_file():
-            run_fn(["systemctl", "--user", "stop", "openclaw-gateway.service"])
-            run_fn(["systemctl", "--user", "disable", "openclaw-gateway.service"])
+            run_fn(["systemctl", "--user", "stop", "openclaw-gateway.service"], SERVICE_TIMEOUT_S)
+            run_fn(["systemctl", "--user", "disable", "openclaw-gateway.service"], SERVICE_TIMEOUT_S)
             unit.unlink(missing_ok=True)
-            run_fn(["systemctl", "--user", "daemon-reload"])
+            run_fn(["systemctl", "--user", "daemon-reload"], SERVICE_TIMEOUT_S)
 
     out(t("Gateway OpenClaw locale fermato e disattivato all'avvio."))
     out(t("Cartella di stato (~/.openclaw: sessioni, memoria, configurazione) conservata intatta."))
@@ -381,25 +359,25 @@ def stop_local_gateway_safe(
 
 
 def stop_node_service_safe(
-    runner: Callable[[list[str]], RunResult] | None = None,
+    runner: Run | None = None,
     out: Callable[[str], None] = print,
 ) -> dict[str, Any]:
     """Stops and uninstalls node host service using documented OpenClaw commands."""
-    run_fn = runner or _safe_default_runner
+    run_fn = runner or run_command
     out(t("Disattivazione servizio nodo OpenClaw..."))
-    run_fn(["openclaw", "node", "stop"])
-    run_fn(["openclaw", "node", "uninstall"])
+    run_fn(["openclaw", "node", "stop"], SERVICE_TIMEOUT_S)
+    run_fn(["openclaw", "node", "uninstall"], SERVICE_TIMEOUT_S)
     return {"ok": True}
 
 
 def start_node_service_safe(
-    runner: Callable[[list[str]], RunResult] | None = None,
+    runner: Run | None = None,
     out: Callable[[str], None] = print,
 ) -> dict[str, Any]:
     """Starts node host service using documented 'openclaw node start'."""
-    run_fn = runner or _safe_default_runner
+    run_fn = runner or run_command
     out(t("Riavvio servizio nodo OpenClaw con 'openclaw node start'..."))
-    run_fn(["openclaw", "node", "start"])
+    run_fn(["openclaw", "node", "start"], SERVICE_TIMEOUT_S)
     return {"ok": True}
 
 

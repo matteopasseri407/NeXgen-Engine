@@ -1,7 +1,6 @@
 """Tests for node attach connection progress monitoring and timeout recovery."""
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from nexgen_core.openclaw.node_attach import (
@@ -13,6 +12,8 @@ from nexgen_core.openclaw_service import RunResult
 
 
 def test_connect_node_service_uses_target_file_and_protects_secrets() -> None:
+    from nexgen_core.openclaw.node_cli import SERVICE_TIMEOUT_S
+
     runner = MagicMock()
     runner.return_value = RunResult(0, "connected\n", "")
     out = MagicMock()
@@ -26,6 +27,8 @@ def test_connect_node_service_uses_target_file_and_protects_secrets() -> None:
     cmd = runner.call_args[0][0]
     assert cmd[0:4] == ["openclaw", "connect", "--service", "--session-host"]
     assert cmd[4] == "--target-file"
+    # Installing the service outlasts a question, and still has a ceiling
+    assert runner.call_args[0][1] == SERVICE_TIMEOUT_S
     # Target file path passed, NOT the literal secret token in command line
     assert secret_join_target not in cmd
 
@@ -151,26 +154,27 @@ def test_wait_for_node_connection_timeout_cites_only_documented_commands() -> No
     assert "node logs" not in full_output
 
 
-def test_default_runner_resolves_openclaw_shim_on_windows(monkeypatch, tmp_path) -> None:
-    from nexgen_core import processes
-    from nexgen_core.openclaw import node_attach
+def test_attach_uses_the_service_deadline_to_connect_and_the_read_deadline_to_check() -> None:
+    """Two different jobs, two different ceilings: connecting installs, checking only asks."""
+    from nexgen_core.openclaw.node_cli import READ_TIMEOUT_S, SERVICE_TIMEOUT_S
 
-    shim = tmp_path / "openclaw.cmd"
-    shim.write_text("@echo off\r\n", encoding="utf-8")
-    monkeypatch.setattr(processes, "os", SimpleNamespace(name="nt"))
-    monkeypatch.setattr(processes.shutil, "which", lambda name: str(shim) if name == "openclaw" else None)
+    attach_calls: list[tuple[list[str], float]] = []
+    probe_calls: list[tuple[list[str], float]] = []
 
-    recorded_cmd: list[str] = []
+    def attach_runner(argv, timeout):
+        attach_calls.append((list(argv), timeout))
+        return RunResult(0, "connected\n", "")
 
-    def fake_run(cmd, **kwargs):
-        recorded_cmd.extend(cmd)
-        res = MagicMock()
-        res.returncode = 0
-        res.stdout = "ok"
-        res.stderr = ""
-        return res
+    def probe_runner(argv, timeout):
+        probe_calls.append((list(argv), timeout))
+        return RunResult(0, (
+            '{"service": {"label": "Scheduled Task", "loaded": true, "command": '
+            '{"programArguments": ["node.exe", "index.js", "node", "run", "--host", "gw.example.com", "--port", "443", "--tls"]}, '
+            '"runtime": {"status": "running"}}}'
+        ), "")
 
-    monkeypatch.setattr(node_attach.subprocess, "run", fake_run)
-    res = node_attach._default_runner(["openclaw", "node", "status"])
-    assert res.returncode == 0
-    assert recorded_cmd == ["cmd.exe", "/d", "/s", "/c", str(shim), "node", "status"]
+    assert connect_node_service("https://gw.example.com/j/code", runner=attach_runner, out=lambda _: None) is True
+    assert check_node_connected(probe_runner) is True
+
+    assert attach_calls[0][1] == SERVICE_TIMEOUT_S
+    assert probe_calls[0] == (["openclaw", "node", "status", "--json"], READ_TIMEOUT_S)
