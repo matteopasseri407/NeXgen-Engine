@@ -61,7 +61,8 @@ def _register_setup(psub) -> None:
     q = psub.add_parser("doctor", help=t("Check OpenClaw's installation and configuration"))
     q.add_argument("--json", action="store_true", help=t("Output in JSON format"))
     q.add_argument("--nodes", action="store_true",
-                   help=t("Also list the nodes the running gateway knows (starts OpenClaw's CLI once)"))
+                   help=t("Also list the nodes the running gateway knows and check the exec approvals of the node "
+                          "an agent runs on (starts OpenClaw's CLI)"))
     q.set_defaults(func=cmd_doctor)
 
 
@@ -153,12 +154,16 @@ def cmd_setup(args) -> int:
 
 
 def cmd_doctor(args) -> int:
-    from nexgen_core.openclaw import node_checks
+    from nexgen_core.openclaw import node_approvals, node_checks
     from nexgen_core.openclaw.doctor import collect, exit_code, render
     from nexgen_core.openclaw_pairing import listed as gateway_devices
 
-    lister = node_checks.default_node_lister if getattr(args, "nodes", False) else None
-    outcomes = collect(node_lister=lister, pending=gateway_devices)
+    asked = getattr(args, "nodes", False)
+    outcomes = collect(
+        node_lister=node_checks.default_node_lister if asked else None,
+        node_approvals_reader=node_approvals.default_reader if asked else None,
+        pending=gateway_devices,
+    )
     if getattr(args, "json", False):
         print(json.dumps([outcome.to_dict() for outcome in outcomes], indent=2, ensure_ascii=False))
     else:

@@ -9,11 +9,12 @@ feature existed.
 The checks are read-only by construction. They read the configuration in force
 and they open one TCP connection. They never run `openclaw config validate`,
 because starting or validating OpenClaw is B2's job, and they never write a file.
-Two commands a check may run, and only when the caller hands them in: the node
-list, behind the `--nodes` flag, with the read-only query OpenClaw documents, and
-the gateway's own device list, because `nexgen openclaw doctor` is where a person
-asks whether the app is paired. Neither runs on `nexgen doctor`'s own schedule,
-which has no business launching a CLI.
+Three commands a check may run, and only when the caller hands them in: the node
+list, and the exec approvals of the node an agent runs on, both behind the
+`--nodes` flag with the read-only queries OpenClaw documents; and the gateway's own
+device list, because `nexgen openclaw doctor` is where a person asks whether the
+app is paired. None of them runs on `nexgen doctor`'s own schedule, which has no
+business launching a CLI.
 """
 from __future__ import annotations
 
@@ -25,7 +26,17 @@ from typing import Any
 
 from nexgen_core import quota_policy
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import background, companion, doctor_agy, doctor_mcp, doctor_runtime, node_checks, observation
+from nexgen_core.openclaw import (
+    background,
+    companion,
+    doctor_agy,
+    doctor_config,
+    doctor_mcp,
+    doctor_runtime,
+    node_approvals,
+    node_checks,
+    observation,
+)
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.doctor_install import check_config, check_declaration, check_installed
@@ -35,7 +46,6 @@ from nexgen_core.openclaw.model_checks import check_agent_models, check_cage, ch
 from nexgen_core.openclaw.pin import pinned_version, required_node_version
 from nexgen_core.openclaw.profile import PENDING_TOKEN
 from nexgen_core.openclaw.server_gateway import exposure
-from nexgen_core.openclaw.terms import google_subscriptions
 from nexgen_core.paths import is_machine_home, mcp_manifest, openclaw_config, resolve_home, resolve_vault_data
 from nexgen_core.report import CheckOutcome, Severity
 
@@ -66,27 +76,6 @@ def _has_trace(home: Path, env: Mapping[str, str]) -> bool:
 
 def _pinned(engine_root: Path | None) -> str | None:
     return pinned_version(engine_root)
-
-
-def _check_heartbeat(config: dict[str, Any]) -> CheckOutcome:
-    """A live heartbeat starts system jobs that write on the channels continuously."""
-    agents = config.get("agents") if isinstance(config.get("agents"), dict) else {}
-    defaults = agents.get("defaults") if isinstance(agents.get("defaults"), dict) else {}
-    heartbeat = defaults.get("heartbeat") if isinstance(defaults.get("heartbeat"), dict) else {}
-    every = heartbeat.get("every")
-    if every == "0m":
-        return CheckOutcome(
-            id="openclaw.heartbeat",
-            severity=Severity.OK,
-            message=t("The heartbeat is off, as the engine configures it."),
-        )
-    return CheckOutcome(
-        id="openclaw.heartbeat",
-        severity=Severity.WARN,
-        message=t("The heartbeat runs every '{every}': it starts system jobs that write to the channels.",
-                  every=every if isinstance(every, str) and every else t("(not set)")),
-        action=t("Set agents.defaults.heartbeat.every to '0m'."),
-    )
 
 
 def _has_real_token(auth: dict[str, Any]) -> bool:
@@ -145,122 +134,6 @@ def _check_gateway(config: dict[str, Any]) -> list[CheckOutcome]:
             action=t("Set gateway.auth.mode to 'token' and let 'nexgen openclaw setup' generate the token."),
         ))
     return outcomes
-
-
-def _check_google(config: dict[str, Any]) -> CheckOutcome:
-    """Google plans may not be used outside Google's own clients; an API key may."""
-    forbidden = google_subscriptions(config)
-    if forbidden:
-        return CheckOutcome(
-            id="openclaw.plugins.google",
-            severity=Severity.BROKEN,
-            message=t("OpenClaw is configured with a Google subscription, which its terms do not allow: {names}",
-                      names=", ".join(forbidden)),
-            action=t("Remove it: use Claude, Codex, the OpenCode Go key or a local model."),
-        )
-    return CheckOutcome(
-        id="openclaw.plugins.google",
-        severity=Severity.OK,
-        message=t("No Google subscription is configured in OpenClaw."),
-    )
-
-
-def _check_acp(config: dict[str, Any]) -> CheckOutcome:
-    """A Gemini seat through ACP is allowed by the protocol and not by the terms."""
-    acp = config.get("acp") if isinstance(config.get("acp"), dict) else {}
-    allowed = acp.get("allowedAgents") if isinstance(acp.get("allowedAgents"), list) else []
-    if any(str(agent).lower() == "gemini" for agent in allowed):
-        return CheckOutcome(
-            id="openclaw.acp.gemini",
-            severity=Severity.WARN,
-            message=t("The ACP bridge allows the 'gemini' agent; its terms do not allow it outside Google's clients."),
-            action=t("Remove 'gemini' from acp.allowedAgents."),
-        )
-    return CheckOutcome(
-        id="openclaw.acp.gemini",
-        severity=Severity.OK,
-        message=t("The ACP bridge does not allow a Google agent."),
-    )
-
-
-MANY_MCP_SERVERS_THRESHOLD = 4
-
-
-def _check_tool_search(config: dict[str, Any]) -> CheckOutcome:
-    """Tool Search: active by default in OpenClaw; warned if disabled with many MCP servers."""
-    tools = config.get("tools") if isinstance(config.get("tools"), dict) else {}
-    ts = tools.get("toolSearch")
-    mcp = config.get("mcp") if isinstance(config.get("mcp"), dict) else {}
-    servers = mcp.get("servers") if isinstance(mcp.get("servers"), dict) else {}
-    mounted_count = sum(1 for s in servers.values() if isinstance(s, dict) and s.get("enabled", True) is not False)
-
-    if ts is False:
-        return CheckOutcome(
-            id="openclaw.tool_search",
-            severity=Severity.WARN,
-            message=t(
-                "Tool Search is disabled by a legacy engine setting; next setup will remove it.",
-            ),
-            action=t("Run 'nexgen openclaw setup' to retire the legacy setting and restore native Tool Search."),
-        )
-
-    if isinstance(ts, dict) and ts.get("enabled") is False:
-        if mounted_count >= MANY_MCP_SERVERS_THRESHOLD:
-            return CheckOutcome(
-                id="openclaw.tool_search",
-                severity=Severity.WARN,
-                message=t(
-                    "Tool Search is disabled by user configuration with {count} MCP servers mounted: direct schemas add large overhead to every prompt.",
-                    count=mounted_count,
-                ),
-                action=t("Remove 'tools.toolSearch' from openclaw.json to restore native Tool Search."),
-            )
-        return CheckOutcome(
-            id="openclaw.tool_search",
-            severity=Severity.OK,
-            message=t(
-                "Tool Search is disabled by user configuration ({count} MCP servers mounted, direct schemas in use).",
-                count=mounted_count,
-            ),
-        )
-
-    mode = t("default") if ts is None else (str(ts.get("mode")) if isinstance(ts, dict) and ts.get("mode") else t("configured"))
-    return CheckOutcome(
-        id="openclaw.tool_search",
-        severity=Severity.OK,
-        message=t(
-            "Tool Search is active ({mode}): MCP and runtime tools are deferred behind search and call.",
-            mode=mode,
-        ),
-    )
-
-
-def _check_mcp_lazy(config: dict[str, Any]) -> CheckOutcome:
-    """The lazy-mcp gateway: must never be mounted by the engine in OpenClaw."""
-    from nexgen_core.mcp_render.openclaw import is_engine_lazy_mcp
-
-    mcp = config.get("mcp") if isinstance(config.get("mcp"), dict) else {}
-    servers = mcp.get("servers") if isinstance(mcp.get("servers"), dict) else {}
-    entry = servers.get("lazy-mcp")
-    if entry is None:
-        return CheckOutcome(
-            id="openclaw.mcp.lazy",
-            severity=Severity.OK,
-            message=t("No lazy-mcp gateway is mounted in OpenClaw (connectors are direct)."),
-        )
-    if is_engine_lazy_mcp(entry):
-        return CheckOutcome(
-            id="openclaw.mcp.lazy",
-            severity=Severity.BROKEN,
-            message=t("The lazy-mcp gateway is mounted inside OpenClaw by the engine: OpenClaw connects MCP servers directly."),
-            action=t("Run 'nexgen sync' or 'nexgen mcp render' to remove the engine's lazy-mcp entry."),
-        )
-    return CheckOutcome(
-        id="openclaw.mcp.lazy",
-        severity=Severity.WARN,
-        message=t("A custom 'lazy-mcp' connector is configured under mcp.servers; OpenClaw does not use the engine gateway."),
-        action=t("Verify if this custom connector is needed or rename it to avoid collision with the engine gateway."),
-    )
 
 
 def _listening(config: dict[str, Any], connect: doctor_runtime.Connect | None,
@@ -323,11 +196,13 @@ def _config_outcomes(
     node_lister: node_checks.NodeLister | None,
     platform: str,
     env: Mapping[str, str] | None = None,
+    approvals: node_approvals.Reader | None = None,
 ) -> list[CheckOutcome]:
     """Every check that reads the configuration in force, in the order a person reads them.
 
     `failover` is the policy the caller already read, when it has one; without it the
-    policy is read here, from the same Vault the other checks read.
+    policy is read here, from the same Vault the other checks read. `approvals` is the
+    node query the caller asked for, and it is asked only where a node is named.
     """
     policy = failover if failover is not None else quota_policy.load(
         home_dir, vault=resolve_vault_data(home_dir, vault_data),
@@ -337,14 +212,14 @@ def _config_outcomes(
         check_ollama_latest(config),
         check_cage(config),
         check_evidence(config, path),
-        _check_heartbeat(config),
+        doctor_config.check_heartbeat(config),
         *_check_gateway(config),
         exposure(config),
-        _check_google(config),
+        doctor_config.check_google(config),
         doctor_agy.check_local_agy(config),
-        _check_acp(config),
-        _check_tool_search(config),
-        _check_mcp_lazy(config),
+        doctor_config.check_acp(config),
+        doctor_config.check_tool_search(config),
+        doctor_config.check_mcp_lazy(config),
         doctor_mcp.check_mcp_secret_url(config, manifest_p, env or os.environ),
         check_agent_models(config, snapshot),
         background.report(config),
@@ -352,6 +227,7 @@ def _config_outcomes(
         check_fallbacks(config, policy),
         _listening(config, connect, home_dir),
         *node_checks.check_nodes(config, _probe(home_dir, connect), node_lister),
+        *node_approvals.check_agents(config, approvals),
         *doctor_runtime.check_workshop_skills(config, path.parent, home_dir),
         doctor_runtime.check_unadopted(config, path, home_dir, resolve_vault_data(home_dir, vault_data)),
         doctor_runtime.check_bindings(config),
@@ -419,12 +295,12 @@ def collect(
     linger_dir: Path | None = None,
     failover: quota_policy.Failover | None = None,
     pending: Callable[[], list[dict[str, Any]] | None] | None = None,
+    node_approvals_reader: node_approvals.Reader | None = None,
 ) -> list[CheckOutcome]:
     """Every OpenClaw check that applies to this machine, or nothing at all.
 
-    `pending` is the gateway's own device list, and it is asked only when the
-    app says it is on this gateway: a caller that must not launch a CLI passes
-    nothing, and the line about the app then says what its files alone say.
+    `pending` and `node_approvals_reader` both start OpenClaw's CLI, so each is asked
+    only by a caller that handed one in: `nexgen doctor` on its schedule passes neither.
     """
     values = dict(os.environ) if env is None else {str(k): str(v) for k, v in env.items()}
     home_dir = resolve_home(home)
@@ -448,14 +324,11 @@ def collect(
     path = Path(snapshot.openclaw.config_path)
     config, error = read_config(path)
     outcomes: list[CheckOutcome] = [check_installed(snapshot, declared, pinned)]
-    declaration = check_declaration(declared)
-    if declaration is not None:
-        outcomes.append(declaration)
-    outcomes.append(check_config(path, config, error))
+    outcomes.extend(filter(None, [check_declaration(declared), check_config(path, config, error)]))
     if config is not None:
         outcomes.extend(_config_outcomes(
             config, snapshot, path, home_dir, vault_data, failover, connect, node_lister, system,
-            env=values,
+            env=values, approvals=node_approvals_reader,
         ))
     outcomes.extend(_store_gateway_outcomes(home_dir, values, system))
     app_outcome = doctor_runtime.check_companion_gateway(

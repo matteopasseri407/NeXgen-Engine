@@ -587,8 +587,9 @@ On the laptop, once:
 4. On Linux, `loginctl enable-linger <user>` once: without it the systemd user service stops when the last
    session closes. `nexgen doctor` already says when lingering is off.
 
-On the fixed PC, to see the result: `nexgen openclaw doctor --nodes` adds the paired nodes to the report, and
-`nexgen openclaw pair` lists them with their state. Neither approves anything on its own.
+On the fixed PC, to see the result: `nexgen openclaw doctor --nodes` adds the paired nodes to the report and
+checks that the node accepts the commands an agent asks it to run, and `nexgen openclaw pair` lists them with
+their state. Neither approves anything on its own.
 
 ### A gateway behind Tailscale Serve, and a laptop on the same tailnet
 
@@ -644,7 +645,10 @@ this PC's gateway, and whether the gateway's own device list knows the app. `nex
 list with `openclaw devices list --json`, on that line only and only when the app says it is on this gateway;
 a stopped gateway is a normal state, so the line then says nothing about devices instead of reporting a fault.
 `--nodes` adds the nodes the running gateway knows, which costs one run of OpenClaw's CLI and is therefore
-never done unless asked; the line about the network needs no query, so it is always there. `nexgen doctor`
+never done unless asked; the line about the network needs no query, so it is always there. The same flag reads
+each node's own exec approvals for every agent that runs its commands there, and warns when that PC is stricter
+than what the agent asks for: a node whose fallback is `deny` answers the agent with `exec denied:
+request-failed`, which says nothing about the cause. Without the flag nothing of a node is asked. `nexgen doctor`
 runs the same checks as part of its own report, without `--nodes` and without launching that list, and says
 nothing at all on a machine that never installed OpenClaw, never declared the module and has no Companion
 gateway.
