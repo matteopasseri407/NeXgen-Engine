@@ -9,9 +9,12 @@ from nexgen_core.openclaw.profile import build_config
 from nexgen_core.openclaw.setup_steps import Setup
 from nexgen_core.openclaw.squad import (
     apply_squad,
+    default_agent,
+    get_squad_instructions,
     get_squad_souls,
     load_squad,
     register_model_keys,
+    unresolved_default,
 )
 
 
@@ -141,3 +144,143 @@ def test_register_model_keys(tmp_path: Path) -> None:
             "anthropic",
         ]
         assert call_args[1]["input"] == "sk-ant-test-secret-key\n"
+
+
+def test_the_squad_names_the_default_agent(tmp_path: Path) -> None:
+    """Without this owner, OpenClaw refuses the main session on a multi-agent roster."""
+    squad = {
+        "default": "capo",
+        "agents": {"main": {"name": "assistente"}, "capo": {"name": "capo"}},
+    }
+
+    applied = apply_squad({"agents": {"entries": {}}}, squad)
+
+    assert applied["agents"]["defaults"]["systemAgent"]["agentId"] == "capo"
+    # The legacy marker a squad may still carry is read, never written back.
+    assert "default" not in applied["agents"]["entries"]["capo"]
+
+
+def test_the_first_marked_agent_is_the_default_when_none_is_named() -> None:
+    squad = {
+        "agents": {
+            "main": {"name": "assistente"},
+            "capo": {"name": "capo", "default": True},
+            "sviluppo": {"name": "sviluppo", "default": True},
+        },
+    }
+
+    assert default_agent(squad) == "capo"
+    assert apply_squad({"agents": {"entries": {}}}, squad)["agents"]["defaults"]["systemAgent"]["agentId"] == "capo"
+
+
+def test_a_default_the_squad_does_not_declare_writes_nobody() -> None:
+    """An owner OpenClaw cannot resolve is the refusal this field exists to prevent."""
+    squad = {"default": "sviluppo", "agents": {"main": {"name": "assistente"}}}
+
+    applied = apply_squad({"agents": {"entries": {}}}, squad)
+
+    assert "systemAgent" not in applied["agents"].get("defaults", {})
+    assert unresolved_default(squad) == "sviluppo"
+    assert unresolved_default({"agents": {"main": {}}}) is None
+
+
+def test_a_default_already_in_force_survives_a_squad_that_names_none() -> None:
+    current = {"agents": {"entries": {}, "defaults": {"systemAgent": {"agentId": "main"}}}}
+
+    applied = apply_squad(current, {"agents": {"capo": {"name": "capo"}}})
+
+    assert applied["agents"]["defaults"]["systemAgent"]["agentId"] == "main"
+
+
+def test_an_agent_exec_policy_lands_under_tools_exec() -> None:
+    """`security`/`ask` decide whether every native tool needs a human approval."""
+    squad = {
+        "agents": {
+            "sviluppo": {
+                "name": "sviluppo",
+                "exec": {
+                    "security": "full",
+                    "ask": "off",
+                    "host": "node",
+                    "node": "node-pc",
+                    "notAKey": "dropped",
+                },
+            },
+        },
+    }
+
+    entry = apply_squad({"agents": {"entries": {}}}, squad)["agents"]["entries"]["sviluppo"]
+
+    assert entry["tools"]["exec"] == {
+        "security": "full",
+        "ask": "off",
+        "host": "node",
+        "node": "node-pc",
+    }
+
+
+def test_a_nested_exec_block_and_an_agent_policy_merge_per_key() -> None:
+    squad = {
+        "agents": {
+            "sviluppo": {
+                "name": "sviluppo",
+                "exec": {"ask": "off"},
+                "tools": {"exec": {"host": "node", "node": "node-pc", "ask": "on-miss"}},
+            },
+        },
+    }
+
+    entry = apply_squad({"agents": {"entries": {}}}, squad)["agents"]["entries"]["sviluppo"]
+
+    assert entry["tools"]["exec"] == {"host": "node", "node": "node-pc", "ask": "off"}
+
+
+def test_the_squad_instructions_are_read_from_beside_the_squad_file(tmp_path: Path) -> None:
+    """`agents_md` is that agent's own text; `common_md` is appended to everyone."""
+    (tmp_path / "roles").mkdir()
+    (tmp_path / "roles" / "sviluppo.md").write_text("# sviluppo\n\nOwn the code.\n", encoding="utf-8")
+    (tmp_path / "common.md").write_text("## Common\n\nSpeak plainly.\n", encoding="utf-8")
+    squad_file = tmp_path / "squad.yaml"
+    squad_file.write_text(
+        """
+common_md: "common.md"
+agents:
+  sviluppo:
+    agents_md: "roles/sviluppo.md"
+  main:
+    name: "assistente"
+""",
+        encoding="utf-8",
+    )
+
+    squad = load_squad(squad_file)
+    instructions, unreadable = get_squad_instructions(squad, squad_file)
+
+    assert unreadable == ()
+    assert set(instructions) == {"sviluppo", "main"}
+    assert "Own the code." in instructions["sviluppo"]
+    assert "Speak plainly." in instructions["sviluppo"]
+    assert "Speak plainly." in instructions["main"]
+    assert "Own the code." not in instructions["main"]
+    assert instructions["main"].startswith("<!-- nexgen:squad:begin")
+
+
+def test_a_declared_instruction_file_that_is_missing_is_named_not_guessed(tmp_path: Path) -> None:
+    squad_file = tmp_path / "squad.yaml"
+    squad_file.write_text(
+        """
+common_md: "missing-common.md"
+agents:
+  main:
+    agents_md: "missing-role.md"
+""",
+        encoding="utf-8",
+    )
+
+    instructions, unreadable = get_squad_instructions(load_squad(squad_file), squad_file)
+
+    assert instructions == {}
+    assert len(unreadable) == 2
+    assert str(tmp_path / "missing-common.md") in unreadable
+    assert str(tmp_path / "missing-role.md") in unreadable
+

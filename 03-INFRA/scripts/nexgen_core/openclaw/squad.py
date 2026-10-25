@@ -1,8 +1,9 @@
 """Squad as data for OpenClaw agents, models, bindings, and node execution.
 
 One job: parse squad configuration from vault squad.yaml or squad.example.yaml,
-apply squad data to OpenClaw config (agents, models, bindings, tools), provide
-per-agent SOUL.md definitions, and register model provider API keys via stdin.
+apply squad data to OpenClaw config (agents, models, bindings, tools, the default
+agent), provide per-agent SOUL.md and AGENTS.md definitions, and register model
+provider API keys via stdin.
 """
 from __future__ import annotations
 
@@ -30,6 +31,22 @@ _PROVIDER_ENV_MAP: dict[str, tuple[str, str]] = {
     "google": ("google", "GEMINI_API_KEY"),
     "gemini": ("google", "GEMINI_API_KEY"),
 }
+
+#: The keys one agent may set in its `exec` block, which is the whole exec policy
+#: OpenClaw reads for that agent (`agents.entries.<id>.tools.exec`). `host` and
+#: `node` choose where a command runs; `security` and `ask` decide whether it needs
+#: a human approval.
+_EXEC_KEYS = ("security", "ask", "host", "node")
+
+#: The line the engine puts on top of an `AGENTS.md` it writes from the squad.
+#: A file without it belongs to the person and is never replaced: the same
+#: ownership test the rest of the setup applies to a file it did not create.
+INSTRUCTION_MARK = "<!-- nexgen:squad:begin"
+
+#: The full mark, saying what happens to the file it opens.
+_INSTRUCTION_MARK_LINE = (
+    INSTRUCTION_MARK + ": written from squad.yaml by 'nexgen openclaw setup', and rewritten on the next run -->"
+)
 
 
 def find_squad_file(vault_data: Path | None = None, home: Path | None = None) -> Path | None:
@@ -82,6 +99,148 @@ def get_squad_souls(squad: dict[str, Any] | None) -> dict[str, str]:
     return souls
 
 
+def _default_reference(squad: dict[str, Any] | None) -> str | None:
+    """The default agent the squad names: `default: <id>`, or the first marked entry.
+
+    The mark is `default: true` on an agent, which is the shape a squad copied from
+    an older OpenClaw roster already carries. It is read, never written back: the
+    engine writes the modern `agents.defaults.systemAgent.agentId` instead, because
+    OpenClaw refuses the legacy marker beside `agents.ownership: "explicit"`.
+    """
+    if not squad:
+        return None
+    declared = squad.get("default")
+    if isinstance(declared, str) and declared.strip():
+        return declared.strip()
+    agents = squad.get("agents")
+    if isinstance(agents, dict):
+        for agent_id, spec in agents.items():
+            if isinstance(spec, dict) and spec.get("default") is True:
+                return str(agent_id)
+    return None
+
+
+def default_agent(squad: dict[str, Any] | None) -> str | None:
+    """The agent the squad declares as this installation's default, if it declares one.
+
+    Only a declared agent can be the default: naming an id the squad does not
+    define would write an owner OpenClaw cannot resolve, which is the refusal this
+    field exists to prevent.
+    """
+    name = _default_reference(squad)
+    agents = squad.get("agents") if isinstance(squad, dict) else None
+    return name if name and isinstance(agents, dict) and name in agents else None
+
+
+def unresolved_default(squad: dict[str, Any] | None) -> str | None:
+    """The default the squad names but does not declare, so the plan can name the typo."""
+    name = _default_reference(squad)
+    return None if default_agent(squad) or not name else name
+
+
+def _exec_policy(spec: Mapping[str, Any]) -> dict[str, str]:
+    """The exec policy one agent declares, keeping only the keys OpenClaw reads."""
+    raw = spec.get("exec")
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        key: str(raw[key]).strip()
+        for key in _EXEC_KEYS
+        if isinstance(raw.get(key), str) and str(raw[key]).strip()
+    }
+
+
+def _declared_path(value: Any, base: Path) -> Path | None:
+    """A path the squad declares, resolved the way the file means it: beside itself."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    path = Path(value.strip()).expanduser()
+    return path if path.is_absolute() else base / path
+
+
+def _read_instruction(path: Path | None) -> str | None:
+    """The text of one declared instruction file, or None when it cannot be read."""
+    if path is None or not path.is_file():
+        return None
+    try:
+        return path.read_text(encoding="utf-8-sig").strip() or None
+    except OSError:  # nexgen: allow reason="an unreadable instruction file is named by the setup step, never a crash"
+        return None
+
+
+def _with_mark(text: str) -> str:
+    """The instruction text with the ownership mark on top, so a later run may replace it."""
+    return f"{_INSTRUCTION_MARK_LINE}\n{text.strip()}\n"
+
+
+def get_squad_instructions(
+    squad: dict[str, Any] | None,
+    squad_file: Path | None,
+) -> tuple[dict[str, str], tuple[str, ...]]:
+    """Returns agent_id -> AGENTS.md text, plus the declared files that cannot be read.
+
+    `agents_md` is one agent's own instructions; `common_md`, declared at the root,
+    is appended to every agent that has either. Paths are relative to the squad
+    file, so the two travel together. The text carries the engine's mark because
+    the setup replaces only a file that has one.
+    """
+    if not squad or squad_file is None:
+        return {}, ()
+    agents = squad.get("agents")
+    if not isinstance(agents, dict):
+        return {}, ()
+    base = squad_file.parent
+    common_path = _declared_path(squad.get("common_md"), base)
+    common = _read_instruction(common_path)
+    unreadable: list[str] = []
+    if common_path is not None and common is None:
+        unreadable.append(str(common_path))
+    texts: dict[str, str] = {}
+    for agent_id, spec in agents.items():
+        if not isinstance(spec, dict):
+            continue
+        role_path = _declared_path(spec.get("agents_md"), base)
+        role = _read_instruction(role_path)
+        if role_path is not None and role is None:
+            unreadable.append(str(role_path))
+        parts = [part for part in (role, common) if part]
+        if parts:
+            texts[str(agent_id)] = _with_mark("\n\n".join(parts))
+    return texts, tuple(unreadable)
+
+
+def _apply_agent_entry(entry: dict[str, Any], spec: Mapping[str, Any], agent_id: Any) -> set[str]:
+    """One agent's own fields on its entry; returns the ids it declares it may message."""
+    name = spec.get("name") or agent_id
+    entry["name"] = name
+    entry["identity"] = {"name": name}
+    if "model" in spec:
+        entry["model"] = spec["model"]
+    if "workspace" in spec:
+        entry["workspace"] = spec["workspace"]
+    if "thinkingDefault" in spec:
+        entry["thinkingDefault"] = spec["thinkingDefault"]
+    senders: set[str] = set()
+    declared_tools = spec.get("tools") if isinstance(spec.get("tools"), dict) else {}
+    if "agentToAgent" in declared_tools:
+        entry.setdefault("tools", {})["agentToAgent"] = declared_tools["agentToAgent"]
+        senders.add(agent_id)
+        for target_id in declared_tools["agentToAgent"].get("send", []):
+            senders.add(str(target_id))
+    # `exec` at the agent's own level is the documented place for its policy;
+    # the older `tools.exec` shape still works and the newer field wins per key.
+    policy = _exec_policy(spec)
+    nested = declared_tools.get("exec")
+    if policy or isinstance(nested, dict):
+        merged = dict(nested) if isinstance(nested, dict) else {}
+        merged.update(policy)
+        entry.setdefault("tools", {})["exec"] = merged
+    elif "exec" in declared_tools:
+        # A shape OpenClaw will refuse is copied as declared, not dropped in silence.
+        entry.setdefault("tools", {})["exec"] = nested
+    return senders
+
+
 def apply_squad(
     config: dict[str, Any],
     squad: dict[str, Any],
@@ -91,30 +250,20 @@ def apply_squad(
     target = dict(config)
     agents_spec = squad.get("agents")
     if isinstance(agents_spec, dict):
-        entries = target.setdefault("agents", {}).setdefault("entries", {})
+        agents_block = target.setdefault("agents", {})
+        entries = agents_block.setdefault("entries", {})
         allowed_senders: set[str] = set()
         for agent_id, spec in agents_spec.items():
-            if not isinstance(spec, dict):
-                continue
-            entry = entries.setdefault(agent_id, {})
-            name = spec.get("name") or agent_id
-            entry["name"] = name
-            entry["identity"] = {"name": name}
-            if "model" in spec:
-                entry["model"] = spec["model"]
-            if "workspace" in spec:
-                entry["workspace"] = spec["workspace"]
-            if "thinkingDefault" in spec:
-                entry["thinkingDefault"] = spec["thinkingDefault"]
-            if "tools" in spec and isinstance(spec["tools"], dict):
-                agent_tools = entry.setdefault("tools", {})
-                if "exec" in spec["tools"]:
-                    agent_tools["exec"] = spec["tools"]["exec"]
-                if "agentToAgent" in spec["tools"]:
-                    agent_tools["agentToAgent"] = spec["tools"]["agentToAgent"]
-                    allowed_senders.add(agent_id)
-                    for target_id in spec["tools"]["agentToAgent"].get("send", []):
-                        allowed_senders.add(str(target_id))
+            if isinstance(spec, dict):
+                allowed_senders |= _apply_agent_entry(entries.setdefault(agent_id, {}), spec, agent_id)
+
+        default_id = default_agent(squad)
+        if default_id:
+            # Without this owner, a roster with more than one explicit agent answers
+            # the main session with "no explicit owner": Talk, the main session and
+            # the dreaming cron all need one agent named here.
+            defaults = agents_block.setdefault("defaults", {})
+            defaults.setdefault("systemAgent", {})["agentId"] = default_id
 
         if allowed_senders:
             tools_block = target.setdefault("tools", {})

@@ -327,3 +327,37 @@ def test_plugin_not_enabled_when_folder_exists_without_index_mjs(tmp_path):
     assert "nexgen" in plan_with_entrypoint.config.get("plugins", {}).get("allow", [])
     assert "plugins.entries.nexgen.enabled" in plan_with_entrypoint.added
 
+
+
+def test_a_squad_that_writes_the_default_agent_says_so_in_the_plan(tmp_path):
+    """A roster with more than one explicit agent needs an owner, or OpenClaw refuses the main session."""
+    home = tmp_path / "home"
+    path = put_config(home, {})
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "squad.yaml").write_text(
+        "default: capo\nagents:\n  main:\n    name: assistente\n  capo:\n    name: capo\n",
+        encoding="utf-8",
+    )
+
+    plan = build_plan(detected=detected(path), home=home, env={}, vault_data=vault)
+
+    assert plan.config["agents"]["defaults"]["systemAgent"]["agentId"] == "capo"
+    assert "agents.defaults.systemAgent.agentId" in plan.added
+
+
+def test_a_squad_default_that_names_no_agent_is_named_in_the_plan(tmp_path):
+    """The plan is what a person reads before anything is written, so a typo must not be silent."""
+    home = tmp_path / "home"
+    path = put_config(home, {})
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "squad.yaml").write_text(
+        "default: sviluppo\nagents:\n  main:\n    name: assistente\n",
+        encoding="utf-8",
+    )
+
+    plan = build_plan(detected=detected(path), home=home, env={}, vault_data=vault)
+
+    assert "systemAgent" not in plan.config["agents"].get("defaults", {})
+    assert any("sviluppo" in note and "default agent" in note for note in plan.notes)

@@ -4,11 +4,22 @@
 # 03-INFRA/agent-universal-layer/squad.yaml) to declare your squad structure.
 # When present, squad.yaml takes precedence over defaults during setup.
 
+# The agent a request uses when no binding names one, written to
+# agents.defaults.systemAgent.agentId. With more than one explicit agent,
+# OpenClaw refuses the main session, Talk and the dreaming cron job without it.
+default: "main"
+
+# Optional instructions shared by every agent, appended to the role text and
+# deposited as AGENTS.md in each workspace. The path is relative to this file.
+# common_md: "squad/common.md"
+
 agents:
   main:
     name: "assistente"
     model: "anthropic/claude-opus-5-5"
     role: "Frontline assistant and entrypoint for conversations"
+    # This agent's own instructions, deposited as its workspace AGENTS.md.
+    # agents_md: "squad/main.md"
     tools:
       agentToAgent:
         send: ["capo", "sviluppo"]
@@ -18,6 +29,19 @@ agents:
     model: "anthropic/claude-opus-5-5"
     role: "Strategic lead, deep planning, and review"
     thinkingDefault: "high"
+    # agents_md: "squad/capo.md"
+    # The agent's execution policy, written to agents.entries.<id>.tools.exec.
+    #
+    # An agent run through OpenClaw's `claude-cli` backend needs
+    # security: "full" and ask: "off": with an allowlist and ask: "on-miss",
+    # every one of Claude's own tools (ToolSearch included) and every external
+    # MCP tool needs a human approval, and is denied when nobody answers.
+    # The engine's guardrail plugin still checks every command before it runs,
+    # so `full` is not an unguarded machine.
+    #
+    # exec:
+    #   security: "full"
+    #   ask: "off"
     soul: |
       # Capo — Guida strategica e supervisione
       Valuta architettura, rischi e correttezza prima dell'azione.

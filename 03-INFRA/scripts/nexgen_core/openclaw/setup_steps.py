@@ -267,13 +267,22 @@ def write_step(setup: Setup, plan) -> str:
 
 def workspaces_step(setup: Setup, plan, before: set[str]) -> None:
     """Step 5: the folders, the manuals, and the first-run file to remove."""
-    from nexgen_core.openclaw.squad import find_squad_file, get_squad_souls, load_squad
+    from nexgen_core.openclaw.squad import (
+        find_squad_file,
+        get_squad_instructions,
+        get_squad_souls,
+        load_squad,
+    )
 
     dirs = agent_dirs(plan.config.get("agents", {}).get("entries") or {})
     created = {agent for agent, path in dirs.items() if created_by_openclaw(path, setup.state_dir, before)}
     squad_file = find_squad_file(setup.vault_data, home=setup.home)
-    souls = get_squad_souls(load_squad(squad_file))
-    prepare(dirs, created, plan.choices.lang or None, setup.out, souls=souls)
+    squad = load_squad(squad_file)
+    souls = get_squad_souls(squad)
+    instructions, unreadable = get_squad_instructions(squad, squad_file)
+    for path in unreadable:
+        setup.out(t("The squad names an instructions file that cannot be read: {path}", path=path))
+    prepare(dirs, created, plan.choices.lang or None, setup.out, souls=souls, instructions=instructions)
 
 
 def wait_for_port(

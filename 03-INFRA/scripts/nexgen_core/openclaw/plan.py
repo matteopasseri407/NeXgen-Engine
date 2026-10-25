@@ -30,7 +30,7 @@ from nexgen_core.openclaw.profile import (
     agent_models,
     build_config,
 )
-from nexgen_core.openclaw.squad import apply_squad, find_squad_file, load_squad
+from nexgen_core.openclaw.squad import apply_squad, find_squad_file, load_squad, unresolved_default
 from nexgen_core.paths import openclaw_config, resolve_home
 from nexgen_core.runtimes.openclaw import PLUGIN_ID
 
@@ -277,9 +277,21 @@ def _with_squad(
     vault_data: Path | None,
     home: Path | None,
     current: dict[str, Any] | None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """The proposal with the squad applied, and the squad itself for the notes."""
     squad_data = load_squad(find_squad_file(vault_data, home=home))
-    return apply_squad(config, squad_data, current) if squad_data else config
+    if not squad_data:
+        return config, None
+    return apply_squad(config, squad_data, current), squad_data
+
+
+def _squad_notes(squad_data: dict[str, Any] | None) -> list[str]:
+    """What the squad asked for and the plan must not swallow: a default it never declares."""
+    unknown = unresolved_default(squad_data)
+    if not unknown:
+        return []
+    return [t("The squad names {agent} as the default agent but does not declare it: no default was written.",
+              agent=unknown)]
 
 
 def build_plan(
@@ -302,7 +314,7 @@ def build_plan(
     home_dir = resolve_home(home)
     current, error = read_config(path)
     failover, failover_notes = quota_policy.load(home, vault=vault_data)
-    proposed = _with_squad(
+    proposed, squad_data = _with_squad(
         build_config(snapshot, chosen, current, home=home_dir, platform=platform),
         vault_data, home_dir, current,
     )
@@ -328,7 +340,7 @@ def build_plan(
         key for key in current_flat
         if key.split(".", 1)[0] in owned and key not in proposed_flat
     ))
-    notes = list(_build_notes(config, snapshot, chosen))
+    notes = [*_build_notes(config, snapshot, chosen), *_squad_notes(squad_data)]
     # A fallback line the engine cannot use is named here too: the plan is what a person
     # reads before the setup writes anything, so a typo in the policy must not be silent.
     notes.extend(failover_notes)

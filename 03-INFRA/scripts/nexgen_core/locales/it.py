@@ -2026,6 +2026,14 @@ MESSAGES: dict[str, str] = {
         "Preparerei la cartella per {agent}: {path}",
     "Skipping the manual for {agent}: {error}":
         "Salto il manuale di {agent}: {error}",
+    "Skipping {path}: it cannot be read ({error}).":
+        "Salto {path}: non riesco a leggerlo ({error}).",
+    "Skipping {path}: it carries no engine mark, so it is yours and stays as it is.":
+        "Salto {path}: non porta il segno del motore, quindi è tuo e resta com'è.",
+    "The squad names an instructions file that cannot be read: {path}":
+        "La squadra indica un file di istruzioni che non riesco a leggere: {path}",
+    "The squad names {agent} as the default agent but does not declare it: no default was written.":
+        "La squadra indica {agent} come agente predefinito ma non lo dichiara: non ho scritto nessun predefinito.",
     "The OpenCode agent is not created: setup was asked to leave it out.":
         "L'agente OpenCode non viene creato: il setup è stato chiesto di lasciarlo fuori.",
     "The OpenCode agent is not created: the 'opencode' command is not on PATH.":
