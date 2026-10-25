@@ -120,6 +120,38 @@ def consumer(tmp_path, directory) -> Path:
     return tmp_path / "home/.gemini" / directory / "mcp_config.json"
 
 
+def test_agy_inside_openclaw_reads_what_openclaw_mounts_directly_never_the_gateway(tmp_path, monkeypatch):
+    """The plugin starts the same `agy` from the same home: the file carries no gateway there.
+
+    Without the plugin the file is the CLI's own list, where a lazy server is served by
+    `lazy-mcp`; with the plugin that gateway would be dead, because OpenClaw never mounts it.
+    """
+    servers = {
+        "browser": {"transport": "stdio", "command": "npx", "args": ["-y", "pw"], "tier": "core"},
+        "notes": {"transport": "stdio", "command": "npx", "args": ["-y", "notes"], "exposure": "lazy"},
+        "lazy-mcp": {"transport": "stdio", "command": "python3", "args": ["lazy-mcp.py"], "tier": "core"},
+    }
+    renderer = make_renderer(tmp_path, servers)
+    config = tmp_path / "openclaw.json"
+    monkeypatch.setenv("OPENCLAW_CONFIG_PATH", str(config))
+    canonical = tmp_path / "home/.gemini/antigravity/mcp_config.json"
+
+    renderer.render_antigravity(write=True)
+    before = json.loads(canonical.read_text(encoding="utf-8"))["mcpServers"]
+    assert "lazy-mcp" in before and "notes" not in before
+
+    config.write_text(json.dumps({"plugins": {
+        "allow": ["google-antigravity-cli"],
+        "entries": {"google-antigravity-cli": {"enabled": True}},
+    }}), encoding="utf-8")
+    renderer.render_antigravity(write=True)
+    after = json.loads(canonical.read_text(encoding="utf-8"))["mcpServers"]
+
+    assert "notes" in after, "OpenClaw mounts it directly, and agy inside OpenClaw must reach it"
+    assert "lazy-mcp" not in after, "inside OpenClaw the engine's gateway is never mounted"
+    assert "browser" in after
+
+
 @pytest.mark.skipif(os.name == "nt", reason="symlinks require privileges")
 def test_antigravity_real_file_is_backed_up_and_its_servers_are_kept(tmp_path):
     renderer = make_renderer(tmp_path)
