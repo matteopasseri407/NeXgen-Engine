@@ -10,6 +10,9 @@ causes no damage and maintains configuration alignment.
 """
 from __future__ import annotations
 
+import getpass
+import os
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -29,6 +32,30 @@ from nexgen_core.openclaw.node_attach import (
     apply_exec_policy,
 )
 from nexgen_core.paths import resolve_home
+from nexgen_core.server_sudo import INVALID, install as _install_sudo_policy
+
+
+def installing_user() -> str:
+    """Who the agents' sudo rules are written for: the admin who ran the installer.
+
+    `sudo sh install.sh` is how a server is set up, and the gateway still runs as
+    the admin, not as root: a rule written for root would be a rule for a user the
+    agents never are. `SUDO_USER` is set exactly in that case.
+    """
+    return os.environ.get("SUDO_USER") or getpass.getuser()
+
+
+def _default_sudoers_step(home_dir: Path, out: Callable[[str], None]) -> str:
+    return _install_sudo_policy(home=home_dir, user=installing_user(), out=out)
+
+
+def _sudoers_step(
+    sudoers_fn: Callable[..., str] | None,
+    home_dir: Path,
+    out: Callable[[str], None],
+) -> str:
+    """Puts the agents' sudo policy in force, and says what happened."""
+    return (sudoers_fn or _default_sudoers_step)(home=home_dir, out=out)
 
 
 def _install_launchers_step(root: Path, out: Callable[[str], None]) -> None:
@@ -104,9 +131,19 @@ def run_server_role(
     setup_fn: Callable[..., int] | None = None,
     align_fn: Callable[[], tuple[bool, str]] | None = None,
     problems_fn: Callable[[], tuple[int, list[str]]] | None = None,
+    sudoers_fn: Callable[..., str] | None = None,
+    platform: str | None = None,
     out: Callable[[str], None] = print,
 ) -> int:
-    """Server role: always-on OpenClaw gateway on headless Linux."""
+    """Server role: always-on OpenClaw gateway on headless Linux.
+
+    The agents' sudo policy belongs to the machine, so it is written before the
+    gateway is configured: a policy the person has to add by hand after the
+    install is a server that works until the first `docker restart`. The step says
+    what happened and, without sudo, the one command an admin runs instead; only
+    a file `visudo` refuses stops the role, because that file is the engine's own
+    mistake rather than a decision someone else made.
+    """
     out(t("NeXgen Engine · server role (always-on headless Linux gateway)"))
     home_dir = resolve_home(home)
     profile = "MULTI"
@@ -115,6 +152,10 @@ def run_server_role(
     write_remotes(root, profile=profile)
     seed_skill_manifest(root)
     _install_launchers_step(root, out)
+    if (platform or sys.platform).startswith("linux"):
+        if _sudoers_step(sudoers_fn, home_dir, out) == INVALID:
+            out(t("The server role stops here: the sudo policy it writes is not a valid sudoers file."))
+            return 1
 
     commit_setup(root, [
         root / "99-INDEX" / "USER-PROFILE.md",
