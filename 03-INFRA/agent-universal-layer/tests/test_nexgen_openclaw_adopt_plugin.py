@@ -101,3 +101,77 @@ await adopt.handleSkillChanged({{ action: "created" }}, {{
 console.log(JSON.stringify({{ logged }}));
 """)
     assert any("Adopted safe skill" in item for item in fired["logged"])
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_failed_scheduled_pass_is_a_log_line_and_never_a_crash(tmp_path: Path):
+    """The tick has no chat to answer: `engine-run.mjs`'s sentence goes to the log."""
+    fired = run_node(tmp_path, f"""
+const adopt = await import({adopt_uri()});
+let logged = [];
+const logger = {{ info: (msg) => logged.push(msg) }};
+await adopt.handleSkillChanged({{ action: "scheduled" }}, {{
+  configPath: {json.dumps(str(tmp_path / "no-config-here.json"))},
+  logger,
+  reportFailures: true,
+}});
+console.log(JSON.stringify({{ logged }}));
+""")
+    assert any("engine path is not configured" in item for item in fired["logged"])
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_gateway_clock_starts_one_timer_and_clears_it_on_stop(tmp_path: Path):
+    """`gateway_start` arms one interval, a second start does not arm another, `gateway_stop` clears it."""
+    fired = run_node(tmp_path, f"""
+const adopt = await import({adopt_uri()});
+const hooks = new Map();
+const api = {{ on: (name, fn) => {{
+  if (!hooks.has(name)) hooks.set(name, []);
+  hooks.get(name).push(fn);
+}} }};
+const armed = [];
+const cleared = [];
+const halfHour = 30 * 60 * 1000;
+adopt.registerAdopt(api, {{
+  intervalMs: halfHour,
+  setIntervalFn: (fn, ms) => {{ armed.push(ms); return {{ id: armed.length }}; }},
+  clearIntervalFn: (token) => cleared.push(token.id),
+}});
+const start = () => hooks.get("gateway_start").forEach((fn) => fn());
+start();
+start();
+hooks.get("gateway_stop").forEach((fn) => fn());
+console.log(JSON.stringify({{ armed, cleared, interval: adopt.ADOPT_INTERVAL_MS }}));
+""")
+    assert fired["armed"] == [30 * 60 * 1000]
+    assert fired["cleared"] == [1]
+    assert fired["interval"] == 30 * 60 * 1000
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_tick_of_the_gateway_clock_runs_the_pass(tmp_path: Path):
+    config = a_config(tmp_path, '{"ok": true, "lines": ["Retired 1 absent server."]}')
+    fired = run_node(tmp_path, f"""
+const adopt = await import({adopt_uri()});
+const hooks = new Map();
+const logged = [];
+const logger = {{ info: (msg) => logged.push(msg) }};
+const api = {{
+  on: (name, fn) => {{
+    if (!hooks.has(name)) hooks.set(name, []);
+    hooks.get(name).push(fn);
+  }},
+  logger,
+}};
+let tick = null;
+adopt.registerAdopt(api, {{
+  configPath: {json.dumps(str(config))},
+  setIntervalFn: (fn) => {{ tick = fn; return {{ unref: () => {{}} }}; }},
+}});
+hooks.get("gateway_start").forEach((fn) => fn());
+tick();
+await new Promise((resolve) => setTimeout(resolve, 400));
+console.log(JSON.stringify({{ logged }}));
+""")
+    assert any("Retired 1 absent server" in item for item in fired["logged"])

@@ -683,12 +683,13 @@ unreachable gateway removes nothing and produces an explanatory warning.
 The OpenClaw `nexgen` plugin registers `/adopt` to view pending items and trigger auto-adoption from chat, and the
 `doctor` prints one line for the last pass: what entered, what left, and what waits for a person.
 
-The plugin alone is not a schedule. OpenClaw's hook catalog (`docs/plugins/hooks.md` in the installed release)
-offers `skill_changed` and no equivalent for `mcp.servers`, so `/adopt` and a Workshop change cover what OpenClaw
-announces, while an MCP server the person removed is noticed by the next pass whenever it runs. On the machine that
-hosts the gateway, `nexgen openclaw adopt --auto` belongs in the same periodic lane as the engine's other scheduled
-work, one run per interval; the unit that added this pass did not own that lane, so the wiring is listed in its
-report rather than half-done here.
+The pass runs from three places, all of them in the plugin that OpenClaw already loads: `/adopt` in chat, the
+`skill_changed` hook (the only lifecycle event OpenClaw announces for what the Workshop and ClawHub create), and
+the gateway's own clock -- one bounded pass every 30 minutes while the gateway is up, the same cadence as the
+engine's guard cycle, armed on `gateway_start` and cleared on `gateway_stop`, one pass at a time. That is what
+covers a removed MCP server: OpenClaw's hook catalog (`docs/plugins/hooks/reference.md` in the installed release)
+has no equivalent for `mcp.servers`, so the tick is the pass that notices. A tick that could not start the engine
+writes the sentence to the gateway log; a skill change stays quiet, so the Workshop's own notice reads alone.
 
 
 `nexgen openclaw package [--json]` builds the plugin's npm tarball in the engine's state folder and prints
