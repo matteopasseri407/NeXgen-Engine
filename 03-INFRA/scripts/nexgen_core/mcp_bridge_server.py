@@ -126,6 +126,7 @@ class McpHttpBridgeHandler(BaseHTTPRequestHandler):
             return
         channel = self._connector()
         if channel is None:
+            self._discard_body()
             self._error(404, -32601, f"No connector at {self.path}")
             return
         message = self._read_message()
@@ -143,6 +144,17 @@ class McpHttpBridgeHandler(BaseHTTPRequestHandler):
         """Answers, then stops the listener from another thread (serve_forever must return)."""
         self._send_json(200, {"status": "stopping"})
         threading.Thread(target=self.server.shutdown, daemon=True, name="mcp-bridge-stop").start()
+
+    def _discard_body(self) -> None:
+        """Reads a refused request's body, so Windows does not abort a client still sending it."""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = 0
+        if 0 < length <= MAX_BODY_BYTES:
+            self.rfile.read(length)
+        elif length > MAX_BODY_BYTES:
+            self.close_connection = True
 
     def _read_message(self) -> dict[str, Any] | None:
         """The request body as one JSON-RPC message, or None after answering with the reason."""
