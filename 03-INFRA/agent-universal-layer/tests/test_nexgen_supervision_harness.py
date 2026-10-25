@@ -774,8 +774,9 @@ def test_a_tab_states_the_model_it_was_asked_for_and_says_so(task, unit, harness
     assert result["model_applied"] is True
 
 
-def test_a_harness_without_a_model_on_the_tab_never_claims_it_was_applied(task, unit, harness_cli):
+def test_a_harness_without_a_model_on_the_tab_never_claims_it_was_applied(task, unit, harness_cli, monkeypatch):
     """Claude Code sceglie il modello nella configurazione, non sulla scheda: il motore non mente."""
+    monkeypatch.setattr(harness.shutil, "which", lambda name: f"{name}-finto")
     result = harness._open_first_tab(
         task, "prova", unit, "prompt",
         opener=lambda title, argv, cwd, marker="": {"title": title, "pid": 12},
