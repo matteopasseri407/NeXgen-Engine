@@ -346,16 +346,35 @@ def _openclaw_path(value: str, home: Path, base: Path) -> Path:
     return candidate if candidate.is_absolute() else base / candidate
 
 
-def openclaw_workspace_owners(config_path: Path, home: Path) -> list[tuple[tuple[str, ...], Path]]:
-    """Every workspace the OpenClaw config declares, with the agents that live in it.
+def _openclaw_default_agent_id(defaults: dict, entries: dict) -> str | None:
+    """The agent that owns the default workspace, as OpenClaw resolves it.
 
-    `agents.entries.<id>.workspace` per agent, `agents.defaults.workspace` for
-    the agents that pin none, and `<state dir>/workspace` when neither exists --
-    the same fallback OpenClaw applies, with the state dir being the folder the
-    config file lives in. Two agents may name one folder, and then one
-    `AGENTS.md` is all of it: the caller is told which ids share it rather than
-    silently picking one. An unreadable config yields nothing: this step cannot
-    fix it, and the MCP checks already name the file.
+    `agents.defaults.systemAgent.agentId` records it once the roster is explicit
+    (the squad's `default`, written by both the setup and the sync), and `main`
+    is the legacy name; without either, no entry owns the default folder.
+    """
+    system = defaults.get("systemAgent")
+    recorded = system.get("agentId") if isinstance(system, dict) else None
+    if isinstance(recorded, str) and recorded.strip():
+        return recorded.strip()
+    return "main" if "main" in entries else None
+
+
+def openclaw_workspace_owners(config_path: Path, home: Path) -> list[tuple[tuple[str, ...], Path]]:
+    """Every workspace the OpenClaw config resolves, with the agents that live in it.
+
+    The rule is OpenClaw's own (`resolveAgentWorkspaceDir`):
+    `agents.entries.<id>.workspace` when an agent pins one; otherwise the default
+    agent gets `agents.defaults.workspace`, or `<state dir>/workspace` when that
+    key is absent; every other agent gets `<agents.defaults.workspace>/<id>`, or
+    `<state dir>/workspace-<id>` when no default is declared.
+
+    Reading every entry without a `workspace` as the default folder is what made
+    two agents look like they shared one `AGENTS.md`, and the default agent's
+    manual then stopped updating at all. Two agents may still name one folder on
+    purpose, and then one `AGENTS.md` is all of it: the caller is told which ids
+    share it rather than silently picking one. An unreadable config yields
+    nothing: this step cannot fix it, and the MCP checks already name the file.
     """
     from nexgen_core.mcp_render import load_json_object
 
@@ -366,20 +385,26 @@ def openclaw_workspace_owners(config_path: Path, home: Path) -> list[tuple[tuple
     agents = data.get("agents") if isinstance(data.get("agents"), dict) else {}
     defaults = agents.get("defaults") if isinstance(agents.get("defaults"), dict) else {}
     declared = defaults.get("workspace")
+    pinned_default = isinstance(declared, str) and bool(declared.strip())
+    state_dir = config_path.parent
     default_path = (
-        _openclaw_path(declared, home, config_path.parent)
-        if isinstance(declared, str) and declared.strip()
-        else config_path.parent / "workspace"
+        _openclaw_path(declared, home, state_dir)
+        if pinned_default
+        else state_dir / "workspace"
     )
     entries = agents.get("entries") if isinstance(agents.get("entries"), dict) else {}
+    owner = _openclaw_default_agent_id(defaults, entries)
     owners: dict[Path, list[str]] = {}
     for agent_id, agent in entries.items() or [(None, None)]:
         value = agent.get("workspace") if isinstance(agent, dict) else None
-        path = (
-            _openclaw_path(value, home, config_path.parent)
-            if isinstance(value, str) and value.strip()
-            else default_path
-        )
+        if isinstance(value, str) and value.strip():
+            path = _openclaw_path(value, home, state_dir)
+        elif agent_id is None or owner is None or str(agent_id) == owner:
+            path = default_path
+        elif pinned_default:
+            path = default_path / str(agent_id)
+        else:
+            path = state_dir / f"workspace-{agent_id}"
         ids = owners.setdefault(path, [])
         if agent_id is not None:
             ids.append(str(agent_id))
