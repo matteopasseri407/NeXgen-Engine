@@ -65,9 +65,8 @@ def installing_user() -> str:
     return os.environ.get("SUDO_USER") or getpass.getuser()
 
 
-def _default_sudoers_step(home_dir: Path, out: Callable[[str], None]) -> str:
-    return _install_sudo_policy(home=home_dir, user=installing_user(), out=out)
-
+def _default_sudoers_step(home: Path, out: Callable[[str], None]) -> str:
+    return _install_sudo_policy(home=home, user=installing_user(), out=out)
 
 def _sudoers_step(
     sudoers_fn: Callable[..., str] | None,

@@ -274,3 +274,21 @@ def test_the_rules_are_written_for_the_admin_who_ran_the_installer(tmp_path, mon
     monkeypatch.delenv("LOGNAME", raising=False)
 
     assert roles.installing_user() == "admin"
+
+
+def test_the_default_sudoers_step_reads_the_home_by_that_name(tmp_path, monkeypatch):
+    """The role hands its step `home=`; the default has to answer to that name.
+
+    A Windows runner never reaches the sudo policy, so only a direct call proves
+    the keyword the Linux path uses, and a wrong name here is a install that dies
+    on its first line on the one machine that needs it.
+    """
+    seen = {}
+
+    def install(**kwargs):
+        seen.update(kwargs)
+        return "policy"
+
+    monkeypatch.setattr(roles, "_install_sudo_policy", install)
+    assert roles._default_sudoers_step(home=tmp_path, out=lambda _: None) == "policy"
+    assert seen["home"] == tmp_path
