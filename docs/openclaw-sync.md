@@ -213,10 +213,10 @@ so both are silent.
 ### Automatic adoption and retirement
 
 `nexgen openclaw adopt --auto` automates canonical library synchronization:
-- **SAFE Ingress**: SAFE resources enter the canonical manifest/library without prompting. REVIEW resources remain held in machine-local state (`openclaw-adopt-state.json`) and are displayed in the `/adopt` command.
-- **Provenance**: Resources entered from OpenClaw are stamped with `origin: openclaw` and their OpenClaw identifier (`openclaw_id`). Hand-written canonical entries lack this mark and are never touched.
+- **SAFE Ingress**: SAFE resources enter the canonical manifest/library without prompting. REVIEW resources remain held in machine-local state (`openclaw-adopt-state.json`, under the engine's state directory) and are displayed in the `/adopt` command.
+- **Provenance**: an MCP row entered from OpenClaw carries `origin: openclaw` plus its OpenClaw identifier (`openclaw_id`); an adopted skill carries `openclaw_id` and records the same pair in its `SKILL.md` frontmatter (its manifest `origin` stays `vault`, the key that names where a skill is materialized from). An entry without a mark belongs to the library and is never touched.
 - **Two-Pass Exit**: Adopted resources absent from OpenClaw for two consecutive passes are retired from the manifest/library and unmounted during sync. A single missing pass, unreadable configuration, or offline gateway removes nothing and is logged.
-- **Plugin Job**: `adopt.mjs` registers the `/adopt` command and listens to `skill_changed` events to trigger automatic passes.
+- **Plugin Job**: `adopt.mjs` registers the `/adopt` command and listens to `skill_changed` events to trigger automatic passes. OpenClaw announces no hook for `mcp.servers`, so removals are noticed by the next pass; on the gateway machine that pass belongs in the engine's periodic lane.
 
 ### Evidence
 

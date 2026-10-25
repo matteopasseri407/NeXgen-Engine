@@ -661,19 +661,34 @@ preserved as references. Installed plugins that are not MCP wrappers (such as ch
 providers) are omitted from adoption with a one-line explanatory note. It prints the plan with every check before writing anything. A name already taken is a refusal and
 never an overwrite, a plaintext credential blocks, and a skill holding a script, an executable or an unknown
 file is a question: `--yes` adopts only what the checks cleared and names what it left. An adopted skill is
-copied into `03-INFRA/agent-universal-layer/skills/<name>/`, declared `origin: openclaw` with `openclaw_id` in the skills manifest,
-built into every view and archived in the Workshop through `openclaw skills workshop archive`, so OpenClaw
-loads the canonical copy like every other CLI; an adopted server enters the MCP manifest lazily, through the
-same writer `nexgen mcp add` uses, stamped with `origin: openclaw` and its OpenClaw identifier.
-Canonical resources without `origin: openclaw` are never removed by adoption.
+copied into `03-INFRA/agent-universal-layer/skills/<name>/`, declared `origin: vault` with `openclaw_id` in the
+skills manifest, built into every view and archived in the Workshop through `openclaw skills workshop archive`, so
+OpenClaw loads the canonical copy like every other CLI; an adopted server enters the MCP manifest lazily, through
+the same writer `nexgen mcp add` uses, stamped with `origin: openclaw` and its OpenClaw identifier.
+Canonical resources without a provenance mark are never removed by adoption.
+
+The mark differs per manifest because the key `origin` already means something else in the skills one: there it
+names where the bytes are materialized from (`engine`, `vault`, `github`, `installer`, `upstream`), and an adopted
+skill is a vault skill -- the copy lives in the Vault like any other. Its OpenClaw provenance is the `openclaw_id`
+it carries, and the skill's own `SKILL.md` frontmatter records the same pair; the MCP manifest had no such key, so
+`origin: openclaw` is the mark there. Either way, an entry without a mark belongs to the library and this
+mechanism never touches it.
 
 When executed with `--auto`, adoption runs non-interactively: resources verified as SAFE enter the canonical library
 immediately, whereas items classified as REVIEW remain outside and are recorded in machine-local state
-(`openclaw-adopt-state.json`, never committed) for review. In addition, `--auto` tracks absences: an adopted resource
-absent from OpenClaw for two consecutive passes is retired from the manifest/library and unmounted on subsequent sync.
-A single missed pass, broken configuration, or unreachable gateway removes nothing and produces an explanatory warning.
+(`openclaw-adopt-state.json`, under the engine's state directory -- never the Vault, never the repository) for review.
+In addition, `--auto` tracks absences: an adopted resource absent from OpenClaw for two consecutive passes is retired
+from the manifest/library and unmounted on subsequent sync. A single missed pass, broken configuration, or
+unreachable gateway removes nothing and produces an explanatory warning.
 The OpenClaw `nexgen` plugin registers `/adopt` to view pending items and trigger auto-adoption from chat, and the
-`doctor` reports the outcome of the last pass.
+`doctor` prints one line for the last pass: what entered, what left, and what waits for a person.
+
+The plugin alone is not a schedule. OpenClaw's hook catalog (`docs/plugins/hooks.md` in the installed release)
+offers `skill_changed` and no equivalent for `mcp.servers`, so `/adopt` and a Workshop change cover what OpenClaw
+announces, while an MCP server the person removed is noticed by the next pass whenever it runs. On the machine that
+hosts the gateway, `nexgen openclaw adopt --auto` belongs in the same periodic lane as the engine's other scheduled
+work, one run per interval; the unit that added this pass did not own that lane, so the wiring is listed in its
+report rather than half-done here.
 
 
 `nexgen openclaw package [--json]` builds the plugin's npm tarball in the engine's state folder and prints
