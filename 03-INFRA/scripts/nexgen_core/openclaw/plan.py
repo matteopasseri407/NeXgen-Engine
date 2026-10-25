@@ -31,7 +31,7 @@ from nexgen_core.openclaw.profile import (
     build_config,
 )
 from nexgen_core.openclaw.squad import apply_squad, find_squad_file, load_squad, unresolved_default
-from nexgen_core.paths import openclaw_config, resolve_home
+from nexgen_core.paths import openclaw_config, resolve_home, resolve_vault_data
 from nexgen_core.runtimes.openclaw import PLUGIN_ID
 
 DISPLAY_NAMES = {"main": "assistente", "capo": "capo", "automazioni": "automazioni", "sviluppo": "sviluppo"}
@@ -316,7 +316,8 @@ def build_plan(
     failover, failover_notes = quota_policy.load(home, vault=vault_data)
     proposed, squad_data = _with_squad(
         build_config(snapshot, chosen, current, home=home_dir, platform=platform),
-        vault_data, home_dir, current,
+        # The setup command passes no vault: the squad still lives in the user's one.
+        vault_data if vault_data is not None else resolve_vault_data(home), home_dir, current,
     )
     config = with_chains(proposed, failover)
     deposited = (
