@@ -64,3 +64,18 @@ def test_an_unknown_role_is_refused_before_anything_is_written():
 
     assert refused.value.code == 2
     assert not roles.role_record_path().exists()
+
+
+def test_the_setup_records_the_server_role_it_is_configuring(tmp_path, capsys):
+    home = tmp_path / "home"
+
+    setup._record_role(server=True, dry_run=False, home=home, out=lambda _: None)
+
+    assert roles.declared_role(home=home) == "server"
+
+
+def test_a_dry_run_or_a_pc_does_not_record_anything(tmp_path):
+    for server, dry_run in ((True, True), (False, False)):
+        home = tmp_path / f"{server}-{dry_run}"
+        setup._record_role(server=server, dry_run=dry_run, home=home, out=lambda _: None)
+        assert roles.declared_role(home=home) is None
