@@ -272,7 +272,7 @@ def test_the_plan_finds_the_squad_in_the_vault_when_no_vault_is_passed(tmp_path:
     vault = tmp_path / "vault"
     (vault / "03-INFRA").mkdir(parents=True)
     (vault / "03-INFRA" / "squad.yaml").write_text(
-        'default: "main"\nagents:\n  main:\n    name: "KURISU"\n    model: "anthropic/claude-sonnet-5-5"\n',
+        'default: "main"\nagents:\n  main:\n    name: "Agente Prova"\n    model: "anthropic/claude-sonnet-5-5"\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("AGENT_VAULT_DATA", str(vault))
@@ -285,4 +285,4 @@ def test_the_plan_finds_the_squad_in_the_vault_when_no_vault_is_passed(tmp_path:
         plugin_deposited=True,
     )
 
-    assert plan.config["agents"]["entries"]["main"]["name"] == "KURISU"
+    assert plan.config["agents"]["entries"]["main"]["name"] == "Agente Prova"
