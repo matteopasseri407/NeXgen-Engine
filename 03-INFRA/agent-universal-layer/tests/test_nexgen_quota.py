@@ -331,10 +331,10 @@ def test_the_json_and_the_human_output_come_from_the_same_lines(tmp_path, capsys
 
 
 def test_a_window_is_labelled_the_way_a_person_reads_it():
-    assert quota._window_label(43200) == "30d"
-    assert quota._window_label(720) == "12h"
-    assert quota._window_label(90) == "90m"
-    assert quota._window_label(None) == "?"
+    assert quota.window_label(43200) == "30d"
+    assert quota.window_label(720) == "12h"
+    assert quota.window_label(90) == "90m"
+    assert quota.window_label(None) == "?"
 
 
 def test_an_age_is_short_and_never_says_zero_minutes():

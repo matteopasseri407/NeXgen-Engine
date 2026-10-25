@@ -24,6 +24,7 @@ import { registerCouncil } from "./council.mjs";
 import { registerGovernor } from "./governor.mjs";
 import { registerGuardrail } from "./guardrail.mjs";
 import { registerQuota } from "./quota.mjs";
+import { registerSpend } from "./spend.mjs";
 import { registerEvidence } from "./evidence.mjs";
 import { registerSupTools } from "./sup-tools.mjs";
 import { registerSup } from "./sup.mjs";
@@ -52,6 +53,7 @@ export default {
     registerBriefing(api);
     registerCheckpoint(api);
     registerQuota(api);
+    registerSpend(api);
     registerWorkshop(api);
     registerGovernor(api);
     registerCouncil(api);

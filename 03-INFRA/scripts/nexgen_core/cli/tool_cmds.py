@@ -169,6 +169,7 @@ def register(sub) -> None:
     _register_utilities(sub)
     _register_mcp_block(sub)
     _register_quota(sub)
+    _register_usage(sub)
 
 
 def _register_quota(sub) -> None:
@@ -180,6 +181,19 @@ def _register_quota(sub) -> None:
     q = sub.add_parser("quota", help=t("What is left of each subscription, and how old the reading is"))
     q.add_argument("--json", action="store_true", help=t("Output in JSON format"))
     q.set_defaults(func=cmd_quota)
+
+
+def _register_usage(sub) -> None:
+    """What was spent, and what is left, said provider by provider.
+
+    The same readings as `quota`, grouped the way a chat asks for them: OpenClaw's
+    `/usage cost` sums its own session logs, so a subscription agent reads as $0 and
+    a flat lane that was really paid for is invisible. `/spend` inside OpenClaw
+    forwards these lines.
+    """
+    u = sub.add_parser("usage", help=t("What this machine spent, and what each plan has left, per provider"))
+    u.add_argument("--json", action="store_true", help=t("Output in JSON format"))
+    u.set_defaults(func=cmd_usage)
 
 
 def _usage(parser) -> int:
@@ -257,6 +271,12 @@ def cmd_quota(args) -> int:
     from nexgen_core import quota
 
     return quota.main(as_json=getattr(args, "json", False))
+
+
+def cmd_usage(args) -> int:
+    from nexgen_core import usage
+
+    return usage.main(as_json=getattr(args, "json", False))
 
 
 def cmd_mcp_add(args) -> int:

@@ -6,18 +6,27 @@ It reads what the harnesses on this machine have already written about their own
 
 `nexgen quota` prints one row per provider and window.
 `/quota` prints the same rows inside OpenClaw.
+`nexgen usage` prints the same readings grouped by provider, and `/spend` shows them inside OpenClaw.
 
-## The three surfaces
+## The four surfaces
 
 | Surface | What it gives |
 | --- | --- |
 | `nexgen quota` | one line per row: provider, window, what was used, the percentage when it is a real one, the reset when the provider gave it, and how old the reading is |
 | `nexgen quota --json` | the same rows as data, plus `lines`: the text already rendered, in the machine's language |
 | `/quota` in OpenClaw | the `lines` of the JSON, forwarded to the chat |
+| `nexgen usage` / `nexgen usage --json` | the same readings, one block per provider: the spend of the flat lanes, the tokens Claude Code used, the percentage Codex and Antigravity report, and a sentence where a lane cannot be read |
+| `/spend` in OpenClaw | the `lines` of `nexgen usage`, forwarded to the chat |
 
 The strings are formatted once, by the engine.
 The plugin never turns a number into a sentence and never rounds a percentage, so the chat and the terminal cannot disagree about the same reading.
 The command always exits 0: a source that cannot be read is an answer, not a failure.
+
+## Why the chat command is `/spend` and not `/usage`
+
+OpenClaw has its own `/usage`: the per-response footer, and `/usage cost`, a local summary summed from OpenClaw's own session logs.
+That sum reports `$0` for an agent on a subscription, and it knows nothing about the OpenCode Go spend or a Claude plan window, because neither is in a session log.
+The engine's readings are the answer to that question, so they travel beside OpenClaw's command instead of taking its name: a plugin command is matched before the built-in ones, and registering `/usage` here would remove the footer and the cost summary from the chat.
 
 ## What each provider gives
 

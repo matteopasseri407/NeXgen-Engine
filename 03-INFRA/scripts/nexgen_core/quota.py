@@ -279,7 +279,7 @@ def _codex_rows(home: Path | None, now: float, notes: list[str]) -> list[QuotaRo
     for limit in (usage.primary, usage.secondary):
         if limit is None:
             continue
-        window = _window_label(limit.window_minutes)
+        window = window_label(limit.window_minutes)
         stale = _expired(usage.read_at, limit.window_minutes, now)
         rows.append(QuotaRow(
             provider=provider,
@@ -410,7 +410,7 @@ def percent_text(value: float | None) -> str:
     return f"{value:.0f}%" if abs(value - round(value)) < 0.05 else f"{value:.1f}%"
 
 
-def _window_label(minutes: int | None) -> str:
+def window_label(minutes: int | None) -> str:
     """A window length as the short label a person reads: 5h, 7d, 12h."""
     if not minutes or minutes <= 0:
         return "?"

@@ -4,12 +4,13 @@ OpenClaw runs native plugins inside its gateway process, so everything the engin
 Claude Code reaches OpenClaw through a single plugin, split into jobs that know nothing
 about each other (`guardrail.mjs`, `briefing.mjs`, `checkpoint.mjs`, `quota.mjs`,
 `workshop.mjs`, `governor.mjs`, `council.mjs`, `sup.mjs`, `sup-tools.mjs`, `evidence.mjs`,
-registered by `index.mjs`):
+`spend.mjs`, registered by `index.mjs`):
 
 - the **guardrail** on `before_tool_call`, the same private body the other CLIs run;
 - the **vault briefing** after a compaction, the same text Claude's checkpoint hook injects;
 - the **session checkpoint** on compaction and session end, keeping continuity in machine state;
 - **`/quota`**, which runs the engine and forwards the lines it already rendered;
+- **`/spend`**, the same for what was spent and what is left, per provider;
 - **`/council`** and **`/sup`**, the same, and the **supervision tools** an agent drives;
 - the **evidence check**, which holds a local model's answer to the receipts of its own turn;
 - the **governor** on `before_model_resolve`, which starts a turn on the fallback when the

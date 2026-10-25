@@ -96,6 +96,7 @@ engine already rendered. The phone and the terminal therefore cannot disagree.
 | From the chat | What it answers | Who may use it |
 | --- | --- | --- |
 | `/quota` | what is left of each plan, and how old the reading is | anyone |
+| `/spend` | what this machine spent, per provider, and what each plan has left | anyone |
 | `/council <question>` | starts a council and answers with an identifier; the outcome arrives when the run ends | anyone |
 | `/sup` | every supervised task with its units, then the spend of the sessions | anyone |
 | `/sup <id>` | that one task | anyone |

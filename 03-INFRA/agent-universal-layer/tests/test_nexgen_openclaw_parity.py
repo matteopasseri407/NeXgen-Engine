@@ -86,7 +86,7 @@ def test_the_deposit_lands_in_the_new_folder_with_every_job(tmp_path):
 
     assert action and str(plugin_dir(home)) in action
     for name in (
-        "index.mjs", "guardrail.mjs", "briefing.mjs", "checkpoint.mjs", "quota.mjs",
+        "index.mjs", "guardrail.mjs", "briefing.mjs", "checkpoint.mjs", "quota.mjs", "spend.mjs",
         "workshop.mjs", "governor.mjs", "engine-run.mjs", "council.mjs", "sup.mjs",
         "sup-tools.mjs", "evidence.mjs", "engine-config.mjs", "session.mjs",
     ):

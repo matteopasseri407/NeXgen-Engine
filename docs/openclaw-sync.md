@@ -134,6 +134,7 @@ extensions/nexgen/
   briefing.mjs                  the vault briefing after a compaction
   checkpoint.mjs                session continuity: a pointer to this session, in machine state
   quota.mjs                     `/quota`: the lines the engine already rendered
+  spend.mjs                     `/spend`: what was spent, per provider, from the engine
   workshop.mjs                  a log line when the Skill Workshop learned a skill
   governor.mjs                  the fallback handover on before_model_resolve
   council.mjs                   /council: the AI Council, started now and reported when it ends
@@ -190,13 +191,22 @@ engine deploys no copy of that hook, so its registration is the observable
 condition. A briefing that fails is swallowed: a session that loses its briefing is
 a worse session, not a broken one.
 
-### The `/quota` command
+### The `/quota` and `/spend` commands
 
 `quota.mjs` registers a chat command and answers with the lines the engine has
 already rendered: `nexgen quota --json` prints `lines`, and the plugin forwards
 that text without formatting a single number of its own, so the phone and the
 terminal cannot disagree about a percentage. What each provider gives, and what
 cannot be measured from here, is `docs/quota.md`.
+
+`spend.mjs` does the same with `nexgen usage --json`: the same readings, grouped
+by the provider that was paid, because that is the question a chat asks. It is
+called `/spend` and not `/usage` on purpose: `/usage` is OpenClaw's own command
+(the per-response footer and its `/usage cost`), and a plugin command is matched
+before the built-in ones, so registering that name would take the surface away
+from OpenClaw. Its cost summary sums session logs, which is why an agent on a
+subscription reports $0 there and the flat lane that was really paid for does not
+appear at all.
 
 The engine's path is deposited, not looked up: `nexgen.config.json` carries
 `engine.command` and `engine.entry`, the interpreter and the CLI module, because
