@@ -19,6 +19,7 @@ from nexgen_core.git_ops import (
 from nexgen_core.i18n import t
 from nexgen_core.report import CheckOutcome, Severity
 from nexgen_core.secret_shapes import redact_url
+from nexgen_core.vault_readonly import unpublished_count
 
 #: An unpublished commit older than this threshold (seconds) is a real
 #: problem nobody chose: it simply sat there because 'vault-push' never
@@ -102,6 +103,59 @@ def check_git_alignment(vault_data: Path, expected_branch: str | None = None) ->
             message=t("Git misalignment in the Vault: {message}", message=res.message),
             action=t("Run 'agent-sync apply' to check and attempt alignment."),
         )
+
+
+def check_readonly_clone(
+    vault_data: Path, reason: str, expected_branch: str | None = None
+) -> CheckOutcome:
+    """Whether the gateway's clone still holds work that was never published.
+
+    The clone is a reader: notes are written with the vault-library, which owns
+    the worktree that publishes. So the only thing worth reporting here is the
+    work a reader kept to itself, in one line a person can act on, with the
+    command that parks it and realigns the clone.
+    """
+    branch = expected_branch or os.environ.get("KNOWLEDGE_VAULT_BRANCH") or get_current_branch(vault_data) or "main"
+    auth_remote, _ = resolve_remotes(vault_data)
+    if auth_remote in ("local", "none"):
+        return CheckOutcome(
+            id="git.readonly_clone",
+            severity=Severity.OK,
+            message=t("Vault clone read-only; no remote is configured"),
+            detail=reason,
+        )
+    res = inspect_git_state(vault_data, expected_branch=branch, remote=auth_remote)
+    if res.state in (GitState.FETCH_FAILED, GitState.REMOTE_MISSING, GitState.ERROR):
+        return CheckOutcome(
+            id="git.readonly_clone",
+            severity=Severity.UNDETERMINED,
+            message=t("Could not check the read-only vault clone: {message}", message=res.message),
+            action=t("Check the connection and the remote, then run 'nexgen doctor' again."),
+        )
+
+    ahead = unpublished_count(vault_data, auth_remote, branch) or 0
+    local_files = len(res.uncommitted_files)
+    waiting = ahead + local_files
+    action = t(
+        "Run 'nexgen pull': it parks them on a 'quarantine/diverged-*' branch and realigns the clone."
+    )
+    if waiting:
+        return CheckOutcome(
+            id="git.readonly_clone",
+            severity=Severity.BROKEN,
+            message=t(
+                "The gateway's vault clone has {count} unpublished change(s): notes are written with the vault-library, not with git.",
+                count=waiting,
+            ),
+            detail=t("{commits} commit(s) not published, {files} file(s) modified", commits=ahead, files=local_files),
+            action=action,
+        )
+    return CheckOutcome(
+        id="git.readonly_clone",
+        severity=Severity.OK,
+        message=t("The gateway's vault clone is read-only and aligned; notes are written with the vault-library."),
+        detail=reason,
+    )
 
 
 def check_mirror_alignment(vault_data: Path, expected_branch: str | None = None) -> list[CheckOutcome]:

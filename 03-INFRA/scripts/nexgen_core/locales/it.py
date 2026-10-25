@@ -2328,4 +2328,42 @@ MESSAGES: dict[str, str] = {
         "la modifica del manifest non ha superato la convalida: {error}",
     "server '{name}' retired from MCP manifest":
         "server '{name}' ritirato dal manifest MCP",
+    "the server role owns this machine, and its notes are written with the vault-library":
+        "questa macchina ha il ruolo server, e le sue note si scrivono col vault-library",
+    "the vault-library here serves {path}, which is another checkout":
+        "il vault-library di questa macchina serve {path}, che è un'altra copia",
+    "Vault clone updated with a fast-forward from {ref}":
+        "Copia del Vault aggiornata con un fast-forward da {ref}",
+    "Vault clone not updated ({detail}): the notes it reads may be stale":
+        "Copia del Vault non aggiornata ({detail}): le note che legge possono essere vecchie",
+    "Nothing local to quarantine":
+        "Non c'è niente di locale da mettere in quarantena",
+    "Local changes could not be recorded on {branch}; nothing was lost and the working tree is unchanged":
+        "Le modifiche locali non sono state registrate su {branch}; non si è perso niente e la cartella di lavoro è com'era",
+    "Local changes are safe on '{branch}', but realigning {target} failed: {error}":
+        "Le modifiche locali sono al sicuro su '{branch}', ma il riallineamento a {target} non è riuscito: {error}",
+    "Local changes parked on quarantine branch '{branch}': notes are written with the vault-library, not with git.":
+        "Modifiche locali messe da parte sul ramo di quarantena '{branch}': le note si scrivono col vault-library, non con git.",
+    "Vault clone read-only ({reason}): there is no remote to pull from":
+        "Copia del Vault in sola lettura ({reason}): non c'è un remoto da cui scaricare",
+    "Vault clone read-only, and it could not be realigned: {message}":
+        "Copia del Vault in sola lettura, e non è stato possibile riallinearla: {message}",
+    "Vault clone read-only ({reason}); no remote is configured":
+        "Copia del Vault in sola lettura; non c'è nessun remoto configurato",
+    "Could not check the read-only vault clone: {message}":
+        "Non ho potuto controllare la copia del Vault in sola lettura: {message}",
+    "Check the connection and the remote, then run 'nexgen doctor' again.":
+        "Controlla la connessione e il remoto, poi lancia di nuovo 'nexgen doctor'.",
+    "Run 'nexgen pull': it parks them on a 'quarantine/diverged-*' branch and realigns the clone.":
+        "Lancia 'nexgen pull': mette le modifiche da parte su un ramo 'quarantine/diverged-*' e riallinea la copia.",
+    "The gateway's vault clone has {count} unpublished change(s): notes are written with the vault-library, not with git.":
+        "Nel clone del gateway ci sono {count} modifiche non pubblicate: le note si scrivono col vault-library, non con git.",
+    "{commits} commit(s) not published, {files} file(s) modified":
+        "{commits} commit non pubblicati, {files} file modificati",
+    "The gateway's vault clone is read-only and aligned; notes are written with the vault-library.":
+        "Il clone del gateway è in sola lettura e allineato; le note si scrivono col vault-library.",
+    "Refusing to publish from this vault clone ({reason}). Notes are written with the vault-library.":
+        "Mi rifiuto di pubblicare da questa copia del Vault ({reason}). Le note si scrivono col vault-library.",
+    "read-only vault clone: the pins are not committed here":
+        "copia del Vault in sola lettura: i pin non vengono committati qui",
 }

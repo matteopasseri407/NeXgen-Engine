@@ -41,6 +41,7 @@ from nexgen_core.updater import (
     EXIT_ROLLED_BACK as UPDATE_EXIT_ROLLED_BACK,
     EngineUpdater,
 )
+from nexgen_core.vault_readonly import readonly_reason
 
 logger = logging.getLogger(__name__)
 
@@ -258,10 +259,18 @@ class Heartbeat:
             try:
                 from nexgen_core.thirdparty_bump import auto_apply, read_guard_payload
 
-                payload = read_guard_payload(self.state_dir)
-                answer["auto_applied"] = auto_apply(
-                    payload or {}, self.vault_data, self.home, self.state_dir,
-                )
+                if readonly_reason(self.vault_data, home=self.home):
+                    # A pin bump commits the two manifests. In a clone that may
+                    # only read, that commit is exactly the unpublished work the
+                    # next pull has to park: the guardian still judges, nothing
+                    # is written.
+                    answer["auto_applied"] = {"ok": True, "skipped": t(
+                        "read-only vault clone: the pins are not committed here")}
+                else:
+                    payload = read_guard_payload(self.state_dir)
+                    answer["auto_applied"] = auto_apply(
+                        payload or {}, self.vault_data, self.home, self.state_dir,
+                    )
             except Exception as exc:  # noqa: BLE001 - failure is returned, never raises
                 answer["auto_applied"] = {"ok": False, "error": str(exc)}
             return answer

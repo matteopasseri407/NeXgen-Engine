@@ -49,6 +49,10 @@ That is a decision taken once, at setup; what happens when the chosen plan runs 
 Each agent gets an `AGENTS.md` in the engine's language: who it is, what it does and does not do, when to
 hand work to another agent with `sessions_send`, that the Council is called with `nexgen council`, and that
 the Vault is read and written with the `vault-library__*` tools.
+Every manual also carries the one write path in so many words: a note is created or changed with
+`create_note`, `append_note`, `update_section` or `update_note`, never with `git commit` or `git push` in the
+Vault's copy and never by editing its files by hand, because on a server that copy is read-only and a write
+made there stays invisible to the other machines.
 The code agent also gets `CLAUDE.md` and `.claude/settings.json`, so Claude Code behaves the same way when it
 is reached directly.
 
