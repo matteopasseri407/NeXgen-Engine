@@ -287,6 +287,42 @@ def test_the_doctor_judges_a_reader_clone_as_a_reader(tmp_path):
     assert outcome.severity is Severity.OK
 
 
+def test_the_reported_state_parked_and_nothing_lost(tmp_path):
+    """The server's own state: commits locali e modifiche non pubblicate, e il remoto avanti.
+
+    It is the case that blocked the fast-forward: whatever order the two kinds of
+    local work are found in, both end up on a quarantine branch and the clone's
+    branch comes back to what the remote has.
+    """
+    remote, origin = _repository(tmp_path)
+    home = tmp_path / "home"
+    _declare_server(home)
+    reader = _reader_clone(remote, tmp_path / "gateway")
+    note = reader / "04-NOW" / "nota.md"
+    note.write_text("commit locale mai pubblicato\n", encoding="utf-8")
+    _git(reader, "commit", "-am", "lavoro locale")
+    note.write_text("modifica locale mai committata\n", encoding="utf-8")
+    published = origin / "04-NOW" / "nota.md"
+    published.write_text("nota pubblicata altrove\n", encoding="utf-8")
+    _git(origin, "commit", "-am", "lavoro pubblicato")
+    _git(origin, "push", "origin", "main")
+
+    converge_git_phase(_server_runner(reader, home), GuardMode.APPLY, False, "origin", "main", [])
+
+    parked = list_quarantine_branches(reader)
+    assert parked, "the local work has to be somewhere"
+    # The local commit and the uncommitted edit both stay reachable from the
+    # quarantine branch: one as history, one as that branch's own tip.
+    history = _git(reader, "log", "--format=%s", *parked).stdout
+    assert "lavoro locale" in history
+    tip_contents = [
+        _git(reader, "show", f"{branch}:04-NOW/nota.md").stdout.strip() for branch in parked
+    ]
+    assert "modifica locale mai committata" in tip_contents
+    assert note.read_text(encoding="utf-8") == "nota pubblicata altrove\n"
+    assert _git(reader, "status", "--porcelain").stdout.strip() == ""
+
+
 def test_the_heartbeat_does_not_bump_pins_in_a_reader_clone(tmp_path, monkeypatch):
     """The unattended pin bump is the other automatic commit: a reader skips it."""
     from nexgen_core import beat as beat_mod
