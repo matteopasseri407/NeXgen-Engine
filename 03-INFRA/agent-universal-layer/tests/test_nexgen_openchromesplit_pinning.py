@@ -105,6 +105,8 @@ def test_heal_chrome_con_cdp_su_non_lancia(monkeypatch: pytest.MonkeyPatch) -> N
         raise AssertionError("launch toccato con CDP su")
 
     monkeypatch.setattr(chrome_mod, "is_cdp_up", lambda *a, **k: True)
+    # On Windows a healthy Chrome also has a window on the user's desktop; a runner has none.
+    monkeypatch.setattr(chrome_mod, "chrome_windows", lambda desktop: [1])
     monkeypatch.setattr(chrome_mod, "launch_chrome", _boom_launch)
     assert chrome_mod.heal_chrome() == 0
 
