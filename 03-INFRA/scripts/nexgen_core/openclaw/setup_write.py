@@ -238,11 +238,13 @@ def _keep_model_fallbacks(base: dict[str, Any], merged: dict[str, Any]) -> None:
             target["model"] = {"primary": model, "fallbacks": list(chain)}
 
 
-def _without_agent(block: Any, key: str) -> None:
-    """`block[key]` without the agent this run does not create, edited in place."""
-    values = block.get(key) if isinstance(block, dict) else None
-    if isinstance(values, list):
-        block[key] = [value for value in values if str(value) != SVILUPPO_ID]
+def _without(block: dict[str, Any], key: str) -> list[Any] | None:
+    """`block[key]` without the agent this run does not create, or None to leave it be."""
+    values = block.get(key)
+    if not isinstance(values, list):
+        return None
+    kept = [value for value in values if str(value) != SVILUPPO_ID]
+    return None if len(kept) == len(values) else kept
 
 
 def _drop_uncreated_agent(document: dict[str, Any]) -> None:
@@ -253,16 +255,29 @@ def _drop_uncreated_agent(document: dict[str, Any]) -> None:
     `send` may still name it. OpenClaw cannot route an id no `agents.entries`
     declares, so the id goes; an agent the person added to the same list, and the
     `*` pattern a person may write, are not the engine's to remove.
+
+    The branches that change are rebuilt rather than edited in place: a section
+    only the proposal carries is the proposal's own object, and editing it would
+    change the caller's document, which this module promises never to do.
     """
     agents = document.get("agents")
     entries = agents.get("entries") if isinstance(agents, dict) else None
     if not isinstance(entries, dict) or SVILUPPO_ID in entries:
         return
     tools = document.get("tools")
-    _without_agent(tools.get("agentToAgent") if isinstance(tools, dict) else None, "allow")
-    for entry in entries.values():
+    block = tools.get("agentToAgent") if isinstance(tools, dict) else None
+    kept = _without(block, "allow") if isinstance(block, dict) else None
+    if kept is not None:
+        document["tools"] = {**tools, "agentToAgent": {**block, "allow": kept}}
+    pruned: dict[str, Any] = {}
+    for agent_id, entry in entries.items():
         inner = entry.get("tools") if isinstance(entry, dict) else None
-        _without_agent(inner.get("agentToAgent") if isinstance(inner, dict) else None, "send")
+        partners = inner.get("agentToAgent") if isinstance(inner, dict) else None
+        send = _without(partners, "send") if isinstance(partners, dict) else None
+        if send is not None:
+            pruned[agent_id] = {**entry, "tools": {**inner, "agentToAgent": {**partners, "send": send}}}
+    if pruned:
+        document["agents"] = {**agents, "entries": {**entries, **pruned}}
 
 
 def _retire(document: dict[str, Any]) -> None:

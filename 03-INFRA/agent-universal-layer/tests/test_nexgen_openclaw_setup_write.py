@@ -7,6 +7,7 @@ a person added by hand.
 """
 from __future__ import annotations
 
+import copy
 import os
 import sys
 from pathlib import Path
@@ -200,6 +201,25 @@ def test_a_send_target_the_run_leaves_out_goes_too():
     send = setup_write.merged_document(current, proposed)["agents"]["entries"]["main"]["tools"]["agentToAgent"]["send"]
 
     assert send == ["*", "personale", "capo"]
+
+
+def test_the_proposal_is_left_untouched_while_the_agent_is_taken_out():
+    """A section only the proposal carries is its own object: the merge must not edit it.
+
+    `merged_document` promises that neither input is modified, and the plan is read
+    after the write: an edit in place would change the document the caller still
+    holds.
+    """
+    proposed = {
+        "agents": {"entries": {"main": {"tools": {"agentToAgent": {"send": ["*", "sviluppo"]}}}}},
+        "tools": {"agentToAgent": {"enabled": True, "allow": ["main", "sviluppo"]}},
+    }
+    before = copy.deepcopy(proposed)
+
+    merged = setup_write.merged_document(None, proposed)
+
+    assert merged["tools"]["agentToAgent"]["allow"] == ["main"]
+    assert proposed == before
 
 
 def test_the_persons_bindings_are_kept_and_the_new_one_added():
