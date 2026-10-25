@@ -51,7 +51,7 @@ def _without_entry(text: str, name: str) -> str:
 
 
 def _add_retired_server_yaml(text: str, name: str) -> str:
-    """Add server name to `retired_servers:` in manifest text."""
+    """Add server name to `retired_servers:` in manifest text, creating the list at the end."""
     if re.search(rf"^\s*-\s+[\"']?{re.escape(name)}[\"']?\s*$", text, re.MULTILINE):
         return text
     match_empty = re.search(r"^retired_servers:\s*\[\s*\]\s*$", text, re.MULTILINE)
@@ -61,7 +61,9 @@ def _add_retired_server_yaml(text: str, name: str) -> str:
     if match_header:
         pos = match_header.end()
         return text[:pos] + f"\n  - {name}" + text[pos:]
-    return f"retired_servers:\n  - {name}\n\n" + text
+    # A manifest written before this list existed: appended, never prepended, so the
+    # document's header comments stay at the top where a person reads them.
+    return text.rstrip("\n") + f"\n\nretired_servers:\n  - {name}\n"
 
 
 def _publish(path: Path, updated: str, validate: Callable[[Path], object]) -> str | None:

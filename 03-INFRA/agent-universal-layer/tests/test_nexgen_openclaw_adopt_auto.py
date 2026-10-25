@@ -22,6 +22,7 @@ from nexgen_core.cli.openclaw_cmds import cmd_adopt
 from nexgen_core.config import load_mcp_manifest, load_skills_manifest
 from nexgen_core.openclaw.adopt import run_adopt
 from nexgen_core.openclaw.adopt_auto import check_adopt_doctor, load_adopt_state
+from nexgen_core.openclaw.adopt_retirement import retire_adopted_server
 from nexgen_core.openclaw_processes import RunResult
 from nexgen_core.report import Severity
 
@@ -226,6 +227,34 @@ def test_retirement_deletes_the_adopted_row_itself_and_leaves_the_library_alone(
     assert '"safe-server":' not in after
     assert "- safe-server" in after
     assert "lazy-mcp:" in after and "lazy-mcp.py" in after
+
+
+def test_a_manifest_without_retired_servers_gains_the_list_without_losing_its_header(a_machine: Machine):
+    """An older manifest has no `retired_servers:` key: it is appended, not prepended."""
+    a_machine.mcp_manifest.write_text(
+        "# a header a person reads first\nschema_version: 1\n\n"
+        "servers:\n"
+        "  lazy-mcp:\n"
+        "    transport: stdio\n"
+        "    command: python3\n"
+        '  "safe-server":\n'
+        "    origin: openclaw\n"
+        "    openclaw_id: safe-server\n"
+        "    transport: stdio\n"
+        "    command: npx\n",
+        encoding="utf-8",
+    )
+
+    retired, note = retire_adopted_server("safe-server", vault_data=a_machine.vault)
+
+    assert retired, note
+    after = a_machine.mcp_manifest.read_text(encoding="utf-8")
+    assert after.startswith("# a header a person reads first")
+    assert '"safe-server":' not in after
+    assert after.endswith("retired_servers:\n  - safe-server\n")
+    data = load_mcp_manifest(a_machine.mcp_manifest)
+    assert "lazy-mcp" in (data.get("servers") or {})
+    assert "safe-server" in (data.get("retired_servers") or [])
 
 
 def test_reappearance_resets_absence_counter(a_machine: Machine):
