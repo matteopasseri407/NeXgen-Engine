@@ -81,6 +81,34 @@ bindings:
     assert "main" not in souls
 
 
+def test_every_model_the_squad_names_is_selectable_from_every_agent(tmp_path: Path) -> None:
+    """`model` on an agent is only its default: the others must be pickable on all of them."""
+    squad = {
+        "agents": {
+            "main": {"model": "google-antigravity-cli/gemini-3.8-flash"},
+            "capo": {"model": "anthropic/claude-opus-5-5"},
+        },
+        "models": {"openai/gpt-6-luna": {"agentRuntime": {"id": "codex"}}},
+    }
+
+    applied = apply_squad({"agents": {"entries": {}}, "tools": {}}, squad)
+
+    defaults = applied["agents"]["defaults"]
+    assert set(defaults["models"]) == {
+        "google-antigravity-cli/gemini-3.8-flash", "anthropic/claude-opus-5-5", "openai/gpt-6-luna",
+    }
+    assert defaults["modelPolicy"]["allow"] == [
+        "google-antigravity-cli/*", "anthropic/*", "openai/*",
+    ]
+    assert applied["agents"]["entries"]["main"]["model"] == "google-antigravity-cli/gemini-3.8-flash"
+
+
+def test_a_squad_that_names_no_model_adds_no_policy(tmp_path: Path) -> None:
+    applied = apply_squad({"agents": {"entries": {}}}, {"agents": {"main": {"name": "Solo"}}})
+
+    assert "defaults" not in applied["agents"] or "modelPolicy" not in applied["agents"]["defaults"]
+
+
 def test_custom_agent_names_preserved_without_squad() -> None:
     detected = _make_dummy_detection()
     current = {

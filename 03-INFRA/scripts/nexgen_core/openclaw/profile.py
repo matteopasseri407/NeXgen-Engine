@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import detect_language
-from nexgen_core.openclaw import agy_backend, background, observation
+from nexgen_core.openclaw import agy_backend, background, model_policy, observation
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
 from nexgen_core.openclaw.acp import SVILUPPO_ID, SVILUPPO_NAMES, acp_block, acpx_entry, sviluppo_enabled
 from nexgen_core.openclaw.detect import Detection
@@ -449,6 +449,9 @@ def build_config(
         "tools": tools,
         "gateway": _gateway(chosen, current),
     }
+    # Every model this machine can reach is selectable from any agent's picker; `model`
+    # on an agent is only its default, and this changes none of them.
+    config = model_policy.with_reachable(config, detected, current)
     allow_supervisor_tools(config["agents"]["entries"], current)
     for agent_id, entry in config["agents"]["entries"].items():
         if agent_id in partners:

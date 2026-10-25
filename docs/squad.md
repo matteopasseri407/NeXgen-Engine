@@ -149,6 +149,30 @@ agents:
 ### `models`
 Optional dictionary of model entries and custom provider specifications.
 
+## Model choice per agent
+
+`model` on an agent is only that agent's **default**: the model a new session starts on.
+Every model the machine can actually run is in the picker of **every** agent, so the model
+can be changed per session from the Control UI, the phone app, Telegram or `/model` without
+editing `squad.yaml`.
+
+`nexgen openclaw setup` writes `agents.defaults.modelPolicy.allow` with one wildcard per
+reachable provider: `anthropic/*` when Claude Code is logged in, `openai/*` when Codex is,
+`opencode-go/*` with the flat OpenCode Go key, `ollama/*` and `llama-cpp/*` for the models
+this machine serves itself, and `google-antigravity-cli/*` when the local `agy` backend
+plugin is allowed.
+A wildcard, not a list of ids, so a model a provider publishes tomorrow is selectable
+without another setup.
+
+The squad adds what it names: each `model` on an agent, and each key of its `models` table,
+becomes an `agents.defaults.models` entry, and its provider a wildcard.
+That is also why an agent can be switched to a model the squad never mentions.
+
+Two rules protect a choice already made.
+A policy already in force is extended, never replaced: what the owner wrote stays first and
+stays there, and a provider the configuration already names stays selectable.
+No agent's `model` is changed by any of this.
+
 ### `bindings`
 List of channel bindings routing incoming messages on a communication channel to a specific agent:
 ```yaml

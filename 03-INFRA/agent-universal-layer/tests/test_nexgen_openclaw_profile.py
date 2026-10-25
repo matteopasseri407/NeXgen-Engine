@@ -466,3 +466,49 @@ def test_a_backend_nobody_approved_gets_no_entry_and_no_mode() -> None:
     assert "google-antigravity-cli" not in entries
 
 
+def test_every_reachable_provider_is_selectable_from_any_agent() -> None:
+    """The owner can change the model of every agent: a wildcard per provider that answers."""
+    defaults = build_config(machine(claude=True, codex=True, go=True, ollama=("qwen3:8b",)))["agents"]["defaults"]
+
+    assert defaults["modelPolicy"]["allow"] == [
+        "anthropic/*", "openai/*", "opencode-go/*", "ollama/*",
+    ]
+
+
+def test_the_agy_backend_plugin_makes_its_models_selectable() -> None:
+    current = {"plugins": {
+        "allow": ["google-antigravity-cli"],
+        "entries": {"google-antigravity-cli": {"enabled": True}},
+    }}
+
+    allow = build_config(machine(), current=current)["agents"]["defaults"]["modelPolicy"]["allow"]
+
+    assert allow == ["google-antigravity-cli/*"]
+
+
+def test_a_machine_with_nothing_reachable_gets_no_policy() -> None:
+    """An empty allowlist would read as "nothing is selectable", so it is not written."""
+    assert "modelPolicy" not in build_config(machine())["agents"]["defaults"]
+
+
+def test_a_policy_the_person_wrote_is_extended_and_never_narrowed() -> None:
+    current = {"agents": {"defaults": {"modelPolicy": {"allow": ["moonshot/*"]}}}}
+
+    allow = build_config(machine(claude=True), current=current)["agents"]["defaults"]["modelPolicy"]["allow"]
+
+    assert allow[0] == "moonshot/*", "what the owner wrote stays first and stays there"
+    assert "anthropic/*" in allow
+
+
+def test_a_provider_the_file_already_names_stays_selectable() -> None:
+    current = {"agents": {"entries": {"main": {"model": "deepseek/deepseek-chat"}}}}
+
+    allow = build_config(machine(claude=True), current=current)["agents"]["defaults"]["modelPolicy"]["allow"]
+
+    assert "deepseek/*" in allow
+
+
+def test_registering_the_reachable_models_changes_no_agent_default() -> None:
+    assert build_config(machine(claude=True, codex=True, go=True))["agents"]["entries"] == build_config(
+        machine(claude=True, codex=True, go=True),
+    )["agents"]["entries"]

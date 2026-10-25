@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from nexgen_core.i18n import t
+from nexgen_core.openclaw import model_policy
 from nexgen_core.processes import no_window_kwargs
 
 if TYPE_CHECKING:
@@ -241,6 +242,20 @@ def _apply_agent_entry(entry: dict[str, Any], spec: Mapping[str, Any], agent_id:
     return senders
 
 
+def _declared_models(squad: dict[str, Any]) -> list[str]:
+    """Every model the squad names, as data: each agent's default and the `models` table."""
+    refs: list[str] = []
+    agents = squad.get("agents")
+    if isinstance(agents, dict):
+        for spec in agents.values():
+            if isinstance(spec, dict) and isinstance(spec.get("model"), str):
+                refs.append(spec["model"])
+    declared = squad.get("models")
+    if isinstance(declared, dict):
+        refs.extend(str(key) for key in declared)
+    return refs
+
+
 def apply_squad(
     config: dict[str, Any],
     squad: dict[str, Any],
@@ -280,7 +295,9 @@ def apply_squad(
     if "bindings" in squad and isinstance(squad["bindings"], list):
         target["bindings"] = list(squad["bindings"])
 
-    return target
+    # A model the squad names is that agent's default, and it must be selectable from the
+    # picker of every other agent too: registering it does not change anyone's `model`.
+    return model_policy.with_declared(target, _declared_models(squad))
 
 
 def _infer_provider(model: str) -> tuple[str, str] | None:
