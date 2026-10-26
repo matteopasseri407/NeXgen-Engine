@@ -83,6 +83,15 @@ def _register_pairing(psub) -> None:
                    help=t("The gateway's port (default: 18789)"))
     q.add_argument("--name", default=None, metavar="LABEL",
                    help=t("The name the gateway shows for this machine"))
+    q.add_argument("--apply", action="store_true",
+                   help=t("Do it on this machine: retire the local gateway, prepare the configuration and start "
+                          "the node service"))
+    q.add_argument("--join-file", dest="join_file", default=None, metavar="PATH",
+                   help=t("A private file holding the gateway's join URL; it is read and never printed"))
+    q.add_argument("--dry-run", action="store_true",
+                   help=t("With --apply: print what would change and change nothing"))
+    q.add_argument("--force", action="store_true",
+                   help=t("Move a machine that is already a node of another gateway to this one"))
     q.set_defaults(func=cmd_node)
 
 
@@ -234,8 +243,46 @@ def cmd_node(args) -> int:
     except ValueError as error:
         print(t("Cannot propose the node connection: {error}", error=error))
         return 2
+    if getattr(args, "apply", False):
+        return _apply_node(args, port)
     print(render_node_link(link))
     return 0
+
+
+def _read_join_target(path: str) -> tuple[str | None, str | None]:
+    """The join URL from a private file, or the reason it cannot be read."""
+    from pathlib import Path
+
+    source = Path(path).expanduser()
+    try:
+        target = source.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        return None, str(error)
+    if not target:
+        return None, t("the file is empty")
+    return target, None
+
+
+def _apply_node(args, port: int) -> int:
+    """The machine-side transition, with the join URL taken from where the person left it."""
+    from nexgen_core.openclaw.node_apply import apply_node
+
+    join_target = None
+    join_file = getattr(args, "join_file", None)
+    if join_file:
+        join_target, error = _read_join_target(join_file)
+        if error:
+            print(t("Cannot read the join file {path}: {error}", path=join_file, error=error))
+            return 2
+    return apply_node(
+        args.host,
+        port=port,
+        name=args.name,
+        join_target=join_target,
+        dry_run=bool(getattr(args, "dry_run", False)),
+        force=bool(getattr(args, "force", False)),
+    )
+
 
 
 def cmd_rpc_health(args) -> int:

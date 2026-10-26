@@ -48,10 +48,9 @@ from nexgen_core.openclaw.node_transition import (
     normalize_gateway_origin,
     plan_node_transition,
     start_node_service_safe,
-    stop_local_gateway_safe,
     stop_node_service_safe,
 )
-from nexgen_core.paths import resolve_home, resolve_state_dir
+from nexgen_core.paths import openclaw_config, resolve_home, resolve_state_dir
 from nexgen_core.server_sudo import FAILURES, install as _install_sudo_policy
 
 
@@ -349,6 +348,8 @@ def _show_no_join_instructions(name: str, out: Callable[[str], None]) -> int:
     out(t("  .\\install.ps1 -Role node -Join <join-url>"))
     out(t("oppure direttamente:"))
     out(t("  openclaw connect <join-url> --service --session-host"))
+    out(t("Or let the engine retire the local gateway first and attach for you:"))
+    out(t("  nexgen openclaw node --host <gateway address> --apply --join-file <file>"))
     out(t("Per assegnare compiti a questo nodo nella squadra centrale, aggiungi a squad.yaml sul server:"))
     out(f"  agents:\n    {name}:\n      tools:\n        exec:\n          host: node\n          node: {name}")
     return 0
@@ -364,19 +365,27 @@ def _stop_local_gateway_step(
     systemd_user_dir: Path | None,
     out: Callable[[str], None],
 ) -> list[str]:
-    """Gracefully shuts down local gateway if one is present."""
-    if not inspection.gateway.present:
-        return []
-    stop_local_gateway_safe(
-        home=home,
-        platform=platform,
-        runner=runner,
-        appdata=appdata,
-        startup_dir=startup_dir,
-        systemd_user_dir=systemd_user_dir,
-        out=out,
-    )
-    return [t("gateway OpenClaw locale disattivato")]
+    """Retires the local gateway and what it left behind, and prepares the node's own config.
+
+    The configuration is prepared even when no gateway service is found: the
+    machine still needs session hosting on, and a token or a channel left in the
+    file fights the central gateway whether or not a service was running.
+    """
+    from nexgen_core.openclaw.node_retire import RetireResult, prepare_config, report, retire_local_gateway
+
+    if inspection.gateway.present:
+        result = retire_local_gateway(
+            home=home,
+            platform=platform,
+            runner=runner,
+            appdata=appdata,
+            startup_dir=startup_dir,
+            systemd_user_dir=systemd_user_dir,
+            out=out,
+        )
+        return [report(result)]
+    change = prepare_config(openclaw_config(resolve_home(home)), out)
+    return [report(RetireResult(drop_in_archive=None, config=change))]
 
 
 def _attach_and_wait(

@@ -2384,4 +2384,84 @@ MESSAGES: dict[str, str] = {
         "Non sono riuscito a registrare il ruolo in {path}",
     "Recorded the role: {role}":
         "Ruolo registrato: {role}",
+    'Local gateway retired: {parts}.':
+        'Gateway locale ritirato: {parts}.',
+    'Gateway drop-in left without its unit, moved to {path}.':
+        'Drop-in del gateway rimasto senza la sua unit, spostato in {path}.',
+    'Nothing left behind by a local gateway.':
+        'Nessun residuo di un gateway locale.',
+    'Gateway auth block removed from {path}: the node uses its pairing token.':
+        'Blocco auth del gateway tolto da {path}: il nodo usa il token del pairing.',
+    'Channels switched off on this PC, they answer from the central gateway: {names}.':
+        'Canali spenti su questo PC, rispondono dal gateway centrale: {names}.',
+    'Session hosting enabled: this node can run agent sessions, not only commands.':
+        'Session hosting acceso: questo nodo può far girare sessioni degli agenti, non solo comandi.',
+    'drop-in archived':
+        'drop-in archiviato',
+    'gateway auth removed':
+        'auth del gateway rimossa',
+    'channels off: {names}':
+        'canali spenti: {names}',
+    'session hosting on':
+        'session hosting acceso',
+    '- gateway auth block: removed, the node uses its pairing token':
+        '- blocco auth del gateway: rimosso, il nodo usa il token del pairing',
+    '- channels switched off here: {names}':
+        '- canali spenti qui: {names}',
+    '- session hosting: switched on, so this node can run agent sessions':
+        '- session hosting: acceso, così questo nodo può far girare sessioni degli agenti',
+    'Configuration not readable, left as it is: {reason}':
+        "Configurazione non leggibile, lasciata com'è: {reason}",
+    'This machine is already a node of {current}.':
+        'Questa macchina è già nodo di {current}.',
+    'The gateway asked for is {wanted}.':
+        'Il gateway richiesto è {wanted}.',
+    'To move it to another gateway, run the same command with --force.':
+        'Per spostarla su un altro gateway, rilancia lo stesso comando con --force.',
+    'The node service is running: nothing to enroll again.':
+        "Il servizio nodo è in esecuzione: non c'è niente da accoppiare di nuovo.",
+    'The node service is not running: starting it.':
+        'Il servizio nodo non è in esecuzione: lo avvio.',
+    '- local gateway: stopped and removed, the node host replaces it':
+        '- gateway locale: fermato e rimosso, il node host prende il suo posto',
+    '- drop-in left without its unit: archived, not deleted':
+        '- drop-in rimasto senza la sua unit: archiviato, non cancellato',
+    '- node service: installed and started with host {host} port {port}, session hosting on':
+        '- servizio nodo: installato e avviato con host {host} porta {port}, session hosting acceso',
+    '- enrolment: the join link taken from the file, approved by the gateway in the same step':
+        '- accoppiamento: il link di ingresso preso dal file, approvato dal gateway nello stesso passo',
+    '- enrolment: the device waits for approval on the gateway, nothing is approved here':
+        "- accoppiamento: il dispositivo aspetta l'approvazione sul gateway, qui non si approva niente",
+    '- name shown by the gateway: {name}':
+        '- nome mostrato dal gateway: {name}',
+    'Check on this machine: openclaw node status':
+        'Controllo su questa macchina: openclaw node status',
+    'Check on the gateway: openclaw nodes describe --node {name}':
+        'Controllo sul gateway: openclaw nodes describe --node {name}',
+    "The gateway still has to admit this machine: run 'nexgen openclaw pair' there, approve the device, then approve the node request.":
+        "Il gateway deve ancora ammettere questa macchina: lancia 'nexgen openclaw pair' là, approva il dispositivo, poi approva la richiesta del nodo.",
+    'Node install failed (exit code {code}).':
+        'Installazione del nodo fallita (codice {code}).',
+    "Node service did not start (exit code {code}). Try 'openclaw node status'.":
+        "Il servizio nodo non è partito (codice {code}). Prova 'openclaw node status'.",
+    'A local gateway is not a reason to stop, but it is retired first: its own token and its own channels make the node fight the central gateway. --apply does that; the commands above leave it alone, so a machine with no channels can keep serving it.':
+        'Un gateway locale non è un motivo per fermarsi, ma viene ritirato prima: il suo token e i suoi canali fanno litigare il nodo con il gateway centrale. Ci pensa --apply; i comandi qui sopra lo lasciano stare, così una macchina senza canali può continuare a servirlo.',
+    'Do it on this machine: retire the local gateway, prepare the configuration and start the node service':
+        'Fallo su questa macchina: ritira il gateway locale, prepara la configurazione e avvia il servizio nodo',
+    "A private file holding the gateway's join URL; it is read and never printed":
+        'Un file privato con il link di ingresso del gateway; viene letto e mai stampato',
+    'With --apply: print what would change and change nothing':
+        'Con --apply: stampa cosa cambierebbe e non cambia niente',
+    'Move a machine that is already a node of another gateway to this one':
+        'Sposta su questo gateway una macchina che è già nodo di un altro',
+    'Cannot read the join file {path}: {error}':
+        'Non riesco a leggere il file di ingresso {path}: {error}',
+    'the file is empty':
+        'il file è vuoto',
+    'The join link is spent: delete the file you kept it in.':
+        'Il link di ingresso è consumato: cancella il file in cui lo avevi messo.',
+    'Or let the engine retire the local gateway first and attach for you:':
+        "Oppure lascia che il motore ritiri prima il gateway locale e faccia l'aggancio:",
+    '  nexgen openclaw node --host <gateway address> --apply --join-file <file>':
+        '  nexgen openclaw node --host <indirizzo del gateway> --apply --join-file <file>',
 }

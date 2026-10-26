@@ -586,6 +586,9 @@ On the laptop, once:
 2. `nexgen openclaw node --host <address of the fixed PC>` prints the two documented routes, in order, with the
    check after each command. It runs none of them.
    Check: the printed commands are the ones below.
+   On a PC that already ran a gateway of its own, `nexgen openclaw node --host <address> --apply --join-file
+   <file>` runs steps 3 and 4 and retires the old gateway first; the printed routes stay the reference for
+   doing it by hand.
 3. Either the one-paste route: `openclaw devices join-code` on the fixed PC, then the command it prints,
    `openclaw connect <url> --service --session-host`, on the laptop. OpenClaw approves the device and its
    first command surface in the same step; `--session-host` also lets the node run agent sessions, so keep it
@@ -665,11 +668,24 @@ runs the same checks as part of its own report, without `--nodes` and without la
 nothing at all on a machine that never installed OpenClaw, never declared the module and has no Companion
 gateway.
 
-`nexgen openclaw node --host <address> [--port 18789] [--name <label>]` prints the commands that make this
-machine a node of a gateway elsewhere: OpenClaw's one-paste route with a join code, and the explicit route with
-its two approvals. The address may be a name on the home network or a Tailscale MagicDNS name; the second
-needs no port in the one-paste route and `--port 443 --tls` in the explicit one. It writes nothing and runs
-nothing, because `openclaw node install` already writes the service on each platform.
+`nexgen openclaw node --host <address> [--port 18789] [--name <label>] [--apply] [--join-file <path>]
+[--dry-run] [--force]` prints the commands that make this machine a node of a gateway elsewhere:
+OpenClaw's one-paste route with a join code, and the explicit route with its two approvals. The address may be
+a name on the home network or a Tailscale MagicDNS name; the second needs no port in the one-paste route and
+`--port 443 --tls` in the explicit one. Without `--apply` it writes nothing and runs nothing, because
+`openclaw node install` already writes the service on each platform.
+
+`--apply` does the machine's side of that transition, in the only order that works on a PC that already ran a
+gateway of its own. It stops and removes the local gateway service, archives a systemd drop-in left without its
+unit, drops the gateway's `auth` block, switches local channels off, and turns `nodeHost.workerRuns` on. All
+three are leftovers that break a node in a way no doctor line names: the token in the file wins over the pairing
+token and the central gateway answers `AUTH_TOKEN_MISMATCH`, two gateways polling one bot kill each other's
+poller every thirty seconds, and a node without worker runs hosts no sessions. Every other key of the
+configuration stays, and the file is copied aside before the single write. Then it enrols: with `--join-file`
+it redeems the link as a service and waits for the connection, without one it runs `openclaw node install` and
+`openclaw node start` and leaves the two approvals to `nexgen openclaw pair` on the gateway. `--dry-run` prints
+the same plan and changes nothing, `--force` moves a machine that is already a node of another gateway.
+`install.sh --role node` and `install.ps1 -Role node` run this same retirement before attaching.
 
 `nexgen openclaw setup` applies that same plan: it installs the pinned release, onboards when there is no
 file, merges the owned sections with a backup beside them, writes the agent manuals, installs and starts the
