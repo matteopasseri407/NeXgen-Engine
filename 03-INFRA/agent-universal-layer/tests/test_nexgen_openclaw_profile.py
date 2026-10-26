@@ -366,10 +366,12 @@ def test_the_agents_may_talk_only_to_the_pairs_that_exist():
     assert "agentToAgent" not in alone["tools"]
 
 
-def test_exec_is_allowlisted_and_tool_search_is_not_written():
+def test_exec_is_the_normalized_auto_policy_and_tool_search_is_not_written():
     tools = build_config(machine(go=True))["tools"]
     assert "toolSearch" not in tools
-    assert tools["exec"] == {"security": "allowlist", "ask": "on-miss"}
+    # `auto` is what `allowlist` + `ask=on-miss` became: safe commands run, the
+    # rest go to the classifier instead of a human.
+    assert tools["exec"] == {"mode": "auto"}
 
 
 def test_the_writer_tools_are_one_table_and_the_cage_is_derived_from_it():

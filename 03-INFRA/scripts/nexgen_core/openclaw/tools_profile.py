@@ -113,7 +113,11 @@ def allow_supervisor_tools(entries: dict[str, Any], current: dict[str, Any] | No
 def tools_block(models: tuple[LocalModel, ...], partners: dict[str, list[str]]) -> dict[str, Any]:
     """The tools block: the exec policy, the cage, and who may message whom."""
     tools: dict[str, Any] = {
-        "exec": {"security": "allowlist", "ask": "on-miss"},
+        # The normalized policy OpenClaw reads: `auto` is the classifier-reviewed
+        # miss, which is what `allowlist` + `ask=on-miss` meant before the field
+        # was collapsed. Writing the old pair makes `doctor --fix` migrate it away
+        # on every run, so the engine emits the shape the gateway already uses.
+        "exec": {"mode": "auto"},
         "byProvider": cage_block(models),
     }
     if partners:

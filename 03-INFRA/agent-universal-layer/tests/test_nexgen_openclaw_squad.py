@@ -221,7 +221,7 @@ def test_a_default_already_in_force_survives_a_squad_that_names_none() -> None:
 
 
 def test_an_agent_exec_policy_lands_under_tools_exec() -> None:
-    """`security`/`ask` decide whether every native tool needs a human approval."""
+    """`security`/`ask` are translated into the one `mode` the gateway reads today."""
     squad = {
         "agents": {
             "sviluppo": {
@@ -240,11 +240,50 @@ def test_an_agent_exec_policy_lands_under_tools_exec() -> None:
     entry = apply_squad({"agents": {"entries": {}}}, squad)["agents"]["entries"]["sviluppo"]
 
     assert entry["tools"]["exec"] == {
-        "security": "full",
-        "ask": "off",
+        "mode": "full",
         "host": "node",
         "node": "node-pc",
     }
+
+
+def test_every_exec_policy_becomes_the_mode_openclaw_reads() -> None:
+    """`mode` replaced the older pair; the engine writes the normalized field.
+
+    `ask=always` is a human-reviewed miss, `ask=on-miss` a classifier-reviewed one,
+    and with `ask=off` the security level is the whole policy.
+    """
+    cases = {
+        ("full", "off"): "full",
+        ("allowlist", "off"): "allowlist",
+        ("deny", "off"): "deny",
+        ("full", "always"): "ask",
+        ("allowlist", "on-miss"): "auto",
+    }
+    for (security, ask), expected in cases.items():
+        squad = {"agents": {"x": {"name": "x", "exec": {"security": security, "ask": ask}}}}
+        entry = apply_squad({"agents": {"entries": {}}}, squad)["agents"]["entries"]["x"]
+        assert entry["tools"]["exec"] == {"mode": expected}, (security, ask)
+
+
+def test_an_explicit_mode_wins_and_the_legacy_pair_is_dropped() -> None:
+    squad = {
+        "agents": {
+            "x": {"name": "x", "exec": {"mode": "ask", "security": "full", "ask": "off"}},
+        },
+    }
+
+    entry = apply_squad({"agents": {"entries": {}}}, squad)["agents"]["entries"]["x"]
+
+    assert entry["tools"]["exec"] == {"mode": "ask"}
+
+
+def test_a_policy_with_only_ask_is_not_guessed_into_a_mode() -> None:
+    """With no security level there is no honest mode: the declared key survives."""
+    squad = {"agents": {"x": {"name": "x", "exec": {"ask": "off"}}}}
+
+    entry = apply_squad({"agents": {"entries": {}}}, squad)["agents"]["entries"]["x"]
+
+    assert entry["tools"]["exec"] == {"ask": "off"}
 
 
 def test_a_nested_exec_block_and_an_agent_policy_merge_per_key() -> None:

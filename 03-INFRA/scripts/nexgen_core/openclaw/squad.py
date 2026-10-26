@@ -36,9 +36,9 @@ _PROVIDER_ENV_MAP: dict[str, tuple[str, str]] = {
 
 #: The keys one agent may set in its `exec` block, which is the whole exec policy
 #: OpenClaw reads for that agent (`agents.entries.<id>.tools.exec`). `host` and
-#: `node` choose where a command runs; `security` and `ask` decide whether it needs
-#: a human approval.
-_EXEC_KEYS = ("security", "ask", "host", "node")
+#: `node` choose where a command runs; `security` and `ask` are the pair the squad
+#: still declares, and `mode` is the one field OpenClaw reads today.
+_EXEC_KEYS = ("mode", "security", "ask", "host", "node")
 
 #: The line the engine puts on top of an `AGENTS.md` it writes from the squad.
 #: A file without it belongs to the person and is never replaced: the same
@@ -183,6 +183,46 @@ def _exec_policy(spec: Mapping[str, Any]) -> dict[str, str]:
     }
 
 
+def exec_mode(policy: Mapping[str, Any]) -> str | None:
+    """OpenClaw's normalized exec policy, from the keys the squad may declare.
+
+    `mode` replaced `security` + `ask` in the gateway config, which is the shape
+    its own `doctor --fix` migrates to: `ask=always` is a human-reviewed miss,
+    `ask=on-miss` a classifier-reviewed one, and with `ask=off` the security level
+    is the whole policy. A policy that names `mode` already is used as it stands.
+    Without either a mode or a security level there is nothing honest to derive,
+    so the answer is None and the declared keys are left alone.
+    """
+    declared = str(policy.get("mode") or "").strip()
+    if declared:
+        return declared
+    ask = str(policy.get("ask") or "").strip()
+    if ask == "always":
+        return "ask"
+    if ask == "on-miss":
+        return "auto"
+    security = str(policy.get("security") or "").strip()
+    return security or None
+
+
+def _normalized_exec(policy: Mapping[str, Any]) -> dict[str, Any]:
+    """One `tools.exec` block in the shape the gateway reads today.
+
+    Everything the squad declared survives except the older `security`/`ask`
+    pair, which is expressed as `mode` when it can be. Unknown keys are copied
+    as declared: they are OpenClaw's, not this engine's, to judge.
+    """
+    block = {key: value for key, value in policy.items() if key not in ("security", "ask")}
+    mode = exec_mode(policy)
+    if mode:
+        block["mode"] = mode
+    else:
+        for key in ("security", "ask"):
+            if key in policy:
+                block[key] = policy[key]
+    return block
+
+
 def _declared_path(value: Any, base: Path) -> Path | None:
     """A path the squad declares, resolved the way the file means it: beside itself."""
     if not isinstance(value, str) or not value.strip():
@@ -267,7 +307,7 @@ def _apply_agent_entry(entry: dict[str, Any], spec: Mapping[str, Any], agent_id:
     if policy or isinstance(nested, dict):
         merged = dict(nested) if isinstance(nested, dict) else {}
         merged.update(policy)
-        entry.setdefault("tools", {})["exec"] = merged
+        entry.setdefault("tools", {})["exec"] = _normalized_exec(merged)
     elif "exec" in declared_tools:
         # A shape OpenClaw will refuse is copied as declared, not dropped in silence.
         entry.setdefault("tools", {})["exec"] = nested
