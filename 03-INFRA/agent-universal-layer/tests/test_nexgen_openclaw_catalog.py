@@ -50,10 +50,10 @@ def test_the_declared_pattern_actually_finds_the_pin():
     text = (INFRA / upstream.pinned_in).read_text(encoding="utf-8")
     found = re.search(upstream.pattern, text)
     assert found is not None
-    assert found.group(1) == "2026.10.6"
+    assert found.group(1) == "2026.10.7"
 
 
 def test_the_package_reads_the_same_version_as_the_catalog_pins():
     from nexgen_core.openclaw.pin import pinned_version
 
-    assert pinned_version(INFRA) == "2026.10.6"
+    assert pinned_version(INFRA) == "2026.10.7"

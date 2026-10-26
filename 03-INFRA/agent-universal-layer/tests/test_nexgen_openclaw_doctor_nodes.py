@@ -25,7 +25,7 @@ from nexgen_core.openclaw.doctor import collect  # noqa: E402 - sys.path shim fo
 from nexgen_core.openclaw.node_checks import check_nodes  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.report import Severity  # noqa: E402 - sys.path shim for cloned checkout
 
-PINNED = "2026.10.6"
+PINNED = "2026.10.7"
 
 
 @pytest.fixture(autouse=True)
