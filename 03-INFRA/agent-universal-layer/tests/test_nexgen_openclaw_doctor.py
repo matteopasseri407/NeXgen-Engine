@@ -23,7 +23,7 @@ from nexgen_core.openclaw.doctor import collect, exit_code  # noqa: E402 - sys.p
 from nexgen_core.openclaw.profile import PENDING_TOKEN  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.report import Severity  # noqa: E402 - sys.path shim for cloned checkout
 
-PINNED = "2026.10.6"
+PINNED = "2026.10.7"
 
 
 @pytest.fixture(autouse=True)
