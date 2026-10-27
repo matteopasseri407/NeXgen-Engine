@@ -80,6 +80,8 @@ function startHeaderShim(target, onReady) {
           path: req.url, method: req.method, headers },
         (answer) => {
           res.writeHead(answer.statusCode ?? 502, answer.headers);
+          res.flushHeaders();  // an SSE stream may send no byte for a while: without this the
+                               // headers wait for one, and mcp-remote's discovery GET times out (10 s)
           answer.pipe(res);   // streamed, so an SSE response is not buffered
         },
       );
