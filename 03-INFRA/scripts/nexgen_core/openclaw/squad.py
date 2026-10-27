@@ -18,6 +18,7 @@ import yaml
 
 from nexgen_core.i18n import t
 from nexgen_core.openclaw import model_policy
+from nexgen_core.openclaw.runtime import apply_runtime
 from nexgen_core.processes import no_window_kwargs
 
 if TYPE_CHECKING:
@@ -366,6 +367,13 @@ def apply_squad(
 
     if "bindings" in squad and isinstance(squad["bindings"], list):
         target["bindings"] = list(squad["bindings"])
+
+    # The runtime block decides how many chats each agent gets and how long a
+    # manual fork lives. It is policy, so it travels with the squad instead of
+    # being re-done by hand on every machine.
+    runtime_spec = squad.get("runtime")
+    if isinstance(runtime_spec, dict):
+        apply_runtime(target, runtime_spec)
 
     # A model the squad names is that agent's default, and it must be selectable from the
     # picker of every other agent too: registering it does not change anyone's `model`.
