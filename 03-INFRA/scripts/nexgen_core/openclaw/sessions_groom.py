@@ -65,13 +65,34 @@ def plan_groom(entries: Iterable[Mapping[str, Any]], now_ms: float) -> list[Deci
     return decisions
 
 
+def _resolve_binary(name: str = "openclaw") -> str:
+    """The executable, never a directory that happens to share the name.
+
+    `subprocess` resolves a bare name through PATH on its own, and a PATH entry
+    like an empty segment points at the current directory. On a gateway host
+    that directory contains `~/.openclaw/openclaw`, so a bare name fails with
+    EACCES instead of running the CLI. Resolve it here, once.
+    """
+    import os
+    import shutil
+
+    found = shutil.which(name)
+    if found and os.path.isfile(found) and os.access(found, os.X_OK):
+        return found
+    for candidate in (os.path.expanduser(f"~/.npm-global/bin/{name}"), f"/usr/local/bin/{name}", f"/usr/bin/{name}"):
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    raise FileNotFoundError(f"the {name} CLI is not on PATH and not in the usual places")
+
+
 def _run(args: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
 
 
-def list_sessions(openclaw: str = "openclaw", timeout: int = 120) -> list[dict[str, Any]]:
+def list_sessions(openclaw: str | None = None, timeout: int = 120) -> list[dict[str, Any]]:
     """Every stored session, across agents, as the CLI reports it."""
-    proc = _run([openclaw, "sessions", "list", "--all-agents", "--json", "--limit", "all"], timeout)
+    binary = openclaw or _resolve_binary()
+    proc = _run([binary, "sessions", "list", "--all-agents", "--json", "--limit", "all"], timeout)
     if proc.returncode != 0 or not proc.stdout.strip():
         return []
     payload = json.loads(proc.stdout)
@@ -89,7 +110,7 @@ def compact(openclaw: str, decision: Decision, timeout: int = 300) -> str:
 
 
 def groom(
-    openclaw: str = "openclaw",
+    openclaw: str | None = None,
     now_ms: float | None = None,
     dry_run: bool = False,
     emit: Callable[[str], None] = print,
@@ -98,14 +119,15 @@ def groom(
     """Compact what the policy says, and return one line per session touched."""
     import time as _time
 
+    binary = openclaw or _resolve_binary()
     moment = now_ms if now_ms is not None else (clock or _time.time)() * 1000
     lines: list[str] = []
-    for decision in plan_groom(list_sessions(openclaw), moment):
+    for decision in plan_groom(list_sessions(binary), moment):
         minutes = int(decision.idle_seconds // 60)
         if dry_run:
             outcome = "dry-run"
         else:
-            outcome = compact(openclaw, decision)
+            outcome = compact(binary, decision)
         line = f"{decision.key}: {decision.tokens} tokens, idle {minutes}m ({decision.reason}) -> {outcome}"
         lines.append(line)
         emit(line)

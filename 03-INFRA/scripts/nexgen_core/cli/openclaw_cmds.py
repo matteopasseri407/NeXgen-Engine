@@ -222,9 +222,15 @@ def cmd_stop(args) -> int:
 
 
 def cmd_groom(args) -> int:
+    import sys
+
     from nexgen_core.openclaw.sessions_groom import groom
 
-    lines = groom(dry_run=bool(getattr(args, "dry_run", False)))
+    try:
+        lines = groom(dry_run=bool(getattr(args, "dry_run", False)))
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
     if not lines:
         print(t("No agent chat needs compacting."))
     return 0
