@@ -7,6 +7,7 @@ from typing import Any
 
 from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc, remove_jsonc_top_level_value, set_jsonc_top_level_value
+from nexgen_core.opencode_compat import supports_v2
 
 
 def _opencode_timeouts(timeouts: Any) -> dict[str, int]:
@@ -197,6 +198,7 @@ def _persist_config(
     old_permissions: list[Any],
     drop_engine_websearch: bool,
     write: bool,
+    drop_v2_permissions: bool = False,
 ) -> None:
     """JSONC-aware write of the merged config, preserving file comments."""
     if write:
@@ -208,6 +210,8 @@ def _persist_config(
                 content = set_jsonc_top_level_value(content, "tools", tools_cfg)
             if permissions and permissions != old_permissions:
                 content = set_jsonc_top_level_value(content, "permissions", permissions)
+            if drop_v2_permissions:
+                content = remove_jsonc_top_level_value(content, "permissions")
             if drop_engine_websearch:
                 content = remove_jsonc_top_level_value(content, "websearch")
         else:
@@ -230,6 +234,17 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
         raise ValueError(f"Could not render {cfg_file}: permissions must be an array")
     permissions = list(permissions)
     old_permissions = list(permissions)
+    drop_v2_permissions = False
+    if not supports_v2():
+        # A V1 CLI rejects the entire config when the V2 `permissions` array is
+        # present ("V2 permissions are not supported by OpenCode V1"), so the CLI
+        # never starts and the provider it backs disappears. Absent the key, the
+        # file loads and the guardrail still comes from the plugin and sidecar.
+        if "permissions" in existing:
+            existing.pop("permissions", None)
+            drop_v2_permissions = True
+        permissions = []
+        old_permissions = []
     _apply_servers(servers, mcp_servers, tools_cfg, permissions)
     drop_engine_websearch = _finalize_state(existing, mcp_config, mcp_servers, tools_cfg, permissions)
     _persist_config(
@@ -244,5 +259,6 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
         old_permissions,
         drop_engine_websearch,
         write,
+        drop_v2_permissions=drop_v2_permissions,
     )
     return True, t("OpenCode configuration updated")

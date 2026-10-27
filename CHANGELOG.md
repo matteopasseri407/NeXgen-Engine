@@ -10,6 +10,13 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.22.1] - 2026-10-27
+
+### Fixed
+
+- The OpenCode config dialect follows the CLI that is actually installed: on a V1 binary the engine no longer writes ordered `permissions` rules, which a V1 CLI rejects outright ("V2 permissions are not supported by OpenCode V1"), leaving the CLI unable to start and the `acp-opencode` provider unavailable. One helper answers the question — `nexgen_core/opencode_compat.py` — and both the posture writer and the MCP renderer ask it. Unknown counts as V1: omitting a posture rule leaves the guardrail to the plugin, while writing a key the CLI cannot parse takes OpenCode down.
+- The MCP HTTP bridge flushes its response headers before piping, so an SSE stream that sends no byte for a while no longer makes the discovery GET wait ten seconds and time out. That wait was paid on every turn that prepared `vault-library`.
+
 ## [2.22.0] - 2026-10-27
 
 ### Added
