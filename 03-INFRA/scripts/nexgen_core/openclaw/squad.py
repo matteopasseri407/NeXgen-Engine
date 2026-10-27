@@ -360,6 +360,14 @@ def apply_squad(
             current_allow = set(a2a.get("allow", []))
             a2a["allow"] = sorted(current_allow | allowed_senders)
 
+        # Removing an agent from the squad removes it here too, but only when the
+        # squad says so: the engine is additive by default, and a person who added
+        # an agent by hand must not lose it to a sync.
+        if squad.get("prune_agents") is True and isinstance(agents_spec, dict):
+            declared = set(agents_spec)
+            for agent_id in [key for key in entries if key not in declared]:
+                entries.pop(agent_id, None)
+
     if "models" in squad and isinstance(squad["models"], dict):
         models_block = target.setdefault("models", {})
         models_entries = models_block.setdefault("entries", {})
