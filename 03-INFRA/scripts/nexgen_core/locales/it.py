@@ -2464,4 +2464,18 @@ MESSAGES: dict[str, str] = {
         "Oppure lascia che il motore ritiri prima il gateway locale e faccia l'aggancio:",
     '  nexgen openclaw node --host <gateway address> --apply --join-file <file>':
         '  nexgen openclaw node --host <indirizzo del gateway> --apply --join-file <file>',
+    'Compact the agent chats that sat idle or grew too large':
+        'Compatta le chat degli agenti rimaste ferme o diventate troppo grandi',
+    'Show what would be compacted, change nothing':
+        'Mostra cosa verrebbe compattato, senza cambiare niente',
+    'No agent chat needs compacting.':
+        'Nessuna chat agente da compattare.',
+    '  Context guard: skipped in dry-run.':
+        '  Guardia del contesto: saltata in prova a vuoto.',
+    "  Context guard: 'nexgen' is not on PATH, job not registered.":
+        "  Guardia del contesto: 'nexgen' non è nel PATH, job non registrato.",
+    '  Context guard: hourly job registered.':
+        '  Guardia del contesto: job orario registrato.',
+    '  Context guard: the job was not registered, the gateway refused it.':
+        '  Guardia del contesto: il job non è stato registrato, il gateway lo ha rifiutato.',
 }

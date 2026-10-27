@@ -449,6 +449,33 @@ def module_step(setup: Setup) -> None:
     enable_openclaw_mcp(setup, vault)
 
 
+def groom_job_step(setup: Setup) -> None:
+    """Registers the hourly groom as an OpenClaw command job, once.
+
+    The job keeps every agent chat small: idle chats are compacted, and a chat
+    that grows past the limit is compacted even while in use. Without the job
+    the policy in the config is only a promise.
+    """
+    if setup.dry_run:
+        setup.out(t("  Context guard: skipped in dry-run."))
+        return
+    engine = setup.which("nexgen")
+    if not engine:
+        setup.out(t("  Context guard: 'nexgen' is not on PATH, job not registered."))
+        return
+    result = setup.run([
+        openclaw_bin(setup), "cron", "add", "nexgen-context-guard",
+        "--cron", "0 * * * *",
+        "--command", f"{engine} openclaw groom",
+        "--declaration-key", "nexgen:context-guard",
+        "--display-name", "Context guard",
+    ])
+    if result.returncode == 0:
+        setup.out(t("  Context guard: hourly job registered."))
+        return
+    setup.out(t("  Context guard: the job was not registered, the gateway refused it."))
+
+
 def phone_step(setup: Setup) -> None:
     """Step 8: how the phone app gets in, in the person's own two commands."""
     setup.out(t("To connect the phone, run this in a terminal of yours: {command}",

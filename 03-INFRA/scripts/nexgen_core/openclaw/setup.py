@@ -42,6 +42,7 @@ from nexgen_core.openclaw.setup_steps import (
     ensure_onboarded,
     governor_step,
     module_step,
+    groom_job_step,
     phone_step,
     planned_commands,
     plugin_step,
@@ -228,6 +229,7 @@ def _apply(
         return 1
     _step(setup.out, 7, t("Module"))
     module_step(setup)
+    groom_job_step(setup)
     _step(setup.out, 8, t("Phone"))
     phone_step(setup)
     _step(setup.out, 9, t("Doctor"))

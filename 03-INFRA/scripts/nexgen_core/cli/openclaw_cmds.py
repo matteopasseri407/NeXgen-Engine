@@ -122,6 +122,10 @@ def _register_upkeep(psub) -> None:
     q = psub.add_parser("stop", help=t("Stop the gateway before editing its file by hand"))
     q.set_defaults(func=cmd_stop)
 
+    q = psub.add_parser("groom", help=t("Compact the agent chats that sat idle or grew too large"))
+    q.add_argument("--dry-run", action="store_true", help=t("Show what would be compacted, change nothing"))
+    q.set_defaults(func=cmd_groom)
+
     q = psub.add_parser("rpc", help=t("Interact with OpenClaw Gateway via WebSocket RPC"))
     rpc_sub = q.add_subparsers(dest="rpc_command", metavar="action")
 
@@ -215,6 +219,15 @@ def cmd_stop(args) -> int:
     from nexgen_core.openclaw.setup import run_stop
 
     return run_stop()
+
+
+def cmd_groom(args) -> int:
+    from nexgen_core.openclaw.sessions_groom import groom
+
+    lines = groom(dry_run=bool(getattr(args, "dry_run", False)))
+    if not lines:
+        print(t("No agent chat needs compacting."))
+    return 0
 
 
 def cmd_smoke(args) -> int:
