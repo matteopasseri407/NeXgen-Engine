@@ -2069,6 +2069,12 @@ MESSAGES: dict[str, str] = {
         "Salto {path}: non l'ha scritto il motore, quindi è tuo e resta com'è.",
     "The squad names an instructions file that cannot be read: {path}":
         "La squadra indica un file di istruzioni che non riesco a leggere: {path}",
+    "Skipping the skill {name}: a skill name cannot be a path.":
+        "Salto la skill {name}: il nome di una skill non può essere un percorso.",
+    "Skipping the skill {name}: no SKILL.md for it in the engine.":
+        "Salto la skill {name}: nel motore non c'è un suo SKILL.md.",
+    "{agent}: {written} skill files written":
+        "{agent}: {written} file di skill scritti",
     "The squad names {agent} as the default agent but does not declare it: no default was written.":
         "La squadra indica {agent} come agente predefinito ma non lo dichiara: non ho scritto nessun predefinito.",
     "The OpenCode agent is not created: setup was asked to leave it out.":

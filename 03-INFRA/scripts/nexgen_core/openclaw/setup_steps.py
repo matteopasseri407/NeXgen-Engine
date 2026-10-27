@@ -274,9 +274,11 @@ def write_step(setup: Setup, plan) -> str:
 
 def workspaces_step(setup: Setup, plan, before: set[str]) -> None:
     """Step 5: the folders, the manuals, and the first-run file to remove."""
+    from nexgen_core.openclaw.setup_skills import prepare_skills, skill_roots
     from nexgen_core.openclaw.squad import (
         find_squad_file,
         get_squad_instructions,
+        get_squad_skills,
         get_squad_souls,
         load_squad,
     )
@@ -290,6 +292,10 @@ def workspaces_step(setup: Setup, plan, before: set[str]) -> None:
     for path in unreadable:
         setup.out(t("The squad names an instructions file that cannot be read: {path}", path=path))
     prepare(dirs, created, plan.choices.lang or None, setup.out, souls=souls, instructions=instructions)
+    # Only agents that declare `skills` are in this map: the others keep their folder as it is.
+    skills = get_squad_skills(squad)
+    if skills:
+        prepare_skills(dirs, skills, skill_roots(setup.vault_data, setup.engine_root), setup.out)
 
 
 def wait_for_port(
