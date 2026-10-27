@@ -10,6 +10,30 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.22.0] - 2026-10-27
+
+### Added
+
+- `nexgen openclaw smoke` runs five checks in order — installed version, configuration, gateway, mounted MCP servers, one short turn — prints one line each and answers with an exit code.
+- The OpenClaw adoption check names the items waiting for review and the first reason for each, instead of only their count.
+
+### Changed
+
+- The OpenClaw pin moves to 2026.10.7, the patch that makes the model catalog honour the agent's primary account, so the Android app stops retrying a model refresh that had nothing to fix.
+- A machine that already ran its own gateway retires it before enrolling as an OpenClaw node: `node --apply` and `install.sh --role node` archive a leftover drop-in, drop `gateway.auth`, switch the local channels off and turn `nodeHost.workerRuns` on, with a backup written beside the configuration.
+- The exec policy is written as the single `mode` field the gateway reads, translating the squad's `security` and `ask` instead of writing the deprecated pair again.
+- On Windows the signature check uses the native GnuPG when it is installed, instead of the MSYS build that ships with Git and cannot start its agent.
+- An update on a machine whose Vault clone is a reader installs the release and leaves the pin to the clone that owns the write path.
+- A tree on a branch now says which commit it is on, that this channel will not move it, and the command that will (`nexgen update --channel nightly`).
+- Agent workspaces are resolved the way OpenClaw does, so two agents no longer look like they share one `AGENTS.md` and the main agent's instructions keep updating.
+- The setup resolves the default Vault in the context its steps share, so the squad's role manuals are written instead of silently skipped.
+- `vault-mcp` runs behind an init, so the git processes it detaches are reaped instead of piling up as zombies.
+
+### Fixed
+
+- The OpenClaw smoke asks the agent with `--agent`, the flag the command documents, instead of reading the agent name as a subcommand.
+- `release_trust.py` stays standalone, so a tag is still not judged by code that can change under it.
+
 ## [2.21.2] - 2026-10-25
 
 ### Changed
