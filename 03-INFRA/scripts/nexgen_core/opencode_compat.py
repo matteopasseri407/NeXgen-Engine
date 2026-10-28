@@ -22,7 +22,8 @@ _V1_SINGULAR_KEY = "permission"
 
 
 @lru_cache(maxsize=4)
-def _major_of(binary: str) -> int | None:
+def _probe(binary: str) -> str | None:
+    """The version this binary reports, or None when it cannot be read."""
     try:
         out = subprocess.run(
             [binary, "--version"],
@@ -36,18 +37,33 @@ def _major_of(binary: str) -> int | None:
     match = re.search(r"(\d+)\.(\d+)\.(\d+)", out or "")
     if not match:
         return None
-    return int(match.group(1))
+    return match.group(0)
 
 
 def binary_path() -> str | None:
     return shutil.which("opencode")
 
 
+def installed_major() -> int | None:
+    """The major of the `opencode` on PATH, or None when there is none to ask.
+
+    None means "no readable answer", not "V1": a caller reporting a diagnosis
+    needs the difference between a CLI that is too old and a CLI that is absent.
+    """
+    binary = binary_path()
+    version = _probe(binary) if binary else None
+    return int(version.split(".")[0]) if version else None
+
+
+def installed_version() -> str | None:
+    """The version string the `opencode` on PATH reports, for a diagnosis."""
+    binary = binary_path()
+    return _probe(binary) if binary else None
+
+
 def permissions_key() -> str:
     """The key this machine's CLI reads: 'permissions' (V2) or 'permission' (V1)."""
-    binary = binary_path()
-    major = _major_of(binary) if binary else None
-    return _V2_PLURAL_KEY if (major or 0) >= 2 else _V1_SINGULAR_KEY
+    return _V2_PLURAL_KEY if (installed_major() or 0) >= 2 else _V1_SINGULAR_KEY
 
 
 def supports_v2() -> bool:

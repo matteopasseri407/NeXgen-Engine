@@ -61,6 +61,7 @@ from nexgen_core.checks.mcp_checks import (  # noqa: E402 - sys.path shim for cl
 from nexgen_core.checks.module_checks import check_modules_catalog, check_modules_ready  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.openclaw_checks import check_openclaw  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.openclaw_parity_checks import check_openclaw_parity  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.checks.opencode_checks import check_opencode_config_dialect  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.quota_checks import check_quota  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.reachability_checks import (  # noqa: E402 - sys.path shim for cloned checkout
     check_cloud_connector_key,
@@ -191,11 +192,15 @@ class Doctor:
 
 
 def _environment_checks(run, doc: Doctor) -> None:
-    """The machine itself: its folders, its launchers, its last cycle."""
+    """The machine itself: its folders, its launchers, its last cycle, and the
+    CLIs that read what a render wrote."""
     vault, home, state = doc.vault_data, doc.home, doc.state_dir
     run("env.state_dir", lambda: check_state_dir(state))
     run("env.vault_path", lambda: check_vault_path(vault))
     run("env.runtime", lambda: check_engine_runtime(home, doc.engine_root))
+    # A config written in a dialect the installed CLI refuses stops OpenCode from
+    # starting at all, and no guard phase asks this: only the doctor does.
+    run("opencode.config_dialect", lambda: check_opencode_config_dialect(home))
     run("guardrail.consulted", lambda: check_guardrail_consulted(home))
     run("guardrail.openclaw_plugin", lambda: check_openclaw_guardrail_plugin(home))
     run("host.timers", check_timers_armed)
