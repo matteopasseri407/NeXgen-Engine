@@ -540,3 +540,36 @@ def test_an_exec_policy_the_person_wrote_is_never_loosened() -> None:
 
 def test_a_missing_exec_policy_is_written_as_auto() -> None:
     assert build_config(machine(go=True))["tools"]["exec"] == {"mode": "auto"}
+
+
+def test_a_node_keeps_its_gateway_mode_and_gets_no_local_listener_or_token() -> None:
+    """A node is a client of a gateway elsewhere: writing `local` beside `remote.url` makes it incoherent."""
+    from nexgen_core.openclaw.setup_write import merged_document  # noqa: E402 - the merge is what lands on disk
+
+    current = {"gateway": {"mode": "remote", "remote": {"url": "wss://gw.example.ts.net"}}}
+
+    gateway = build_config(machine(go=True), current=current)["gateway"]
+
+    assert "mode" not in gateway, "the file's role is the person's"
+    assert "bind" not in gateway, "a node opens no listener here"
+    assert "auth" not in gateway, "a node authenticates to the remote gateway, not to itself"
+    merged = merged_document(current, {"gateway": gateway})["gateway"]
+    assert merged["mode"] == "remote"
+    assert merged["remote"]["url"] == "wss://gw.example.ts.net"
+
+
+def test_a_local_gateway_the_person_chose_keeps_its_mode() -> None:
+    current = {"gateway": {"mode": "local", "auth": {"mode": "token", "token": "kept"}}}
+
+    gateway = build_config(machine(go=True), current=current)["gateway"]
+
+    assert "mode" not in gateway
+    assert gateway["auth"]["token"] == "kept", "the token is kept"
+
+
+def test_a_gateway_with_no_mode_is_written_as_local() -> None:
+    gateway = build_config(machine(go=True))["gateway"]
+
+    assert gateway["mode"] == "local"
+    assert gateway["bind"] == "loopback"
+    assert gateway["auth"]["mode"] == "token"

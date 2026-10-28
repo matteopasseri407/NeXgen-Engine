@@ -330,8 +330,18 @@ def _agent_pairs(models: dict[str, str]) -> dict[str, list[str]]:
 
 
 def _gateway(chosen: Choices, current: dict[str, Any] | None) -> dict[str, Any]:
-    """The gateway block, keeping a token and a tailscale mode the file already has."""
+    """The gateway block, keeping the role, the token and the tailscale mode the file has.
+
+    `mode` is the person's once it exists: a node that declares `remote` is a
+    client of a gateway elsewhere, and writing `local` beside its `remote.url`
+    makes the file incoherent and can raise a second listener on this machine.
+    A node also opens no listener here, so `bind` and `auth` are not proposed at
+    all; they are written only where the engine writes the mode, which is a file
+    that has none.
+    """
     gateway = current.get("gateway") if isinstance(current, dict) else None
+    declared = gateway.get("mode") if isinstance(gateway, dict) else None
+    mode = declared.strip() if isinstance(declared, str) and declared.strip() else None
     auth = gateway.get("auth") if isinstance(gateway, dict) else None
     token = auth.get("token") if isinstance(auth, dict) else None
     tailscale = gateway.get("tailscale") if isinstance(gateway, dict) else None
@@ -341,18 +351,19 @@ def _gateway(chosen: Choices, current: dict[str, Any] | None) -> dict[str, Any]:
         # never leaves loopback and Tailscale serves it over HTTPS on the tailnet.
         # The rest of the section is the person's and stays: only the mode changes.
         block["mode"] = "serve"
-    return {
-        "mode": "local",
-        "port": GATEWAY_PORT,
-        "bind": "lan" if chosen.lan else "loopback",
-        "auth": {
+    proposed: dict[str, Any] = {"port": GATEWAY_PORT}
+    if mode is None:
+        proposed["mode"] = "local"
+    if mode != "remote":
+        proposed["bind"] = "lan" if chosen.lan else "loopback"
+        proposed["auth"] = {
             "mode": "token",
             "token": token if isinstance(token, str) and token.strip() else PENDING_TOKEN,
-        },
-        # The person may have chosen Tailscale for remote access: turning it off
-        # silently would break a setup that works and was not the engine's to undo.
-        "tailscale": block,
-    }
+        }
+    # The person may have chosen Tailscale for remote access: turning it off
+    # silently would break a setup that works and was not the engine's to undo.
+    proposed["tailscale"] = block
+    return proposed
 
 
 def _exec_policy(current: dict[str, Any] | None) -> dict[str, Any]:
