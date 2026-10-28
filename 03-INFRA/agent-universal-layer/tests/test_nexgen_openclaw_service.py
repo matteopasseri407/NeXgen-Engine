@@ -30,6 +30,7 @@ from nexgen_core.openclaw_service import (  # noqa: E402
 )
 from nexgen_core.openclaw_pairing import (  # noqa: E402
     approve as pairing_approve,
+    listed as pairing_listed,
     pending as pairing_pending,
     qr as pairing_qr,
 )
@@ -836,3 +837,45 @@ def test_a_gateway_that_survives_the_kill_stops_the_restart(fake_env) -> None:
     assert res["ok"] is False
     assert "801" in res["error"]
     assert spawned == [], "never start a second gateway beside a live one"
+
+
+# The shape `openclaw devices list --json` prints in 2026.10.6
+# (dist/devices-cli.runtime-CllfBpVQ.mjs:234-239): two tables, and the id of a
+# waiting request is `requestId`, which is what `devices approve` takes.
+def _devices_payload() -> str:
+    return json.dumps({
+        "pending": [{
+            "requestId": "req-7c1",
+            "deviceId": "9f2b",
+            "displayName": "OpenClaw Companion",
+            "roles": ["operator"],
+            "scopes": ["operator.read"],
+            "ts": 1761000000000,
+        }],
+        "paired": [{
+            "deviceId": "aa11",
+            "displayName": "Pixel 8",
+            "clientId": "cli",
+            "platform": "android",
+        }],
+    })
+
+
+def test_pairing_pending_reads_the_requests_table_of_the_real_payload() -> None:
+    """`pending` is the table with the requests: `paired` is not one of them."""
+    runner = RecordingRunner(default_code=0, default_stdout=_devices_payload())
+
+    devices = pairing_pending(runner=runner)["devices"]
+
+    assert len(devices) == 1, "a device already paired is not a request to approve"
+    assert devices[0]["id"] == "req-7c1", "the id `devices approve` takes is requestId"
+
+
+def test_the_listed_devices_are_requests_and_devices_together() -> None:
+    """What the gateway knows about this machine: the app is in `paired` once it said yes."""
+    runner = RecordingRunner(default_code=0, default_stdout=_devices_payload())
+
+    devices = pairing_listed(runner=runner)
+
+    assert devices is not None
+    assert [device["id"] for device in devices] == ["req-7c1", "aa11"]

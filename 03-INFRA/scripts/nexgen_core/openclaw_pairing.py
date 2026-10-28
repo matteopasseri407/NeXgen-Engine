@@ -91,6 +91,64 @@ def _parse_text_devices(output: str) -> list[dict[str, Any]]:
     return devices
 
 
+#: The two tables `openclaw devices list --json` prints, and the name of the id a
+#: waiting request is approved by. Both are read from the release's own parser
+#: (`dist/devices-cli.runtime-*.mjs`: `parseDevicePairingList` returns exactly
+#: `{pending, paired}`), not guessed from the shape of a record.
+_PAIRING_TABLES = ("pending", "paired")
+_REQUEST_ID = "requestId"
+
+
+def _pairing_tables(data: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The requests waiting and the devices already paired, from the CLI's answer.
+
+    A bare array is an answer from a build that printed the list alone, and it
+    can only be the requests: a device that is already paired is not asking for
+    anything.
+    """
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)], []
+    if not isinstance(data, dict):
+        return [], []
+    tables: list[list[dict[str, Any]]] = []
+    for name in _PAIRING_TABLES:
+        value = data.get(name)
+        tables.append([item for item in value if isinstance(item, dict)] if isinstance(value, list) else [])
+    return tables[0], tables[1]
+
+
+def _with_id(device: dict[str, Any]) -> dict[str, Any]:
+    """One record with a single `id` whichever table it came from.
+
+    A waiting request is approved by its `requestId`; a device already paired is
+    known by its `deviceId`. The engine speaks `id` everywhere else, so the three
+    names are reconciled here, once, instead of at every call site.
+    """
+    clean = _strip_tokens(device)
+    if str(clean.get("id") or "").strip():
+        return clean
+    for key in (_REQUEST_ID, "deviceId"):
+        value = clean.get(key)
+        if isinstance(value, str) and value.strip():
+            clean["id"] = value.strip()
+            break
+    return clean
+
+
+def _read_devices(runner: Callable[[list[str]], RunResult] | None) -> tuple[bool, str, Any]:
+    """Run the documented query and hand back `(ok, stdout, parsed answer)`."""
+    cmd = ["openclaw", "devices", "list", "--json"]
+    run_cmd = runner or default_runner
+    res = run_cmd(cmd)
+    data: Any = None
+    if res.stdout.strip():
+        try:
+            data = json.loads(res.stdout)
+        except (json.JSONDecodeError, ValueError):  # nexgen: allow reason="the text table is the fallback when the CLI did not print json"
+            data = None
+    return res.returncode == 0, res.stdout, data
+
+
 def pending(
     runner: Callable[[list[str]], RunResult] | None = None,
     dry_run: bool = False,
@@ -101,21 +159,15 @@ def pending(
     if dry_run:
         return {"ok": True, "commands": commands, "devices": [], "dry_run": True}
 
-    run_cmd = runner or default_runner
-    res = run_cmd(cmd)
-
-    devices: list[dict[str, Any]] = []
-    if res.stdout.strip():
-        try:
-            data = json.loads(res.stdout)
-            raw_list = data if isinstance(data, list) else data.get("devices", data.get("pending", []))
-            if isinstance(raw_list, list):
-                devices = [_strip_tokens(d) for d in raw_list if isinstance(d, dict)]
-        except (json.JSONDecodeError, ValueError):  # nexgen: allow reason="fallback to text parsing when json is invalid"
-            devices = _parse_text_devices(res.stdout)
+    ok, stdout, data = _read_devices(runner)
+    if data is None:
+        devices = _parse_text_devices(stdout)
+    else:
+        requests, _ = _pairing_tables(data)
+        devices = [_with_id(device) for device in requests]
 
     return {
-        "ok": res.returncode == 0,
+        "ok": ok,
         "commands": commands,
         "devices": devices,
         "dry_run": False,
@@ -146,10 +198,15 @@ def listed(runner: Callable[[list[str]], RunResult] | None = None) -> list[dict[
     instead of reporting a fault.
     """
     try:
-        listing = pending(runner=runner)
+        ok, stdout, data = _read_devices(runner)
     except OSError:  # nexgen: allow reason="a CLI that cannot be launched is an unanswered question, not a crash"
         return None
-    return list(listing.get("devices") or []) if listing.get("ok") else None
+    if not ok:
+        return None
+    if data is None:
+        return [_with_id(device) for device in _parse_text_devices(stdout)]
+    requests, paired = _pairing_tables(data)
+    return [_with_id(device) for device in (*requests, *paired)]
 
 
 def approve(
