@@ -360,6 +360,7 @@ MESSAGES: dict[str, str] = {
     "Claude Code's own configuration does not exist ({path})": "la configurazione nativa di Claude Code non esiste ({path})",
     "Run 'nexgen openclaw setup': it denies every connector on the loopback server and renders Claude Code's own configuration, where they load lazily.": "Lancia 'nexgen openclaw setup': nega ogni connettore sul server di loopback e scrive la configurazione nativa di Claude Code, dove vengono caricati in modo lazy.",
     "The {count} agent(s) on Claude Code's CLI keep every connector off the loopback server, and Claude Code's own configuration carries them.": "I {count} agenti sulla CLI di Claude Code tengono ogni connettore fuori dal server di loopback, e la configurazione nativa di Claude Code li porta.",
+    "Took {key} out of {path}: no agent reads it, and the apps cannot update the models while it is there. The value stays in the engine's secret store.": "Ho tolto {key} da {path}: nessun agente la legge, e finché resta le app non riescono ad aggiornare i modelli. Il valore resta nell'archivio segreti del motore.",
     'Antigravity configuration updated': 'Configurazione Antigravity aggiornata',
     'OpenCode configuration updated': 'Configurazione OpenCode aggiornata',
     'Codex configuration updated': 'Configurazione Codex aggiornata',

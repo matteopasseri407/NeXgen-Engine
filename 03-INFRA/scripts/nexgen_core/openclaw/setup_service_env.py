@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
 from nexgen_core.mcp_render import load_json_object
-from nexgen_core.openclaw.claude_cli import ANTHROPIC, is_claude_cli
+from nexgen_core.openclaw.claude_cli import ANTHROPIC, claude_cli_agents, is_claude_cli
 
 if TYPE_CHECKING:
     from nexgen_core.openclaw.setup_steps import Setup
@@ -23,8 +23,12 @@ if TYPE_CHECKING:
 _VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _SIMPLE_VAR_PATTERN = re.compile(r"(?<!\\)\$([A-Za-z_][A-Za-z0-9_]*)")
 
+#: The one provider key whose mere presence in the gateway's environment is a fault:
+#: OpenClaw's live catalogue sends it to `GET /v1/models` (`_retired_keys` argues it).
+ANTHROPIC_API_KEY = "ANTHROPIC_API_KEY"
+
 _KNOWN_MODEL_ENV_VARS = {
-    "anthropic": ["ANTHROPIC_API_KEY"],
+    "anthropic": [ANTHROPIC_API_KEY],
     "openai": ["OPENAI_API_KEY"],
     "deepseek": ["DEEPSEEK_API_KEY"],
     "opencode": ["OPENCODE_GO_KEY"],
@@ -102,20 +106,45 @@ def _format_env_line(key: str, value: str) -> str:
     return f'{key}="{escaped}"'
 
 
-def _align_values(content: str, values: Mapping[str, str]) -> tuple[str, list[str], list[str]]:
-    """The file with every named key at its current value.
+def _retired_keys(config: dict[str, Any], referenced: set[str]) -> set[str]:
+    """The keys the gateway must not carry even though nothing asks for them.
 
-    Returns the new content, the keys that were rewritten, and the keys that were
-    added. A line the engine does not know is left exactly as it is: this file also
-    carries keys a person put there by hand, and they are not the engine's.
+    `ANTHROPIC_API_KEY` is the exception, and it is narrow on purpose. It belongs
+    here when at least one agent runs on `claude-cli` and no reference is left for
+    it: the key is not what runs that agent's turn, but while it sits in the
+    gateway's environment OpenClaw's live discovery calls `GET /v1/models` with it,
+    a workspace-scoped key answers 400, every model is reported unavailable, and
+    the apps that read `models.list` say they cannot update the models on each
+    open. Nothing is lost: the value stays in the engine's secret store, which is
+    where the setup reads it from the next time something names it.
     """
+    if not claude_cli_agents(config):
+        return set()
+    return {ANTHROPIC_API_KEY} - referenced
+
+
+def _align_values(
+    content: str, values: Mapping[str, str], retired: set[str] | None = None,
+) -> tuple[str, list[str], list[str], list[str]]:
+    """The file with every named key at its current value, and the retired ones gone.
+
+    Returns the new content, the keys that were rewritten, the keys that were added,
+    and the keys that were removed. A line the engine does not know is left exactly
+    as it is: this file also carries keys a person put there by hand, and they are
+    not the engine's. `retired` is the exception the caller argues for, one key at
+    a time: those lines go even though no value replaces them.
+    """
+    dropped = retired or set()
     rewritten: list[str] = []
+    removed: list[str] = []
     present: set[str] = set()
     out: list[str] = []
     for line in content.splitlines():
         stripped = line.strip()
         key = stripped.split("=", 1)[0].strip() if "=" in stripped and not stripped.startswith("#") else ""
-        if key and key in values:
+        if key and key in dropped:
+            removed.append(key)
+        elif key and key in values:
             present.add(key)
             new_line = _format_env_line(key, values[key])
             if line != new_line:
@@ -126,7 +155,8 @@ def _align_values(content: str, values: Mapping[str, str]) -> tuple[str, list[st
     added = [key for key in values if key not in present]
     for key in added:
         out.append(_format_env_line(key, values[key]))
-    return "\n".join(out).rstrip() + "\n", rewritten, added
+    body = "\n".join(out).rstrip()
+    return (body + "\n" if body else ""), rewritten, added, removed
 
 
 def write_gateway_service_env(
@@ -139,7 +169,9 @@ def write_gateway_service_env(
     servers make. They are regenerated every run, not filled in once: a token rotated
     in the engine's secret store used to stay alive here at its old value, and a second
     copy of a secret is exactly what the store exists to prevent. Keys the engine does
-    not reference are the person's and stay untouched.
+    not reference are the person's and stay untouched, except one: a key a
+    `claude-cli` agent does not read is taken out, because it breaks the model
+    catalogue (`_retired_keys` argues it).
     """
     referenced = extract_referenced_env_vars(config) | extract_mounted_mcp_env_vars(setup.config_path)
     env_source: Mapping[str, str] = setup.env or os.environ
@@ -154,13 +186,16 @@ def write_gateway_service_env(
     else:
         existing_content = "# OpenClaw environment file\n# Variables referenced in configuration and mounted MCP servers\n"
 
-    content, rewritten, added = _align_values(existing_content, active_vars)
+    content, rewritten, added, removed = _align_values(existing_content, active_vars, _retired_keys(config, referenced))
     if content != existing_content or not env_file.is_file():
         atomic_write_text(env_file, content, preserve_mode=False)
 
     if rewritten or added:
         setup.out(t("OpenClaw environment regenerated at {path} ({rewritten} updated, {added} added).",
                     path=env_file, rewritten=len(rewritten), added=len(added)))
-    else:
+    elif not removed:
         setup.out(t("OpenClaw environment at {path} already carries the current values.", path=env_file))
+    for key in removed:
+        setup.out(t("Took {key} out of {path}: no agent reads it, and the apps cannot update the models while it "
+                    "is there. The value stays in the engine's secret store.", key=key, path=env_file))
     return env_file
