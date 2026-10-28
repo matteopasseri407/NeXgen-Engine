@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -333,6 +334,34 @@ def test_an_old_node_stops_the_setup_before_installing(tmp_path):
     assert not any(" install -g " in command for command in machine.runner.commands())
     assert ">=24.22.1" in machine.output()
     assert "nodejs.org" in machine.output()
+
+
+def test_the_node_floor_of_the_pin_is_checked_against_an_older_install(tmp_path):
+    """The installed release accepts an older Node than the pin does.
+
+    OpenClaw 2026.8.1 declares `>=24.15.0 <25`, so a Node 24.18.0 satisfies the
+    release on disk; 2026.10.6 requires `>=24.22.1`. Reading the requirement of
+    what is installed installs a release the CLI then refuses to run, so the
+    floor of the pin is the one that decides, before the install.
+    """
+    machine = Machine(tmp_path)
+    machine.runner.node_version = "v24.18.0"
+    installed = detection(machine.config, version="2026.8.1")
+    installed = replace(
+        installed,
+        openclaw=replace(
+            installed.openclaw,
+            node_requirement=">=22.22.3 <23 || >=24.15.0 <25 || >=25.9.0",
+        ),
+    )
+
+    code = machine.run(detected=installed)
+
+    assert code == 1
+    assert not any(" install -g " in command for command in machine.runner.commands())
+    assert "24.18.0" in machine.output(), "the version found is named"
+    assert ">=24.22.1" in machine.output(), "the version required is named"
+    assert "nodejs.org" in machine.output(), "the person is told what to do"
 
 
 def test_a_linux_session_without_the_user_bus_stops_with_an_action(tmp_path):
@@ -688,7 +717,7 @@ def test_the_opencode_agent_appears_only_with_its_command_and_its_key(tmp_path):
         other.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
         assert other.run(detected=detection(other.config, **kwargs)) == 0
         config = other.config_json()
-        assert "sviluppo" not in config["agents"]["entries"]
+        assert "sviluppo" not in config.get("agents", {}).get("entries", {}), "no roster names it"
         assert "acp" not in config
         assert "acpx" not in config["plugins"]["allow"]
 
@@ -1159,3 +1188,76 @@ def test_find_engine_hooks_dir_returns_none_when_explicit_root_lacks_hooks(tmp_p
     # An explicit engine root without hooks must return None (no fallback to module hooks)
     assert _find_engine_hooks_dir(empty_engine_root) is None
 
+
+
+def test_the_setup_reads_the_default_vault_when_the_caller_passes_none(tmp_path, monkeypatch):
+    """The plan resolves the default vault; the context must see the same one.
+
+    Without it, the steps that read the squad (the manuals above all) work with no
+    squad at all: the plan still proposes the workspace, no manual is written, and
+    nothing reports an error (measured on the VPS, 2026-10-25).
+    """
+    from nexgen_core.openclaw.setup import _prepare
+
+    monkeypatch.delenv("AGENT_VAULT_DATA", raising=False)
+    monkeypatch.delenv("KNOWLEDGE_VAULT_PATH", raising=False)
+    machine = Machine(tmp_path)
+
+    setup, _snapshot = _prepare(
+        home=machine.home,
+        env={},
+        detected=detection(machine.config),
+        which=which_map().get,
+        run=machine.runner,
+        service=machine.service,
+        dry_run=True,
+        engine_root=ENGINE_ROOT,
+        vault_data=None,
+        stamp="20261025-test",
+        out=machine.lines.append,
+        platform=sys.platform,
+    )
+
+    assert setup.vault_data == machine.home / "KnowledgeVault"
+
+
+#: Two connectors, mounted directly by every CLI, for the `claude-cli` test below.
+CLAUDE_CLI_MANIFEST = """schema_version: 1
+servers:
+  vault-library:
+    exposure: eager
+    transport: stdio
+    command: node
+    args: ["vault.mjs"]
+  n8n-mcp:
+    exposure: eager
+    transport: stdio
+    command: node
+    args: ["n8n.mjs"]
+"""
+
+
+def test_a_claude_cli_agent_reads_its_connectors_from_claude_code(tmp_path):
+    """One run, two files: the loopback loses the connectors, Claude Code's own file gains them.
+
+    This is the end-to-end shape of the 943k-token incident: without the deny, every
+    connector's schema rode on OpenClaw's `alwaysLoad` loopback server at every call.
+    """
+    machine = Machine(tmp_path)
+    machine.runner.onboard = onboard_writer(machine.config, machine.state_dir / "workspace")
+    manifest = machine.vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(CLAUDE_CLI_MANIFEST, encoding="utf-8")
+
+    code = machine.run(detected=detection(machine.config, installed=False, claude=True))
+
+    assert code == 0
+    from nexgen_core.openclaw.tools_profile import SUPERVISOR_TOOLS
+
+    capo = machine.config_json()["agents"]["entries"]["capo"]
+    assert capo["tools"]["deny"] == ["n8n-mcp__*", "vault-library__*"]
+    assert capo["tools"]["alsoAllow"] == sorted(SUPERVISOR_TOOLS), \
+        "the deny is added beside the supervisor's own list, never instead of it"
+    native = json.loads((machine.home / ".claude.json").read_text(encoding="utf-8"))["mcpServers"]
+    assert set(native) == {"vault-library", "n8n-mcp"}
+    assert "The connectors of capo come from Claude Code's own configuration." in machine.output()

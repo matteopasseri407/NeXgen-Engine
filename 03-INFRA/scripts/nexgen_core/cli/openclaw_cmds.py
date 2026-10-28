@@ -83,6 +83,15 @@ def _register_pairing(psub) -> None:
                    help=t("The gateway's port (default: 18789)"))
     q.add_argument("--name", default=None, metavar="LABEL",
                    help=t("The name the gateway shows for this machine"))
+    q.add_argument("--apply", action="store_true",
+                   help=t("Do it on this machine: retire the local gateway, prepare the configuration and start "
+                          "the node service"))
+    q.add_argument("--join-file", dest="join_file", default=None, metavar="PATH",
+                   help=t("A private file holding the gateway's join URL; it is read and never printed"))
+    q.add_argument("--dry-run", action="store_true",
+                   help=t("With --apply: print what would change and change nothing"))
+    q.add_argument("--force", action="store_true",
+                   help=t("Move a machine that is already a node of another gateway to this one"))
     q.set_defaults(func=cmd_node)
 
 
@@ -106,8 +115,16 @@ def _register_upkeep(psub) -> None:
                    help=t("How long to wait for the port (default: 600)"))
     q.set_defaults(func=cmd_restart)
 
+    q = psub.add_parser("smoke", help=t("Prove the gateway is up and answering, after a version change"))
+    q.add_argument("--agent", default="main", help=t("The agent that answers the short turn"))
+    q.set_defaults(func=cmd_smoke)
+
     q = psub.add_parser("stop", help=t("Stop the gateway before editing its file by hand"))
     q.set_defaults(func=cmd_stop)
+
+    q = psub.add_parser("groom", help=t("Compact the agent chats that sat idle or grew too large"))
+    q.add_argument("--dry-run", action="store_true", help=t("Show what would be compacted, change nothing"))
+    q.set_defaults(func=cmd_groom)
 
     q = psub.add_parser("rpc", help=t("Interact with OpenClaw Gateway via WebSocket RPC"))
     rpc_sub = q.add_subparsers(dest="rpc_command", metavar="action")
@@ -204,6 +221,27 @@ def cmd_stop(args) -> int:
     return run_stop()
 
 
+def cmd_groom(args) -> int:
+    import sys
+
+    from nexgen_core.openclaw.sessions_groom import groom
+
+    try:
+        lines = groom(dry_run=bool(getattr(args, "dry_run", False)))
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    if not lines:
+        print(t("No agent chat needs compacting."))
+    return 0
+
+
+def cmd_smoke(args) -> int:
+    from nexgen_core.openclaw.smoke import run_smoke
+
+    return run_smoke(agent=getattr(args, "agent", "main") or "main")
+
+
 def cmd_pair(args) -> int:
     from nexgen_core.openclaw.setup import run_pair
 
@@ -224,8 +262,46 @@ def cmd_node(args) -> int:
     except ValueError as error:
         print(t("Cannot propose the node connection: {error}", error=error))
         return 2
+    if getattr(args, "apply", False):
+        return _apply_node(args, port)
     print(render_node_link(link))
     return 0
+
+
+def _read_join_target(path: str) -> tuple[str | None, str | None]:
+    """The join URL from a private file, or the reason it cannot be read."""
+    from pathlib import Path
+
+    source = Path(path).expanduser()
+    try:
+        target = source.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        return None, str(error)
+    if not target:
+        return None, t("the file is empty")
+    return target, None
+
+
+def _apply_node(args, port: int) -> int:
+    """The machine-side transition, with the join URL taken from where the person left it."""
+    from nexgen_core.openclaw.node_apply import apply_node
+
+    join_target = None
+    join_file = getattr(args, "join_file", None)
+    if join_file:
+        join_target, error = _read_join_target(join_file)
+        if error:
+            print(t("Cannot read the join file {path}: {error}", path=join_file, error=error))
+            return 2
+    return apply_node(
+        args.host,
+        port=port,
+        name=args.name,
+        join_target=join_target,
+        dry_run=bool(getattr(args, "dry_run", False)),
+        force=bool(getattr(args, "force", False)),
+    )
+
 
 
 def cmd_rpc_health(args) -> int:

@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.jsonc import parse_jsonc, set_jsonc_top_level_value
+from nexgen_core.opencode_compat import supports_v2
 from nexgen_core.paths import opencode_config_path
 from nexgen_core.runtimes.base import EVENT_SINK_NAME, GUARDRAIL_CORE_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
 
@@ -157,6 +158,11 @@ class OpenCodeRuntime(Runtime):
     def _apply_posture_impl(self, home: Path, posture: str) -> str | None:
         desired = _POSTURE_RENDER.get(posture)
         if desired is None:
+            return None
+        if not supports_v2():
+            # A V1 CLI cannot read ordered `permissions` rules and refuses the whole
+            # config, so writing them would stop OpenCode from starting at all. The
+            # guardrail still runs from the plugin and its sidecar.
             return None
         path = self._config_path(home)
         data = self._load(path)

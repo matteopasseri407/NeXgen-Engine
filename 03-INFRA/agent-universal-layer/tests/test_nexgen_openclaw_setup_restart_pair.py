@@ -57,7 +57,8 @@ class PairRunner:
     def __call__(self, argv):
         self.calls.append(list(argv))
         if argv[1:3] == ["devices", "list"]:
-            return RunResult(0, json.dumps({"devices": self.devices}), "")
+            # The two tables the 2026.10.6 CLI prints (dist/devices-cli.runtime-*.mjs).
+            return RunResult(0, json.dumps({"pending": self.devices, "paired": []}), "")
         if argv[1:3] == ["devices", "approve"]:
             return RunResult(self.approve_code, "", "" if self.approve_code == 0 else "unknown id")
         return RunResult(0, "", "")

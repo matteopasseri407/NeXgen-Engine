@@ -64,8 +64,9 @@ def test_with_no_supervisor_agent_there_is_no_allowlist():
     """Only the OpenCode agent: nothing supervises, so nothing is allowed to."""
     config = build_config(machine(claude=False, go=False), Choices())
 
-    assert SUPERVISOR_AGENT not in config["agents"]["entries"]
-    for entry in config["agents"]["entries"].values():
+    entries = config.get("agents", {}).get("entries", {})
+    assert SUPERVISOR_AGENT not in entries
+    for entry in entries.values():
         assert "alsoAllow" not in entry.get("tools", {})
 
 

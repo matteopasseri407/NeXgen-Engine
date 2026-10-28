@@ -19,6 +19,7 @@ from nexgen_core.guard_instructions import (
     OPENCLAW_BLOCK_END,
     openclaw_block_state,
     openclaw_instruction_block,
+    openclaw_workspace_owners,
     openclaw_workspaces,
     with_openclaw_block,
 )
@@ -468,3 +469,44 @@ def test_guard_and_doctor_agree_on_a_misaligned_block(tmp_path):
 
     assert check_openclaw_instructions(vault, home).severity is Severity.WARN
     assert touching(aligns(vault, home), workspace / "AGENTS.md")
+
+
+def _owners_by_agent(config_path: Path, home: Path) -> dict[str, Path]:
+    return {
+        agent: workspace
+        for agents, workspace in openclaw_workspace_owners(config_path, home)
+        for agent in agents
+    }
+
+
+def test_an_agent_without_a_declared_workspace_gets_its_own_folder(tmp_path):
+    """OpenClaw nests a non-default agent under the default workspace, or names its
+    folder `workspace-<id>` when no default is declared; the engine must read the
+    same rule.
+
+    Reading every entry without a `workspace` as the default folder is how two
+    agents ended up sharing one `AGENTS.md` and the default agent's manual stopped
+    updating (VPS, 2026-10-25).
+    """
+    home = tmp_path / "home"
+    state = home / ".openclaw"
+    state.mkdir(parents=True)
+    entries = {"main": {"name": "KURISU"}, "laptop": {"name": "Laptop"}}
+
+    nested = state / "openclaw.json"
+    nested.write_text(json.dumps({"agents": {
+        "defaults": {"workspace": str(state / "workspace"), "systemAgent": {"agentId": "main"}},
+        "entries": entries,
+    }}), encoding="utf-8")
+    by_agent = _owners_by_agent(nested, home)
+    assert by_agent["main"] == state / "workspace"
+    assert by_agent["laptop"] == state / "workspace" / "laptop"
+
+    flat = state / "openclaw.json"
+    flat.write_text(json.dumps({"agents": {
+        "defaults": {"systemAgent": {"agentId": "main"}},
+        "entries": entries,
+    }}), encoding="utf-8")
+    by_agent = _owners_by_agent(flat, home)
+    assert by_agent["main"] == state / "workspace"
+    assert by_agent["laptop"] == state / "workspace-laptop"

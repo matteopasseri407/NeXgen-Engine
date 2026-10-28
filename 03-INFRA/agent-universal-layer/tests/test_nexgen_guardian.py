@@ -88,8 +88,8 @@ def test_new_script_is_held(tmp_path: Path):
     head = _commit(repo, "new helper script")
 
     verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, ".")
-    assert verdict.verdict == HOLD
-    assert any("script" in reason for reason in verdict.reasons)
+    assert verdict.verdict == HOLD, verdict.reasons
+    assert any("script" in reason for reason in verdict.reasons), verdict.reasons
 
 
 def test_rewritten_history_is_held(tmp_path: Path):

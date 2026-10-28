@@ -7,6 +7,7 @@ still finds the version in the file the entry points at.
 """
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -46,14 +47,22 @@ def test_the_upstream_is_the_npm_package_and_the_pin_is_one_file():
 
 
 def test_the_declared_pattern_actually_finds_the_pin():
+    """The catalog's pattern and the pin file must name the same release.
+
+    Neither number is written here: a copy of the version in a test is a copy
+    that goes stale, and this one did (it still said 2026.10.7 after the pin
+    moved). The file is the source, and the pattern must find what is in it.
+    """
     upstream = openclaw_module().upstream[0]
     text = (INFRA / upstream.pinned_in).read_text(encoding="utf-8")
+    declared = json.loads(text)["version"]
     found = re.search(upstream.pattern, text)
     assert found is not None
-    assert found.group(1) == "2026.10.6"
+    assert found.group(1) == declared
 
 
 def test_the_package_reads_the_same_version_as_the_catalog_pins():
     from nexgen_core.openclaw.pin import pinned_version
 
-    assert pinned_version(INFRA) == "2026.10.6"
+    declared = json.loads((INFRA / "agent-universal-layer" / "openclaw" / "pin.json").read_text(encoding="utf-8"))
+    assert pinned_version(INFRA) == declared["version"]

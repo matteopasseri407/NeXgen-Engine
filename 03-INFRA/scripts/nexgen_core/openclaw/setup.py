@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 from nexgen_core.i18n import t
+from nexgen_core.openclaw import claude_native
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.doctor import collect as doctor_collect
 from nexgen_core.openclaw.doctor import render as doctor_render
@@ -42,6 +43,7 @@ from nexgen_core.openclaw.setup_steps import (
     ensure_onboarded,
     governor_step,
     module_step,
+    groom_job_step,
     phone_step,
     planned_commands,
     plugin_step,
@@ -58,7 +60,7 @@ from nexgen_core.openclaw_pairing import nodes_pending as pairing_nodes_pending
 from nexgen_core.openclaw_pairing import nodes_status as pairing_nodes_status
 from nexgen_core.openclaw_pairing import pending as pairing_pending
 from nexgen_core.openclaw_service import OpenClawService, RunResult
-from nexgen_core.paths import openclaw_config, resolve_home
+from nexgen_core.paths import openclaw_config, resolve_home, resolve_vault_data
 from nexgen_core.processes import command_line_text
 
 __all__ = ["START_TIMEOUT_SECONDS", "run_pair", "run_restart", "run_setup", "run_stop"]
@@ -119,7 +121,10 @@ def _prepare(
         env=values,
         config_path=config_path,
         engine_root=engine_root,
-        vault_data=vault_data,
+        # The plan already resolves the default vault; the context has to see the
+        # same one or every step that reads the squad (the manuals above all)
+        # works with no squad at all.
+        vault_data=vault_data if vault_data is not None else resolve_vault_data(home_dir),
         pinned=pinned_version(engine_root),
         dry_run=dry_run,
         out=out,
@@ -212,6 +217,13 @@ def _apply(
         return 1
     _record_role(server=server, dry_run=setup.dry_run, home=setup.home, out=setup.out)
     write_gateway_service_env(setup, plan.config)
+    # The connectors of a `claude-cli` agent live in Claude Code's own file, which
+    # `claude_loopback` has just taken off the loopback server: rendering it is what
+    # keeps those agents connected at all.
+    claude_native.ensure(
+        plan.config, home=setup.home, vault_data=setup.vault_data,
+        engine_root=setup.engine_root, out=setup.out, dry_run=setup.dry_run,
+    )
     from nexgen_core.openclaw.squad import register_model_keys
 
     register_model_keys(setup, plan.config)
@@ -225,6 +237,7 @@ def _apply(
         return 1
     _step(setup.out, 7, t("Module"))
     module_step(setup)
+    groom_job_step(setup)
     _step(setup.out, 8, t("Phone"))
     phone_step(setup)
     _step(setup.out, 9, t("Doctor"))

@@ -27,6 +27,12 @@ def _no_ambient_binaries(monkeypatch):
         monkeypatch.setattr(f"nexgen_core.runtimes.{module}.shutil.which", lambda *_a, **_k: None)
 
 
+@pytest.fixture(autouse=True)
+def _opencode_v2(opencode_dialect):
+    """Every OpenCode case below proves the V2 writer; the V1 case pins its own dialect."""
+    opencode_dialect("2.2.0")
+
+
 def _body(tmp_path: Path, text: str = "// policy\n") -> Path:
     body = tmp_path / "guardrail-catastrophic.mjs"
     body.write_text(text, encoding="utf-8")
@@ -155,6 +161,17 @@ def test_with_the_plugin_installed_bypass_asks_and_lets_the_plugin_answer(tmp_pa
 def test_without_the_plugin_bypass_is_rendered_as_before(tmp_path):
     _home, _path, _rt, rules = _install_and_bypass(tmp_path, guardrail=False)
     assert rules[("shell", "*")] == "allow"
+
+
+def test_a_v1_binary_keeps_the_config_it_cannot_parse_untouched(tmp_path, opencode_dialect):
+    """A V1 CLI refuses the whole config on ordered `permissions`: writing them stops OpenCode."""
+    opencode_dialect("1.19.3")
+    home, path = _opencode_home(tmp_path)
+    before = path.read_text(encoding="utf-8")
+
+    assert OpenCodeRuntime().apply_posture(home, "bypass") is None
+
+    assert path.read_text(encoding="utf-8") == before
 
 
 def test_an_allow_written_before_the_plugin_existed_is_converted_not_left_unreachable(tmp_path):

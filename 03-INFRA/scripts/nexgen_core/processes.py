@@ -1,14 +1,16 @@
 """Launch adapters and bounded cleanup for subprocess trees owned by us."""
 from __future__ import annotations
 
+import contextlib
 import os
 import shlex
 import shutil
 import signal
 import subprocess
+import tempfile
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 
 #: PowerShell reads all of these as a single quote, not just the ASCII apostrophe.
@@ -32,6 +34,23 @@ NPM_SHIM_ENTRIES = {
 
 class ShimEntryError(RuntimeError):
     """An npm shim whose Node entry is not beside it: there is nothing left to start."""
+
+
+@contextlib.contextmanager
+def probe_environment(prefix: str = "nexgen-probe-") -> Iterator[dict[str, str]]:
+    """An environment in which an interrogated CLI writes nothing into the real home.
+
+    A CLI asked only for its version or its flags still opens its log and state
+    directories on start-up, and on a clean machine that append made a second
+    install look like a rewrite. The config directory is redirected too, so a
+    config the binary cannot parse cannot change the answer about the binary.
+    """
+    with tempfile.TemporaryDirectory(prefix=prefix) as scratch:
+        env = dict(os.environ)
+        for key in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+                    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
+            env[key] = scratch
+        yield env
 
 
 def powershell_literal(text: str) -> str:

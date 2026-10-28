@@ -54,7 +54,10 @@ servers:
     return McpRenderer(vault_data=vault, home=tmp_path / "home")
 
 
-def test_opencode_v2_migrates_legacy_and_preserves_unmanaged_servers(tmp_path: Path, monkeypatch) -> None:
+def test_opencode_v2_migrates_legacy_and_preserves_unmanaged_servers(
+    tmp_path: Path, monkeypatch, opencode_dialect
+) -> None:
+    opencode_dialect("2.2.0")
     renderer = _renderer(tmp_path)
     cfg = renderer.opencode_config_path()
     cfg.parent.mkdir(parents=True)
@@ -117,7 +120,29 @@ def test_a_bom_in_the_live_config_is_still_read_for_adoption(tmp_path: Path, mon
     assert set(renderer_cli._load_live("opencode")) == {"outside"}
 
 
-def test_opencode_v2_preserves_native_options_and_other_cli_output(tmp_path: Path) -> None:
+def test_a_v1_cli_gets_no_v2_permissions_from_the_renderer(tmp_path: Path, opencode_dialect) -> None:
+    """A V1 CLI refuses the whole config when `permissions` is present.
+
+    The tool denies are V2 only: on a V1 machine the trimming shim still
+    enforces them, and the render must not write the key that stops the CLI
+    from starting.
+    """
+    opencode_dialect("1.19.3")
+    renderer = _renderer(tmp_path)
+
+    assert renderer.render_opencode(write=True)[0]
+
+    cfg = renderer.opencode_config_path()
+    raw = cfg.read_text(encoding="utf-8")
+    data = parse_jsonc(raw)
+    assert "permissions" not in data
+    assert "mcp-trim.py" in data["mcp"]["servers"]["managed"]["command"][1]
+    renderer.render_opencode(write=True)
+    assert cfg.read_text(encoding="utf-8") == raw, "a second render must not rewrite the file"
+
+
+def test_opencode_v2_preserves_native_options_and_other_cli_output(tmp_path: Path, opencode_dialect) -> None:
+    opencode_dialect("2.2.0")
     renderer = _renderer(tmp_path)
     cfg = renderer.opencode_config_path()
     cfg.parent.mkdir(parents=True)

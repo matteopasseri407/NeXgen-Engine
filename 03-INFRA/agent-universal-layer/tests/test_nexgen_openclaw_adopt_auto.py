@@ -485,3 +485,24 @@ def test_cli_adopt_auto_json_output(a_machine: Machine, capsys, monkeypatch):
     # It acted on the fixture, not on the machine running the suite.
     assert "safe-server" in (load_mcp_manifest(a_machine.mcp_manifest).get("servers") or {})
     assert (a_machine.state / "openclaw-adopt-state.json").is_file()
+
+
+def test_the_adoption_check_names_what_is_waiting_and_why(a_machine: Machine):
+    """A count is not something a person can act on: the line names the skill and the file.
+
+    The four skills waiting on the server were invisible in the doctor's one line, so
+    the only way to know what to decide was to run the interactive command and read.
+    """
+    workshop_dir = a_machine.home / ".openclaw" / "agents" / "main" / "agent" / "workshop-skills" / "review-skill"
+    workshop_dir.mkdir(parents=True)
+    (workshop_dir / "SKILL.md").write_text(
+        "---\nname: review-skill\ndescription: Needs human check\n---\nBody", encoding="utf-8"
+    )
+    (workshop_dir / "run.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+
+    a_machine.auto_adopt()
+    outcome = check_adopt_doctor(a_machine.state)
+
+    assert outcome.detail is not None
+    assert "review-skill" in outcome.detail
+    assert "run.sh" in outcome.detail

@@ -541,7 +541,7 @@ def wire_absorbed_secrets(root: Path, refs: dict[str, list[str]], masked: list[s
     return _wire_absorbed_secrets_impl(root, refs, masked)
 
 
-def install_launchers(root: Path) -> str:
+def install_launchers(root: Path, home: Path | None = None) -> str:
     """Generates the commands, if the engine lives in this clone.
 
     The home is asked for, never assumed. Without this the installer wrote
@@ -556,7 +556,7 @@ def install_launchers(root: Path) -> str:
     try:
         from nexgen_core.shims import install_shims
 
-        installed = install_shims(scripts_dir=scripts_dir, home=resolve_home())
+        installed = install_shims(scripts_dir=scripts_dir, home=resolve_home(home))
         return t("{count} commands installed in ~/.local/bin", count=len(installed))
     except Exception as exc:  # noqa: BLE001 - bootstrap reports, never raises
         return t("commands not installed ({error})", error=exc)

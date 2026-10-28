@@ -48,10 +48,9 @@ from nexgen_core.openclaw.node_transition import (
     normalize_gateway_origin,
     plan_node_transition,
     start_node_service_safe,
-    stop_local_gateway_safe,
     stop_node_service_safe,
 )
-from nexgen_core.paths import resolve_home, resolve_state_dir
+from nexgen_core.paths import openclaw_config, resolve_home, resolve_state_dir
 from nexgen_core.server_sudo import FAILURES, install as _install_sudo_policy
 
 
@@ -139,13 +138,19 @@ def declared_role(home: Path | None = None, vault_root: Path | None = None) -> s
     return None
 
 
-def _install_launchers_step(root: Path, out: Callable[[str], None]) -> None:
+def _install_launchers_step(root: Path, out: Callable[[str], None], home: Path | None = None) -> None:
+    """Writes the engine commands into the home this role was given.
+
+    The home is a parameter, never re-derived here: resolving it inside wrote
+    into the operator's real `~/.local/bin` from a sandboxed test, leaving every
+    engine command pointing at a directory in /tmp that was then deleted.
+    """
     scripts_dir = root / "03-INFRA" / "scripts"
     if (scripts_dir / "nexgen_core").is_dir():
         try:
             from nexgen_core.shims import install_shims
 
-            installed = install_shims(scripts_dir=scripts_dir, home=resolve_home())
+            installed = install_shims(scripts_dir=scripts_dir, home=resolve_home(home))
             out(t("{count} commands installed in ~/.local/bin", count=len(installed)))
         except Exception as exc:  # nexgen: allow reason="shim install failure handled gracefully during role bootstrap"
             out(t("commands not installed ({error})", error=exc))
@@ -172,6 +177,7 @@ def _sync_node_role(
     root: Path,
     out: Callable[[str], None],
     align_fn: Callable[[], tuple[bool, str]] | None = None,
+    home: Path | None = None,
 ) -> int:
     profile = "MINIMAL"
     write_user_profile(
@@ -182,7 +188,7 @@ def _sync_node_role(
     )
     write_remotes(root, profile=profile)
     seed_skill_manifest(root)
-    _install_launchers_step(root, out)
+    _install_launchers_step(root, out, home)
     aligner = align_fn or _default_align
     aligned, message = aligner()
     out(t("Synchronized CLI, skills and MCP from engine: {msg}", msg=message))
@@ -217,7 +223,7 @@ def run_standalone_role(
     )
     write_remotes(root, profile=profile)
     seed_skill_manifest(root)
-    _install_launchers_step(root, out)
+    _install_launchers_step(root, out, home_dir)
 
     commit_setup(root, [
         root / "99-INDEX" / "USER-PROFILE.md",
@@ -273,7 +279,7 @@ def run_server_role(
     write_user_profile(root, profile=profile, clis=["openclaw"], machines=SERVER_MACHINES)
     write_remotes(root, profile=profile)
     seed_skill_manifest(root)
-    _install_launchers_step(root, out)
+    _install_launchers_step(root, out, home_dir)
     on_linux = (platform or sys.platform).startswith("linux")
     policy = _sudoers_step(sudoers_fn, home_dir, out) if on_linux else None
 
@@ -313,6 +319,7 @@ def _handle_existing_node(
     root: Path,
     out: Callable[[str], None],
     align_fn: Callable[[], tuple[bool, str]] | None,
+    home: Path | None = None,
     runner: Run | None = None,
 ) -> tuple[bool, int]:
     """Handles existing node checks. Returns (handled, exit_code)."""
@@ -325,7 +332,7 @@ def _handle_existing_node(
             out(t("Questa macchina è già nodo del gateway {gw}.", gw=cur_origin))
             if not inspection.node.is_running:
                 start_node_service_safe(runner=runner, out=out)
-            return True, _sync_node_role(root, out, align_fn)
+            return True, _sync_node_role(root, out, align_fn, home)
         if not force:
             out(t("Questa macchina è già nodo del gateway {gw}.", gw=cur_origin))
             out(t("Il link specificato punta a un gateway diverso: {target}.", target=new_origin))
@@ -335,7 +342,7 @@ def _handle_existing_node(
         out(t("Questa macchina è già nodo del gateway {gw}.", gw=cur_origin))
         if not inspection.node.is_running:
             start_node_service_safe(runner=runner, out=out)
-        return True, _sync_node_role(root, out, align_fn)
+        return True, _sync_node_role(root, out, align_fn, home)
     return False, 0
 
 
@@ -349,6 +356,8 @@ def _show_no_join_instructions(name: str, out: Callable[[str], None]) -> int:
     out(t("  .\\install.ps1 -Role node -Join <join-url>"))
     out(t("oppure direttamente:"))
     out(t("  openclaw connect <join-url> --service --session-host"))
+    out(t("Or let the engine retire the local gateway first and attach for you:"))
+    out(t("  nexgen openclaw node --host <gateway address> --apply --join-file <file>"))
     out(t("Per assegnare compiti a questo nodo nella squadra centrale, aggiungi a squad.yaml sul server:"))
     out(f"  agents:\n    {name}:\n      tools:\n        exec:\n          host: node\n          node: {name}")
     return 0
@@ -364,19 +373,27 @@ def _stop_local_gateway_step(
     systemd_user_dir: Path | None,
     out: Callable[[str], None],
 ) -> list[str]:
-    """Gracefully shuts down local gateway if one is present."""
-    if not inspection.gateway.present:
-        return []
-    stop_local_gateway_safe(
-        home=home,
-        platform=platform,
-        runner=runner,
-        appdata=appdata,
-        startup_dir=startup_dir,
-        systemd_user_dir=systemd_user_dir,
-        out=out,
-    )
-    return [t("gateway OpenClaw locale disattivato")]
+    """Retires the local gateway and what it left behind, and prepares the node's own config.
+
+    The configuration is prepared even when no gateway service is found: the
+    machine still needs session hosting on, and a token or a channel left in the
+    file fights the central gateway whether or not a service was running.
+    """
+    from nexgen_core.openclaw.node_retire import RetireResult, prepare_config, report, retire_local_gateway
+
+    if inspection.gateway.present:
+        result = retire_local_gateway(
+            home=home,
+            platform=platform,
+            runner=runner,
+            appdata=appdata,
+            startup_dir=startup_dir,
+            systemd_user_dir=systemd_user_dir,
+            out=out,
+        )
+        return [report(result)]
+    change = prepare_config(openclaw_config(resolve_home(home)), out)
+    return [report(RetireResult(drop_in_archive=None, config=change))]
 
 
 def _attach_and_wait(
@@ -463,7 +480,7 @@ def _execute_node_transition(
     stopped = _stop_local_gateway_step(
         inspection, home, platform, runner, appdata, startup_dir, systemd_user_dir, out,
     )
-    sync_code = _sync_node_role(root, out, align_fn)
+    sync_code = _sync_node_role(root, out, align_fn, home)
     if sync_code != 0:
         return sync_code
 
@@ -528,7 +545,7 @@ def run_node_role(
     join_target = join or target or gateway_url or os.environ.get("NEXGEN_JOIN_URL")
     name = node_name or "node"
 
-    handled, code = _handle_existing_node(inspection, join_target, force, root, out, align_fn, runner=runner)
+    handled, code = _handle_existing_node(inspection, join_target, force, root, out, align_fn, home, runner=runner)
     if handled:
         return code
     if not join_target:

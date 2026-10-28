@@ -23,7 +23,8 @@ from nexgen_core.openclaw.doctor import collect, exit_code  # noqa: E402 - sys.p
 from nexgen_core.openclaw.profile import PENDING_TOKEN  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.report import Severity  # noqa: E402 - sys.path shim for cloned checkout
 
-PINNED = "2026.10.6"
+#: The release the pin file declares: the doctor must name that one, whatever it is.
+PINNED = json.loads((SCRIPTS_DIR.parent / "agent-universal-layer" / "openclaw" / "pin.json").read_text(encoding="utf-8"))["version"]
 
 
 @pytest.fixture(autouse=True)
@@ -812,3 +813,77 @@ def test_mcp_literal_non_secret_url_passes(tmp_path):
     outcome = by_id(outcomes)["openclaw.mcp.secret_url"]
     assert outcome.severity == Severity.OK
 
+
+
+def _deposited_plugin(config_path: Path) -> Path:
+    """The engine's plugin folder where OpenClaw's loader looks for it."""
+    plugin = config_path.parent / "extensions" / "nexgen"
+    plugin.mkdir(parents=True, exist_ok=True)
+    (plugin / "openclaw.plugin.json").write_text('{"id": "nexgen"}\n', encoding="utf-8")
+    (plugin / "index.mjs").write_text("export default {};\n", encoding="utf-8")
+    return plugin
+
+
+def test_a_deposited_plugin_openclaw_will_not_load_is_a_failure(tmp_path):
+    """`plugins.allow` is an allowlist of ids: a folder it does not name is code that never runs.
+
+    The guardrail, the governor and the evidence check all live in that folder, so
+    a silent OK here would tell the person the protections are installed when they
+    are not (2026.10.6: `plugins.allow` permits plugin ids to load, and
+    `plugins.entries.<id>.enabled` is the switch).
+    """
+    path = write_config(tmp_path, clean_config())
+    _deposited_plugin(path)
+
+    outcome = by_id(run_doctor(tmp_path, path))["openclaw.plugin"]
+
+    assert outcome.severity == Severity.BROKEN
+    assert "nexgen" in outcome.message
+    assert "plugins.allow" in outcome.message
+    assert "nexgen openclaw setup" in outcome.action
+
+
+def test_a_deposited_plugin_named_but_not_enabled_is_a_failure(tmp_path):
+    config = clean_config()
+    config["plugins"]["allow"] = [*config["plugins"]["allow"], "nexgen"]
+    path = write_config(tmp_path, config)
+    _deposited_plugin(path)
+
+    outcome = by_id(run_doctor(tmp_path, path))["openclaw.plugin"]
+
+    assert outcome.severity == Severity.BROKEN
+    assert "enabled" in outcome.message
+
+
+def test_a_deposited_plugin_that_is_enabled_is_fine(tmp_path):
+    config = clean_config()
+    config["plugins"]["allow"] = [*config["plugins"]["allow"], "nexgen"]
+    config["plugins"]["entries"] = {"nexgen": {"enabled": True}}
+    path = write_config(tmp_path, config)
+    _deposited_plugin(path)
+
+    assert by_id(run_doctor(tmp_path, path))["openclaw.plugin"].severity == Severity.OK
+
+
+def test_a_machine_without_the_plugin_folder_says_nothing_about_it(tmp_path):
+    path = write_config(tmp_path, clean_config())
+
+    assert "openclaw.plugin" not in by_id(run_doctor(tmp_path, path))
+
+
+def test_a_node_is_judged_on_its_remote_gateway_not_on_a_local_listener(tmp_path):
+    """A node declares no bind and no local token: judging it as a gateway invents a fault.
+
+    A3 stopped the setup from writing `bind` and `auth` on a node, so the doctor
+    must stop asking a node for them: otherwise every node in the field turns
+    red at the next run for a port the node is not supposed to open.
+    """
+    config = clean_config()
+    config["gateway"] = {"mode": "remote", "port": 18789, "remote": {"url": "wss://gw.example.ts.net"}}
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, config)))
+
+    assert outcomes["openclaw.gateway.bind"].severity == Severity.OK
+    assert "wss://gw.example.ts.net" in outcomes["openclaw.gateway.bind"].message
+    assert "no listener" in outcomes["openclaw.gateway.bind"].message
+    assert "openclaw.gateway.auth" not in outcomes
+    assert not [o for o in outcomes.values() if o.severity == Severity.BROKEN]

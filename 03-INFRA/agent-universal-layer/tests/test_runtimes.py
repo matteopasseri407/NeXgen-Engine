@@ -245,10 +245,11 @@ def _write_opencode_config(home: Path) -> Path:
     return path
 
 
-def test_opencode_apply_posture_migrates_legacy_object_to_v2_rules(tmp_path: Path):
+def test_opencode_apply_posture_migrates_legacy_object_to_v2_rules(tmp_path: Path, opencode_dialect):
     """V2 native posture: the legacy `permission` object migrates once into
     ordered `permissions` rules, then disappears. Foreign dimensions
     survive as equivalent rules, the user's plugins are untouched."""
+    opencode_dialect("2.2.0")
     home = tmp_path / "home"
     config = _write_opencode_config(home)
 
@@ -268,10 +269,11 @@ def test_opencode_apply_posture_migrates_legacy_object_to_v2_rules(tmp_path: Pat
     assert OpenCodeRuntime().apply_posture(home, "bypass") is None
 
 
-def test_opencode_apply_posture_never_overrides_an_explicit_user_deny(tmp_path: Path):
+def test_opencode_apply_posture_never_overrides_an_explicit_user_deny(tmp_path: Path, opencode_dialect):
     """Ordered rules: a user deny on the same (action, resource) pair wins
     over the engine posture. Appending an allow after it would punch a hole
     in a fence the user built on purpose."""
+    opencode_dialect("2.2.0")
     home = tmp_path / "home"
     config = home / ".config" / "opencode" / "opencode.jsonc"
     config.parent.mkdir(parents=True)
@@ -286,6 +288,18 @@ def test_opencode_apply_posture_never_overrides_an_explicit_user_deny(tmp_path: 
     shell_rules = [r for r in data["permissions"] if r["action"] == "shell"]
     assert shell_rules == [{"action": "shell", "resource": "*", "effect": "deny"}]
     assert {"action": "edit", "resource": "*", "effect": "allow"} in data["permissions"]
+
+
+def test_opencode_apply_posture_writes_nothing_a_v1_binary_would_refuse(tmp_path: Path, opencode_dialect):
+    """V1 refuses the whole config on ordered `permissions`, so the writer stays off."""
+    opencode_dialect("1.19.3")
+    home = tmp_path / "home"
+    config = _write_opencode_config(home)
+    before = config.read_text(encoding="utf-8")
+
+    assert OpenCodeRuntime().apply_posture(home, "bypass") is None
+
+    assert config.read_text(encoding="utf-8") == before
 
 
 def _engine_hooks(tmp_path: Path) -> Path:

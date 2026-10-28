@@ -10,6 +10,55 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.23.0] - 2026-10-28
+
+### Added
+
+- OpenClaw keeps every agent chat small: an hourly job compacts a chat that sat idle for an hour, and any chat past 600k tokens even while in use. The main chat is compacted, never archived and never deleted, and `nexgen openclaw groom --dry-run` shows the plan before it runs.
+
+### Changed
+
+- The OpenClaw pin stays at 2026.10.7.
+
+### Fixed
+
+- An OpenClaw agent running on Claude Code's CLI reads its connectors lazily from Claude Code's own configuration, not from OpenClaw's loopback catalog. The loopback server carried every tool of the agent marked `alwaysLoad: true`, so every schema sat in the prompt of every call: 943k tokens for one request. Claude's native compaction is reached through the groom job, and a gateway with no `claude-cli` agent is written exactly as before. A new doctor check (`openclaw.claude_loopback`) names a connector still on the loopback.
+- The gateway no longer carries `ANTHROPIC_API_KEY` when every agent runs on `claude-cli`. The leftover key made the Android app, and anything else reading `models.list`, report that it could not update the models. A new doctor check names the key and the `openclaw gateway install --force` that rewrites the service copy.
+- OpenClaw setup respects decisions the file already carries: the exec mode, a gateway role declared on a node, a skill's toggle, and an empty agent list written as no `agents` section at all. It also checks the pinned Node floor before installing, reads the device tables the 2026.10.x CLI prints, and the doctor fails on a plugin OpenClaw will not load instead of reporting a healthy machine.
+- The doctor reports an OpenCode config the installed CLI cannot parse (#142): V2 `permissions` in front of a pre-2.0 binary, the state where every `opencode` invocation dies at config parse. A V1 CLI no longer gets V2 permissions written at all, and the version probe no longer touches the person's home.
+- The role onboarding writes its commands into the home it was given, instead of rewriting the real `~/.local/bin` on this machine. A second install on a clean machine changes nothing, every child output is read as UTF-8, and the discipline smoke runs under the interpreter that runs the engine.
+
+## [2.22.1] - 2026-10-27
+
+### Fixed
+
+- The OpenCode config dialect follows the CLI that is actually installed: on a V1 binary the engine no longer writes ordered `permissions` rules, which a V1 CLI rejects outright ("V2 permissions are not supported by OpenCode V1"), leaving the CLI unable to start and the `acp-opencode` provider unavailable. One helper answers the question — `nexgen_core/opencode_compat.py` — and both the posture writer and the MCP renderer ask it. Unknown counts as V1: omitting a posture rule leaves the guardrail to the plugin, while writing a key the CLI cannot parse takes OpenCode down.
+- The MCP HTTP bridge flushes its response headers before piping, so an SSE stream that sends no byte for a while no longer makes the discovery GET wait ten seconds and time out. That wait was paid on every turn that prepared `vault-library`.
+
+## [2.22.0] - 2026-10-27
+
+### Added
+
+- `nexgen openclaw smoke` runs five checks in order — installed version, configuration, gateway, mounted MCP servers, one short turn — prints one line each and answers with an exit code.
+- The OpenClaw adoption check names the items waiting for review and the first reason for each, instead of only their count.
+
+### Changed
+
+- The OpenClaw pin moves to 2026.10.7, the patch that makes the model catalog honour the agent's primary account, so the Android app stops retrying a model refresh that had nothing to fix.
+- A machine that already ran its own gateway retires it before enrolling as an OpenClaw node: `node --apply` and `install.sh --role node` archive a leftover drop-in, drop `gateway.auth`, switch the local channels off and turn `nodeHost.workerRuns` on, with a backup written beside the configuration.
+- The exec policy is written as the single `mode` field the gateway reads, translating the squad's `security` and `ask` instead of writing the deprecated pair again.
+- On Windows the signature check uses the native GnuPG when it is installed, instead of the MSYS build that ships with Git and cannot start its agent.
+- An update on a machine whose Vault clone is a reader installs the release and leaves the pin to the clone that owns the write path.
+- A tree on a branch now says which commit it is on, that this channel will not move it, and the command that will (`nexgen update --channel nightly`).
+- Agent workspaces are resolved the way OpenClaw does, so two agents no longer look like they share one `AGENTS.md` and the main agent's instructions keep updating.
+- The setup resolves the default Vault in the context its steps share, so the squad's role manuals are written instead of silently skipped.
+- `vault-mcp` runs behind an init, so the git processes it detaches are reaped instead of piling up as zombies.
+
+### Fixed
+
+- The OpenClaw smoke asks the agent with `--agent`, the flag the command documents, instead of reading the agent name as a subcommand.
+- `release_trust.py` stays standalone, so a tag is still not judged by code that can change under it.
+
 ## [2.21.2] - 2026-10-25
 
 ### Changed

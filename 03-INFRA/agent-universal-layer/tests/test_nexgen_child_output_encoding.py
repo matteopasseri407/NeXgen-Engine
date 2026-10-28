@@ -64,6 +64,38 @@ def test_every_text_mode_child_read_uses_utf8_with_replacement():
     )
 
 
+def test_the_two_call_sites_the_scan_flagged_decode_with_replacement(monkeypatch):
+    """The scan above states the rule; this pins the two call sites that broke it.
+
+    A fake `subprocess.run` records the keywords, so the proof does not depend on
+    the locale of the machine running the suite.
+    """
+    import subprocess
+
+    from nexgen_core import opencode_compat
+    from nexgen_core.openclaw import sessions_groom
+
+    seen: list[dict] = []
+
+    def fake_run(argv, **kwargs):
+        seen.append(kwargs)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    sessions_groom._run(["openclaw", "sessions"], 5)  # noqa: SLF001 - the call site under test
+    opencode_compat._probe.cache_clear()  # noqa: SLF001 - the cache would skip the call
+    try:
+        assert opencode_compat._probe("/usr/bin/opencode") is None  # no version in an empty answer
+    finally:
+        opencode_compat._probe.cache_clear()  # noqa: SLF001
+
+    assert len(seen) == 2
+    for keywords in seen:
+        assert keywords["encoding"] == "utf-8"
+        assert keywords["errors"] == "replace"
+
+
 def test_the_scan_catches_a_codec_left_to_the_machine():
     """`errors="replace"` alone is not enough.
 

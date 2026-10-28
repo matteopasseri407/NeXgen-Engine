@@ -352,6 +352,19 @@ MESSAGES: dict[str, str] = {
     "Usage: render.py [--write CLI|--revert CLI|--reset CLI|--adopt CLI [--apply]|--inventory]\n  --write CLI      regenerate the CLI's MCP section from the manifest\n  --revert CLI     restore the CLI's config from its most recent backup\n  --reset CLI      backup + remove the config (antigravity/opencode only)\n  --adopt CLI      manifest stub for live servers outside the manifest (--apply to apply)\n  --inventory      list the MCP servers per CLI (read-only)": "Uso: render.py [--write CLI|--revert CLI|--reset CLI|--adopt CLI [--apply]|--inventory]\n  --write CLI      rigenera la sezione MCP della CLI dal manifest\n  --revert CLI     ripristina la config della CLI dal backup piu' recente\n  --reset CLI      backup + rimozione della config (solo antigravity/opencode)\n  --adopt CLI      stub manifest per i server vivi fuori manifest (--apply per applicare)\n  --inventory      elenca i server MCP per CLI (read-only)",
     'render.py: unknown argument: {arg}': 'render.py: argomento sconosciuto: {arg}',
     'Claude configuration updated': 'Configurazione Claude aggiornata',
+    "The connectors of {agent} come from Claude Code's own configuration.": "I connettori di {agent} arrivano dalla configurazione nativa di Claude Code.",
+    "Claude Code's own MCP configuration was not rendered: {error}": "Non ho potuto scrivere la configurazione MCP nativa di Claude Code: {error}",
+    "An agent runs on Claude Code's CLI, but its connectors are not where they belong: {problems}.": "Un agente gira sulla CLI di Claude Code, ma i suoi connettori non sono dove dovrebbero: {problems}.",
+    "still on the loopback server: {connectors}": "ancora sul server di loopback: {connectors}",
+    "missing from Claude Code's own configuration: {connectors}": "mancanti dalla configurazione nativa di Claude Code: {connectors}",
+    "Claude Code's own configuration does not exist ({path})": "la configurazione nativa di Claude Code non esiste ({path})",
+    "Run 'nexgen openclaw setup': it denies every connector on the loopback server and renders Claude Code's own configuration, where they load lazily.": "Lancia 'nexgen openclaw setup': nega ogni connettore sul server di loopback e scrive la configurazione nativa di Claude Code, dove vengono caricati in modo lazy.",
+    "The {count} agent(s) on Claude Code's CLI keep every connector off the loopback server, and Claude Code's own configuration carries them.": "I {count} agenti sulla CLI di Claude Code tengono ogni connettore fuori dal server di loopback, e la configurazione nativa di Claude Code li porta.",
+    "Took {key} out of {path}: no agent reads it, and the apps cannot update the models while it is there. The value stays in the engine's secret store.": "Ho tolto {key} da {path}: nessun agente la legge, e finché resta le app non riescono ad aggiornare i modelli. Il valore resta nell'archivio segreti del motore.",
+    "The apps that read the gateway (Android included) say they cannot update the models, because Anthropic's catalogue discovery fails: ANTHROPIC_API_KEY is in {paths}, and no agent reads it.": "Le app che leggono il gateway (Android compresa) dicono che non riescono ad aggiornare i modelli, perché la scoperta del catalogo Anthropic fallisce: ANTHROPIC_API_KEY è in {paths} e nessun agente la legge.",
+    "Run 'nexgen openclaw setup', then 'openclaw gateway install --force' as the gateway's user: the service reads a copy of .env that only a reinstall rewrites.": "Lancia 'nexgen openclaw setup', poi 'openclaw gateway install --force' come utente del gateway: il servizio legge una copia di .env che solo una reinstallazione riscrive.",
+    "Run 'openclaw gateway install --force' as the gateway's user: the service reads a copy of .env that only a reinstall rewrites, and a restart alone keeps the old key.": "Lancia 'openclaw gateway install --force' come utente del gateway: il servizio legge una copia di .env che solo una reinstallazione riscrive, e un semplice riavvio tiene la chiave vecchia.",
+    "No ANTHROPIC_API_KEY sits in the gateway's environment: the {count} agent(s) on Claude Code's CLI add nothing the model catalogue has to fail over.": "Nessuna ANTHROPIC_API_KEY nell'ambiente del gateway: i {count} agenti sulla CLI di Claude Code non aggiungono niente su cui il catalogo dei modelli debba inciampare.",
     'Antigravity configuration updated': 'Configurazione Antigravity aggiornata',
     'OpenCode configuration updated': 'Configurazione OpenCode aggiornata',
     'Codex configuration updated': 'Configurazione Codex aggiornata',
@@ -2384,4 +2397,98 @@ MESSAGES: dict[str, str] = {
         "Non sono riuscito a registrare il ruolo in {path}",
     "Recorded the role: {role}":
         "Ruolo registrato: {role}",
+    'Local gateway retired: {parts}.':
+        'Gateway locale ritirato: {parts}.',
+    'Gateway drop-in left without its unit, moved to {path}.':
+        'Drop-in del gateway rimasto senza la sua unit, spostato in {path}.',
+    'Nothing left behind by a local gateway.':
+        'Nessun residuo di un gateway locale.',
+    'Gateway auth block removed from {path}: the node uses its pairing token.':
+        'Blocco auth del gateway tolto da {path}: il nodo usa il token del pairing.',
+    'Channels switched off on this PC, they answer from the central gateway: {names}.':
+        'Canali spenti su questo PC, rispondono dal gateway centrale: {names}.',
+    'Session hosting enabled: this node can run agent sessions, not only commands.':
+        'Session hosting acceso: questo nodo può far girare sessioni degli agenti, non solo comandi.',
+    'drop-in archived':
+        'drop-in archiviato',
+    'gateway auth removed':
+        'auth del gateway rimossa',
+    'channels off: {names}':
+        'canali spenti: {names}',
+    'session hosting on':
+        'session hosting acceso',
+    '- gateway auth block: removed, the node uses its pairing token':
+        '- blocco auth del gateway: rimosso, il nodo usa il token del pairing',
+    '- channels switched off here: {names}':
+        '- canali spenti qui: {names}',
+    '- session hosting: switched on, so this node can run agent sessions':
+        '- session hosting: acceso, così questo nodo può far girare sessioni degli agenti',
+    'Configuration not readable, left as it is: {reason}':
+        "Configurazione non leggibile, lasciata com'è: {reason}",
+    'This machine is already a node of {current}.':
+        'Questa macchina è già nodo di {current}.',
+    'The gateway asked for is {wanted}.':
+        'Il gateway richiesto è {wanted}.',
+    'To move it to another gateway, run the same command with --force.':
+        'Per spostarla su un altro gateway, rilancia lo stesso comando con --force.',
+    'The node service is running: nothing to enroll again.':
+        "Il servizio nodo è in esecuzione: non c'è niente da accoppiare di nuovo.",
+    'The node service is not running: starting it.':
+        'Il servizio nodo non è in esecuzione: lo avvio.',
+    '- local gateway: stopped and removed, the node host replaces it':
+        '- gateway locale: fermato e rimosso, il node host prende il suo posto',
+    '- drop-in left without its unit: archived, not deleted':
+        '- drop-in rimasto senza la sua unit: archiviato, non cancellato',
+    '- node service: installed and started with host {host} port {port}, session hosting on':
+        '- servizio nodo: installato e avviato con host {host} porta {port}, session hosting acceso',
+    '- enrolment: the join link taken from the file, approved by the gateway in the same step':
+        '- accoppiamento: il link di ingresso preso dal file, approvato dal gateway nello stesso passo',
+    '- enrolment: the device waits for approval on the gateway, nothing is approved here':
+        "- accoppiamento: il dispositivo aspetta l'approvazione sul gateway, qui non si approva niente",
+    '- name shown by the gateway: {name}':
+        '- nome mostrato dal gateway: {name}',
+    'Check on this machine: openclaw node status':
+        'Controllo su questa macchina: openclaw node status',
+    'Check on the gateway: openclaw nodes describe --node {name}':
+        'Controllo sul gateway: openclaw nodes describe --node {name}',
+    "The gateway still has to admit this machine: run 'nexgen openclaw pair' there, approve the device, then approve the node request.":
+        "Il gateway deve ancora ammettere questa macchina: lancia 'nexgen openclaw pair' là, approva il dispositivo, poi approva la richiesta del nodo.",
+    'Node install failed (exit code {code}).':
+        'Installazione del nodo fallita (codice {code}).',
+    "Node service did not start (exit code {code}). Try 'openclaw node status'.":
+        "Il servizio nodo non è partito (codice {code}). Prova 'openclaw node status'.",
+    'A local gateway is not a reason to stop, but it is retired first: its own token and its own channels make the node fight the central gateway. --apply does that; the commands above leave it alone, so a machine with no channels can keep serving it.':
+        'Un gateway locale non è un motivo per fermarsi, ma viene ritirato prima: il suo token e i suoi canali fanno litigare il nodo con il gateway centrale. Ci pensa --apply; i comandi qui sopra lo lasciano stare, così una macchina senza canali può continuare a servirlo.',
+    'Do it on this machine: retire the local gateway, prepare the configuration and start the node service':
+        'Fallo su questa macchina: ritira il gateway locale, prepara la configurazione e avvia il servizio nodo',
+    "A private file holding the gateway's join URL; it is read and never printed":
+        'Un file privato con il link di ingresso del gateway; viene letto e mai stampato',
+    'With --apply: print what would change and change nothing':
+        'Con --apply: stampa cosa cambierebbe e non cambia niente',
+    'Move a machine that is already a node of another gateway to this one':
+        'Sposta su questo gateway una macchina che è già nodo di un altro',
+    'Cannot read the join file {path}: {error}':
+        'Non riesco a leggere il file di ingresso {path}: {error}',
+    'the file is empty':
+        'il file è vuoto',
+    'The join link is spent: delete the file you kept it in.':
+        'Il link di ingresso è consumato: cancella il file in cui lo avevi messo.',
+    'Or let the engine retire the local gateway first and attach for you:':
+        "Oppure lascia che il motore ritiri prima il gateway locale e faccia l'aggancio:",
+    '  nexgen openclaw node --host <gateway address> --apply --join-file <file>':
+        '  nexgen openclaw node --host <indirizzo del gateway> --apply --join-file <file>',
+    'Compact the agent chats that sat idle or grew too large':
+        'Compatta le chat degli agenti rimaste ferme o diventate troppo grandi',
+    'Show what would be compacted, change nothing':
+        'Mostra cosa verrebbe compattato, senza cambiare niente',
+    'No agent chat needs compacting.':
+        'Nessuna chat agente da compattare.',
+    '  Context guard: skipped in dry-run.':
+        '  Guardia del contesto: saltata in prova a vuoto.',
+    "  Context guard: 'nexgen' is not on PATH, job not registered.":
+        "  Guardia del contesto: 'nexgen' non è nel PATH, job non registrato.",
+    '  Context guard: hourly job registered.':
+        '  Guardia del contesto: job orario registrato.',
+    '  Context guard: the job was not registered, the gateway refused it.':
+        '  Guardia del contesto: il job non è stato registrato, il gateway lo ha rifiutato.',
 }

@@ -175,12 +175,13 @@ def test_on_a_machine_without_systemd_lingering_is_never_mentioned(tmp_path):
     assert not any("loginctl" in command for command in commands(link))
 
 
-def test_the_notes_say_a_local_gateway_is_left_alone():
+def test_the_notes_say_a_local_gateway_is_retired_first():
     link = build_node_link("gateway.local", platform="linux", user="someone", linger_directory=Path("/nonexistent"))
 
     text = render_node_link(link)
 
-    assert "left as it is" in text
+    assert "retired first" in text
+    assert "--apply" in text
     assert "one gateway at a time" in text
     assert "Every approval is yours" in text
 

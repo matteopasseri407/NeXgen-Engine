@@ -42,18 +42,49 @@ def skill_entries(vault_data: Path | None) -> dict[str, dict[str, bool]]:
     return entries
 
 
-def with_skill_policy(config: dict[str, Any], vault_data: Path | None) -> dict[str, Any]:
+def with_skill_policy(
+    config: dict[str, Any],
+    vault_data: Path | None,
+    current: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """The configuration plus the derived `skills.entries`, leaving unknown skills alone.
 
     Additive on purpose: a skill somebody installed through OpenClaw and that the
     manifest does not declare keeps the state it has. Only the manifest's own
     skills are decided here, because only those have one source.
+
+    A skill the file in force already decides keeps that decision. The manifest's
+    exposure is the engine's default for a skill nobody has looked at, not a
+    verdict on a toggle somebody set in OpenClaw's panel: writing it again on
+    every setup made that toggle last one run, which is worse than not offering
+    it at all. `current` is that file, as a value; without it the engine knows of
+    no decision and writes its own.
     """
     declared = skill_entries(vault_data)
     if not declared:
         return config
+    decided = _already_decided(current)
     merged = dict(config)
     skills = dict(merged.get("skills") or {})
-    skills["entries"] = {**(skills.get("entries") or {}), **declared}
+    entries = dict(skills.get("entries") or {})
+    for name, decision in declared.items():
+        if name in decided:
+            continue
+        existing = entries.get(name)
+        entries[name] = {**(existing if isinstance(existing, dict) else {}), **decision}
+    skills["entries"] = entries
     merged["skills"] = skills
     return merged
+
+
+def _already_decided(current: dict[str, Any] | None) -> set[str]:
+    """The skills whose `enabled` the file in force already answers, yes or no."""
+    skills = current.get("skills") if isinstance(current, dict) else None
+    entries = skills.get("entries") if isinstance(skills, dict) else None
+    if not isinstance(entries, dict):
+        return set()
+    return {
+        str(name)
+        for name, entry in entries.items()
+        if isinstance(entry, dict) and isinstance(entry.get("enabled"), bool)
+    }

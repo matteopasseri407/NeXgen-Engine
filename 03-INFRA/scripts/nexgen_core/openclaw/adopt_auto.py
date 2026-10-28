@@ -86,10 +86,17 @@ def check_adopt_doctor(state_dir: Path) -> CheckOutcome:
         pending=pending_count,
     )
     if pending_count > 0:
+        named = [str(item.get("name") or "") for item in pending if isinstance(item, dict)]
+        reasons = [
+            f"{item.get('name')}: {', '.join(str(r) for r in (item.get('reasons') or [])[:2])}"
+            for item in pending
+            if isinstance(item, dict)
+        ]
         return CheckOutcome(
             id="openclaw.adoption",
             severity=Severity.WARN,
             message=msg,
+            detail="; ".join(reasons)[:600] or ", ".join(named[:5]),
             action=t("Run 'nexgen openclaw adopt' to review and decide on pending resources."),
         )
     return CheckOutcome(id="openclaw.adoption", severity=Severity.OK, message=msg)

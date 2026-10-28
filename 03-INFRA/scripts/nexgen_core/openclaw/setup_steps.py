@@ -146,10 +146,17 @@ def ensure_installed(setup: Setup, snapshot: Detection) -> Detection | None:
 
 
 def _check_node(setup: Setup, snapshot: Detection) -> bool:
-    """The Node in use must satisfy the range OpenClaw declares."""
+    """The Node in use must satisfy the range the pinned OpenClaw declares.
+
+    The requirement comes from the pin first, and from the release on disk only
+    when the pin cannot be read. The other order reads the range of an older
+    OpenClaw, which may accept a Node the pin does not: the setup would then
+    install a release whose CLI refuses to start on this machine, and the
+    failure would surface later as a rejected configuration.
+    """
     if setup.dry_run:
         return True
-    requirement = snapshot.openclaw.node_requirement or required_node_version(setup.engine_root)
+    requirement = required_node_version(setup.engine_root) or snapshot.openclaw.node_requirement
     if not requirement:
         return True
     version = host_preflight.read_node_version(setup.run, setup.which("node") or "node", setup.env)
@@ -447,6 +454,33 @@ def module_step(setup: Setup) -> None:
         return
     setup.out(t("This machine declares 'openclaw: local' for host {host}.", host=current_host()))
     enable_openclaw_mcp(setup, vault)
+
+
+def groom_job_step(setup: Setup) -> None:
+    """Registers the hourly groom as an OpenClaw command job, once.
+
+    The job keeps every agent chat small: idle chats are compacted, and a chat
+    that grows past the limit is compacted even while in use. Without the job
+    the policy in the config is only a promise.
+    """
+    if setup.dry_run:
+        setup.out(t("  Context guard: skipped in dry-run."))
+        return
+    engine = setup.which("nexgen")
+    if not engine:
+        setup.out(t("  Context guard: 'nexgen' is not on PATH, job not registered."))
+        return
+    result = setup.run([
+        openclaw_bin(setup), "cron", "add", "nexgen-context-guard",
+        "--cron", "0 * * * *",
+        "--command", f"{engine} openclaw groom",
+        "--declaration-key", "nexgen:context-guard",
+        "--display-name", "Context guard",
+    ])
+    if result.returncode == 0:
+        setup.out(t("  Context guard: hourly job registered."))
+        return
+    setup.out(t("  Context guard: the job was not registered, the gateway refused it."))
 
 
 def phone_step(setup: Setup) -> None:

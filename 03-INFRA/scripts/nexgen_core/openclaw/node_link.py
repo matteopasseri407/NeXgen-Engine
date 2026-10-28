@@ -7,13 +7,17 @@ writes the systemd user service on Linux, the LaunchAgent on macOS and the
 scheduled task on Windows, and a join code is the gateway's to mint, so the
 engine prints what exists instead of wrapping it in a second implementation.
 
-Nothing here touches a local gateway. A node host is a process of its own with a
-state record of its own, so a laptop that already serves a gateway in loopback
-keeps it exactly as it is; what it gains is a second connection outward.
+Nothing here touches a local gateway: this module only proposes. The machine-side
+steps live in `node_apply`, which retires a local gateway before enrolling. It has
+to be retired rather than left beside the node, because a gateway's own token
+makes the node authenticate with it instead of its pairing token, and a channel
+on both gateways means two pollers on one bot. A machine with no channels can
+still keep its own gateway; the commands here leave it exactly as it is.
 """
 from __future__ import annotations
 
 import os
+import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,6 +86,16 @@ def _install_command(host: str, port: int, name: str | None, tls: bool = False) 
     named = f' --display-name "{name}"' if name else ""
     secure = " --tls" if tls else ""
     return f"openclaw node install --host {host} --port {port}{secure}{named}"
+
+
+def install_argv(host: str, port: int, name: str | None, tls: bool = False) -> list[str]:
+    """The same line as arguments, so `--apply` runs what this command prints.
+
+    Parsed from the rendering rather than rebuilt beside it: two builders drift,
+    and the one a person copies is the one that has to work.
+    """
+    return shlex.split(_install_command(host, port, name, tls))
+
 
 
 def _explicit_route(host: str, port: int, name: str | None, linger: Step | None, tls: bool = False) -> Route:
@@ -167,8 +181,9 @@ def _notes(host: str, port: int, tailnet: bool = False) -> tuple[str, ...]:
         t("The gateway on the other PC has to answer on the home network: 'nexgen openclaw setup --lan' writes "
           "gateway.bind 'lan', and 'nexgen openclaw doctor' there says whether it is reachable."),
         t("The address {host} is yours to supply: the engine does not guess another machine's address.", host=host),
-        t("Your own gateway is left as it is: the node host is a separate process, so a machine that already "
-          "serves OpenClaw in loopback keeps serving it."),
+        t("A local gateway is not a reason to stop, but it is retired first: its own token and its own "
+          "channels make the node fight the central gateway. --apply does that; the commands above leave "
+          "it alone, so a machine with no channels can keep serving it."),
         t("Away from home only a local gateway in loopback is reachable, and a channel such as Telegram lives on "
           "one gateway at a time: it belongs to the machine that stays on."),
         t("Every approval is yours: nothing is approved automatically, and each request names the machine and the "
@@ -187,8 +202,9 @@ def _tailnet_notes(host: str, port: int) -> tuple[str, ...]:
         t("The address {host} is yours to supply: the engine does not guess another machine's address.", host=host),
         t("The join code carries the HTTPS address the gateway mints, so the node needs no port and no token of "
           "its own; the explicit route below uses 443 with '--tls', because that port belongs to Serve."),
-        t("Your own gateway is left as it is: the node host is a separate process, so a machine that already "
-          "serves OpenClaw in loopback keeps serving it."),
+        t("A local gateway is not a reason to stop, but it is retired first: its own token and its own "
+          "channels make the node fight the central gateway. --apply does that; the commands above leave "
+          "it alone, so a machine with no channels can keep serving it."),
         t("Every approval is yours: nothing is approved automatically, and each request names the machine and the "
           "commands it would run."),
         t("Port 443 is the one Tailscale Serve owns on the gateway machine; the gateway's own port {port} stays "

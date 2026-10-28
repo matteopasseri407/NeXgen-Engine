@@ -34,7 +34,8 @@ def _engine_hooks(tmp_path: Path) -> Path:
     return engine_hooks
 
 
-def test_apply_posture_su_config_finta_stabile(tmp_path: Path, monkeypatch) -> None:
+def test_apply_posture_su_config_finta_stabile(tmp_path: Path, monkeypatch, opencode_dialect) -> None:
+    opencode_dialect("2.2.0")
     home = _fake_home(tmp_path, monkeypatch)
     rt = OpenCodeRuntime()
     cfg = rt._config_path(home)

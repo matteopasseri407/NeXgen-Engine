@@ -144,7 +144,7 @@ def test_a_llama_cpp_plugin_the_person_enabled_stays_on_when_the_server_is_off()
 
 def test_a_machine_with_no_model_creates_no_agent_and_says_nothing_it_cannot_back():
     config = build_config(machine())
-    assert config["agents"]["entries"] == {}
+    assert "agents" not in config, "no entry to declare, so no section OpenClaw would refuse"
     assert "agentToAgent" not in config["tools"]
     assert config["tools"]["byProvider"] == {}
 
@@ -366,10 +366,12 @@ def test_the_agents_may_talk_only_to_the_pairs_that_exist():
     assert "agentToAgent" not in alone["tools"]
 
 
-def test_exec_is_allowlisted_and_tool_search_is_not_written():
+def test_exec_is_the_normalized_auto_policy_and_tool_search_is_not_written():
     tools = build_config(machine(go=True))["tools"]
     assert "toolSearch" not in tools
-    assert tools["exec"] == {"security": "allowlist", "ask": "on-miss"}
+    # `auto` is what `allowlist` + `ask=on-miss` became: safe commands run, the
+    # rest go to the classifier instead of a human.
+    assert tools["exec"] == {"mode": "auto"}
 
 
 def test_the_writer_tools_are_one_table_and_the_cage_is_derived_from_it():
@@ -488,14 +490,14 @@ def test_the_agy_backend_plugin_makes_its_models_selectable() -> None:
         "entries": {"google-antigravity-cli": {"enabled": True}},
     }}
 
-    allow = build_config(machine(), current=current)["agents"]["defaults"]["modelPolicy"]["allow"]
+    allow = build_config(machine(go=True), current=current)["agents"]["defaults"]["modelPolicy"]["allow"]
 
-    assert allow == ["google-antigravity-cli/*"]
+    assert "google-antigravity-cli/*" in allow, "the approved backend's models stay selectable"
 
 
 def test_a_machine_with_nothing_reachable_gets_no_policy() -> None:
-    """An empty allowlist would read as "nothing is selectable", so it is not written."""
-    assert "modelPolicy" not in build_config(machine())["agents"]["defaults"]
+    """An empty allowlist would read as "nothing is selectable", so not even the section is written."""
+    assert "agents" not in build_config(machine())
 
 
 def test_a_policy_the_person_wrote_is_extended_and_never_narrowed() -> None:
@@ -519,3 +521,60 @@ def test_registering_the_reachable_models_changes_no_agent_default() -> None:
     assert build_config(machine(claude=True, codex=True, go=True))["agents"]["entries"] == build_config(
         machine(claude=True, codex=True, go=True),
     )["agents"]["entries"]
+
+
+def test_an_exec_policy_the_person_wrote_is_never_loosened() -> None:
+    """`ask` is the person's decision: the engine proposes a mode only where none is set.
+
+    OpenClaw rejects `mode` next to the legacy `security`/`ask` pair, and a
+    proposed `auto` wins over the file's `ask` in the merge, so an unconditional
+    proposal both loosened the approval policy and could produce a document the
+    schema refuses.
+    """
+    current = {"tools": {"exec": {"mode": "ask"}, "deny": ["edit"]}}
+
+    proposal = build_config(machine(go=True), current=current)["tools"]
+
+    assert "mode" not in proposal.get("exec", {}), "the file's mode is the person's"
+
+
+def test_a_missing_exec_policy_is_written_as_auto() -> None:
+    assert build_config(machine(go=True))["tools"]["exec"] == {"mode": "auto"}
+
+
+def test_a_node_keeps_its_gateway_mode_and_gets_no_local_listener_or_token() -> None:
+    """A node is a client of a gateway elsewhere: writing `local` beside `remote.url` makes it incoherent."""
+    from nexgen_core.openclaw.setup_write import merged_document  # noqa: E402 - the merge is what lands on disk
+
+    current = {"gateway": {"mode": "remote", "remote": {"url": "wss://gw.example.ts.net"}}}
+
+    gateway = build_config(machine(go=True), current=current)["gateway"]
+
+    assert "mode" not in gateway, "the file's role is the person's"
+    assert "bind" not in gateway, "a node opens no listener here"
+    assert "auth" not in gateway, "a node authenticates to the remote gateway, not to itself"
+    merged = merged_document(current, {"gateway": gateway})["gateway"]
+    assert merged["mode"] == "remote"
+    assert merged["remote"]["url"] == "wss://gw.example.ts.net"
+
+
+def test_a_local_gateway_the_person_chose_keeps_its_mode() -> None:
+    current = {"gateway": {"mode": "local", "auth": {"mode": "token", "token": "kept"}}}
+
+    gateway = build_config(machine(go=True), current=current)["gateway"]
+
+    assert "mode" not in gateway
+    assert gateway["auth"]["token"] == "kept", "the token is kept"
+
+
+def test_a_gateway_with_no_mode_is_written_as_local() -> None:
+    gateway = build_config(machine(go=True))["gateway"]
+
+    assert gateway["mode"] == "local"
+    assert gateway["bind"] == "loopback"
+    assert gateway["auth"]["mode"] == "token"
+
+
+def test_a_machine_with_no_agent_gets_no_agents_section() -> None:
+    """OpenClaw refuses `agents.entries` with no entry, so the section is not proposed at all."""
+    assert "agents" not in build_config(machine()), "an empty roster is not a roster"

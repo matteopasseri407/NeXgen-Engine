@@ -1,0 +1,87 @@
+"""The connectors a `claude-cli` agent must not see through OpenClaw's loopback server.
+
+One job: for every agent that runs on Claude Code's own CLI, deny every connector the
+OpenClaw configuration mounts (`<server>__*`) on the loopback MCP server OpenClaw
+hands Claude Code with `alwaysLoad: true`. What stays is the agent's own OpenClaw
+toolset -- messages, sessions, the supervisor's `nexgen_sup_*` -- and what disappears
+is the one thing that made a single call cost 943k tokens: every connector schema in
+the prompt at every request.
+
+The connectors are not lost. Claude Code reads its own configuration
+(`~/.claude.json`), where the same connectors sit deferred behind ToolSearch exactly
+like a plain Claude Code session, and Claude Code -- not OpenClaw -- owns their
+loading. `claude_native` makes sure that file is the engine's render.
+
+Two rules are not preferences:
+
+- the patterns are added to whatever `deny` the agent already has, never instead of
+  it, and never touching `allow`/`alsoAllow`: OpenClaw refuses `allow` beside
+  `alsoAllow` in one scope, and an agent's own permission list is the person's;
+- an agent that does not run on `claude-cli` is left exactly as it was, so a machine
+  that never had this problem cannot lose a tool to a change about it.
+"""
+from __future__ import annotations
+
+from collections.abc import Iterable
+from typing import Any
+
+from nexgen_core.openclaw.claude_cli import claude_cli_agents
+
+#: How OpenClaw spells a connector's tools: `<server>__<tool>`, so the wildcard
+#: covers a tool the server grows tomorrow without anyone editing this file.
+SUFFIX = "__*"
+
+#: Names that are not connectors of the configuration: OpenClaw's own loopback
+#: server lives in the same namespace, and denying it would deny the agent's own
+#: toolset -- the whole point of the deny is to keep exactly that.
+NOT_A_CONNECTOR = frozenset({"openclaw"})
+
+
+def pattern_for(server: str) -> str | None:
+    """The deny pattern that covers one connector, or None when the name is not one."""
+    name = str(server or "").strip()
+    if not name or name in NOT_A_CONNECTOR:
+        return None
+    return f"{name}{SUFFIX}"
+
+
+def patterns(servers: Iterable[str]) -> list[str]:
+    """One `<server>__*` pattern per connector, sorted and without duplicates."""
+    return sorted({pattern for server in servers if (pattern := pattern_for(server))})
+
+
+def _deny_for(entry: dict[str, Any], added: list[str]) -> list[str]:
+    """The agent's deny list with the patterns added, sorted, keeping what was there."""
+    tools = entry.get("tools") if isinstance(entry.get("tools"), dict) else {}
+    existing = tools.get("deny") if isinstance(tools.get("deny"), list) else []
+    merged = {str(item) for item in [*existing, *added]}
+    return sorted(merged)
+
+
+def apply(config: dict[str, Any], servers: Iterable[str]) -> dict[str, Any]:
+    """The same configuration with every connector denied on its `claude-cli` agents.
+
+    Returns a new document: the caller's proposal is data it may still print, and a
+    plan that mutated it would describe a machine that no longer matches the one
+    written. Nothing is added when there is no pattern, so an engine on a gateway
+    with no connector writes nothing at all.
+    """
+    added = patterns(servers)
+    agents = config.get("agents") if isinstance(config.get("agents"), dict) else {}
+    entries = agents.get("entries") if isinstance(agents.get("entries"), dict) else {}
+    agents_to_fix = set(claude_cli_agents(config)) if added else set()
+    if not agents_to_fix:
+        return config
+    updated: dict[str, Any] = {}
+    for agent_id, entry in entries.items():
+        if agent_id not in agents_to_fix or not isinstance(entry, dict):
+            continue
+        tools = dict(entry.get("tools")) if isinstance(entry.get("tools"), dict) else {}
+        tools["deny"] = _deny_for(entry, added)
+        updated[agent_id] = {**entry, "tools": tools}
+    if not updated:
+        return config
+    return {
+        **config,
+        "agents": {**agents, "entries": {**entries, **updated}},
+    }

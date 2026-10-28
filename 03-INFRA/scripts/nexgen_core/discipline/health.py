@@ -1,7 +1,10 @@
 """Plain-Italian health report and the real-flow smoke command. Read-only, never blocks a commit."""
 from __future__ import annotations
 
+import os
+import shlex
 import subprocess
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -79,9 +82,25 @@ def report(root: Path) -> str:
     ])
 
 
+def _with_this_interpreter(command: str) -> str:
+    """`command` with a leading `python`/`python3` replaced by the interpreter running the engine.
+
+    `python` is not a command on a stock Linux or macOS (only `python3` is), so the
+    smoke failed with exit 127 from the pre-push hook before it ran anything. The
+    replacement keeps whatever follows untouched, so `npm test` and `a && b` are
+    still handed to the shell; Windows gets its own quoting because the interpreter
+    usually lives under "Program Files".
+    """
+    head, _, rest = command.partition(" ")
+    if Path(head).stem.lower() not in ("python", "python3"):
+        return command
+    interpreter = f'"{sys.executable}"' if os.name == "nt" else shlex.quote(sys.executable)
+    return f"{interpreter} {rest}" if rest else interpreter
+
+
 def run_smoke(root: Path) -> int:
     """Run the project's real-flow command. Not defined means a notice, never a failure."""
-    command = load(root, "HEAD").smoke_command
+    command = _with_this_interpreter(load(root, "HEAD").smoke_command)
     if not command:
         print("smoke: nessun test del percorso reale definito (smoke_command in .nexgen-discipline.toml)")
         return 0
