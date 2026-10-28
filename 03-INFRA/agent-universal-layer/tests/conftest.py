@@ -83,6 +83,28 @@ def harness_cli(tmp_path, monkeypatch):
     return bin_dir
 
 
+@pytest.fixture
+def opencode_dialect(monkeypatch):
+    """`opencode_dialect("2.2.0")`: make the engine see a CLI that speaks that dialect.
+
+    The writer emits ordered `permissions` (V2) only for a binary reporting 2.x and
+    treats anything else as V1, which is the deliberate default. A test that proves
+    the V2 writer therefore has to declare it, or it proves whatever the machine
+    running the suite happens to have on PATH. `installed_major` is the one place
+    both `supports_v2` and the doctor resolve at call time, so patching it pins the
+    dialect without a child process or a shell script that Windows cannot start.
+    """
+    from nexgen_core import opencode_compat
+
+    def pin(version: str | None) -> None:
+        major = int(version.split(".")[0]) if version else None
+        monkeypatch.setattr(opencode_compat, "installed_major", lambda: major)
+        opencode_compat._probe.cache_clear()  # noqa: SLF001 - no cached answer may outlive the pin
+
+    yield pin
+    opencode_compat._probe.cache_clear()  # noqa: SLF001
+
+
 @pytest.fixture(autouse=True)
 def no_ollama_probe(request, monkeypatch):
     """The lane's capability probe talks to whatever OLLAMA_HOST points at: never from a test, unless the test is about the probe."""
