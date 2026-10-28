@@ -79,7 +79,8 @@ def test_the_doctor_names_a_key_left_in_the_environment_file(tmp_path: Path) -> 
     assert outcome.id == "openclaw.anthropic_catalog"
     assert "models" in outcome.message
     assert "sk-ant-workspace-scoped" not in outcome.message
-    assert outcome.action == "Run 'nexgen openclaw setup'."
+    assert "nexgen openclaw setup" in outcome.action
+    assert "openclaw gateway install --force" in outcome.action
 
 
 def test_the_doctor_names_a_key_left_in_the_systemd_copy(tmp_path: Path) -> None:
@@ -93,6 +94,9 @@ def test_the_doctor_names_a_key_left_in_the_systemd_copy(tmp_path: Path) -> None
     assert outcome is not None
     assert outcome.severity == Severity.WARN
     assert "gateway.systemd.env" in outcome.message
+    # Only a reinstall rewrites the copy; the setup has nothing left to clean.
+    assert "openclaw gateway install --force" in outcome.action
+    assert "nexgen openclaw setup" not in outcome.action
 
 
 def test_the_doctor_is_silent_without_openclaw(tmp_path: Path) -> None:

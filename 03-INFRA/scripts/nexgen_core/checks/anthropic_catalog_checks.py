@@ -79,6 +79,16 @@ def check_anthropic_catalog(home: Path) -> CheckOutcome | None:
         message=t("The apps that read the gateway (Android included) say they cannot update the models, because "
                   "Anthropic's catalogue discovery fails: ANTHROPIC_API_KEY is in {paths}, and no agent reads it.",
                   paths=", ".join(offenders)),
-        action=t("Run 'nexgen openclaw setup'."),
+        action=_action(offenders),
         detail=", ".join(agents),
     )
+
+
+def _action(offenders: list[str]) -> str:
+    """The command that clears what is left: the setup cleans `.env`, and only a
+    reinstall of the service rewrites its systemd copy (a restart reads the old one)."""
+    if ".env" in offenders:
+        return t("Run 'nexgen openclaw setup', then 'openclaw gateway install --force' as the gateway's user: "
+                 "the service reads a copy of .env that only a reinstall rewrites.")
+    return t("Run 'openclaw gateway install --force' as the gateway's user: the service reads a copy of .env "
+             "that only a reinstall rewrites, and a restart alone keeps the old key.")
