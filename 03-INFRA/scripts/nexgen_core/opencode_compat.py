@@ -17,6 +17,8 @@ import shutil
 import subprocess
 from functools import lru_cache
 
+from .processes import probe_environment
+
 _V2_PLURAL_KEY = "permissions"
 _V1_SINGULAR_KEY = "permission"
 
@@ -25,16 +27,18 @@ _V1_SINGULAR_KEY = "permission"
 def _probe(binary: str) -> str | None:
     """The version this binary reports, or None when it cannot be read."""
     try:
-        out = subprocess.run(
-            [binary, "--version"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=10,
-            check=False,
-        ).stdout
-    except (OSError, subprocess.SubprocessError):
+        with probe_environment("nexgen-opencode-version-") as env:
+            out = subprocess.run(
+                [binary, "--version"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+                check=False,
+                env=env,
+            ).stdout
+    except (OSError, subprocess.SubprocessError):  # nexgen: allow reason="a binary that cannot be started has no version to report, and the caller reads that as V1"
         return None
     match = re.search(r"(\d+)\.(\d+)\.(\d+)", out or "")
     if not match:

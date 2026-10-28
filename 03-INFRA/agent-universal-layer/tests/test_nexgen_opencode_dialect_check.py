@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -62,6 +63,28 @@ _V2_CONFIG = {
     "permissions": [{"action": "shell", "resource": "*", "effect": "ask"}],
 }
 _V1_CONFIG = {"permission": {"bash": "ask", "edit": "allow"}}
+
+
+def test_a_version_probe_runs_in_a_home_of_its_own(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CLI logs every start: asking its version must not write into the person's home."""
+    home = tmp_path / "home"
+    home.mkdir()
+    seen: dict[str, object] = {}
+
+    def fake_run(argv, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(argv, 0, "2.2.0\n", "")
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(opencode_compat.subprocess, "run", fake_run)
+    opencode_compat._probe.cache_clear()  # noqa: SLF001
+    try:
+        assert opencode_compat._probe("/usr/bin/opencode") == "2.2.0"  # noqa: SLF001
+    finally:
+        opencode_compat._probe.cache_clear()  # noqa: SLF001
+
+    child_home = Path(str(seen["env"]["HOME"]))  # type: ignore[index]
+    assert child_home != home and not child_home.is_relative_to(home)
 
 
 def test_v2_config_behind_a_v1_binary_is_broken(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
