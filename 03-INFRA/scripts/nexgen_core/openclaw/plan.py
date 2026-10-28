@@ -355,7 +355,7 @@ def build_plan(
         vault_data if vault_data is not None else resolve_vault_data(home), home_dir, current,
     )
     config = _with_engine_plugin(
-        with_chains(with_skill_policy(proposed, vault_data), failover), _plugin_deposited(path, plugin_deposited),
+        with_chains(with_skill_policy(proposed, vault_data, current), failover), _plugin_deposited(path, plugin_deposited),
     )
     changes = _diff(config, current)
     notes = [
