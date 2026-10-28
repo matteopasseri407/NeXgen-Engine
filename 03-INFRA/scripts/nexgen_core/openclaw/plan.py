@@ -16,7 +16,8 @@ from typing import Any
 from nexgen_core import quota_policy
 from nexgen_core.i18n import detect_language, t
 from nexgen_core.openclaw import companion as app_gateway
-from nexgen_core.openclaw import observation
+from nexgen_core.openclaw import claude_loopback, observation
+from nexgen_core.openclaw.claude_cli import claude_cli_agents
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.governor import with_chains
@@ -317,6 +318,56 @@ def _with_squad(
     return apply_squad(config, squad_data, current), squad_data
 
 
+def _servers_in_force(current: dict[str, Any] | None) -> set[str]:
+    """The connector names the file already mounts under `mcp.servers`."""
+    mcp = current.get("mcp") if isinstance(current, dict) else None
+    servers = mcp.get("servers") if isinstance(mcp, dict) else None
+    return {str(name) for name in servers} if isinstance(servers, dict) else set()
+
+
+def _connector_names(
+    home: Path,
+    vault_data: Path | None,
+    engine_root: Path | None,
+    current: dict[str, Any] | None,
+) -> list[str]:
+    """Every connector this gateway carries or will carry: the ones in force, plus the ones sync mounts.
+
+    The second half is not a convenience. A setup that denied only the connectors
+    already in the file would leave the loopback open for exactly the connectors the
+    next `nexgen sync` mounts, which is the state the incident happened in. The
+    question is asked of the same renderer sync uses, so the two cannot disagree
+    about which server is mounted for OpenClaw.
+    """
+    names = _servers_in_force(current)
+    try:
+        from nexgen_core.renderer import McpRenderer
+
+        renderer = McpRenderer(vault_data=vault_data, engine_root=engine_root, home=home)
+        names.update(renderer.load_resolved_servers("openclaw"))
+    except (OSError, ValueError):  # nexgen: allow reason="a manifest this machine cannot read leaves the connectors already in force, and the deny must still cover those"
+        pass
+    return sorted(names)
+
+
+def _with_loopback(
+    config: dict[str, Any],
+    current: dict[str, Any] | None,
+    *,
+    home: Path,
+    vault_data: Path | None,
+    engine_root: Path | None,
+) -> dict[str, Any]:
+    """A `claude-cli` agent reads its connectors from Claude Code, not from the loopback.
+
+    Nothing is asked of a proposal with no such agent: a machine whose agents run
+    elsewhere keeps the tool surface it had, byte for byte.
+    """
+    if not claude_cli_agents(config):
+        return config
+    return claude_loopback.apply(config, _connector_names(home, vault_data, engine_root, current))
+
+
 def _squad_notes(squad_data: dict[str, Any] | None) -> list[str]:
     """What the squad asked for and the plan must not swallow: a default it never declares."""
     unknown = unresolved_default(squad_data)
@@ -351,6 +402,7 @@ def build_plan(
         # The setup command passes no vault: the squad still lives in the user's one.
         vault_data if vault_data is not None else resolve_vault_data(home), home_dir, current,
     )
+    proposed = _with_loopback(proposed, current, home=home_dir, vault_data=vault_data, engine_root=engine_root)
     config = _with_engine_plugin(
         with_chains(with_skill_policy(proposed, vault_data), failover), _plugin_deposited(path, plugin_deposited),
     )

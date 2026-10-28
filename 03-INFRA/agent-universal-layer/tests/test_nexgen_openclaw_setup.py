@@ -1190,3 +1190,45 @@ def test_the_setup_reads_the_default_vault_when_the_caller_passes_none(tmp_path,
     )
 
     assert setup.vault_data == machine.home / "KnowledgeVault"
+
+
+#: Two connectors, mounted directly by every CLI, for the `claude-cli` test below.
+CLAUDE_CLI_MANIFEST = """schema_version: 1
+servers:
+  vault-library:
+    exposure: eager
+    transport: stdio
+    command: node
+    args: ["vault.mjs"]
+  n8n-mcp:
+    exposure: eager
+    transport: stdio
+    command: node
+    args: ["n8n.mjs"]
+"""
+
+
+def test_a_claude_cli_agent_reads_its_connectors_from_claude_code(tmp_path):
+    """One run, two files: the loopback loses the connectors, Claude Code's own file gains them.
+
+    This is the end-to-end shape of the 943k-token incident: without the deny, every
+    connector's schema rode on OpenClaw's `alwaysLoad` loopback server at every call.
+    """
+    machine = Machine(tmp_path)
+    machine.runner.onboard = onboard_writer(machine.config, machine.state_dir / "workspace")
+    manifest = machine.vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(CLAUDE_CLI_MANIFEST, encoding="utf-8")
+
+    code = machine.run(detected=detection(machine.config, installed=False, claude=True))
+
+    assert code == 0
+    from nexgen_core.openclaw.tools_profile import SUPERVISOR_TOOLS
+
+    capo = machine.config_json()["agents"]["entries"]["capo"]
+    assert capo["tools"]["deny"] == ["n8n-mcp__*", "vault-library__*"]
+    assert capo["tools"]["alsoAllow"] == sorted(SUPERVISOR_TOOLS), \
+        "the deny is added beside the supervisor's own list, never instead of it"
+    native = json.loads((machine.home / ".claude.json").read_text(encoding="utf-8"))["mcpServers"]
+    assert set(native) == {"vault-library", "n8n-mcp"}
+    assert "The connectors of capo come from Claude Code's own configuration." in machine.output()

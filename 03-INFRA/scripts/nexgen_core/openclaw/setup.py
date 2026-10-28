@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 from nexgen_core.i18n import t
+from nexgen_core.openclaw import claude_native
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.doctor import collect as doctor_collect
 from nexgen_core.openclaw.doctor import render as doctor_render
@@ -216,6 +217,13 @@ def _apply(
         return 1
     _record_role(server=server, dry_run=setup.dry_run, home=setup.home, out=setup.out)
     write_gateway_service_env(setup, plan.config)
+    # The connectors of a `claude-cli` agent live in Claude Code's own file, which
+    # `claude_loopback` has just taken off the loopback server: rendering it is what
+    # keeps those agents connected at all.
+    claude_native.ensure(
+        plan.config, home=setup.home, vault_data=setup.vault_data,
+        engine_root=setup.engine_root, out=setup.out, dry_run=setup.dry_run,
+    )
     from nexgen_core.openclaw.squad import register_model_keys
 
     register_model_keys(setup, plan.config)

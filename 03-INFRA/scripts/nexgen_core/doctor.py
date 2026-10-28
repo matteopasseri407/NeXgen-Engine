@@ -17,6 +17,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.checks import schedule  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.checks.claude_loopback_checks import check_claude_loopback  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.env_checks import check_state_dir, check_vault_path  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.git_checks import (  # noqa: E402 - sys.path shim for cloned checkout
     check_engine_lane,
@@ -296,6 +297,8 @@ def _run_harness_checks(run, home: Path, engine_root: Path, vault: Path) -> None
     run("openclaw", lambda: check_openclaw(home, engine_root, vault))
     # One plugin, two hosts: every layer OpenClaw must receive from Claude Code.
     run("openclaw.parity", lambda: check_openclaw_parity(home, vault))
+    # The loopback server a `claude-cli` agent's connectors must not appear on.
+    run("openclaw.claude_loopback", lambda: check_claude_loopback(home, vault, engine_root))
     # What is left of each plan, as far as a few kilobytes can say.
     run("quota.known", lambda: check_quota(home, vault))
 
