@@ -234,18 +234,20 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
         raise ValueError(f"Could not render {cfg_file}: permissions must be an array")
     permissions = list(permissions)
     old_permissions = list(permissions)
+    _apply_servers(servers, mcp_servers, tools_cfg, permissions)
     drop_v2_permissions = False
     if not supports_v2():
         # A V1 CLI rejects the entire config when the V2 `permissions` array is
         # present ("V2 permissions are not supported by OpenCode V1"), so the CLI
         # never starts and the provider it backs disappears. Absent the key, the
         # file loads and the guardrail still comes from the plugin and sidecar.
+        # The tool denies added just above are V2 only: on a V1 machine the
+        # trimming shim (mcp-trim.py) still enforces them.
         if "permissions" in existing:
             existing.pop("permissions", None)
             drop_v2_permissions = True
         permissions = []
         old_permissions = []
-    _apply_servers(servers, mcp_servers, tools_cfg, permissions)
     drop_engine_websearch = _finalize_state(existing, mcp_config, mcp_servers, tools_cfg, permissions)
     _persist_config(
         renderer,
