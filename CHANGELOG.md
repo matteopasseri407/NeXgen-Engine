@@ -12,6 +12,7 @@ of any engine release.
 
 ### Fixed
 
+- The role onboarding writes its commands into the home it was given: the launcher step resolved the real `~/.local/bin` on its own, so a sandboxed run (a test, a node in a temporary tree) rewrote this machine's `agent-doctor`, `agent-now` and `agent-skill` to point at a directory in `/tmp` that was deleted afterwards. The home is a parameter through `run_standalone_role`, `run_node_role` and `install_launchers`.
 - The doctor reports an OpenCode config that the installed CLI cannot parse: V2 `permissions` in `opencode.json` in front of a pre-2.0 binary, the state where every `opencode` invocation dies at config parse while the machine is reported healthy. The check asks `nexgen_core/opencode_compat.py` the same question the writer asks, names the version it found, and stays silent when OpenCode never ran here.
 
 ## [2.22.1] - 2026-10-27
