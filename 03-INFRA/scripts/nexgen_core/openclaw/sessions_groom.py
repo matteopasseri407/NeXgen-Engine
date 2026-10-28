@@ -86,7 +86,9 @@ def _resolve_binary(name: str = "openclaw") -> str:
 
 
 def _run(args: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    return subprocess.run(
+        args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout
+    )
 
 
 def list_sessions(openclaw: str | None = None, timeout: int = 120) -> list[dict[str, Any]]:
