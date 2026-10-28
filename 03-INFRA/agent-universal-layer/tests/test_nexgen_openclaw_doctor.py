@@ -23,7 +23,8 @@ from nexgen_core.openclaw.doctor import collect, exit_code  # noqa: E402 - sys.p
 from nexgen_core.openclaw.profile import PENDING_TOKEN  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.report import Severity  # noqa: E402 - sys.path shim for cloned checkout
 
-PINNED = "2026.10.6"
+#: The release the pin file declares: the doctor must name that one, whatever it is.
+PINNED = json.loads((SCRIPTS_DIR.parent / "agent-universal-layer" / "openclaw" / "pin.json").read_text(encoding="utf-8"))["version"]
 
 
 @pytest.fixture(autouse=True)
