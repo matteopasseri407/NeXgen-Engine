@@ -6,6 +6,7 @@ to name a real, quick, read-only proof that the engine starts on this machine.
 """
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 
@@ -22,6 +23,17 @@ def test_the_project_smoke_is_a_real_script_and_not_the_gate():
     assert "smoke.py" in command
     assert "discipline.py" not in command
     assert SMOKE.is_file()
+
+
+def test_the_smoke_runs_under_the_interpreter_that_runs_it():
+    """`python` is not a command on a stock Linux or macOS, so the smoke died with exit 127."""
+    from nexgen_core.discipline import health
+
+    for command in ("python 03-INFRA/scripts/smoke.py", "python3 03-INFRA/scripts/smoke.py"):
+        resolved = health._with_this_interpreter(command)
+        assert sys.executable in resolved
+        assert not resolved.startswith(("python ", "python3 "))
+    assert health._with_this_interpreter("npm test") == "npm test"
 
 
 def test_the_smoke_proves_the_checkout_on_this_machine_under_its_budget():
