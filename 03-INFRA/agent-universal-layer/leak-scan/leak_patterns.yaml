@@ -97,6 +97,12 @@ leak_allow:
   # trovato su deploy/pii, 2026-10-11; la voce era andata persa col
   # revert del modulo PII e viene ripristinata qui).
   - '/home/app\b'
+  # Home segnaposto delle fixture OpenClaw (test di idempotenza del setup,
+  # 2026-10-28): stessa natura di /home/user, nessuna workstation reale.
+  - '/home/person\b'
+  # Epoch in millisecondi di una fixture `devices list` (2025-10-20), non un
+  # ID o un telefono (falso positivo del test pairing, 2026-10-28).
+  - '^1761000000000$'
   - '(?i)[A-Z]:[\\/]Users[\\/]user\b'
   # Limite generico 15 MiB usato negli esempi OCR, non ID o telefono.
   - '^15728640$'
