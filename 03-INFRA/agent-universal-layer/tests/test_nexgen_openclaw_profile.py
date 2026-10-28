@@ -521,3 +521,22 @@ def test_registering_the_reachable_models_changes_no_agent_default() -> None:
     assert build_config(machine(claude=True, codex=True, go=True))["agents"]["entries"] == build_config(
         machine(claude=True, codex=True, go=True),
     )["agents"]["entries"]
+
+
+def test_an_exec_policy_the_person_wrote_is_never_loosened() -> None:
+    """`ask` is the person's decision: the engine proposes a mode only where none is set.
+
+    OpenClaw rejects `mode` next to the legacy `security`/`ask` pair, and a
+    proposed `auto` wins over the file's `ask` in the merge, so an unconditional
+    proposal both loosened the approval policy and could produce a document the
+    schema refuses.
+    """
+    current = {"tools": {"exec": {"mode": "ask"}, "deny": ["edit"]}}
+
+    proposal = build_config(machine(go=True), current=current)["tools"]
+
+    assert "mode" not in proposal.get("exec", {}), "the file's mode is the person's"
+
+
+def test_a_missing_exec_policy_is_written_as_auto() -> None:
+    assert build_config(machine(go=True))["tools"]["exec"] == {"mode": "auto"}

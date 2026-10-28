@@ -355,6 +355,22 @@ def _gateway(chosen: Choices, current: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _exec_policy(current: dict[str, Any] | None) -> dict[str, Any]:
+    """The exec mode to propose: `auto`, and nothing at all when the file already decides.
+
+    OpenClaw's normalized policy (`auto` is the classifier-reviewed miss) is the
+    shape the engine wants for a machine that never chose one. A file that
+    already carries a mode carries the person's decision, and it is also the only
+    shape the schema accepts next to the legacy `security`/`ask` pair: proposing
+    `mode` over it would loosen the approval policy and could produce a document
+    `config validate` refuses.
+    """
+    tools = current.get("tools") if isinstance(current, dict) else None
+    block = tools.get("exec") if isinstance(tools, dict) else None
+    mode = block.get("mode") if isinstance(block, dict) else None
+    return {} if isinstance(mode, str) and mode.strip() else {"mode": "auto"}
+
+
 def _missing_channel_bindings(
     current: dict[str, Any] | None, entries: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -440,6 +456,8 @@ def build_config(
 
     partners = _agent_pairs(agents)
     tools = tools_block(models, partners)
+    # The one leaf of the tools block that is the person's once it exists.
+    tools["exec"] = _exec_policy(current)
 
     config: dict[str, Any] = {
         "plugins": {

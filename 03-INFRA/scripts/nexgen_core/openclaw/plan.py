@@ -405,6 +405,22 @@ def _wanted_notes(
     return [*_build_notes(config, detected, choices), *_squad_notes(squad_data)]
 
 
+def _exec_mode_note(current: dict[str, Any] | None) -> str | None:
+    """The exec mode the engine leaves alone, named so the plan is not silent about it.
+
+    The proposal carries `mode` only where the file has none, so a file that
+    already decides never appears in `changed`. A person who wrote `ask` must
+    still read that it stayed.
+    """
+    tools = current.get("tools") if isinstance(current, dict) else None
+    block = tools.get("exec") if isinstance(tools, dict) else None
+    mode = block.get("mode") if isinstance(block, dict) else None
+    if not isinstance(mode, str) or not mode.strip():
+        return None
+    return t("tools.exec.mode stays as you wrote it ({mode}): the engine proposes its own only where "
+             "none is set.", mode=mode.strip())
+
+
 def _change_notes(
     config: dict[str, Any], changes: dict[str, tuple[str, ...]], current: dict[str, Any] | None,
 ) -> list[str]:
@@ -414,7 +430,7 @@ def _change_notes(
     if polling_key in (*changes["added"], *changes["changed"]):
         notes.append(t("OpenClaw changes how it watches its configuration only when it starts: "
                        "restart the gateway once for this key to take effect."))
-    for note in (_binding_note(config), _supervisor_tool_note(current)):
+    for note in (_binding_note(config), _supervisor_tool_note(current), _exec_mode_note(current)):
         if note:
             notes.append(note)
     return notes

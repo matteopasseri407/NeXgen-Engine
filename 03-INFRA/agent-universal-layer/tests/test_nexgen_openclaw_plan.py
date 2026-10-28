@@ -417,3 +417,14 @@ def test_an_agent_with_no_model_inherits_the_configured_default():
     }
 
     assert planned_agents(config) == {"revisore": "opencode-go/deepseek-v4-pro"}
+
+
+def test_the_plan_names_an_exec_mode_it_leaves_alone(tmp_path):
+    """Silence is not an option: the person reads which policy stays in force."""
+    home = tmp_path / "home"
+    put_config(home, {"tools": {"exec": {"mode": "ask"}}, "agents": {"entries": {"main": {}}}})
+
+    plan = build_plan(detected=detected(home / ".openclaw" / "openclaw.json"), home=home, env={})
+
+    assert "tools.exec.mode" not in plan.changed, "the file's decision is not a change"
+    assert any("ask" in note and "exec" in note for note in plan.notes), plan.notes
