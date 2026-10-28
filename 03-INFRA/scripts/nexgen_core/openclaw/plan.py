@@ -216,6 +216,9 @@ def _build_notes(config: dict[str, Any], detected: Detection, choices: Choices |
         notes.append(t("The gateway token is a placeholder: 'nexgen openclaw setup' generates the real one."))
     models = agent_models(detected, choices)
     notes.extend(_agent_notes(models, detected, choices, planned_agents(config)))
+    if "agents" not in config:
+        notes.append(t("The setup writes no agents section: OpenClaw refuses one with no entry, and this "
+                       "machine has no model to give an agent. Configure a model, then run the setup again."))
     notes.extend(_context_notes(config))
     companion_note = _companion_note(detected)
     if companion_note:

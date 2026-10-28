@@ -428,3 +428,22 @@ def test_the_plan_names_an_exec_mode_it_leaves_alone(tmp_path):
 
     assert "tools.exec.mode" not in plan.changed, "the file's decision is not a change"
     assert any("ask" in note and "exec" in note for note in plan.notes), plan.notes
+
+
+def test_the_plan_says_the_agents_section_is_not_written_when_there_is_no_agent(tmp_path):
+    """The diff cannot say "nothing here": the reason has to be a sentence."""
+    home = tmp_path / "home"
+    path = put_config(home, {})
+    machine = Detection(
+        openclaw=Installation(installed=True, version="2026.10.6", config_path=str(path), config_present=True),
+        claude=Login(binary=False),
+        codex=Login(binary=False),
+        opencode_go=False,
+        local=LocalModels(),
+        n8n=False,
+    )
+
+    plan = build_plan(detected=machine, home=home, env={})
+
+    assert "agents" not in plan.config
+    assert any("no agent" in note.lower() and "agents" in note.lower() for note in plan.notes), plan.notes

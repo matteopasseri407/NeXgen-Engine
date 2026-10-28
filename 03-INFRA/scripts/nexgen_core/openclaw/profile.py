@@ -505,4 +505,9 @@ def build_config(
     bindings = _missing_channel_bindings(current, config["agents"]["entries"])
     if bindings:
         config["bindings"] = bindings
+    if not config["agents"]["entries"]:
+        # OpenClaw refuses `agents` with no entry ("must contain at least one
+        # configured agent"), and a proposal that cannot be written fresh would
+        # make every setup fail on a machine with no model to give an agent.
+        del config["agents"]
     return config

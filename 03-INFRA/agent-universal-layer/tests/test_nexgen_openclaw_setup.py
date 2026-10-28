@@ -717,7 +717,7 @@ def test_the_opencode_agent_appears_only_with_its_command_and_its_key(tmp_path):
         other.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
         assert other.run(detected=detection(other.config, **kwargs)) == 0
         config = other.config_json()
-        assert "sviluppo" not in config["agents"]["entries"]
+        assert "sviluppo" not in config.get("agents", {}).get("entries", {}), "no roster names it"
         assert "acp" not in config
         assert "acpx" not in config["plugins"]["allow"]
 

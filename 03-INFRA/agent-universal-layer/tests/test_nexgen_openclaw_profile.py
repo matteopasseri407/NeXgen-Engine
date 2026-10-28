@@ -144,7 +144,7 @@ def test_a_llama_cpp_plugin_the_person_enabled_stays_on_when_the_server_is_off()
 
 def test_a_machine_with_no_model_creates_no_agent_and_says_nothing_it_cannot_back():
     config = build_config(machine())
-    assert config["agents"]["entries"] == {}
+    assert "agents" not in config, "no entry to declare, so no section OpenClaw would refuse"
     assert "agentToAgent" not in config["tools"]
     assert config["tools"]["byProvider"] == {}
 
@@ -490,14 +490,14 @@ def test_the_agy_backend_plugin_makes_its_models_selectable() -> None:
         "entries": {"google-antigravity-cli": {"enabled": True}},
     }}
 
-    allow = build_config(machine(), current=current)["agents"]["defaults"]["modelPolicy"]["allow"]
+    allow = build_config(machine(go=True), current=current)["agents"]["defaults"]["modelPolicy"]["allow"]
 
-    assert allow == ["google-antigravity-cli/*"]
+    assert "google-antigravity-cli/*" in allow, "the approved backend's models stay selectable"
 
 
 def test_a_machine_with_nothing_reachable_gets_no_policy() -> None:
-    """An empty allowlist would read as "nothing is selectable", so it is not written."""
-    assert "modelPolicy" not in build_config(machine())["agents"]["defaults"]
+    """An empty allowlist would read as "nothing is selectable", so not even the section is written."""
+    assert "agents" not in build_config(machine())
 
 
 def test_a_policy_the_person_wrote_is_extended_and_never_narrowed() -> None:
@@ -573,3 +573,8 @@ def test_a_gateway_with_no_mode_is_written_as_local() -> None:
     assert gateway["mode"] == "local"
     assert gateway["bind"] == "loopback"
     assert gateway["auth"]["mode"] == "token"
+
+
+def test_a_machine_with_no_agent_gets_no_agents_section() -> None:
+    """OpenClaw refuses `agents.entries` with no entry, so the section is not proposed at all."""
+    assert "agents" not in build_config(machine()), "an empty roster is not a roster"
