@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
 from nexgen_core.mcp_render import load_json_object
+from nexgen_core.openclaw.claude_cli import ANTHROPIC, is_claude_cli
 
 if TYPE_CHECKING:
     from nexgen_core.openclaw.setup_steps import Setup
@@ -51,17 +52,28 @@ def _extract_vars_from_val(val: Any, found: set[str]) -> None:
 
 
 def extract_referenced_env_vars(config: dict[str, Any]) -> set[str]:
-    """Inspects OpenClaw config and MCP servers to find all cited env vars."""
+    """Inspects OpenClaw config and MCP servers to find all cited env vars.
+
+    A provider's key is a reference the agent's model makes. It is not, however,
+    the reference a `claude-cli` agent makes: that agent signs in through Claude
+    Code, and `ANTHROPIC_API_KEY` in the gateway's environment only makes OpenClaw's
+    live catalogue call `GET /v1/models` with a key that may not be allowed to.
+    An explicit `${ANTHROPIC_API_KEY}` anywhere in the file is collected above and
+    still counts: that is a reference somebody wrote on purpose.
+    """
     found: set[str] = set()
     _extract_vars_from_val(config, found)
 
     agents = config.get("agents", {}).get("entries", {}) if isinstance(config.get("agents"), dict) else {}
-    for entry in agents.values():
+    for agent_id, entry in agents.items():
         if isinstance(entry, dict):
             model = str(entry.get("model") or "").lower()
             for provider, vars_list in _KNOWN_MODEL_ENV_VARS.items():
-                if provider in model:
-                    found.update(vars_list)
+                if provider not in model:
+                    continue
+                if provider == ANTHROPIC and is_claude_cli(config, str(agent_id)):
+                    continue
+                found.update(vars_list)
     return found
 
 
