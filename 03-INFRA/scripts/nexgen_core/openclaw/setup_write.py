@@ -207,8 +207,33 @@ def merged_document(current: dict[str, Any] | None, proposed: dict[str, Any]) ->
         merged["models"] = merged_models
     _keep_model_fallbacks(base, merged)
     _drop_uncreated_agent(merged)
+    _retire_replaced(merged, proposed)
     _retire(merged)
     return merged
+
+
+def _retire_replaced(document: dict[str, Any], proposed: dict[str, Any]) -> None:
+    """Drops the legacy keys of an owned section when the proposal writes their replacement.
+
+    The merge keeps every key the person wrote, at every depth, and that is
+    right until OpenClaw retires one: a file that still carries `security` and
+    `ask` would then keep them beside the `mode` the proposal writes, and the
+    schema refuses exactly that pair (`mode cannot be combined with security or
+    ask in the same exec object`, zod-schema.agent-runtime in 2026.10.6, enforced
+    by `config validate`). The engine cannot tell a key the person wrote from one
+    an older OpenClaw left behind, so it removes neither on its own: only where
+    its own replacement lands, which is what this pass does.
+    """
+    tools = proposed.get("tools") if isinstance(proposed.get("tools"), dict) else None
+    exec_proposed = tools.get("exec") if isinstance(tools, dict) else None
+    if not isinstance(exec_proposed, dict) or "mode" not in exec_proposed:
+        return
+    merged_tools = document.get("tools") if isinstance(document.get("tools"), dict) else None
+    merged_exec = merged_tools.get("exec") if isinstance(merged_tools, dict) else None
+    if not isinstance(merged_exec, dict):
+        return
+    for legacy in ("security", "ask"):
+        merged_exec.pop(legacy, None)
 
 
 def _keep_model_fallbacks(base: dict[str, Any], merged: dict[str, Any]) -> None:
