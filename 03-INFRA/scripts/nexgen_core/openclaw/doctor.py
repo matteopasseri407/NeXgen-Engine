@@ -244,7 +244,7 @@ def _config_outcomes(
         *doctor_runtime.check_workshop_skills(config, path.parent, home_dir),
         doctor_runtime.check_unadopted(config, path, home_dir, resolve_vault_data(home_dir, vault_data)),
         doctor_runtime.check_bindings(config),
-        *_plugin_outcomes(path),
+        *_plugin_outcomes(path, config),
     ])
     return list(outcomes)
 
@@ -259,10 +259,14 @@ def _store_gateway_outcomes(
     return [store] if store is not None else []
 
 
-def _plugin_outcomes(path: Path) -> list[CheckOutcome]:
-    """The switches the plugin reads on every call, kept in the gateway's own extensions folder."""
-    checkpoint = doctor_runtime.check_checkpoint(path.parent / "extensions" / "nexgen")
-    return [checkpoint] if checkpoint is not None else []
+def _plugin_outcomes(path: Path, config: dict[str, Any]) -> list[CheckOutcome]:
+    """Whether OpenClaw loads the plugin, and the switches it reads on every call."""
+    plugin_dir = path.parent / "extensions" / "nexgen"
+    outcomes = [
+        doctor_runtime.check_plugin_enabled(config, plugin_dir),
+        doctor_runtime.check_checkpoint(plugin_dir),
+    ]
+    return [outcome for outcome in outcomes if outcome is not None]
 
 
 def _speaking_snapshot(
