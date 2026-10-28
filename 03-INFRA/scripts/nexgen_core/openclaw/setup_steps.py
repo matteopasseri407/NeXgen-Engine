@@ -146,10 +146,17 @@ def ensure_installed(setup: Setup, snapshot: Detection) -> Detection | None:
 
 
 def _check_node(setup: Setup, snapshot: Detection) -> bool:
-    """The Node in use must satisfy the range OpenClaw declares."""
+    """The Node in use must satisfy the range the pinned OpenClaw declares.
+
+    The requirement comes from the pin first, and from the release on disk only
+    when the pin cannot be read. The other order reads the range of an older
+    OpenClaw, which may accept a Node the pin does not: the setup would then
+    install a release whose CLI refuses to start on this machine, and the
+    failure would surface later as a rejected configuration.
+    """
     if setup.dry_run:
         return True
-    requirement = snapshot.openclaw.node_requirement or required_node_version(setup.engine_root)
+    requirement = required_node_version(setup.engine_root) or snapshot.openclaw.node_requirement
     if not requirement:
         return True
     version = host_preflight.read_node_version(setup.run, setup.which("node") or "node", setup.env)

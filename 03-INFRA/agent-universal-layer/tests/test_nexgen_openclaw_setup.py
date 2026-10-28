@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -333,6 +334,34 @@ def test_an_old_node_stops_the_setup_before_installing(tmp_path):
     assert not any(" install -g " in command for command in machine.runner.commands())
     assert ">=24.22.1" in machine.output()
     assert "nodejs.org" in machine.output()
+
+
+def test_the_node_floor_of_the_pin_is_checked_against_an_older_install(tmp_path):
+    """The installed release accepts an older Node than the pin does.
+
+    OpenClaw 2026.8.1 declares `>=24.15.0 <25`, so a Node 24.18.0 satisfies the
+    release on disk; 2026.10.6 requires `>=24.22.1`. Reading the requirement of
+    what is installed installs a release the CLI then refuses to run, so the
+    floor of the pin is the one that decides, before the install.
+    """
+    machine = Machine(tmp_path)
+    machine.runner.node_version = "v24.18.0"
+    installed = detection(machine.config, version="2026.8.1")
+    installed = replace(
+        installed,
+        openclaw=replace(
+            installed.openclaw,
+            node_requirement=">=22.22.3 <23 || >=24.15.0 <25 || >=25.9.0",
+        ),
+    )
+
+    code = machine.run(detected=installed)
+
+    assert code == 1
+    assert not any(" install -g " in command for command in machine.runner.commands())
+    assert "24.18.0" in machine.output(), "the version found is named"
+    assert ">=24.22.1" in machine.output(), "the version required is named"
+    assert "nodejs.org" in machine.output(), "the person is told what to do"
 
 
 def test_a_linux_session_without_the_user_bus_stops_with_an_action(tmp_path):
