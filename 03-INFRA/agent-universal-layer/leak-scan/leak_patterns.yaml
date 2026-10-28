@@ -100,6 +100,9 @@ leak_allow:
   # Home segnaposto delle fixture OpenClaw (test di idempotenza del setup,
   # 2026-10-28): stessa natura di /home/user, nessuna workstation reale.
   - '/home/person\b'
+  # La stessa home segnaposto a fine frase (il punto entra nel token e il
+  # confronto e' fullmatch): trovata in un messaggio di commit, 2026-10-28.
+  - '/home/(?:app|person|user)\.'
   # Epoch in millisecondi di una fixture `devices list` (2025-10-20), non un
   # ID o un telefono (falso positivo del test pairing, 2026-10-28).
   - '^1761000000000$'
