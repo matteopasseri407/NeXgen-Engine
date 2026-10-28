@@ -96,34 +96,56 @@ def _has_real_token(auth: dict[str, Any]) -> bool:
     return isinstance(token, str) and bool(token.strip()) and token != PENDING_TOKEN
 
 
-def _check_gateway(config: dict[str, Any]) -> list[CheckOutcome]:
-    """Loopback or the home network, and a real token: anything else is an open door."""
-    gateway = config.get("gateway") if isinstance(config.get("gateway"), dict) else {}
-    outcomes: list[CheckOutcome] = []
-    auth = gateway.get("auth") if isinstance(gateway.get("auth"), dict) else {}
-    real_token = _has_real_token(auth)
-    bind = gateway.get("bind")
+def _remote_url(gateway: dict[str, Any]) -> str | None:
+    """The gateway a node points at, when the file names one."""
+    remote = gateway.get("remote") if isinstance(gateway.get("remote"), dict) else {}
+    url = remote.get("url")
+    return url.strip() if isinstance(url, str) and url.strip() else None
+
+
+def _bind_outcome(bind: Any, real_token: bool) -> CheckOutcome:
+    """Where the listener sits, and whether a listener on the home network is safe."""
     if bind == "loopback" or (bind == "lan" and real_token):
-        outcomes.append(CheckOutcome(
+        return CheckOutcome(
             id="openclaw.gateway.bind",
             severity=Severity.OK,
             message=t("The gateway binds to {bind}.", bind=bind),
-        ))
-    elif bind == "lan":
-        outcomes.append(CheckOutcome(
+        )
+    if bind == "lan":
+        return CheckOutcome(
             id="openclaw.gateway.bind",
             severity=Severity.BROKEN,
             message=t("The gateway binds to the home network, but its token is missing or still the placeholder."),
             action=t("Run 'nexgen openclaw setup' to generate a real token, or set gateway.bind to 'loopback'."),
-        ))
-    else:
-        outcomes.append(CheckOutcome(
+        )
+    return CheckOutcome(
+        id="openclaw.gateway.bind",
+        severity=Severity.BROKEN,
+        message=t("The gateway binds to '{bind}', which is neither loopback nor the home network.",
+                  bind=bind if isinstance(bind, str) and bind else t("(not set)")),
+        action=t("Set gateway.bind to 'loopback', or 'lan' if you use the phone app on your home network."),
+    )
+
+
+def _check_gateway(config: dict[str, Any]) -> list[CheckOutcome]:
+    """Loopback or the home network, and a real token: anything else is an open door.
+
+    A node is the exception, and not a lenient one: it declares `remote` and
+    opens no listener here, so it has no bind and no local token to judge. Asking
+    it for both would turn every node red for a port it is not supposed to open.
+    """
+    gateway = config.get("gateway") if isinstance(config.get("gateway"), dict) else {}
+    mode = gateway.get("mode")
+    if isinstance(mode, str) and mode.strip() == "remote":
+        return [CheckOutcome(
             id="openclaw.gateway.bind",
-            severity=Severity.BROKEN,
-            message=t("The gateway binds to '{bind}', which is neither loopback nor the home network.",
-                      bind=bind if isinstance(bind, str) and bind else t("(not set)")),
-            action=t("Set gateway.bind to 'loopback', or 'lan' if you use the phone app on your home network."),
-        ))
+            severity=Severity.OK,
+            message=t("This machine is a node of the gateway at {url}: it opens no listener of its own.",
+                      url=_remote_url(gateway) or t("(not named)")),
+        )]
+    auth = gateway.get("auth") if isinstance(gateway.get("auth"), dict) else {}
+    real_token = _has_real_token(auth)
+    outcomes: list[CheckOutcome] = [_bind_outcome(gateway.get("bind"), real_token)]
     if auth.get("mode") == "token" and real_token:
         outcomes.append(CheckOutcome(
             id="openclaw.gateway.auth",

@@ -868,3 +868,21 @@ def test_a_machine_without_the_plugin_folder_says_nothing_about_it(tmp_path):
     path = write_config(tmp_path, clean_config())
 
     assert "openclaw.plugin" not in by_id(run_doctor(tmp_path, path))
+
+
+def test_a_node_is_judged_on_its_remote_gateway_not_on_a_local_listener(tmp_path):
+    """A node declares no bind and no local token: judging it as a gateway invents a fault.
+
+    A3 stopped the setup from writing `bind` and `auth` on a node, so the doctor
+    must stop asking a node for them: otherwise every node in the field turns
+    red at the next run for a port the node is not supposed to open.
+    """
+    config = clean_config()
+    config["gateway"] = {"mode": "remote", "port": 18789, "remote": {"url": "wss://gw.example.ts.net"}}
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, config)))
+
+    assert outcomes["openclaw.gateway.bind"].severity == Severity.OK
+    assert "wss://gw.example.ts.net" in outcomes["openclaw.gateway.bind"].message
+    assert "no listener" in outcomes["openclaw.gateway.bind"].message
+    assert "openclaw.gateway.auth" not in outcomes
+    assert not [o for o in outcomes.values() if o.severity == Severity.BROKEN]
