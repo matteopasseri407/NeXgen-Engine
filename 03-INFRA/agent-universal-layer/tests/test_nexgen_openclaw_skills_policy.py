@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "03-INFRA" / "scripts"))
 
+from nexgen_core.openclaw.setup_write import merged_document  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.skills_policy import skill_entries, with_skill_policy  # noqa: E402 - sys.path shim for cloned checkout
 
 MANIFEST = """skills:
@@ -64,3 +65,29 @@ def test_the_config_is_left_alone_when_nothing_is_declared(tmp_path):
     config = {"skills": {"entries": {"x": {"enabled": True}}}}
 
     assert with_skill_policy(config, tmp_path / "vuoto") == config
+
+
+def test_a_decision_already_in_the_file_is_not_overwritten(tmp_path):
+    """A manual skill the person turned on in the panel stays on.
+
+    The manifest still says `manual`, which is the engine's default and not a
+    decision made after reading the file. Writing it again on every setup made
+    the panel's toggle last until the next run.
+    """
+    decided = {"skills": {"entries": {"humanizer": {"enabled": True}}}}
+
+    proposal = with_skill_policy({}, _vault(tmp_path), decided)
+
+    assert "humanizer" not in proposal["skills"]["entries"], "the file's decision is not re-proposed"
+    assert proposal["skills"]["entries"]["vault-save"] == {"enabled": True}
+    assert merged_document(decided, proposal)["skills"]["entries"]["humanizer"] == {"enabled": True}
+
+
+def test_a_decision_is_written_where_the_file_has_none(tmp_path):
+    config = {"skills": {"entries": {"humanizer": {"env": {"A": "1"}}}}}
+
+    merged = with_skill_policy(config, _vault(tmp_path))
+
+    assert merged["skills"]["entries"]["humanizer"] == {"env": {"A": "1"}, "enabled": False}, (
+        "the engine's default lands, and the person's other keys stay"
+    )

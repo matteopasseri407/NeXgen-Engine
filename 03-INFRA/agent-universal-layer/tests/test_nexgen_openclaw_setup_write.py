@@ -284,3 +284,44 @@ def test_user_configured_tool_search_boolean_true_is_preserved():
     merged = setup_write.merged_document(current, proposed)
 
     assert merged["tools"]["toolSearch"] is True
+
+
+def test_the_legacy_exec_pair_goes_when_the_proposal_writes_the_mode():
+    """OpenClaw refuses `mode` beside `security`/`ask` in the same exec object.
+
+    `zod-schema.agent-runtime-iDxKMLd-.mjs:403-415` (2026.10.6) adds the issue
+    "mode cannot be combined with security or ask in the same exec object", and
+    `config validate` exits 1 on it. The merge keeps every key the person wrote,
+    so without this pass a file that never saw `openclaw doctor --fix` could
+    never be validated again.
+    """
+    current = {"tools": {"exec": {"security": "allowlist", "ask": "on-miss"}}}
+    proposed = {"tools": {"exec": {"mode": "auto"}}}
+
+    merged = setup_write.merged_document(current, proposed)
+
+    assert merged["tools"]["exec"] == {"mode": "auto"}, "the replacement replaces"
+
+
+def test_the_legacy_exec_pair_stays_when_the_proposal_writes_no_mode():
+    """A2: the engine proposes no mode over the person's, so nothing is retired either."""
+    current = {"tools": {"exec": {"security": "allowlist", "ask": "on-miss"}}}
+    proposed = {"tools": {"exec": {}}}
+
+    merged = setup_write.merged_document(current, proposed)
+
+    assert merged["tools"]["exec"] == {"security": "allowlist", "ask": "on-miss"}
+
+
+def test_an_exec_object_never_carries_a_mode_and_a_legacy_key():
+    """The property the schema asks for, checked over the whole result."""
+    for current in (
+        {"tools": {"exec": {"security": "deny"}}},
+        {"tools": {"exec": {"ask": "always"}}},
+        {"tools": {"exec": {"security": "full", "ask": "off", "strictInlineEval": True}}},
+        {},
+    ):
+        merged = setup_write.merged_document(current, {"tools": {"exec": {"mode": "auto"}}})
+        block = merged["tools"]["exec"]
+        assert block["mode"] == "auto"
+        assert "security" not in block and "ask" not in block, current

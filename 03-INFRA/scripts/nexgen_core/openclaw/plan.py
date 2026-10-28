@@ -217,6 +217,9 @@ def _build_notes(config: dict[str, Any], detected: Detection, choices: Choices |
         notes.append(t("The gateway token is a placeholder: 'nexgen openclaw setup' generates the real one."))
     models = agent_models(detected, choices)
     notes.extend(_agent_notes(models, detected, choices, planned_agents(config)))
+    if "agents" not in config:
+        notes.append(t("The setup writes no agents section: OpenClaw refuses one with no entry, and this "
+                       "machine has no model to give an agent. Configure a model, then run the setup again."))
     notes.extend(_context_notes(config))
     companion_note = _companion_note(detected)
     if companion_note:
@@ -404,7 +407,7 @@ def build_plan(
     )
     proposed = _with_loopback(proposed, current, home=home_dir, vault_data=vault_data, engine_root=engine_root)
     config = _with_engine_plugin(
-        with_chains(with_skill_policy(proposed, vault_data), failover), _plugin_deposited(path, plugin_deposited),
+        with_chains(with_skill_policy(proposed, vault_data, current), failover), _plugin_deposited(path, plugin_deposited),
     )
     changes = _diff(config, current)
     notes = [
@@ -457,6 +460,22 @@ def _wanted_notes(
     return [*_build_notes(config, detected, choices), *_squad_notes(squad_data)]
 
 
+def _exec_mode_note(current: dict[str, Any] | None) -> str | None:
+    """The exec mode the engine leaves alone, named so the plan is not silent about it.
+
+    The proposal carries `mode` only where the file has none, so a file that
+    already decides never appears in `changed`. A person who wrote `ask` must
+    still read that it stayed.
+    """
+    tools = current.get("tools") if isinstance(current, dict) else None
+    block = tools.get("exec") if isinstance(tools, dict) else None
+    mode = block.get("mode") if isinstance(block, dict) else None
+    if not isinstance(mode, str) or not mode.strip():
+        return None
+    return t("tools.exec.mode stays as you wrote it ({mode}): the engine proposes its own only where "
+             "none is set.", mode=mode.strip())
+
+
 def _change_notes(
     config: dict[str, Any], changes: dict[str, tuple[str, ...]], current: dict[str, Any] | None,
 ) -> list[str]:
@@ -466,7 +485,7 @@ def _change_notes(
     if polling_key in (*changes["added"], *changes["changed"]):
         notes.append(t("OpenClaw changes how it watches its configuration only when it starts: "
                        "restart the gateway once for this key to take effect."))
-    for note in (_binding_note(config), _supervisor_tool_note(current)):
+    for note in (_binding_note(config), _supervisor_tool_note(current), _exec_mode_note(current)):
         if note:
             notes.append(note)
     return notes

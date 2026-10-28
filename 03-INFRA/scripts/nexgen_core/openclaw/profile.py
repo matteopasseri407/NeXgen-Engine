@@ -33,6 +33,7 @@ from nexgen_core.openclaw import agy_backend, background, model_policy, observat
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
 from nexgen_core.openclaw.acp import SVILUPPO_ID, SVILUPPO_NAMES, acp_block, acpx_entry, sviluppo_enabled
 from nexgen_core.openclaw.detect import Detection
+from nexgen_core.openclaw.gateway_section import gateway_block
 from nexgen_core.openclaw.local_models import local_models, provider_blocks
 from nexgen_core.openclaw.tools_profile import (
     LOCAL_DENY,
@@ -269,6 +270,31 @@ def _sviluppo_entry(model: str, current: dict[str, Any] | None, state_dir: Path 
     return entry
 
 
+def _tools_section(
+    models: tuple[Any, ...], partners: dict[str, list[str]], current: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """The tools block, with the exec mode already decided: the one leaf the person owns."""
+    tools = tools_block(models, partners)
+    tools["exec"] = _exec_policy(current)
+    return tools
+
+
+def _agents_section(
+    models: tuple[Any, ...], detected: Detection, current: dict[str, Any] | None,
+    language: str, agents: dict[str, str],
+) -> dict[str, Any]:
+    """The roster: who owns it, what every agent inherits, and the agents themselves."""
+    return {
+        "ownership": "explicit",
+        "defaults": {
+            "models": _default_models(detected),
+            # Otherwise the system jobs write to the channels continuously.
+            "heartbeat": {"every": "0m"},
+        },
+        "entries": _agent_entries(agents, detected, current, language),
+    }
+
+
 def _agent_entries(models: dict[str, str], detected: Detection, current: dict[str, Any] | None, language: str) -> dict[str, Any]:
     """The agents to create, with only the options that belong to the model chosen."""
     state_dir = _state_dir(detected)
@@ -329,30 +355,20 @@ def _agent_pairs(models: dict[str, str]) -> dict[str, list[str]]:
     return partners
 
 
-def _gateway(chosen: Choices, current: dict[str, Any] | None) -> dict[str, Any]:
-    """The gateway block, keeping a token and a tailscale mode the file already has."""
-    gateway = current.get("gateway") if isinstance(current, dict) else None
-    auth = gateway.get("auth") if isinstance(gateway, dict) else None
-    token = auth.get("token") if isinstance(auth, dict) else None
-    tailscale = gateway.get("tailscale") if isinstance(gateway, dict) else None
-    block = dict(tailscale) if isinstance(tailscale, dict) else {"mode": "off"}
-    if chosen.serve:
-        # The pair OpenClaw documents for a machine with no screen: the listener
-        # never leaves loopback and Tailscale serves it over HTTPS on the tailnet.
-        # The rest of the section is the person's and stays: only the mode changes.
-        block["mode"] = "serve"
-    return {
-        "mode": "local",
-        "port": GATEWAY_PORT,
-        "bind": "lan" if chosen.lan else "loopback",
-        "auth": {
-            "mode": "token",
-            "token": token if isinstance(token, str) and token.strip() else PENDING_TOKEN,
-        },
-        # The person may have chosen Tailscale for remote access: turning it off
-        # silently would break a setup that works and was not the engine's to undo.
-        "tailscale": block,
-    }
+def _exec_policy(current: dict[str, Any] | None) -> dict[str, Any]:
+    """The exec mode to propose: `auto`, and nothing at all when the file already decides.
+
+    OpenClaw's normalized policy (`auto` is the classifier-reviewed miss) is the
+    shape the engine wants for a machine that never chose one. A file that
+    already carries a mode carries the person's decision, and it is also the only
+    shape the schema accepts next to the legacy `security`/`ask` pair: proposing
+    `mode` over it would loosen the approval policy and could produce a document
+    `config validate` refuses.
+    """
+    tools = current.get("tools") if isinstance(current, dict) else None
+    block = tools.get("exec") if isinstance(tools, dict) else None
+    mode = block.get("mode") if isinstance(block, dict) else None
+    return {} if isinstance(mode, str) and mode.strip() else {"mode": "auto"}
 
 
 def _missing_channel_bindings(
@@ -439,24 +455,19 @@ def build_config(
     language = _language(chosen)
 
     partners = _agent_pairs(agents)
-    tools = tools_block(models, partners)
+    tools = _tools_section(models, partners, current)
 
     config: dict[str, Any] = {
         "plugins": {
             "allow": _plugin_allow(detected, chosen, current),
             "entries": _plugin_entries(detected, chosen, current),
         },
-        "agents": {
-            "ownership": "explicit",
-            "defaults": {
-                "models": _default_models(detected),
-                # Otherwise the system jobs write to the channels continuously.
-                "heartbeat": {"every": "0m"},
-            },
-            "entries": _agent_entries(agents, detected, current, language),
-        },
+        "agents": _agents_section(models, detected, current, language, agents),
         "tools": tools,
-        "gateway": _gateway(chosen, current),
+        "gateway": gateway_block(
+            lan=chosen.lan, serve=chosen.serve, current=current,
+            port=GATEWAY_PORT, pending_token=PENDING_TOKEN,
+        ),
         "update": _update_policy(),
     }
     # Every model this machine can reach is selectable from any agent's picker; `model`
@@ -476,4 +487,9 @@ def build_config(
     bindings = _missing_channel_bindings(current, config["agents"]["entries"])
     if bindings:
         config["bindings"] = bindings
+    if not config["agents"]["entries"]:
+        # OpenClaw refuses `agents` with no entry ("must contain at least one
+        # configured agent"), and a proposal that cannot be written fresh would
+        # make every setup fail on a machine with no model to give an agent.
+        del config["agents"]
     return config

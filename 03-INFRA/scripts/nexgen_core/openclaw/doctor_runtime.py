@@ -492,6 +492,47 @@ def _devices_sentence(
              "request and approves it.", count=len(devices))
 
 
+def check_plugin_enabled(config: dict[str, Any], plugin_dir: Path) -> CheckOutcome | None:
+    """Whether OpenClaw will actually load the engine's plugin, not merely find it.
+
+    Two facts decide a plugin in OpenClaw 2026.10.6: `plugins.allow` is an
+    allowlist of ids (a folder it does not name is code that never runs), and
+    `plugins.entries.<id>.enabled` is the switch. A machine that never received
+    the folder has no plugin, which is a legitimate state and stays silent; a
+    folder that OpenClaw will not load is the guardrail, governor and evidence
+    check missing while everything else in the file says they are installed.
+    """
+    if not plugin_dir.is_dir():
+        return None
+    from nexgen_core.runtimes.openclaw import PLUGIN_ID  # lazy: the adapter imports the engine around this module
+
+    plugins = config.get("plugins") if isinstance(config.get("plugins"), dict) else {}
+    allow = plugins.get("allow") if isinstance(plugins.get("allow"), list) else []
+    entries = plugins.get("entries") if isinstance(plugins.get("entries"), dict) else {}
+    entry = entries.get(PLUGIN_ID) if isinstance(entries.get(PLUGIN_ID), dict) else {}
+    allowed = PLUGIN_ID in {str(item) for item in allow}
+    enabled = entry.get("enabled") is True
+    if allowed and enabled:
+        return CheckOutcome(
+            id="openclaw.plugin",
+            severity=Severity.OK,
+            message=t("The engine plugin {plugin} is deposited and OpenClaw loads it.", plugin=PLUGIN_ID),
+        )
+    if not allowed:
+        reason = t("'{plugin}' is not in plugins.allow", plugin=PLUGIN_ID)
+    else:
+        reason = t("plugins.entries.{plugin}.enabled is not true", plugin=PLUGIN_ID)
+    return CheckOutcome(
+        id="openclaw.plugin",
+        severity=Severity.BROKEN,
+        message=t("The engine plugin is in {path}, and OpenClaw will not load it: {reason}. The guardrail, "
+                  "the governor and the evidence check live there and none of them is running.",
+                  path=plugin_dir, reason=reason),
+        action=t("Run 'nexgen openclaw setup' with the gateway stopped: it adds {plugin} to plugins.allow and "
+                 "enables its entry.", plugin=PLUGIN_ID),
+    )
+
+
 def check_checkpoint(plugin_dir: Path) -> CheckOutcome | None:
     """Whether session continuity checkpoint is enabled in nexgen.config.json."""
     config_path = plugin_dir / "nexgen.config.json"
