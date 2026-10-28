@@ -32,6 +32,7 @@ from nexgen_core.openclaw.profile import (
     agent_models,
     build_config,
 )
+from nexgen_core.openclaw.setup_write import merged_document
 from nexgen_core.openclaw.skills_policy import with_skill_policy
 from nexgen_core.openclaw.squad import apply_squad, find_squad_file, load_squad, unresolved_default
 from nexgen_core.paths import openclaw_config, resolve_home, resolve_vault_data
@@ -363,12 +364,22 @@ def _with_loopback(
 ) -> dict[str, Any]:
     """A `claude-cli` agent reads its connectors from Claude Code, not from the loopback.
 
-    Nothing is asked of a proposal with no such agent: a machine whose agents run
+    The question is asked of the document the write will leave, not of the proposal:
+    the merge keeps every key the proposal does not carry, so `agents.defaults.models`
+    in the file -- and the agents the engine no longer declares -- can put an agent on
+    `claude-cli` while the proposal says nothing about it. The doctor reads that merged
+    file, so a plan that judged the proposal alone wrote its deny for the agents it
+    happened to create and left the loopback open for the others, on every run.
+
+    Nothing is asked of a machine with no such agent: a proposal whose agents run
     elsewhere keeps the tool surface it had, byte for byte.
     """
-    if not claude_cli_agents(config):
+    agents = claude_cli_agents(merged_document(current, config))
+    if not agents:
         return config
-    return claude_loopback.apply(config, _connector_names(home, vault_data, engine_root, current))
+    return claude_loopback.apply(
+        config, _connector_names(home, vault_data, engine_root, current), agents,
+    )
 
 
 def _squad_notes(squad_data: dict[str, Any] | None) -> list[str]:
@@ -405,10 +416,12 @@ def build_plan(
         # The setup command passes no vault: the squad still lives in the user's one.
         vault_data if vault_data is not None else resolve_vault_data(home), home_dir, current,
     )
-    proposed = _with_loopback(proposed, current, home=home_dir, vault_data=vault_data, engine_root=engine_root)
     config = _with_engine_plugin(
         with_chains(with_skill_policy(proposed, vault_data, current), failover), _plugin_deposited(path, plugin_deposited),
     )
+    # Last, and on purpose: the deny is decided on the document the write will leave,
+    # so it sees what every pass above proposed and what the merge will keep.
+    config = _with_loopback(config, current, home=home_dir, vault_data=vault_data, engine_root=engine_root)
     changes = _diff(config, current)
     notes = [
         *_wanted_notes(config, snapshot, chosen, squad_data),
