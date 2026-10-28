@@ -123,6 +123,15 @@ def _retired_keys(config: dict[str, Any], referenced: set[str]) -> set[str]:
     return {ANTHROPIC_API_KEY} - referenced
 
 
+def retired_environment_keys(config: dict[str, Any], config_path: Path) -> set[str]:
+    """The keys the setup takes out of the gateway's environment, given the file in force.
+
+    The doctor asks the same question as the writer, so it asks it here rather than
+    deciding for itself what a reference is.
+    """
+    return _retired_keys(config, extract_referenced_env_vars(config) | extract_mounted_mcp_env_vars(config_path))
+
+
 def _align_values(
     content: str, values: Mapping[str, str], retired: set[str] | None = None,
 ) -> tuple[str, list[str], list[str], list[str]]:
