@@ -107,8 +107,11 @@ def test_smoke_scope_file_is_the_loaded_instructions(tmp_path: Path, monkeypatch
     assert outcome is not None and outcome.severity.name == "OK"
 
 
-def test_smoke_posture_and_guardrail_use_native_keys(tmp_path: Path, monkeypatch) -> None:
+def test_smoke_posture_and_guardrail_use_native_keys(
+    tmp_path: Path, monkeypatch, opencode_dialect
+) -> None:
     """Posture lands in ordered `permissions`; the guardrail is a plugin directory, not a registration."""
+    opencode_dialect("2.2.0")
     home, _vault = _sandbox(tmp_path, monkeypatch)
     cfg = home / ".config" / "opencode" / "opencode.json"
     cfg.parent.mkdir(parents=True)
