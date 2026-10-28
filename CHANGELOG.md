@@ -10,11 +10,21 @@ of any engine release.
 
 ## [Unreleased]
 
+### Added
+
+- OpenClaw keeps every agent chat small: an hourly job compacts a chat that sat idle for an hour, and any chat past 600k tokens even while in use. The main chat is compacted, never archived and never deleted, and `nexgen openclaw groom --dry-run` shows the plan before it runs.
+
+### Changed
+
+- The OpenClaw pin stays at 2026.10.7.
+
 ### Fixed
 
-- An OpenClaw agent running on Claude Code's CLI gets its connectors from Claude Code's own configuration, not from OpenClaw's loopback MCP server. OpenClaw hands the `claude-cli` runtime an `openclaw` server marked `alwaysLoad: true` carrying every tool of the agent, connectors included, so every schema sits in the prompt of every call: 943k tokens for one request, 74 calls in one turn. The setup now denies `<server>__*` for every connector of the configuration on those agents only, leaves OpenClaw's own toolset (`capo`'s `nexgen_sup_*` included) in place, and renders Claude Code's own `~/.claude.json` with the same renderer `nexgen sync` uses, where the connectors load lazily as in a plain Claude Code. A gateway with no `claude-cli` agent is written byte for byte as before, and a new doctor check (`openclaw.claude_loopback`) reports a connector still on the loopback or a missing native file.
-- The role onboarding writes its commands into the home it was given: the launcher step resolved the real `~/.local/bin` on its own, so a sandboxed run (a test, a node in a temporary tree) rewrote this machine's `agent-doctor`, `agent-now` and `agent-skill` to point at a directory in `/tmp` that was deleted afterwards. The home is a parameter through `run_standalone_role`, `run_node_role` and `install_launchers`.
-- The doctor reports an OpenCode config that the installed CLI cannot parse: V2 `permissions` in `opencode.json` in front of a pre-2.0 binary, the state where every `opencode` invocation dies at config parse while the machine is reported healthy. The check asks `nexgen_core/opencode_compat.py` the same question the writer asks, names the version it found, and stays silent when OpenCode never ran here.
+- An OpenClaw agent running on Claude Code's CLI reads its connectors lazily from Claude Code's own configuration, not from OpenClaw's loopback catalog. The loopback server carried every tool of the agent marked `alwaysLoad: true`, so every schema sat in the prompt of every call: 943k tokens for one request. Claude's native compaction is reached through the groom job, and a gateway with no `claude-cli` agent is written exactly as before. A new doctor check (`openclaw.claude_loopback`) names a connector still on the loopback.
+- The gateway no longer carries `ANTHROPIC_API_KEY` when every agent runs on `claude-cli`. The leftover key made the Android app, and anything else reading `models.list`, report that it could not update the models. A new doctor check names the key and the `openclaw gateway install --force` that rewrites the service copy.
+- OpenClaw setup respects decisions the file already carries: the exec mode, a gateway role declared on a node, a skill's toggle, and an empty agent list written as no `agents` section at all. It also checks the pinned Node floor before installing, reads the device tables the 2026.10.x CLI prints, and the doctor fails on a plugin OpenClaw will not load instead of reporting a healthy machine.
+- The doctor reports an OpenCode config the installed CLI cannot parse (#142): V2 `permissions` in front of a pre-2.0 binary, the state where every `opencode` invocation dies at config parse. A V1 CLI no longer gets V2 permissions written at all, and the version probe no longer touches the person's home.
+- The role onboarding writes its commands into the home it was given, instead of rewriting the real `~/.local/bin` on this machine. A second install on a clean machine changes nothing, every child output is read as UTF-8, and the discipline smoke runs under the interpreter that runs the engine.
 
 ## [2.22.1] - 2026-10-27
 
