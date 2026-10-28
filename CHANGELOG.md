@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.23.0] - 2026-10-28
+
 ### Added
 
 - OpenClaw keeps every agent chat small: an hourly job compacts a chat that sat idle for an hour, and any chat past 600k tokens even while in use. The main chat is compacted, never archived and never deleted, and `nexgen openclaw groom --dry-run` shows the plan before it runs.
