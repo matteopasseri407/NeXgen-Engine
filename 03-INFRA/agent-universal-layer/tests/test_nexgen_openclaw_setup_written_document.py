@@ -32,7 +32,7 @@ SCRIPTS_DIR = TESTS_DIR.parents[1] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from test_nexgen_openclaw_setup import ENGINE_ROOT, Machine, detection  # noqa: E402 - the fake machine this suite already drives
+from test_nexgen_openclaw_setup import ENGINE_ROOT, Machine, detection, session_env  # noqa: E402 - the fake machine this suite already drives
 
 from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.claude_loopback_checks import check_claude_loopback  # noqa: E402
@@ -124,7 +124,9 @@ def _machine(tmp_path: Path, *, server_env: dict[str, str] | None = None) -> Mac
 
 def _run(machine: Machine) -> str:
     """The whole setup, on a machine with no Claude login: the only `claude-cli` agents are the file's."""
-    code = machine.run(detected=detection(machine.config, claude=False), env={"PATH": "/fake/bin"})
+    # A healthy session, so a Linux runner meets the systemd preflight as a desktop would.
+    env = {"PATH": "/fake/bin", **session_env(sys.platform)}
+    code = machine.run(detected=detection(machine.config, claude=False), env=env)
     assert code == 0, machine.output()
     return (machine.state_dir / ".env").read_text(encoding="utf-8")
 
