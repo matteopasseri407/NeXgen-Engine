@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.24.0] - 2026-10-29
+
+### Changed
+
+- OpenClaw ready to install with the engine: a node is no longer judged as a gateway (nexgen update stops rolling back on node PCs); the node role installs the pinned OpenClaw; the Windows Companion app can be the node (nexgen openclaw node --use-app, never removing the CLI node before the app is connected); Gemini via Antigravity CLI is set up by the engine (pinned ClawHub plugin google-antigravity-provider 0.3.4, sandbox mode, agent folders trusted in agy) and agy models no longer register a Google API key; skills installed from ClawHub or by the person's own plugins are adopted and reach every CLI, and an adopted MCP server is rendered to every CLI at once (lazy); the doctor no longer suggests gateway install --force.
+
 ## [2.23.1] - 2026-10-29
 
 ### Changed
