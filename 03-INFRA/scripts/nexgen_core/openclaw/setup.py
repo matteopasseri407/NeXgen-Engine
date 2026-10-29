@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import claude_native, setup_write
+from nexgen_core.openclaw import claude_native, setup_agy, setup_write
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.doctor import collect as doctor_collect
 from nexgen_core.openclaw.doctor import render as doctor_render
@@ -195,7 +195,7 @@ def _plan_phase(
     if setup.dry_run:
         setup.out("")
         setup.out(t("Commands this run would execute:"))
-        for line in planned_commands(setup, installed, plan):
+        for line in [*planned_commands(setup, installed, plan), *setup_agy.planned_lines(setup, plan.config)]:
             setup.out(f"  {line}" if line.startswith("# ") else f"  $ {line}")
         setup.out(t("Dry run: nothing was written and nothing was executed."))
         return _Decision(None, 0)
@@ -211,6 +211,8 @@ def _apply(
     """Steps 4 to 9: write, workspaces, service, module, phone, doctor."""
     _step(setup.out, 4, t("Safe write"))
     if not plugin_step(setup):
+        return 1
+    if not setup_agy.install_step(setup, plan.config):
         return 1
     outcome = write_step(setup, plan)
     if outcome == "failed":

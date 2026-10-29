@@ -247,7 +247,7 @@ def _gateway_outcomes(
         *_check_gateway(config),
         exposure(config),
         doctor_config.check_google(config),
-        doctor_agy.check_local_agy(config),
+        *doctor_agy.check_local_agy(config, state_dir=path.parent, home=home_dir),
         doctor_config.check_acp(config),
         doctor_config.check_tool_search(config),
         doctor_config.check_mcp_lazy(config),

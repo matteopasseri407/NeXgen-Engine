@@ -287,6 +287,40 @@ with the same id. `nexgen openclaw doctor` gives that backend its own line and n
 plugin was given: `skip` (and omitting it, which is the plugin's default) is a warning, because it lets
 `agy` approve every tool call by itself, while `sandbox` and `settings` keep an approval boundary.
 
+### The `agy` backend: the plugin, and what `agy` itself needs
+
+The plugin is third-party: `google-antigravity-provider`, MIT, from `github.com/jason-allen-oneal/openclaw-google-antigravity-provider`.
+It is installed at one exact release and never at `@latest`.
+`agent-universal-layer/openclaw/agy-plugin.json` holds the package and the version, the same way `pin.json` holds OpenClaw's.
+
+When the team puts an agent on `google-antigravity-cli/...`, either in `squad.yaml` or already approved in the file in force, `nexgen openclaw setup` does three things in the write step, in this order:
+
+1. It runs `openclaw plugins install npm:<package>@<version> --force --no-enable`.
+   `--force` is what a non-interactive install of an arbitrary npm package needs, and it is also what replaces a copy at another version.
+   `--no-enable` keeps activation with the engine, which owns `openclaw.json`.
+2. It proves the release on disk: the `version` in `extensions/google-antigravity-cli/package.json` must be the pinned one, or the setup stops with nothing written.
+   `openclaw plugins install` records its own integrity hash but takes no hash to check against, so the version is the check this engine can make.
+3. It writes `plugins.allow` with the backend, `enabled: true`, and `permissionMode: sandbox`, or the guarded mode (`sandbox`, `settings`) the file already declared.
+   `skip` is never written.
+
+A team that names no `agy` model gets none of this: no command, no line, the same file as before.
+`--dry-run` prints the install command instead of running it, and `nexgen openclaw plan` shows the `plugins` entries the setup would add.
+
+Two things the setup only reports, because they belong to the person:
+
+- `agy` on PATH and its login.
+  The credential is not a file the engine reads: `agy` keeps it in the system keyring (on Windows, the Credential Manager entry `gemini:antigravity`), so the doctor never says "not logged in".
+  It says it cannot see the login, and asks the person to run `agy` once.
+- the trust `agy` asks for every folder.
+  It records the answer in `~/.gemini/antigravity-cli/settings.json` under `trustedWorkspaces`, as absolute paths.
+  The agent workspaces OpenClaw creates are not in that list on a new machine, and an agent that starts in an untrusted folder stops at the prompt, so the setup and the doctor name the folders and the step: run `agy` once in each one and accept the prompt.
+
+`nexgen openclaw doctor` has three lines for this backend and they do not overlap.
+`openclaw.google.cli_backend` judges the permission mode.
+`openclaw.google.cli_backend.plugin` says the plugin is missing or is not the pinned release, with the exact install command.
+`openclaw.google.cli_backend.agy` says the `agy` command is not on PATH or a workspace is not trusted.
+A missing plugin is never reported as a `permissionMode` problem again.
+
 ## Windows, the traps that cost an afternoon
 
 - `openclaw gateway restart` does not restart on Windows. Stop the processes and relaunch the service, or

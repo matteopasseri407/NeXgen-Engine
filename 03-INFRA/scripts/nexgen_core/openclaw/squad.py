@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import model_policy
+from nexgen_core.openclaw import agy_backend, agy_prereqs, model_policy
 from nexgen_core.openclaw.claude_cli import CLAUDE_CLI
 from nexgen_core.openclaw.runtime import apply_runtime
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
@@ -433,7 +433,8 @@ def apply_squad(
 
     # A model the squad names is that agent's default, and it must be selectable from the
     # picker of every other agent too: registering it does not change anyone's `model`.
-    return model_policy.with_declared(target, _declared_models(squad))
+    applied = model_policy.with_declared(target, _declared_models(squad))
+    return agy_backend.with_backend(applied, current) if agy_prereqs.requested(squad) else applied
 
 
 def _cli_backend(model: str) -> str:

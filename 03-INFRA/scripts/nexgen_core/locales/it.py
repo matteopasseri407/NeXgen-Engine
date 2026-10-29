@@ -1613,6 +1613,42 @@ MESSAGES: dict[str, str] = {
         "Il backend CLI locale '{backend}' è configurato: 'agy' conserva il proprio login e OpenClaw non detiene nessuna credenziale Google (permissionMode '{mode}').",
     "The local '{backend}' CLI backend declares permissionMode '{mode}', which is neither 'skip' nor 'sandbox'/'settings': the doctor cannot say whether 'agy' approves a tool call by itself.":
         "Il backend CLI locale '{backend}' dichiara permissionMode '{mode}', che non è né 'skip' né 'sandbox'/'settings': il doctor non può dire se 'agy' approva da solo una chiamata di tool.",
+    "The engine cannot read its Antigravity plugin pin, so it will not install an unpinned plugin. Check agent-universal-layer/openclaw/agy-plugin.json and run the setup again.":
+        "Il motore non riesce a leggere il pin del plugin Antigravity, quindi non installa un plugin senza versione bloccata. Controlla agent-universal-layer/openclaw/agy-plugin.json e rilancia il setup.",
+    "The Antigravity plugin {plugin} is already {version}.":
+        "Il plugin Antigravity {plugin} è già alla versione {version}.",
+    "The Antigravity plugin {plugin} is {version}, not the pinned {pinned}: installing the pin.":
+        "Il plugin Antigravity {plugin} è alla versione {version}, non alla {pinned} bloccata: installo quella bloccata.",
+    "An agent runs on the local 'agy' CLI and the plugin is not installed: installing {pinned}.":
+        "Un agente gira sulla CLI locale 'agy' e il plugin non è installato: installo la versione {pinned}.",
+    "The Antigravity plugin install failed (exit {code}).":
+        "L'installazione del plugin Antigravity non è riuscita (uscita {code}).",
+    "The install finished but the plugin is {version} in {path}, not {pinned}: the configuration was not written.":
+        "L'installazione è finita ma il plugin in {path} è alla versione {version}, non alla {pinned}: la configurazione non è stata scritta.",
+    "The Antigravity plugin {plugin} {version} is installed.":
+        "Il plugin Antigravity {plugin} {version} è installato.",
+    "The 'agy' command is not on PATH: install the Antigravity CLI from Google, then run 'agy' once and sign in. The plugin cannot run an agent until then.":
+        "Il comando 'agy' non è nel PATH: installa la CLI Antigravity di Google, poi lancia 'agy' una volta e fai il login. Fino a quel momento il plugin non può far girare nessun agente.",
+    "The login of 'agy' is kept by the system keyring and cannot be checked from here: run 'agy' once and make sure it answers.":
+        "Il login di 'agy' è custodito dal portachiavi di sistema e da qui non si può controllare: lancia 'agy' una volta e verifica che risponda.",
+    "'agy' has not been trusted with these agent folders: {folders}":
+        "'agy' non ha ricevuto la fiducia per queste cartelle degli agenti: {folders}",
+    "Run 'agy' once in each of them and accept the trust prompt; 'agy' records the folder in {settings} under {key}.":
+        "Lancia 'agy' una volta in ciascuna e accetta la richiesta di fiducia; 'agy' registra la cartella in {settings} sotto {key}.",
+    "the Antigravity plugin pin cannot be read: no plugin is installed":
+        "il pin del plugin Antigravity non è leggibile: nessun plugin viene installato",
+    "The configuration runs an agent on '{backend}', but the plugin is not installed in {path}: OpenClaw cannot run that agent.":
+        "La configurazione fa girare un agente su '{backend}', ma il plugin non è installato in {path}: OpenClaw non può far girare quell'agente.",
+    "The '{backend}' plugin is {version}, not the pinned {pinned}: the engine configures and tests one exact release.":
+        "Il plugin '{backend}' è alla versione {version}, non alla {pinned} bloccata: il motore configura e collauda una sola versione esatta.",
+    "Check agent-universal-layer/openclaw/agy-plugin.json: it holds the plugin release the engine expects.":
+        "Controlla agent-universal-layer/openclaw/agy-plugin.json: contiene la versione del plugin che il motore si aspetta.",
+    "The '{backend}' plugin runs the 'agy' command, which is not on PATH: install the Antigravity CLI from Google, then run 'agy' once and sign in.":
+        "Il plugin '{backend}' lancia il comando 'agy', che non è nel PATH: installa la CLI Antigravity di Google, poi lancia 'agy' una volta e fai il login.",
+    "Install the Antigravity CLI from Google, then run 'agy' once and sign in.":
+        "Installa la CLI Antigravity di Google, poi lancia 'agy' una volta e fai il login.",
+    "Run '{command}'.":
+        "Lancia '{command}'.",
     "The ACP bridge allows the 'gemini' agent; its terms do not allow it outside Google's clients.":
         "Il bridge ACP permette l'agente 'gemini'; i termini non lo permettono fuori dai client Google.",
     "Remove 'gemini' from acp.allowedAgents.":

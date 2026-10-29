@@ -22,12 +22,23 @@ PIN_RELATIVE = Path("agent-universal-layer") / "openclaw" / "pin.json"
 _VERSION_RE = re.compile(r'"version"\s*:\s*"([^"]+)"')
 
 
+def pin_candidates(engine_root: Path | None = None) -> list[Path]:
+    """Where the pin may be, in the order it is looked for.
+
+    A cloned checkout runs from `03-INFRA/scripts/nexgen_core/openclaw/pin.py`:
+    four parents up is the `03-INFRA` that holds the layer. A pin beside the
+    installed engine wins; the source tree is the fallback a test and a
+    developer's copy rely on.
+    """
+    return [
+        resolve_engine_root(engine_root) / PIN_RELATIVE,
+        Path(__file__).resolve().parents[3] / PIN_RELATIVE,
+    ]
+
+
 def pin_path(engine_root: Path | None = None) -> Path:
     """The pin file in the installed engine, falling back to the source tree."""
-    candidates = [resolve_engine_root(engine_root) / PIN_RELATIVE]
-    # A cloned checkout runs from 03-INFRA/scripts/nexgen_core/openclaw/pin.py:
-    # four parents up is the 03-INFRA that holds the layer.
-    candidates.append(Path(__file__).resolve().parents[3] / PIN_RELATIVE)
+    candidates = pin_candidates(engine_root)
     for candidate in candidates:
         if candidate.is_file():
             return candidate
