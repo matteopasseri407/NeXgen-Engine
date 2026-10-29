@@ -331,6 +331,7 @@ It tells these situations apart, from evidence that starts nothing:
 
 - **Doctor (`nexgen openclaw doctor`)**:
   - `openclaw.companion_gateway`: reports OK when connected to the engine gateway, or when either the isolated native gateway or WSL distribution runs alone as the designated gateway. Warns only when both an engine gateway and an app-managed gateway run simultaneously.
+  - `openclaw.companion_node`: warns when the app's node mode is on beside the CLI node service, or when the app's node has no credential. It takes the place of an OK line above while either is true, and joins a warning line when there is one, because that is the line a person has to act on.
   - `openclaw.store_gateway`: excludes the companion's isolated native gateway MSIX (`OpenClawGatewayMSIX`), preventing false-positive Store package conflict alarms.
 - **Plan (`nexgen openclaw plan`)**:
   - Notes the detected companion gateway mode (`isolated`, `wsl`, `engine`, `remote`).
@@ -353,6 +354,28 @@ written it asks whether the gateway port answers, because two gateways cannot sh
 
 The app's distribution is never started, stopped or written, with or without the option. The app is not
 something to remove, either: the doctor's lines say which gateway is which, never that the app has to go.
+
+### One node per PC: the app, not the CLI service
+
+On Windows the Companion app has its own node mode (`EnableNodeMode` in `%APPDATA%\OpenClawTray\settings.json`),
+and OpenClaw's CLI has one too: `openclaw node install` registers the scheduled task `OpenClaw Node` and leaves
+`~/.openclaw/node.cmd` beside it. Both at once are two nodes on one PC. The owner's decision is that the node is
+the app, so the CLI service is the one that goes.
+
+The engine reads both facts and writes nothing under either app folder:
+
+- node mode off: nothing new, and the doctor's line about the app's gateway is all there is;
+- node mode on and the CLI node service installed: a warning names the two nodes, the command that removes the
+  service (`nexgen openclaw node --use-app --apply`) and the two approvals the app still needs on the gateway;
+- node mode on and the app's latest node line in its log is `No node credential available`: a warning says the
+  app could not use its node, with the steps that pair it again (`openclaw devices list`, then
+  `openclaw devices approve <id>` on the gateway).
+
+The app's log is read from its end, the last megabyte of it, and only when node mode is on; the scheduled task is
+asked with a read-only `schtasks /Query` that gives up after five seconds. `nexgen openclaw node --use-app` shows
+that transition and `--apply` carries it out: it runs `openclaw node uninstall` and records the role `node`. The
+engine never writes `settings.json`, never starts the app and never turns node mode off itself: that switch is
+the person's.
 
 ### What it does not do yet
 
@@ -699,6 +722,11 @@ it redeems the link as a service and waits for the connection, without one it ru
 `openclaw node start` and leaves the two approvals to `nexgen openclaw pair` on the gateway. `--dry-run` prints
 the same plan and changes nothing, `--force` moves a machine that is already a node of another gateway.
 `install.sh --role node` and `install.ps1 -Role node` run this same retirement before attaching.
+
+`nexgen openclaw node --use-app [--apply]` is the other direction, for the Windows PC whose node is the
+Companion app: it reads whether the CLI node service `OpenClaw Node` is installed, and with `--apply` removes
+it with `openclaw node uninstall` and records the role `node`. It never writes under the app's folders and
+never starts the app; the section on the Companion app says what the app itself still needs.
 
 `nexgen openclaw setup` applies that same plan: it installs the pinned release, onboards when there is no
 file, merges the owned sections with a backup beside them, writes the agent manuals, installs and starts the

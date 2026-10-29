@@ -4,10 +4,12 @@
 One job: the checks that read machine state rather than configuration, so
 `doctor.py` stays the rules of the configuration and this module answers what is
 running, what else is running, and what an agent has learned. Read-only by
-construction: no file is written and nothing is started by itself. Two calls can
+construction: no file is written and nothing is started by itself. Three calls can
 run a command, and only when the caller hands them in: asking Node for its version,
-and the gateway's own device list, which `nexgen openclaw doctor` passes and a pass
-with no business launching a CLI does not. A URL read from the Companion's settings
+the gateway's own device list, which `nexgen openclaw doctor` passes and a pass
+with no business launching a CLI does not; and, when the Windows app has its node
+mode switched on, the read-only `schtasks /Query` that says whether the CLI node
+service is installed beside it. A URL read from the Companion's settings
 is never printed. Where the Windows app keeps its own gateway is `companion.py`'s
 question; here it is only a value that decides which sentence a person reads.
 """
@@ -23,6 +25,7 @@ from nexgen_core.i18n import t
 from nexgen_core.openclaw import companion as app
 from nexgen_core.openclaw import host_preflight
 from nexgen_core.openclaw.companion import Companion
+from nexgen_core.openclaw.node_app import NODE_TASK_NAME, CliNodeService, detect_cli_node_service
 from nexgen_core.openclaw.pin import node_satisfies
 from nexgen_core.openclaw.profile import GATEWAY_PORT
 from nexgen_core.openclaw_pairing import names_the_windows_app
@@ -380,7 +383,7 @@ def _isolated_companion_outcome(companion: Companion, situation: str) -> CheckOu
     return None
 
 
-def check_companion_gateway(
+def _gateway_companion_outcome(
     companion: Companion,
     native_installed: bool,
     platform: str,
@@ -437,6 +440,77 @@ def check_companion_gateway(
         )
     if situation == app.NATIVE and companion.present:
         return _app_and_this_gateway(companion, pending)
+    return None
+
+
+def check_companion_gateway(
+    companion: Companion,
+    native_installed: bool,
+    platform: str,
+    pending: Callable[[], list[dict[str, Any]] | None] | None = None,
+    cli_service: CliNodeService | None = None,
+) -> CheckOutcome | None:
+    """The app's line, with the one-node fact folded into it when it applies.
+
+    The doctor has one line for the app; a node problem is about the same app, so
+    it is said in that line rather than in a second one. When the app's gateway
+    line is a warning of its own it is kept and the node sentence joins it,
+    because dropping either would hide a conflict a person can fix. `cli_service`
+    is the detection, injected because finding it runs `schtasks`.
+
+    The app's files are never written, here or anywhere: every sentence says what
+    to type in the app and on the gateway, never what this engine changes there.
+    """
+    if not platform.startswith("win"):
+        return None
+    gateway = _gateway_companion_outcome(companion, native_installed, platform, pending)
+    node = check_companion_node(companion, platform, cli_service)
+    if node is None:
+        return gateway
+    if gateway is None or gateway.severity == Severity.OK:
+        return node
+    return CheckOutcome(
+        id="openclaw.companion_node",
+        severity=Severity.WARN,
+        message=" ".join((gateway.message, node.message)),
+        action=" ".join(part for part in (gateway.action, node.action) if part),
+    )
+
+
+def check_companion_node(
+    companion: Companion,
+    platform: str,
+    cli_service: CliNodeService | None = None,
+) -> CheckOutcome | None:
+    """One node per PC: the app's node mode against the CLI service that does the node.
+
+    The owner's rule decides the direction: when the app has node mode on, the
+    node is the app, and the CLI service is what has to go. A node mode that is
+    off says nothing new, and a node that is on and working says nothing either.
+    """
+    if not platform.startswith("win") or not companion.wants_node:
+        return None
+    service = cli_service if cli_service is not None else detect_cli_node_service(query=True)
+    if service.present:
+        return CheckOutcome(
+            id="openclaw.companion_node",
+            severity=Severity.WARN,
+            message=t("The OpenClaw Companion app has node mode on and the CLI node service "
+                      "'{name}' is installed too: two nodes on the same PC.", name=NODE_TASK_NAME),
+            action=t("The node is the app: remove the CLI service with 'nexgen openclaw node "
+                     "--use-app --apply', then pair the app on the gateway with 'openclaw devices "
+                     "list' and 'openclaw devices approve <id>'."),
+        )
+    if companion.node_credential_missing:
+        return CheckOutcome(
+            id="openclaw.companion_node",
+            severity=Severity.WARN,
+            message=t("The OpenClaw Companion app has node mode on but no node credential: its "
+                      "log's last node line is 'No node credential available'."),
+            action=t("Pair the app again: in OpenClaw Companion leave node mode on and connect it "
+                     "to the gateway, then on the gateway run 'openclaw devices list' and "
+                     "'openclaw devices approve <id>'."),
+        )
     return None
 
 

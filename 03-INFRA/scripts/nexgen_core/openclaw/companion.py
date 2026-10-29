@@ -1,3 +1,4 @@
+# nexgen: one-job reason="turning the app's files, WSL list and log end into one value about its gateway and node"
 """Where the OpenClaw Companion app keeps its gateway, read without starting it.
 
 One job: turn the things that answer without launching the app, WSL or a gateway --
@@ -9,10 +10,15 @@ command is run, no file is written, and nothing is started.
 The app's schema is not documented field by field, so every field is optional
 and a file that does not parse says nothing. The keys this engine knows are
 `setupManagedDistroName`, `isLocal`, `sshTunnel`, `nativePackageFamilyName`,
-`nativeRuntimeContract`, and gateway URLs. A URL can carry a token in its query
-string, so it is parsed for its host and its port and then dropped. No URL,
-token or device key is ever returned, kept or printed, and a `device-key*` file
-is never opened.
+`nativeRuntimeContract`, `EnableNodeMode`, and gateway URLs. A URL can carry a
+token in its query string, so it is parsed for its host and its port and then
+dropped. No URL, token or device key is ever returned, kept or printed, and a
+`device-key*` file is never opened.
+
+The app can also be the node of a gateway, and whether it managed to be one is
+only visible in its log: the last bounded piece of that log is enough to say
+whether its latest node line is the missing-credential error. The log is read
+from its end in one bounded read, never opened whole.
 """
 from __future__ import annotations
 
@@ -58,6 +64,17 @@ Distros = Callable[[], list[str]]
 #: A gateway the app names on one of these is a gateway on this PC.
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
+#: The app's log, and the tail of it this module reads. Not the whole file: the
+#: app writes a health snapshot about once a minute, and the owner's log had
+#: reached several megabytes with the node error the doctor has to see written
+#: hours before its end.
+LOG_FILENAME = "openclaw-tray.log"
+LOG_TAIL_BYTES = 1024 * 1024
+#: What the app writes when it has node mode on but no credential to use it.
+NODE_CREDENTIAL_ERROR = "no node credential available"
+#: A line saying the app's node did connect, which makes an older error stale.
+NODE_CONNECTED_WORDS = ("connected", "is ready")
+
 
 @dataclass(frozen=True)
 class Companion:
@@ -74,6 +91,11 @@ class Companion:
     points_here: bool = False
     #: The loopback port the app's settings name, when they name one.
     port: int | None = None
+    #: The app's own node mode is switched on: this PC is meant to be a node.
+    wants_node: bool = False
+    #: The app's log ends on "no node credential" rather than on a connected node:
+    #: node mode is on and the app cannot use it.
+    node_credential_missing: bool = False
     signals: tuple[str, ...] = ()
     isolated: IsolatedGateway | None = None
     target: str = ""
@@ -118,6 +140,10 @@ class Companion:
             "port": self.port,
             "signals": list(self.signals),
         }
+        if self.wants_node:
+            data["wants_node"] = True
+        if self.node_credential_missing:
+            data["node_credential_missing"] = True
         if self.isolated is not None:
             data["isolated"] = self.isolated.to_dict()
         if self.target:
@@ -147,6 +173,14 @@ def _pairs(document: Any) -> Iterator[tuple[str, Any]]:
     elif isinstance(document, list):
         for item in document:
             yield from _pairs(item)
+
+
+def _wants_node(document: Any) -> bool:
+    """Whether the app's own settings switch its node mode on: one boolean, nothing else."""
+    return any(
+        key.casefold() == "enablenodemode" and value is True
+        for key, value in _pairs(document)
+    )
 
 
 def _address(text: str) -> tuple[bool, int | None] | None:
@@ -275,6 +309,35 @@ def _json(path: Path) -> Any:
         return None
 
 
+def _log_lines(path: Path, limit: int = LOG_TAIL_BYTES) -> list[str]:
+    """The end of the app's log, in one bounded read: absent or unreadable means no lines."""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - limit))
+            data = handle.read()
+    except OSError:  # nexgen: allow reason="an app that wrote no log says nothing about its node"
+        return []
+    return data.decode("utf-8", errors="replace").splitlines()
+
+
+def log_says_no_node_credential(log_path: Path, limit: int = LOG_TAIL_BYTES) -> bool:
+    """Whether the app's latest node line is the missing-credential error.
+
+    The two facts are taken in the order they were written: an error read after a
+    line saying the node connected is stale and says nothing.
+    """
+    last_error = last_connected = -1
+    for index, line in enumerate(_log_lines(log_path, limit)):
+        lowered = line.casefold()
+        if NODE_CREDENTIAL_ERROR in lowered:
+            last_error = index
+        elif "node" in lowered and any(word in lowered for word in NODE_CONNECTED_WORDS):
+            last_connected = index
+    return last_error > last_connected
+
+
 def engine_port() -> int:
     """The port this engine's gateway uses, imported late and read in one place."""
     from nexgen_core.openclaw.profile import GATEWAY_PORT
@@ -287,12 +350,14 @@ def read_settings(settings_dir: Path) -> Companion:
     local = remote = here = False
     port = None
     present = False
+    wants_node = False
     target = native_family = native_contract = ""
     for name in SETTINGS_FILES:
         document = _json(settings_dir / name)
         if document is None:
             continue
         present = True
+        wants_node = wants_node or _wants_node(document)
         found = _scan(
             document, only_gateway_keys=name == "settings.json", engine_port=engine_port(),
         )
@@ -317,7 +382,7 @@ def read_settings(settings_dir: Path) -> Companion:
         )
     return Companion(
         present=present, owns_local_gateway=local, points_remote=remote, points_here=here,
-        port=port, signals=tuple(signals), isolated=isolated, target=target,
+        port=port, wants_node=wants_node, signals=tuple(signals), isolated=isolated, target=target,
     )
 
 
@@ -426,6 +491,9 @@ def probe(
     port = settings.port if settings.port is not None else (isolated.port if isolated else None)
     owns_local = distro or storage or settings.owns_local_gateway or has_isolated
     target = _resolve_target(settings, has_isolated, owns_local, distro, storage)
+    credential_missing = log_says_no_node_credential(
+        local_appdata / COMPANION_DIRNAME / LOG_FILENAME,
+    ) if settings.wants_node else False
 
     return Companion(
         present=bool(unique_signals) or settings.present or has_isolated,
@@ -433,6 +501,8 @@ def probe(
         points_remote=settings.points_remote,
         points_here=settings.points_here,
         port=port,
+        wants_node=settings.wants_node,
+        node_credential_missing=credential_missing,
         signals=tuple(unique_signals),
         isolated=isolated,
         target=target,

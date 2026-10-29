@@ -1719,6 +1719,42 @@ MESSAGES: dict[str, str] = {
         "L'app OpenClaw Companion esegue il gateway su questo PC ({signals}) e non ce n'è uno nativo.",
     "The OpenClaw Companion app points to its own isolated native gateway ({signals}) and there is no native one.":
         "L'app OpenClaw Companion punta al proprio gateway nativo isolato ({signals}) e non ce n'è uno nativo.",
+    "The OpenClaw Companion app has node mode on and the CLI node service '{name}' is installed too: two nodes on the same PC.":
+        "L'app OpenClaw Companion ha il nodo acceso e c'è anche il servizio nodo della CLI '{name}': due nodi sullo stesso PC.",
+    "The node is the app: remove the CLI service with 'nexgen openclaw node --use-app --apply', then pair the app on the gateway with 'openclaw devices list' and 'openclaw devices approve <id>'.":
+        "Il nodo è l'app: togli il servizio della CLI con 'nexgen openclaw node --use-app --apply', poi associa l'app sul gateway con 'openclaw devices list' e 'openclaw devices approve <id>'.",
+    "The OpenClaw Companion app has node mode on but no node credential: its log's last node line is 'No node credential available'.":
+        "L'app OpenClaw Companion ha il nodo acceso ma nessuna credenziale per il nodo: l'ultima riga del suo log sul nodo è 'No node credential available'.",
+    "Pair the app again: in OpenClaw Companion leave node mode on and connect it to the gateway, then on the gateway run 'openclaw devices list' and 'openclaw devices approve <id>'.":
+        "Associa di nuovo l'app: in OpenClaw Companion lascia il nodo acceso e collegala al gateway, poi sul gateway lancia 'openclaw devices list' e 'openclaw devices approve <id>'.",
+    "The OpenClaw Companion app is the node of this PC":
+        "Il nodo di questo PC è l'app OpenClaw Companion",
+    "- CLI node service '{name}': uninstalled with 'openclaw node uninstall'":
+        "- servizio nodo della CLI '{name}': disinstallato con 'openclaw node uninstall'",
+    "- CLI node service '{name}': not installed, nothing to remove":
+        "- servizio nodo della CLI '{name}': non installato, niente da rimuovere",
+    "- this machine: role 'node' recorded":
+        "- questa macchina: ruolo 'node' registrato",
+    "- the app's files: never written, and the app is not started":
+        "- i file dell'app: mai scritti, e l'app non viene avviata",
+    "Nothing was changed: run the same command with --apply.":
+        "Non è cambiato niente: rilancia lo stesso comando con --apply.",
+    "'openclaw node uninstall' failed (exit code {code}): the CLI node service is still there.":
+        "'openclaw node uninstall' non è riuscito (codice d'uscita {code}): il servizio nodo della CLI è ancora lì.",
+    "The CLI node service '{name}' is gone.":
+        "Il servizio nodo della CLI '{name}' non c'è più.",
+    "This machine is recorded as a node.":
+        "Questa macchina è registrata come nodo.",
+    "The role could not be recorded: run 'nexgen role set node'.":
+        "Il ruolo non è stato registrato: lancia 'nexgen role set node'.",
+    "In OpenClaw Companion leave node mode on and connect the app to the gateway; on the gateway run 'openclaw devices list', then 'openclaw devices approve <id>'.":
+        "In OpenClaw Companion lascia il nodo acceso e collega l'app al gateway, poi sul gateway lancia 'openclaw devices list' e poi 'openclaw devices approve <id>'.",
+    "The Companion app exists on Windows only: there is no app node to choose here.":
+        "L'app OpenClaw Companion esiste solo su Windows: qui non c'è un nodo dell'app da scegliere.",
+    "A gateway address is needed: pass --host, or --use-app when the Companion app is the node.":
+        "Serve l'indirizzo del gateway: passa --host, oppure --use-app quando il nodo è l'app OpenClaw Companion.",
+    "The OpenClaw Companion app is the node of this PC: remove the CLI node service and record the role (with --apply)":
+        "Il nodo di questo PC è l'app OpenClaw Companion: toglie il servizio nodo della CLI e registra il ruolo (con --apply)",
     "This version of the engine configures the native Node gateway, which is the road it supports, not the app's one: nothing was installed and nothing was written, because a native gateway beside it would fight over the same port.":
         "Questa versione del motore configura il gateway nativo Node, che è la strada che supporta, non quello dell'app: non è stato installato né scritto niente, perché un gateway nativo accanto a quello dell'app si batterebbe per la stessa porta.",
     "To use the app with the engine, open Connections in OpenClaw Companion and choose 'a local Gateway on this PC'.":
