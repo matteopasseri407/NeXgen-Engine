@@ -92,6 +92,7 @@ def plan_adoption(
     *,
     skills: bool = True,
     mcp: bool = True,
+    include_workshop: bool = True,
     home: Path | None = None,
     vault_data: Path | None = None,
     config: Mapping[str, Any] | None = None,
@@ -102,6 +103,11 @@ def plan_adoption(
     A manifest that cannot be read lists nothing at all instead of listing
     everything: without it the engine cannot tell its own resources from the
     person's, and adopting a resource back is worse than adopting none.
+
+    `include_workshop` is the person's answer, not the scan's: the plain command
+    leaves the skills the Workshop taught itself inside OpenClaw and says so,
+    while `--skills` puts them on the table. The default is the explicit door,
+    because a caller that names skills is already asking for them.
     """
     home_dir = resolve_home(home)
     vault = resolve_vault_data(home_dir, vault_data)
@@ -122,10 +128,22 @@ def plan_adoption(
     )
     pending: list[Pending] = []
     if skills and known.skills is not None:
-        pending.extend(Pending(SKILL, skill.name, vet_skill(skill), skill=skill) for skill in found.skills)
+        candidates = tuple(found.skills) if include_workshop else adopt_scan.automatic_skills(found.skills)
+        pending.extend(Pending(SKILL, skill.name, vet_skill(skill), skill=skill) for skill in candidates)
     if mcp and known.mcp is not None:
         pending.extend(Pending(SERVER, server.name, vet_server(server), server=server) for server in found.servers)
+    if skills and not include_workshop:
+        hidden = [skill for skill in found.skills if skill.source not in adopt_scan.AUTOMATIC_SOURCES]
+        notes.extend(_workshop_note(len(hidden)))
     return Plan(tuple(pending), tuple(notes) + found.notes)
+
+
+def _workshop_note(count: int) -> list[str]:
+    """The sentence that says where the Workshop's own skills went, when they are left out."""
+    if count == 0:
+        return []
+    return [t("{count} skills the Workshop learned stay inside OpenClaw: "
+              "'nexgen openclaw adopt --skills' offers them one by one.", count=count)]
 
 
 def _verdict_phrase(item: Pending) -> str:
@@ -141,7 +159,8 @@ def render_plan(plan: Plan) -> str:
     """The table a person reads before anything is written."""
     lines: list[str] = []
     if plan.total == 0:
-        lines.append(t("Nothing to adopt: everything OpenClaw created is already in the canonical library."))
+        lines.append(t("Nothing to adopt: everything OpenClaw created that the engine carries is already "
+                       "in the canonical library."))
     else:
         lines.append(t("{count} resources created in OpenClaw are not in the canonical library yet:",
                        count=plan.total))
@@ -260,10 +279,35 @@ def _run_auto(
     return 0 if res.ok else 1
 
 
+def _agreed(
+    plan: Plan,
+    *,
+    yes: bool,
+    ask: Confirm,
+    emit: Emit,
+) -> list[Pending] | None:
+    """What this person said yes to, or None when they refused the whole plan.
+
+    `--yes` is consent for the safe ones and nothing more: a resource the checks
+    left for a person is still asked about, one at a time. The refusal of the
+    main question is a separate answer, not an empty list, so the pass stops
+    before it starts rather than reporting everything as left alone.
+    """
+    ready = list(plan.with_status(SAFE))
+    if yes:
+        return ready
+    if not ask(t("Adopt the resources above into the canonical library now?")):
+        emit(t("Nothing adopted."))
+        return None
+    ready.extend(item for item in plan.with_status(REVIEW) if ask(_review_question(item)))
+    return ready
+
+
 def _run_interactive(
     *,
     skills: bool,
     mcp: bool,
+    include_workshop: bool,
     dry_run: bool,
     yes: bool,
     home: Path | None,
@@ -281,7 +325,8 @@ def _run_interactive(
     home_dir = resolve_home(home)
     vault = resolve_vault_data(home_dir, vault_data)
     plan = plan_adoption(
-        skills=skills, mcp=mcp, home=home_dir, vault_data=vault, config_path=config_path,
+        skills=skills, mcp=mcp, include_workshop=include_workshop,
+        home=home_dir, vault_data=vault, config_path=config_path,
     )
     emit(render_plan(plan))
     if plan.total == 0:
@@ -291,12 +336,9 @@ def _run_interactive(
         return 0
 
     ask = confirm or ask_yes_no
-    ready = list(plan.with_status(SAFE))
-    if not yes:
-        if not ask(t("Adopt the resources above into the canonical library now?")):
-            emit(t("Nothing adopted."))
-            return 0
-        ready.extend(item for item in plan.with_status(REVIEW) if ask(_review_question(item)))
+    ready = _agreed(plan, yes=yes, ask=ask, emit=emit)
+    if ready is None:
+        return 0
 
     engine = resolve_engine_root(home_dir, engine_root)
     failed, servers = _write_and_report(
@@ -325,6 +367,7 @@ def run_adopt(
     *,
     skills: bool = True,
     mcp: bool = True,
+    include_workshop: bool = True,
     dry_run: bool = False,
     yes: bool = False,
     auto: bool = False,
@@ -343,6 +386,9 @@ def run_adopt(
 
     Exit code 1 only when an adoption the person asked for failed: a refusal,
     a blocked resource and a resource left for a person are answers, not errors.
+
+    `include_workshop` reaches only the interactive plan: the automatic pass is
+    never a person, so it always leaves the Workshop's own skills alone.
     """
     if auto:
         return _run_auto(
@@ -351,7 +397,7 @@ def run_adopt(
             config_path=config_path, out=out, run=run, which=which,
         )
     return _run_interactive(
-        skills=skills, mcp=mcp, dry_run=dry_run, yes=yes, home=home,
-        vault_data=vault_data, engine_root=engine_root, state_dir=state_dir,
+        skills=skills, mcp=mcp, include_workshop=include_workshop, dry_run=dry_run, yes=yes,
+        home=home, vault_data=vault_data, engine_root=engine_root, state_dir=state_dir,
         config_path=config_path, out=out, run=run, which=which, confirm=confirm,
     )

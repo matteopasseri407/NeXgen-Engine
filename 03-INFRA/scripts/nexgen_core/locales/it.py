@@ -2265,8 +2265,8 @@ MESSAGES: dict[str, str] = {
     # L'adozione: ciò che nasce in OpenClaw diventa canonico
     "Adopt what OpenClaw created into the canonical library":
         "Adotta nella libreria canonica ciò che ha creato OpenClaw",
-    "Only the skills the Skill Workshop learned":
-        "Solo le skill imparate dallo Skill Workshop",
+    "Only the skills, including the ones the Skill Workshop learned":
+        "Solo le skill, comprese quelle imparate dallo Skill Workshop",
     "Only the MCP servers added in OpenClaw":
         "Solo i server MCP aggiunti in OpenClaw",
     "Show the plan and the checks, and change nothing":
@@ -2287,8 +2287,8 @@ MESSAGES: dict[str, str] = {
         "serve una persona prima",
     "cannot be adopted":
         "non adottabile",
-    "Nothing to adopt: everything OpenClaw created is already in the canonical library.":
-        "Niente da adottare: tutto ciò che OpenClaw ha creato è già nella libreria canonica.",
+    "Nothing to adopt: everything OpenClaw created that the engine carries is already in the canonical library.":
+        "Niente da adottare: tutto ciò che OpenClaw ha creato e che il motore porta è già nella libreria canonica.",
     "{count} resources created in OpenClaw are not in the canonical library yet:":
         "{count} risorse create in OpenClaw non sono ancora nella libreria canonica:",
     "  note: {note}":
@@ -2379,8 +2379,10 @@ MESSAGES: dict[str, str] = {
         "{count} risorse create in OpenClaw non sono ancora adottate.",
     "Run 'nexgen openclaw adopt': it shows each one and asks before writing.":
         "Lancia 'nexgen openclaw adopt': te le mostra una per una e chiede prima di scrivere.",
-    "Every skill and server OpenClaw created is in the canonical library.":
-        "Ogni skill e ogni server creati da OpenClaw sono nella libreria canonica.",
+    "Every skill and server the engine carries from OpenClaw is in the canonical library.":
+        "Ogni skill e ogni server che il motore porta fuori da OpenClaw è nella libreria canonica.",
+    "{count} skills the Workshop learned stay inside OpenClaw: 'nexgen openclaw adopt --skills' offers them one by one.":
+        "{count} skill imparate dal Workshop restano dentro OpenClaw: 'nexgen openclaw adopt --skills' te le offre una per una.",
 
     # --- Ripiego: quando un piano finisce, il lavoro passa al successivo ------------
     # La politica la scrive il proprietario in quota.yaml: il motore non ne ha una

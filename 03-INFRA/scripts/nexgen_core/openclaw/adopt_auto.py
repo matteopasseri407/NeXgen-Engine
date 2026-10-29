@@ -11,6 +11,10 @@ Skills are admitted but never retired here: adoption archives the Workshop copy
 they came from, so the OpenClaw side of an adopted skill is gone by design. A
 copy OpenClaw installed itself -- from ClawHub, or from a plugin -- stays where
 it is, so it is not evidence either. See `adopt_retirement` for the whole reason.
+
+What the Workshop learned by itself is not a candidate here at all: only the
+sources in `adopt_scan.AUTOMATIC_SOURCES` are. An unattended pass is not a person
+asking, and `nexgen openclaw adopt --skills` is the door that offers those.
 """
 from __future__ import annotations
 
@@ -77,7 +81,7 @@ def check_adopt_doctor(state_dir: Path) -> CheckOutcome:
         )
     entered = len(last.get("entered") or [])
     exited = len(last.get("exited") or [])
-    pending = last.get("pending_review") or []
+    pending = _still_waiting(last.get("pending_review") or [])
     pending_count = len(pending)
 
     msg = t(
@@ -101,6 +105,26 @@ def check_adopt_doctor(state_dir: Path) -> CheckOutcome:
             action=t("Run 'nexgen openclaw adopt' to review and decide on pending resources."),
         )
     return CheckOutcome(id="openclaw.adoption", severity=Severity.OK, message=msg)
+
+
+def _still_waiting(pending: Any) -> list[dict[str, Any]]:
+    """The review entries the automatic lane still answers for.
+
+    A skill the Workshop taught itself is no longer one of them: an older state
+    file can still name one, and that entry is ignored rather than reported as
+    something to review, because this pass will never act on it. The source is
+    what decides, not the kind alone, so a skill ClawHub installed or a plugin
+    published stays counted, and an MCP server -- which no Workshop writes --
+    always stays counted.
+    """
+    kept: list[dict[str, Any]] = []
+    for item in pending if isinstance(pending, list) else []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("kind") == "skill" and item.get("source") not in adopt_scan.AUTOMATIC_SOURCES:
+            continue
+        kept.append(item)
+    return kept
 
 
 def _read_openclaw_safely(
@@ -216,6 +240,7 @@ def _process_candidate_skills(
         elif verdict.status in (REVIEW, BLOCKED):
             review.append({
                 "kind": "skill", "name": sk.name, "status": verdict.status,
+                "source": sk.source,
                 "reasons": list(verdict.reasons),
             })
             line = (
@@ -293,7 +318,12 @@ def _admit_candidates(
     run: Callable[..., Any] | None,
     which: Callable[[str], str | None] | None,
 ) -> tuple[list[str], list[dict[str, Any]], list[str]]:
-    """Process newly discovered candidates for admission."""
+    """Process newly discovered candidates for admission.
+
+    Only the skill sources the unattended lane carries are candidates (see
+    `adopt_scan.AUTOMATIC_SOURCES`): a skill the Workshop taught itself is not
+    one, and an unattended pass is not a person asking for it.
+    """
     entered: list[str] = []
     pending_review: list[dict[str, Any]] = []
     lines: list[str] = []
@@ -304,7 +334,7 @@ def _admit_candidates(
         lines.extend(l_m)
     if skills:
         ent_s, rev_s, l_s = _process_candidate_skills(
-            plan.skills, dry_run, home_dir, vault, engine, state_d, emit, run, which,
+            adopt_scan.automatic_skills(plan.skills), dry_run, home_dir, vault, engine, state_d, emit, run, which,
         )
         entered.extend(ent_s)
         pending_review.extend(rev_s)

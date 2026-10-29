@@ -102,7 +102,8 @@ def _register_pairing(psub) -> None:
 def _register_upkeep(psub) -> None:
     """What OpenClaw created and the engine adopts, and taking the gateway down and back."""
     q = psub.add_parser("adopt", help=t("Adopt what OpenClaw created into the canonical library"))
-    q.add_argument("--skills", action="store_true", help=t("Only the skills the Skill Workshop learned"))
+    q.add_argument("--skills", action="store_true",
+                   help=t("Only the skills, including the ones the Skill Workshop learned"))
     q.add_argument("--mcp", action="store_true", help=t("Only the MCP servers added in OpenClaw"))
     q.add_argument("--dry-run", action="store_true",
                    help=t("Show the plan and the checks, and change nothing"))
@@ -205,6 +206,9 @@ def cmd_adopt(args) -> int:
     return run_adopt(
         skills=wants_skills or both,
         mcp=wants_mcp or both,
+        # Naming the skills is the door to the ones the Workshop taught itself;
+        # the plain command leaves them where the learning happens.
+        include_workshop=wants_skills,
         dry_run=bool(getattr(args, "dry_run", False)),
         yes=bool(getattr(args, "yes", False)),
         auto=bool(getattr(args, "auto", False)),

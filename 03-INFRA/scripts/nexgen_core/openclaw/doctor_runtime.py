@@ -328,6 +328,10 @@ def check_unadopted(
     only says how much is waiting. Silent when either manifest cannot be read
     -- the configuration checks own that finding, and a count computed without
     the manifest would name the engine's own resources as the person's.
+
+    Only the sources the automatic pass carries are counted: a skill the
+    Workshop taught itself is not waiting for adoption, it is where OpenClaw
+    learns, and the doctor does not ask a person to answer for it.
     """
     from nexgen_core.openclaw import adopt_scan
 
@@ -342,16 +346,19 @@ def check_unadopted(
         mcp_manifest=known.mcp,
         config=config,
     )
-    if found.total == 0:
+    # The Workshop teaches itself, so its skills are not something to adopt: the
+    # count is the one the automatic pass would act on (see `adopt_scan.AUTOMATIC_SOURCES`).
+    count = len(adopt_scan.automatic_skills(found.skills)) + len(found.servers)
+    if count == 0:
         return CheckOutcome(
             id="openclaw.unadopted",
             severity=Severity.OK,
-            message=t("Every skill and server OpenClaw created is in the canonical library."),
+            message=t("Every skill and server the engine carries from OpenClaw is in the canonical library."),
         )
     return CheckOutcome(
         id="openclaw.unadopted",
         severity=Severity.WARN,
-        message=t("{count} resources created in OpenClaw are not adopted yet.", count=found.total),
+        message=t("{count} resources created in OpenClaw are not adopted yet.", count=count),
         action=t("Run 'nexgen openclaw adopt': it shows each one and asks before writing."),
     )
 
