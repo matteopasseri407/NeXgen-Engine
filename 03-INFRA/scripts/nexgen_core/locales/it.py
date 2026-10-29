@@ -2089,6 +2089,8 @@ MESSAGES: dict[str, str] = {
         "L'agente OpenCode non viene creato: il comando 'opencode' non è nel PATH.",
     "The OpenCode agent is not created: no OpenCode Go key was detected.":
         "L'agente OpenCode non viene creato: non ho rilevato la chiave OpenCode Go.",
+    "No key is registered for agent '{agent}': its model runs on the local {backend} CLI, which keeps its own login.":
+        "Nessuna chiave viene registrata per l'agente '{agent}': il suo modello gira sulla CLI locale {backend}, che tiene il proprio accesso.",
     "OpenClaw, the harness with the interface":
         "OpenClaw, l'harness con l'interfaccia",
     "Install, configure, write the agent manuals and start the gateway":
