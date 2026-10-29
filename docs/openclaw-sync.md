@@ -147,14 +147,27 @@ it: `agents.entries.<id>.workspace`, then `agents.defaults.workspace` (with the
 id appended for every agent but `main`), then `<state dir>/workspace` or
 `<state dir>/workspace-<id>`. `openclaw skills install <slug>` copies into
 `<workspace>/skills/<slug>` and records the provenance in
-`<workspace>/.clawhub/lock.json`. The engine never writes there.
+`<workspace>/.clawhub/lock.json`. The engine writes in that same folder too --
+`<name>.md` and `INDICE.md`, the squad skills of `setup_skills` -- but as
+files, never as a skill folder, and the scan reads folders only.
 
 `plugin-skills` is a folder OpenClaw owns and fills with one link per published
 plugin skill. A plugin bundled with the package publishes from inside the
-package, so a link that resolves there is not the person's and is skipped; only
-a link that resolves under `<state dir>/extensions`, where an installed plugin
-lives, is a candidate. A link that resolves anywhere else is skipped, never
-followed.
+package, so a link that resolves there is not the person's and is skipped; a
+link that resolves anywhere else is skipped too. What is left -- a plugin
+installed under `<state dir>/extensions` -- is judged once more, because
+OpenClaw installs its own catalogue plugins in that same folder (`acpx`,
+`codex`, ...) and the engine deposits its own plugin there:
+
+- a plugin whose folder name, manifest id or package name (or `@openclaw/<id>`)
+  is in OpenClaw's official catalog snapshot is OpenClaw's own, and its skills
+  speak about tools that exist only inside OpenClaw: not a candidate;
+- the engine's own plugin (`nexgen`) is never a candidate;
+- a plugin absent from the catalog is the person's, and its skills are
+  candidates;
+- when the catalog cannot be read at all, no plugin skill is offered and the
+  scan says so, because guessing would either port OpenClaw's own skills or
+  hide the person's.
 
 Two consequences worth knowing:
 

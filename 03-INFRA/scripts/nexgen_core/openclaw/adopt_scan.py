@@ -203,27 +203,63 @@ def _resolved(path: Path) -> Path | None:
         return None
 
 
-def plugin_skills(state_dir: Path, declared: set[str]) -> list[WorkshopSkill]:
-    """The plugin skills a person installed, read from `<state>/plugin-skills`.
+def _openclaw_own_plugin(installed: Path, target: Path, catalog: Mapping[str, Any]) -> bool:
+    """Whether the plugin that publishes this skill is OpenClaw's, or the engine's own.
 
-    OpenClaw owns that folder and fills it with one link per published plugin
-    skill, pointing at the skill inside the plugin that brings it. A plugin
-    bundled with the package publishes from inside the package, so only a link
-    that resolves under `<state>/extensions` -- where a plugin the person
-    installed lives -- is a candidate. A link that resolves anywhere else is
-    skipped, never followed: the copy reads real bytes, and it reads them only
-    from a folder this scan can name.
+    OpenClaw installs its catalogue plugins into `<state>/extensions` as well, and
+    the engine deposits its own plugin there, so "under extensions" is not the
+    same as "the person put it there". A catalogue plugin is recognised by any of
+    its names -- folder, manifest id, package name, `@openclaw/<id>` -- and the
+    engine's own by its id.
     """
-    installed = _resolved(Path(state_dir) / "extensions")
+    from nexgen_core.openclaw.adopt_plugins import plugin_identities
+    from nexgen_core.runtimes.openclaw import PLUGIN_ID
+
+    relative = target.relative_to(installed)
+    if not relative.parts:
+        return True
+    names = plugin_identities(installed / relative.parts[0])
+    if PLUGIN_ID in names:
+        return True
+    return any(name in catalog or f"@openclaw/{name}" in catalog for name in names)
+
+
+def plugin_skills(state_dir: Path, declared: set[str]) -> tuple[list[WorkshopSkill], list[str]]:
+    """The plugin skills a person installed, and the one case where none can be named.
+
+    OpenClaw owns `<state>/plugin-skills` and fills it with one link per
+    published plugin skill, pointing at the skill inside the plugin that brings
+    it. Two kinds of plugin live under `<state>/extensions` and only one is the
+    person's: OpenClaw installs its catalogue plugins there and the engine
+    deposits its own, and a skill of either speaks about tools that exist only
+    inside OpenClaw. What is left -- a plugin absent from the official catalog --
+    is a candidate. When the catalog cannot be read, nothing is offered and the
+    scan says why: guessing would either port OpenClaw's own skills or hide the
+    person's.
+    """
+    state = Path(state_dir)
+    installed = _resolved(state / "extensions")
     if installed is None:
-        return []
-    found: list[WorkshopSkill] = []
-    for child in live_skill_folders(Path(state_dir) / "plugin-skills"):
+        return [], []
+    inside: list[tuple[str, Path]] = []
+    for child in live_skill_folders(state / "plugin-skills"):
         target = _resolved(child)
         if target is None or not target.is_relative_to(installed) or child.name in declared:
             continue
-        found.append(WorkshopSkill(child.name, "", target, PLUGIN))
-    return found
+        inside.append((child.name, target))
+    if not inside:
+        return [], []
+    from nexgen_core.openclaw.adopt_plugins import read_catalog_snapshots
+
+    catalog = read_catalog_snapshots(state, strict=True)
+    if catalog is None:
+        return [], [t("the official plugin catalog cannot be read: no plugin skill is offered, and none is taken for the person's")]
+    found: list[WorkshopSkill] = []
+    for name, target in inside:
+        if _openclaw_own_plugin(installed, target, catalog):
+            continue
+        found.append(WorkshopSkill(name, "", target, PLUGIN))
+    return found, []
 
 
 def one_per_name(skills: list[WorkshopSkill]) -> list[WorkshopSkill]:
@@ -315,13 +351,14 @@ def scan(
     live = unmanaged_servers(live_servers(loaded), mcp_manifest)
     existing_names = engine_owned | {s.name for s in live}
     plugin_servers, plugin_notes = scan_plugins(Path(state_dir), loaded, existing_names)
+    plugin_skill_list, plugin_skill_notes = plugin_skills(Path(state_dir), declared)
     all_servers = sorted(list(live) + [s for s in plugin_servers if s.name not in existing_names], key=lambda s: s.name)
-    all_notes = tuple(notes) + tuple(plugin_notes)
+    all_notes = tuple(notes) + tuple(plugin_notes) + tuple(plugin_skill_notes)
     return Scan(
         skills=tuple(one_per_name(
             workshop_skills(loaded, Path(state_dir), Path(home), declared)
             + workspace_skills(loaded, Path(state_dir), Path(home), declared)
-            + plugin_skills(Path(state_dir), declared)
+            + plugin_skill_list
         )),
         servers=tuple(all_servers),
         notes=all_notes,

@@ -36,13 +36,22 @@ def _index_catalog_entry(catalog: dict[str, dict[str, Any]], entry: Mapping[str,
         catalog[str(name)] = dict(entry)
 
 
-def read_catalog_snapshots(state_dir: Path) -> dict[str, dict[str, Any]]:
-    """Read official_external_plugin_catalog_snapshots from openclaw.sqlite in read-only mode."""
+def read_catalog_snapshots(
+    state_dir: Path,
+    *,
+    strict: bool = False,
+) -> dict[str, dict[str, Any]] | None:
+    """Read official_external_plugin_catalog_snapshots from openclaw.sqlite in read-only mode.
+
+    `strict` asks to hear the difference between "the database says nothing" and
+    "the database cannot be read": the first is an empty catalog, the second is
+    None. A caller that must not guess cannot treat the two the same.
+    """
     db_path = state_dir / "state" / "openclaw.sqlite"
     if not db_path.is_file():
         db_path = state_dir / "openclaw.sqlite"
     if not db_path.is_file():
-        return {}
+        return None if strict else {}
     catalog: dict[str, dict[str, Any]] = {}
     try:
         uri = f"file:{db_path.resolve().as_posix()}?mode=ro"
@@ -62,7 +71,7 @@ def read_catalog_snapshots(state_dir: Path) -> dict[str, dict[str, Any]]:
                         if isinstance(entry, Mapping):
                             _index_catalog_entry(catalog, entry)
     except (sqlite3.Error, OSError):  # nexgen: allow reason="unreadable, locked, or absent sqlite DB returns empty catalog"
-        return {}
+        return None if strict else {}
     return catalog
 
 
@@ -99,6 +108,21 @@ def _extract_manifests(ext_dir: Path) -> tuple[dict[str, Any], dict[str, Any], d
     pkg_json = _read_json(ext_dir / "package.json") or {}
     mcp_json = _read_json(ext_dir / "mcp.json") or _read_json(ext_dir / ".mcp.json") or {}
     return plugin_json, pkg_json, mcp_json
+
+
+def plugin_identities(ext_dir: Path) -> set[str]:
+    """Every name one installed plugin answers to: its folder, its id, its package name.
+
+    The catalog indexes an entry by both its plugin id and its package name
+    (`@openclaw/<id>` for the official ones), so a caller comparing a folder
+    against the catalog needs all three, not the folder name alone.
+    """
+    plugin_json, pkg_json, _mcp_json = _extract_manifests(Path(ext_dir))
+    names = {Path(ext_dir).name}
+    for value in (plugin_json.get("id"), pkg_json.get("name")):
+        if isinstance(value, str) and value.strip():
+            names.add(value.strip())
+    return names
 
 
 def _extract_mcp_servers_from_manifests(

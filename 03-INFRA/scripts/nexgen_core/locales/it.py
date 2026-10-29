@@ -2213,6 +2213,8 @@ MESSAGES: dict[str, str] = {
         "archiviata nel Workshop, così OpenClaw carica la copia canonica",
     "left in OpenClaw: only a Workshop copy can be archived, and the Vault now holds the canonical one":
         "lasciata in OpenClaw: solo una copia del Workshop si può archiviare, e adesso la copia canonica sta nel Vault",
+    "the official plugin catalog cannot be read: no plugin skill is offered, and none is taken for the person's":
+        "il catalogo ufficiale dei plugin non si riesce a leggere: non offro nessuna skill dei plugin, e non do per scontato che nessuna sia tua",
     "in the Vault and in the manifest ({changes} views written). OpenClaw: {note}":
         "nel Vault e nel manifest ({changes} viste scritte). OpenClaw: {note}",
     "`openclaw` is not on PATH: archive the learned copy by hand when it is":
