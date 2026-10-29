@@ -17,10 +17,10 @@ from nexgen_core import quota_policy
 from nexgen_core.i18n import detect_language, t
 from nexgen_core.openclaw import companion as app_gateway
 from nexgen_core.openclaw import claude_loopback, observation
-from nexgen_core.openclaw.claude_cli import claude_cli_agents
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.governor import with_chains
+from nexgen_core.openclaw.native_connectors import denied_agents
 from nexgen_core.openclaw.profile import (
     CLAUDE_MODEL,
     CODEX_MODEL,
@@ -362,19 +362,23 @@ def _with_loopback(
     vault_data: Path | None,
     engine_root: Path | None,
 ) -> dict[str, Any]:
-    """A `claude-cli` agent reads its connectors from Claude Code, not from the loopback.
+    """An agent whose own CLI carries the connectors reads them there, not from the loopback.
 
     The question is asked of the document the write will leave, not of the proposal:
     the merge keeps every key the proposal does not carry, so `agents.defaults.models`
     in the file -- and the agents the engine no longer declares -- can put an agent on
-    `claude-cli` while the proposal says nothing about it. The doctor reads that merged
-    file, so a plan that judged the proposal alone wrote its deny for the agents it
-    happened to create and left the loopback open for the others, on every run.
+    `claude-cli` or on `agy` while the proposal says nothing about it. The doctor reads
+    that merged file, so a plan that judged the proposal alone wrote its deny for the
+    agents it happened to create and left the loopback open for the others, on every run.
+
+    Which agents those are, and whether `agy` has a file of its own here to hold the
+    connectors the deny takes off the loopback, is `native_connectors`' answer: it names
+    an `agy` agent only where that file exists.
 
     Nothing is asked of a machine with no such agent: a proposal whose agents run
     elsewhere keeps the tool surface it had, byte for byte.
     """
-    agents = claude_cli_agents(merged_document(current, config))
+    agents = denied_agents(merged_document(current, config), home)
     if not agents:
         return config
     return claude_loopback.apply(
