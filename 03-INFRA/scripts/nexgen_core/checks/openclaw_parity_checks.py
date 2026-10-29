@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import t
+from nexgen_core.openclaw.node_only import detect_node_only, node_only_outcome
 from nexgen_core.paths import claude_settings, openclaw_config, resolve_vault_data
 from nexgen_core.report import CheckOutcome, Severity
 
@@ -287,7 +288,11 @@ _LAYERS = (
 )
 
 
-def check_openclaw_parity(home: Path, vault_data: Path | None = None) -> list[CheckOutcome]:
+def check_openclaw_parity(
+    home: Path,
+    vault_data: Path | None = None,
+    platform: str | None = None,
+) -> list[CheckOutcome]:
     """One outcome per aligned or diverging layer; nothing at all on a machine without both CLIs."""
     from nexgen_core.runtimes.openclaw import PLUGIN_ID
 
@@ -295,6 +300,8 @@ def check_openclaw_parity(home: Path, vault_data: Path | None = None) -> list[Ch
     config_path = openclaw_config(home)
     if not settings_path.is_file() or not config_path.is_file():
         return []
+    if detect_node_only(home, platform=platform):
+        return [node_only_outcome("openclaw.parity")]
     data = resolve_vault_data(home, vault_data)
     plugin_dir = config_path.parent / "extensions" / PLUGIN_ID
     openclaw = {

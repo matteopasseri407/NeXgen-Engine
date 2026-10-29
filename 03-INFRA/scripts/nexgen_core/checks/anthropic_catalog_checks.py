@@ -22,6 +22,7 @@ from pathlib import Path
 from nexgen_core.i18n import t
 from nexgen_core.openclaw.claude_cli import claude_cli_agents
 from nexgen_core.openclaw.config_file import read_config
+from nexgen_core.openclaw.node_only import detect_node_only, node_only_outcome
 from nexgen_core.openclaw.setup_service_env import ANTHROPIC_API_KEY, retired_environment_keys
 from nexgen_core.paths import openclaw_config
 from nexgen_core.report import CheckOutcome, Severity
@@ -48,11 +49,13 @@ def _carries_key(path: Path, key: str) -> bool:
     return False
 
 
-def check_anthropic_catalog(home: Path) -> CheckOutcome | None:
+def check_anthropic_catalog(home: Path, platform: str | None = None) -> CheckOutcome | None:
     """One outcome for the whole question, or None when there is nothing here to judge."""
     config_path = openclaw_config(home)
     if not config_path.is_file():
         return None
+    if detect_node_only(home, platform=platform):
+        return node_only_outcome(CHECK_ID)
     config, _error = read_config(config_path)
     if config is None:
         return None

@@ -606,6 +606,19 @@ On the fixed PC, to see the result: `nexgen openclaw doctor --nodes` adds the pa
 checks that the node accepts the commands an agent asks it to run, and `nexgen openclaw pair` lists them with
 their state. Neither approves anything on its own.
 
+### What the doctor says on a node
+
+On a machine that is only a node, `nexgen doctor` and `nexgen openclaw doctor` stop judging the gateway: bind,
+token, exposure, the port it listens on, the plugin, the agents and their models are not read there, and one line
+says why. The `openclaw.json` the PC kept from when it was a gateway stays where it is, because the node still
+reads `nodeHost` from it, and it is not a fault.
+
+Three facts make the machine a node, in this order: the role it recorded (`nexgen role set node`, also written
+by `install.ps1 -Role node` and by `nexgen openclaw node --apply`); the node service OpenClaw installed, pointing
+at a gateway elsewhere, for a PC migrated before that role existed; the Companion app with its node switch on and
+a gateway elsewhere in `gateways.json`. The app's files are read and never written. A machine that still runs a
+local gateway service is a gateway, and keeps the full report.
+
 ### A gateway behind Tailscale Serve, and a laptop on the same tailnet
 
 On the always-on machine: `nexgen openclaw setup --server`, then `nexgen openclaw restart` if the gateway was

@@ -48,6 +48,7 @@ from nexgen_core.openclaw.model_checks import (
     check_model_overrides,
     check_ollama_latest,
 )
+from nexgen_core.openclaw.node_only import NODE_MODE_CHECK_ID, detect_node_only, node_only_outcome
 from nexgen_core.openclaw.pin import pinned_version, required_node_version
 from nexgen_core.openclaw.profile import PENDING_TOKEN
 from nexgen_core.openclaw.server_gateway import exposure
@@ -219,29 +220,25 @@ def _host_outcomes(
     return outcomes
 
 
-def _config_outcomes(
+def _gateway_outcomes(
     config: dict[str, Any],
     snapshot: Detection,
     path: Path,
     home_dir: Path,
-    vault_data: Path | None,
-    failover: quota_policy.Failover | None,
+    manifest_p: Path,
     connect: doctor_runtime.Connect | None,
-    node_lister: node_checks.NodeLister | None,
+    policy: quota_policy.Failover,
     platform: str,
-    env: Mapping[str, str] | None = None,
-    approvals: node_approvals.Reader | None = None,
+    env: Mapping[str, str] | None,
 ) -> list[CheckOutcome]:
-    """Every check that reads the configuration in force, in the order a person reads them.
+    """Every check that judges the gateway this file would configure.
 
-    `failover` is the policy the caller already read, when it has one; without it the
-    policy is read here, from the same Vault the other checks read. `approvals` is the
-    node query the caller asked for, and it is asked only where a node is named.
+    They are one component because they answer one question -- does the gateway on
+    this machine work -- and a node does not have one: they retire together, with
+    the one line `collect` prints instead of them. The evidence check is here for
+    the same reason: on a node the file it judges is the copy `node_retire` kept,
+    not the configuration any gateway loads.
     """
-    policy = failover if failover is not None else quota_policy.load(
-        home_dir, vault=resolve_vault_data(home_dir, vault_data),
-    )[0]
-    manifest_p = mcp_manifest(resolve_vault_data(home_dir, vault_data))
     outcomes = filter(None, [
         check_ollama_latest(config),
         check_cage(config),
@@ -261,14 +258,51 @@ def _config_outcomes(
         observation.report(config, path, home_dir, platform),
         check_fallbacks(config, policy),
         _listening(config, connect, home_dir),
+        *_plugin_outcomes(path, config),
+    ])
+    return list(outcomes)
+
+
+def _config_outcomes(
+    config: dict[str, Any],
+    snapshot: Detection,
+    path: Path,
+    home_dir: Path,
+    vault_data: Path | None,
+    failover: quota_policy.Failover | None,
+    connect: doctor_runtime.Connect | None,
+    node_lister: node_checks.NodeLister | None,
+    platform: str,
+    env: Mapping[str, str] | None = None,
+    approvals: node_approvals.Reader | None = None,
+    node_only: bool = False,
+) -> list[CheckOutcome]:
+    """Every check that reads the configuration in force, in the order a person reads them.
+
+    `failover` is the policy the caller already read, when it has one; without it the
+    policy is read here, from the same Vault the other checks read. `approvals` is the
+    node query the caller asked for, and it is asked only where a node is named.
+    `node_only` retires the gateway's half of this list: on a node the file is the
+    copy a former gateway left behind, and the agents, models and plugin it names
+    live on the gateway that loads them.
+    """
+    policy = failover if failover is not None else quota_policy.load(
+        home_dir, vault=resolve_vault_data(home_dir, vault_data),
+    )[0]
+    manifest_p = mcp_manifest(resolve_vault_data(home_dir, vault_data))
+    outcomes: list[CheckOutcome] = []
+    if not node_only:
+        outcomes.extend(_gateway_outcomes(
+            config, snapshot, path, home_dir, manifest_p, connect, policy, platform, env,
+        ))
+    outcomes.extend(filter(None, [
         *node_checks.check_nodes(config, _probe(home_dir, connect), node_lister),
         *node_approvals.check_agents(config, approvals),
         *doctor_runtime.check_workshop_skills(config, path.parent, home_dir),
         doctor_runtime.check_unadopted(config, path, home_dir, resolve_vault_data(home_dir, vault_data)),
         doctor_runtime.check_bindings(config),
-        *_plugin_outcomes(path, config),
-    ])
-    return list(outcomes)
+    ]))
+    return outcomes
 
 
 def _store_gateway_outcomes(
@@ -356,13 +390,16 @@ def collect(
     pinned = _pinned(engine_root)
     path = Path(snapshot.openclaw.config_path)
     config, error = read_config(path)
+    node_only = detect_node_only(home_dir, platform=system, env=values)
     outcomes: list[CheckOutcome] = [check_installed(snapshot, declared, pinned)]
     outcomes.extend(filter(None, [check_declaration(declared), check_config(path, config, error)]))
     if config is not None:
         outcomes.extend(_config_outcomes(
             config, snapshot, path, home_dir, vault_data, failover, connect, node_lister, system,
-            env=values, approvals=node_approvals_reader,
+            env=values, approvals=node_approvals_reader, node_only=bool(node_only),
         ))
+    if node_only:
+        outcomes.append(node_only_outcome(NODE_MODE_CHECK_ID))
     outcomes.extend(_store_gateway_outcomes(home_dir, values, system))
     app_outcome = doctor_runtime.check_companion_gateway(
         app_gateway, snapshot.openclaw.installed, system, pending,

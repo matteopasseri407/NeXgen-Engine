@@ -1417,6 +1417,8 @@ MESSAGES: dict[str, str] = {
     "Nothing was written. 'nexgen openclaw setup' (B2) applies this plan.":
         "Non è stato scritto niente. 'nexgen openclaw setup' (B2) applica questo piano.",
     # Il doctor di OpenClaw
+    "This machine is a node: the agent configuration lives on the gateway.":
+        "Questa macchina è un nodo: la configurazione degli agenti vive sul gateway.",
     "The OpenClaw module is declared on this machine but OpenClaw is not installed.":
         "Il modulo OpenClaw è dichiarato su questa macchina ma OpenClaw non è installato.",
     "Install the pinned release: {command}":
