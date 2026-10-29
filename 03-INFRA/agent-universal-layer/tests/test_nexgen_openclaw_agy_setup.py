@@ -193,8 +193,8 @@ def test_a_squad_with_an_agy_agent_installs_the_pinned_plugin_once_and_enables_i
 
     plugin = pinned_plugin()
     assert install_commands(runner) == [
-        f"/fake/bin/openclaw plugins install npm:{plugin['package']}@{plugin['version']} --force --no-enable",
-    ]
+        f"/fake/bin/openclaw plugins install clawhub:{plugin['package']}@{plugin['version']} --no-enable",
+    ], "a fresh ClawHub install needs no --force"
     plugins = machine.config_json()["plugins"]
     assert BACKEND in plugins["allow"]
     assert plugin_entry(machine) == {"enabled": True, "config": {"permissionMode": "sandbox"}}
@@ -219,8 +219,8 @@ def test_another_plugin_version_is_reinstalled_at_the_pin(tmp_path):
 
     plugin = pinned_plugin()
     assert install_commands(runner) == [
-        f"/fake/bin/openclaw plugins install npm:{plugin['package']}@{plugin['version']} --force --no-enable",
-    ]
+        f"/fake/bin/openclaw plugins install clawhub:{plugin['package']}@{plugin['version']} --force --no-enable",
+    ], "replacing an existing copy is what --force is for"
     assert agy_prereqs.installed_version(machine.state_dir) == plugin["version"]
 
 
@@ -230,7 +230,7 @@ def test_a_dry_run_prints_the_install_command_and_runs_nothing(tmp_path):
     assert run(machine, runner, dry_run=True) == 0, machine.output()
 
     plugin = pinned_plugin()
-    assert f"plugins install npm:{plugin['package']}@{plugin['version']} --force --no-enable" in machine.output()
+    assert f"plugins install clawhub:{plugin['package']}@{plugin['version']} --no-enable" in machine.output()
     assert runner.calls == [], "a dry run executed a command"
     assert not machine.config.exists(), "a dry run wrote the configuration"
 
@@ -295,8 +295,8 @@ def test_the_doctor_names_the_missing_plugin_and_the_command(tmp_path):
     outcome = outcomes["openclaw.google.cli_backend.plugin"]
     assert outcome.severity == Severity.WARN
     assert BACKEND in outcome.message and "not installed" in outcome.message
-    assert f"npm:{plugin['package']}@{plugin['version']}" in (outcome.action or "")
-    assert "--force" in (outcome.action or "")
+    assert f"clawhub:{plugin['package']}@{plugin['version']}" in (outcome.action or "")
+    assert "--force" not in (outcome.action or ""), "nothing is there to overwrite"
 
 
 def test_the_doctor_names_a_plugin_at_another_version(tmp_path):
@@ -311,6 +311,7 @@ def test_the_doctor_names_a_plugin_at_another_version(tmp_path):
     outcome = outcomes["openclaw.google.cli_backend.plugin"]
     assert outcome.severity == Severity.WARN
     assert "0.0.9" in outcome.message and pinned_plugin()["version"] in outcome.message
+    assert "--force" in (outcome.action or ""), "the copy in place has to be replaced"
 
 
 def test_the_doctor_names_a_missing_agy_command(tmp_path):
@@ -360,6 +361,28 @@ def test_a_trusted_workspace_leaves_the_permission_mode_line(tmp_path):
     assert "openclaw.google.cli_backend.agy" not in outcomes
     assert outcomes["openclaw.google.cli_backend"].severity == Severity.OK
     assert "permissionMode 'sandbox'" in outcomes["openclaw.google.cli_backend"].message
+
+
+def test_a_pin_that_names_npm_still_installs_from_npm(tmp_path, monkeypatch):
+    """The source is data too: npm stays for a pin that names it, and an unknown one installs nothing."""
+    pin_file = tmp_path / "agy-plugin.json"
+    pin_file.write_text(
+        json.dumps({"source": "npm", "package": "google-antigravity-provider", "version": "0.3.4"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("nexgen_core.openclaw.agy_prereqs.pin_path", lambda engine_root=None: pin_file)
+
+    plugin = agy_prereqs.plugin_pin()
+
+    assert plugin == {"source": "npm", "package": "google-antigravity-provider", "version": "0.3.4"}
+    assert agy_prereqs.install_spec(plugin) == "npm:google-antigravity-provider@0.3.4"
+    assert agy_prereqs.install_argv("openclaw", plugin) == [
+        "openclaw", "plugins", "install", "npm:google-antigravity-provider@0.3.4", "--no-enable",
+    ]
+    assert agy_prereqs.install_argv("openclaw", plugin, replace=True)[-2:] == ["--force", "--no-enable"]
+
+    pin_file.write_text(json.dumps({"source": "ftp", "package": "p", "version": "1"}), encoding="utf-8")
+    assert agy_prereqs.plugin_pin() is None, "a source this engine does not know installs nothing"
 
 
 def test_the_plan_shows_the_plugin_it_would_install(tmp_path):

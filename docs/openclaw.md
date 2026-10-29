@@ -290,16 +290,18 @@ plugin was given: `skip` (and omitting it, which is the plugin's default) is a w
 ### The `agy` backend: the plugin, and what `agy` itself needs
 
 The plugin is third-party: `google-antigravity-provider`, MIT, from `github.com/jason-allen-oneal/openclaw-google-antigravity-provider`.
-It is installed at one exact release and never at `@latest`.
-`agent-universal-layer/openclaw/agy-plugin.json` holds the package and the version, the same way `pin.json` holds OpenClaw's.
+It is published on ClawHub, and it is installed at one exact release, never at `@latest`.
+`agent-universal-layer/openclaw/agy-plugin.json` holds the source, the package and the version, the same way `pin.json` holds OpenClaw's.
+The source is written down because the npm package of the same name does not exist: a setup that assumed npm would fail on a new machine.
 
 When the team puts an agent on `google-antigravity-cli/...`, either in `squad.yaml` or already approved in the file in force, `nexgen openclaw setup` does three things in the write step, in this order:
 
-1. It runs `openclaw plugins install npm:<package>@<version> --force --no-enable`.
-   `--force` is what a non-interactive install of an arbitrary npm package needs, and it is also what replaces a copy at another version.
+1. It runs `openclaw plugins install clawhub:<package>@<version> --no-enable`.
+   ClawHub is a trusted source, so a fresh install asks nothing and needs no `--force`.
+   When a copy at another release is already there, the command gains `--force`, which is the flag OpenClaw reads as "overwrite the install target".
    `--no-enable` keeps activation with the engine, which owns `openclaw.json`.
 2. It proves the release on disk: the `version` in `extensions/google-antigravity-cli/package.json` must be the pinned one, or the setup stops with nothing written.
-   `openclaw plugins install` records its own integrity hash but takes no hash to check against, so the version is the check this engine can make.
+   ClawHub records the artifact hash of the release it installed, but `plugins install` takes no hash to check against, so the version is the check this engine can make.
 3. It writes `plugins.allow` with the backend, `enabled: true`, and `permissionMode: sandbox`, or the guarded mode (`sandbox`, `settings`) the file already declared.
    `skip` is never written.
 

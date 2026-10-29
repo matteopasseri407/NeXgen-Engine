@@ -36,6 +36,11 @@ SETTINGS_RELATIVE = Path(".gemini") / "antigravity-cli" / "settings.json"
 #: The key inside that file: absolute folder paths, no secrets.
 TRUST_KEY = "trustedWorkspaces"
 
+#: Where the plugin can be installed from, and the spec prefix each one takes.
+#: ClawHub is where this plugin is published: the npm package of the same name
+#: does not exist, and an install that pretends otherwise fails on a new machine.
+SOURCES: tuple[str, ...] = ("clawhub", "npm")
+
 
 def pin_path(engine_root: Path | None = None) -> Path:
     """The plugin's pin, looked for beside each place OpenClaw's own pin may be."""
@@ -47,11 +52,12 @@ def pin_path(engine_root: Path | None = None) -> Path:
 
 
 def plugin_pin(engine_root: Path | None = None) -> dict[str, str] | None:
-    """The npm package and the exact version to install, or None when unreadable.
+    """The package, the exact version and the source to install from, or None.
 
     A pin this module cannot read is never replaced by a version compiled into
     the code: the setup refuses to install an unknown release, exactly as it does
-    for OpenClaw itself.
+    for OpenClaw itself. A source this engine does not know is treated the same
+    way, because guessing one is how a new machine ends up installing nothing.
     """
     try:
         loaded = json.loads(pin_path(engine_root).read_text(encoding="utf-8"))
@@ -61,26 +67,39 @@ def plugin_pin(engine_root: Path | None = None) -> dict[str, str] | None:
         return None
     package = loaded.get("package")
     version = loaded.get("version")
+    source = loaded.get("source")
     if not (isinstance(package, str) and package.strip() and isinstance(version, str) and version.strip()):
         return None
-    return {"package": package.strip(), "version": version.strip()}
+    if not isinstance(source, str) or source.strip().lower() not in SOURCES:
+        return None
+    return {"package": package.strip(), "version": version.strip(), "source": source.strip().lower()}
 
 
 def install_spec(plugin: dict[str, str]) -> str:
-    """The npm spec OpenClaw is given: the `npm:` form, so a bundled id cannot win."""
-    return f"npm:{plugin['package']}@{plugin['version']}"
+    """The spec OpenClaw is given: the source's own prefix, so a bundled id cannot win.
+
+    `clawhub:` is the source this plugin is published on. The npm package of the
+    same name does not exist, and `npm:` is kept for a pin that names it, so the
+    two roads stay one function.
+    """
+    prefix = plugin.get("source", "clawhub").strip().lower()
+    return f"{prefix if prefix in SOURCES else 'clawhub'}:{plugin['package']}@{plugin['version']}"
 
 
-def install_argv(openclaw_bin: str, plugin: dict[str, str]) -> list[str]:
+def install_argv(openclaw_bin: str, plugin: dict[str, str], *, replace: bool = False) -> list[str]:
     """The one command that puts the plugin on this gateway at the pinned release.
 
-    `--force` is what a non-interactive install of an arbitrary npm package needs,
-    and it is also what replaces an existing copy at another version.
+    `replace` is what an existing copy at another release needs: `--force` is the
+    flag OpenClaw reads as "overwrite the install target", and it is not needed
+    for a fresh ClawHub install, which is a trusted source and asks nothing.
     `--no-enable` keeps activation where it belongs: the engine owns
     `openclaw.json` and writes the allow-list and the entry itself, so the
     install must not decide which plugin is on.
     """
-    return [openclaw_bin, "plugins", "install", install_spec(plugin), "--force", "--no-enable"]
+    argv = [openclaw_bin, "plugins", "install", install_spec(plugin)]
+    if replace:
+        argv.append("--force")
+    return [*argv, "--no-enable"]
 
 
 def extension_dir(state_dir: Path, backend: str = LOCAL_AGY_BACKEND) -> Path:

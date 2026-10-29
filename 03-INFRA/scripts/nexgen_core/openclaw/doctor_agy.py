@@ -75,13 +75,13 @@ def _says_nothing(backend: str, mode: str) -> CheckOutcome:
     )
 
 
-def _install_action(plugin: dict[str, str] | None) -> str:
+def _install_action(plugin: dict[str, str] | None, *, replace: bool) -> str:
     """The exact command that puts the pinned plugin on this gateway."""
     if plugin is None:
         return t("Check agent-universal-layer/openclaw/agy-plugin.json: it holds the plugin release the "
                  "engine expects.")
     return t("Run '{command}'.",
-             command=command_line_text(agy_prereqs.install_argv("openclaw", plugin)))
+             command=command_line_text(agy_prereqs.install_argv("openclaw", plugin, replace=replace)))
 
 
 def _plugin_line(backend: str, state_dir: Path | None) -> CheckOutcome | None:
@@ -97,7 +97,7 @@ def _plugin_line(backend: str, state_dir: Path | None) -> CheckOutcome | None:
             message=t("The configuration runs an agent on '{backend}', but the plugin is not installed in "
                       "{path}: OpenClaw cannot run that agent.", backend=backend,
                       path=str(agy_prereqs.extension_dir(state_dir, backend))),
-            action=_install_action(plugin),
+            action=_install_action(plugin, replace=False),
         )
     if plugin is not None and installed != plugin["version"]:
         return CheckOutcome(
@@ -106,7 +106,7 @@ def _plugin_line(backend: str, state_dir: Path | None) -> CheckOutcome | None:
             message=t("The '{backend}' plugin is {version}, not the pinned {pinned}: the engine configures "
                       "and tests one exact release.", backend=backend, version=installed,
                       pinned=plugin["version"]),
-            action=_install_action(plugin),
+            action=_install_action(plugin, replace=True),
         )
     return None
 

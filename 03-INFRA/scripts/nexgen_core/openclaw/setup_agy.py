@@ -47,7 +47,7 @@ def install_step(setup: Setup, config: dict[str, Any]) -> bool:
 
 def _install(setup: Setup, config: dict[str, Any], plugin: dict[str, str], installed: str | None) -> bool:
     """Run the one install command, then prove the release on disk is the pinned one."""
-    argv = agy_prereqs.install_argv(openclaw_bin(setup), plugin)
+    argv = agy_prereqs.install_argv(openclaw_bin(setup), plugin, replace=installed is not None)
     if installed:
         setup.out(t("The Antigravity plugin {plugin} is {version}, not the pinned {pinned}: installing the pin.",
                     plugin=LOCAL_AGY_BACKEND, version=installed, pinned=plugin["version"]))
@@ -102,6 +102,7 @@ def planned_lines(setup: Setup, config: dict[str, Any]) -> list[str]:
     plugin = agy_prereqs.plugin_pin(setup.engine_root)
     if plugin is None:
         return ["# " + t("the Antigravity plugin pin cannot be read: no plugin is installed")]
-    if agy_prereqs.installed_version(setup.state_dir) == plugin["version"]:
+    installed = agy_prereqs.installed_version(setup.state_dir)
+    if installed == plugin["version"]:
         return []
-    return [command_line_text(agy_prereqs.install_argv(openclaw_bin(setup), plugin))]
+    return [command_line_text(agy_prereqs.install_argv(openclaw_bin(setup), plugin, replace=installed is not None))]
