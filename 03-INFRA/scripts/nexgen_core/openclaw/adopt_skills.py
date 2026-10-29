@@ -1,13 +1,14 @@
-"""Adopting one learned skill: into the Vault's own library, then into every CLI.
+"""Adopting one skill OpenClaw created: into the Vault's own library, then into every CLI.
 
-A skill the Workshop learned lives in OpenClaw's state folder, which no other
-CLI reads and no backup carries. Adoption makes it canonical: the folder is
-copied into `03-INFRA/agent-universal-layer/skills/<name>/` (where the engine
-keeps `origin: vault` skills), one entry is appended to the skills manifest,
-and the materializer builds the library and the native views for every target
-the entry names. The copy in the Workshop is archived afterwards, through the
-injected executor, so OpenClaw keeps loading the canonical one and the two
-cannot diverge.
+A skill OpenClaw created lives in one of its own folders -- the Workshop's, the
+agent workspace ClawHub installs into, or a plugin's -- which no other CLI reads
+and no backup carries. Adoption makes it canonical: the folder is copied into
+`03-INFRA/agent-universal-layer/skills/<name>/` (where the engine keeps
+`origin: vault` skills), one entry is appended to the skills manifest, and the
+materializer builds the library and the native views for every target the entry
+names. A Workshop copy is archived afterwards, through the injected executor, so
+OpenClaw keeps loading the canonical one and the two cannot diverge; a copy
+OpenClaw installed itself stays where it is.
 
 One job per function: this module owns the write path of a skill. What may be
 adopted is `adopt_vetting`'s answer, and how the pass is ordered is `adopt`'s.
@@ -25,7 +26,7 @@ from nexgen_core.files import atomic_write_text, backup_file
 from nexgen_core.i18n import t
 from nexgen_core.manifest_text import entry_span
 from nexgen_core.mcp_placement import CLIS
-from nexgen_core.openclaw.adopt_scan import WorkshopSkill
+from nexgen_core.openclaw.adopt_scan import WORKSHOP, WorkshopSkill
 from nexgen_core.openclaw_processes import RunResult, default_runner
 from nexgen_core.paths import resolve_engine_root, resolve_home, resolve_state_dir, resolve_vault_data, skills_manifest
 
@@ -230,7 +231,10 @@ def adopt_skill(
             shutil.rmtree(destination, ignore_errors=True)
             return SkillAdoption(skill.name, False, problem)
         changes, _actions = materializer.materialize(apply=True)
-    _archived, archive_note = archive_learned(skill, run=run, which=which)
+    if skill.source == WORKSHOP:
+        _archived, archive_note = archive_learned(skill, run=run, which=which)
+    else:
+        archive_note = t("left in OpenClaw: only a Workshop copy can be archived, and the Vault now holds the canonical one")
     return SkillAdoption(
         skill.name, True,
         t("in the Vault and in the manifest ({changes} views written). OpenClaw: {note}",

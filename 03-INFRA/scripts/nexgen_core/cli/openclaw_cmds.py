@@ -5,7 +5,8 @@
 proves a live configuration is one OpenClaw can actually use; `stop` and
 `restart` take the gateway down to edit its file by hand and bring it back;
 `pair` lets a phone, or another machine, in; `node` proposes the commands that
-make this machine a node of a gateway elsewhere.
+make this machine a node of a gateway elsewhere, or, on Windows with `--use-app`,
+takes the CLI node service away because the Companion app is the node.
 
 Every verb that touches the machine lives in a module of its own; this file
 only declares the arguments and prints what comes back.
@@ -76,13 +77,16 @@ def _register_pairing(psub) -> None:
     q.set_defaults(func=cmd_pair)
 
     q = psub.add_parser("node", help=t("Connect this machine as a node of a gateway on another PC"))
-    q.add_argument("--host", required=True, metavar="ADDRESS",
+    q.add_argument("--host", default=None, metavar="ADDRESS",
                    help=t("The gateway machine's address: its name on the home network, or its Tailscale "
                           "MagicDNS name"))
     q.add_argument("--port", type=int, default=None, metavar="PORT",
                    help=t("The gateway's port (default: 18789)"))
     q.add_argument("--name", default=None, metavar="LABEL",
                    help=t("The name the gateway shows for this machine"))
+    q.add_argument("--use-app", dest="use_app", action="store_true",
+                   help=t("The OpenClaw Companion app is the node of this PC: remove the CLI node service "
+                          "and record the role (with --apply)"))
     q.add_argument("--apply", action="store_true",
                    help=t("Do it on this machine: retire the local gateway, prepare the configuration and start "
                           "the node service"))
@@ -256,6 +260,11 @@ def cmd_node(args) -> int:
     from nexgen_core.openclaw.node_link import build_node_link, render_node_link
     from nexgen_core.openclaw.profile import GATEWAY_PORT
 
+    if getattr(args, "use_app", False):
+        return _use_app_node(args)
+    if not args.host:
+        print(t("A gateway address is needed: pass --host, or --use-app when the Companion app is the node."))
+        return 2
     port = int(args.port) if args.port is not None else GATEWAY_PORT
     try:
         link = build_node_link(args.host, port=port, name=args.name)
@@ -266,6 +275,13 @@ def cmd_node(args) -> int:
         return _apply_node(args, port)
     print(render_node_link(link))
     return 0
+
+
+def _use_app_node(args) -> int:
+    """The app is the node: the CLI service goes, and the role is recorded."""
+    from nexgen_core.openclaw.node_app import use_app
+
+    return use_app(apply=bool(getattr(args, "apply", False)))
 
 
 def _read_join_target(path: str) -> tuple[str | None, str | None]:

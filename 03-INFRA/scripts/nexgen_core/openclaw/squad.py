@@ -1,5 +1,6 @@
 """Squad as data for OpenClaw agents, models, bindings, and node execution.
 
+nexgen: one-job reason="the squad as data: its agents, models, bindings, provider keys and manuals, applied to OpenClaw from one place"
 One job: parse squad configuration from vault squad.yaml or squad.example.yaml,
 apply squad data to OpenClaw config (agents, models, bindings, tools, the default
 agent), provide per-agent SOUL.md and AGENTS.md definitions, and register model
@@ -17,8 +18,10 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import model_policy
+from nexgen_core.openclaw import agy_backend, agy_prereqs, model_policy
+from nexgen_core.openclaw.claude_cli import CLAUDE_CLI
 from nexgen_core.openclaw.runtime import apply_runtime
+from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
 from nexgen_core.processes import no_window_kwargs
 
 if TYPE_CHECKING:
@@ -30,10 +33,20 @@ _PROVIDER_ENV_MAP: dict[str, tuple[str, str]] = {
     "openai": ("openai", "OPENAI_API_KEY"),
     "gpt": ("openai", "OPENAI_API_KEY"),
     "deepseek": ("deepseek", "DEEPSEEK_API_KEY"),
-    "opencode-go": ("deepseek", "OPENCODE_GO_KEY"),
     "google": ("google", "GEMINI_API_KEY"),
     "gemini": ("google", "GEMINI_API_KEY"),
 }
+
+#: The providers that run on a local CLI binary and keep the login inside it, so an
+#: agent on one of them needs no provider key in OpenClaw. `codex` is the runtime id
+#: `profile._default_models` writes into `agents.defaults.models`.
+_CLI_BACKENDS = (CLAUDE_CLI, "codex", LOCAL_AGY_BACKEND)
+
+#: The providers whose login the engine wires elsewhere, from its own secret store:
+#: `profile.py` allows the `opencode-go` plugin and `detect.py` reads that auth profile,
+#: so pasting the Go key under `deepseek` -- which this map used to do -- would put a
+#: credential in the wrong provider. The Zen `opencode` prefix rides the same road.
+_PROFILE_PROVIDERS = ("opencode-go", "opencode")
 
 #: The keys one agent may set in its `exec` block, which is the whole exec policy
 #: OpenClaw reads for that agent (`agents.entries.<id>.tools.exec`). `host` and
@@ -420,14 +433,41 @@ def apply_squad(
 
     # A model the squad names is that agent's default, and it must be selectable from the
     # picker of every other agent too: registering it does not change anyone's `model`.
-    return model_policy.with_declared(target, _declared_models(squad))
+    applied = model_policy.with_declared(target, _declared_models(squad))
+    return agy_backend.with_backend(applied, current) if agy_prereqs.requested(squad) else applied
+
+
+def _cli_backend(model: str) -> str:
+    """The local CLI a model ref runs on, or "" when OpenClaw may hold a key for it.
+
+    Read from the prefix before the slash, never by substring: `google-antigravity-cli`
+    is a backend of its own, not a `google` model, and `terms.py` reads it the same way.
+    """
+    low = str(model or "").strip().lower()
+    prefix, sep, _ = low.partition("/")
+    name = prefix if sep else low
+    return name if name in _CLI_BACKENDS else ""
 
 
 def _infer_provider(model: str) -> tuple[str, str] | None:
-    low = model.lower()
-    for prefix, (provider, env_var) in _PROVIDER_ENV_MAP.items():
-        if prefix in low:
-            return provider, env_var
+    """The provider a model ref names, and the environment variable its key lives in.
+
+    The provider is the prefix before the slash, as `terms.py` reads it. A substring
+    test reads `google-antigravity-cli/gemini-3.8-flash` as `google` and, with
+    `GEMINI_API_KEY` in the environment, pastes an AI Studio key for an agent that runs
+    on the local `agy` CLI: a credential on a road `docs/openclaw.md` declares closed.
+    A ref with no prefix is still read by name, which is how `gemini-2.5-flash` names
+    Google.
+    """
+    if _cli_backend(model):
+        return None
+    low = str(model or "").strip().lower()
+    prefix, sep, _ = low.partition("/")
+    if sep:
+        return None if prefix in _PROFILE_PROVIDERS else _PROVIDER_ENV_MAP.get(prefix)
+    for name, pair in _PROVIDER_ENV_MAP.items():
+        if name in low:
+            return pair
     return None
 
 
@@ -446,6 +486,13 @@ def register_model_keys(
         if not isinstance(entry, dict):
             continue
         model = str(entry.get("model") or "")
+        backend = _cli_backend(model)
+        if backend:
+            # Said once per agent, so a person who expected a key registered reads why
+            # none was: the login stays in the CLI that already has it.
+            setup.out(t("No key is registered for agent '{agent}': its model runs on the local {backend} CLI, which keeps its own login.",
+                        agent=agent_id, backend=backend))
+            continue
         match = _infer_provider(model)
         if not match:
             continue

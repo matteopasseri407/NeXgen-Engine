@@ -1,15 +1,18 @@
 """`nexgen openclaw adopt`: what OpenClaw created, made canonical, with a person's consent.
 
 The library is the single source every CLI receives, and OpenClaw is a door
-into it: the Workshop learns a skill, a person adds a server from its panel.
-Both live only in OpenClaw's own state until they are adopted, which means
-the other four runtimes have never heard of them and a lost state folder takes
-them with it.
+into it: the Workshop learns a skill, ClawHub installs one, a plugin publishes
+its own, and a person adds a server from its panel. All of them live only in
+OpenClaw's own folders until they are adopted, which means the other four
+runtimes have never heard of them and a lost state folder takes them with it.
 
 This module is the order of the pass and the words a person reads. What may be
 adopted is `adopt_vetting`'s answer, and the writing is `adopt_skills`' and
 `adopt_mcp`'s. Nothing here adopts without consent: `--yes` only means "do not
 ask", and a resource that needs a person is still left alone and named.
+
+When the pass really added a server, `adopt_render` runs the engine's own render
+so the other CLIs can use it now, not at the next scheduled pass.
 """
 from __future__ import annotations
 
@@ -19,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import adopt_scan
+from nexgen_core.openclaw import adopt_render, adopt_scan
 from nexgen_core.openclaw.adopt_mcp import adopt_server
 from nexgen_core.openclaw.adopt_scan import SERVER, SKILL, UnmanagedServer, WorkshopSkill
 from nexgen_core.openclaw.adopt_skills import adopt_skill
@@ -191,21 +194,24 @@ def _write_and_report(
     state: Path,
     run: Run | None,
     which: Which | None,
-) -> int:
-    """Adopt each resource and say what happened; returns how many of them failed."""
+) -> tuple[int, int]:
+    """Adopt each resource and say what happened; returns (failed, servers adopted)."""
     adopted = 0
     failed = 0
+    servers = 0
     for item in items:
         ok, note = _adopt_one(item, home=home, vault=vault, engine=engine, state=state, run=run, which=which)
         if ok:
             adopted += 1
+            if item.kind == SERVER:
+                servers += 1
             emit(t("  + {kind} {name}: {note}", kind=item.kind, name=item.name, note=note))
         else:
             failed += 1
             emit(t("  ! {kind} {name}: {note}", kind=item.kind, name=item.name, note=note))
     if not adopted and not failed:
         emit(t("Nothing adopted."))
-    return failed
+    return failed, servers
 
 
 def _run_auto(
@@ -292,16 +298,22 @@ def _run_interactive(
             return 0
         ready.extend(item for item in plan.with_status(REVIEW) if ask(_review_question(item)))
 
-    failed = _write_and_report(
+    engine = resolve_engine_root(home_dir, engine_root)
+    failed, servers = _write_and_report(
         ready,
         emit=emit,
         home=home_dir,
         vault=vault,
-        engine=resolve_engine_root(home_dir, engine_root),
+        engine=engine,
         state=resolve_state_dir(home_dir, override=state_dir),
         run=run,
         which=which,
     )
+    if servers:
+        _rendered, line = adopt_render.render_adopted_servers(
+            home=home_dir, vault_data=vault, engine_root=engine,
+        )
+        emit(line)
     left = [item for item in plan.pending if item not in ready]
     if left:
         emit(t("Left alone: {items}. A person decides; run 'nexgen openclaw adopt' to be asked.",

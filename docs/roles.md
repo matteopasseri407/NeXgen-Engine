@@ -51,6 +51,7 @@ On Windows:
 ```
 
 **What it does:**
+- Installs the pinned OpenClaw release before anything asks this PC whether it is a node: the same release and the same Node check `nexgen openclaw setup` runs (`03-INFRA/agent-universal-layer/openclaw/pin.json`). A PC with an older or different version is realigned to the pin, and a Node outside the pin's range stops the role with the setup's own message instead of leaving a half-configured machine.
 - Configures the local machine profile as `MINIMAL` (secondary node).
 - Synchronizes local developer harnesses (Claude Code, Codex, OpenCode, Antigravity), skills, and MCP connectors.
 - Connects the node host as an OS service using `openclaw connect --service --session-host --target-file <path>`, protecting single-use join credentials from process argument inspection.
@@ -88,7 +89,7 @@ Se questo computer ha già NeXgen installato (ad esempio come standalone o con u
    ```powershell
    .\install.ps1 -Role node -Check
    ```
-   Stampa il piano dettagliato riga per riga senza scrivere nulla: versione attuale e in arrivo del motore, presenza di gateway o attività pianificate, stato del nodo, cosa verrà fermato e cosa rimarrà invariato.
+   Stampa il piano dettagliato riga per riga senza scrivere nulla: versione attuale e in arrivo del motore, presenza di gateway o attività pianificate, stato del nodo, cosa verrà fermato e cosa rimarrà invariato. Non installa OpenClaw: l'installazione della versione fissata avviene al primo `--role node` vero, senza `--check`.
 
 2. **Passaggio a nodo:**
    Crea un codice di aggancio monouso sul server (`openclaw devices join-code`), poi esegui sul PC:

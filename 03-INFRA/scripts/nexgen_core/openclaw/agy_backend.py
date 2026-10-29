@@ -1,12 +1,13 @@
-"""The local agy CLI backend plugin: its permission modes, and the one this engine writes.
+"""The local agy CLI backend plugin: its permission modes, and the entry this engine writes.
 
-One job: name the modes the `google-antigravity-cli` plugin understands, and decide
-which one the engine puts in the configuration it owns. `skip` hands tool approval
-to `agy` itself and is the plugin's default when nothing is declared, so the engine
-never writes it: a machine whose model approves its own tool calls is a machine that
-runs whatever the model asks for. `sandbox` and `settings` keep a boundary, and a
-guarded mode already in force is left alone, because the person may have chosen
-`sandbox` or `settings` deliberately.
+One job: name the modes the `google-antigravity-cli` plugin understands, decide
+which one the engine puts in the configuration it owns, and say what the plugin's
+entry holds when the team asks for the backend. `skip` hands tool approval to
+`agy` itself and is the plugin's default when nothing is declared, so the engine
+never writes it: a machine whose model approves its own tool calls is a machine
+that runs whatever the model asks for. `sandbox` and `settings` keep a boundary,
+and a guarded mode already in force is left alone, because the person may have
+chosen `sandbox` or `settings` deliberately.
 """
 from __future__ import annotations
 
@@ -50,12 +51,37 @@ def mode_for_engine(current: dict[str, Any] | None, backend: str) -> str:
 def approved(current: dict[str, Any] | None, backend: str = LOCAL_AGY_BACKEND) -> bool:
     """Whether the person already allowed this backend and did not switch it off.
 
-    The engine never introduces the plugin: it only keeps, aligns and reports what the
-    person approved. Allowing it while its entry is disabled is not approval, and an entry
-    that is absent is not approval either.
+    Approval in the file in force is what keeps a backend the person chose: the
+    engine aligns its one setting and never removes it. It is no longer the only
+    way in, since a team that runs an agent on `agy` is itself the request
+    (`with_backend`); an entry that is absent is still not approval, and neither
+    is an entry that is present and disabled.
     """
     plugins = (current or {}).get("plugins")
     plugins = plugins if isinstance(plugins, dict) else {}
     allowed = plugins.get("allow") if isinstance(plugins.get("allow"), list) else []
     entry = _entry(current, backend) or {}
     return backend in {str(item) for item in allowed} and entry.get("enabled") is not False
+
+
+def with_backend(config: dict[str, Any], current: dict[str, Any] | None) -> dict[str, Any]:
+    """The configuration with this backend allowed, enabled and given a guarded mode.
+
+    Called when the squad puts an agent on `agy`: that is the owner asking for the
+    plugin, so the engine introduces it instead of waiting to find it approved.
+    Only `permissionMode` is carried over from the file in force -- a guarded mode
+    the person chose stays, anything else becomes `sandbox` -- and every other key
+    of the entry is kept, because the rest of the plugin's settings are not the
+    engine's.
+    """
+    plugins = dict(config.get("plugins") or {})
+    allow = list(plugins.get("allow") or [])
+    if LOCAL_AGY_BACKEND not in allow:
+        allow.append(LOCAL_AGY_BACKEND)
+    entries = dict(plugins.get("entries") or {})
+    entry = dict(entries.get(LOCAL_AGY_BACKEND) or {})
+    settings = dict(entry.get("config") or {})
+    settings["permissionMode"] = mode_for_engine(current, LOCAL_AGY_BACKEND)
+    entry.update({"enabled": True, "config": settings})
+    entries[LOCAL_AGY_BACKEND] = entry
+    return {**config, "plugins": {**plugins, "allow": allow, "entries": entries}}

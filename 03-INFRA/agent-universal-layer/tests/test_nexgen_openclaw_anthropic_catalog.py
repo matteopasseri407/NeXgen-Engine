@@ -80,7 +80,8 @@ def test_the_doctor_names_a_key_left_in_the_environment_file(tmp_path: Path) -> 
     assert "models" in outcome.message
     assert "sk-ant-workspace-scoped" not in outcome.message
     assert "nexgen openclaw setup" in outcome.action
-    assert "openclaw gateway install --force" in outcome.action
+    assert "nexgen openclaw restart" in outcome.action
+    assert "openclaw gateway install --force" not in outcome.action
 
 
 def test_the_doctor_names_a_key_left_in_the_systemd_copy(tmp_path: Path) -> None:
@@ -94,9 +95,12 @@ def test_the_doctor_names_a_key_left_in_the_systemd_copy(tmp_path: Path) -> None
     assert outcome is not None
     assert outcome.severity == Severity.WARN
     assert "gateway.systemd.env" in outcome.message
-    # Only a reinstall rewrites the copy; the setup has nothing left to clean.
-    assert "openclaw gateway install --force" in outcome.action
-    assert "nexgen openclaw setup" not in outcome.action
+    # The copy is named with its path: the engine never writes it, so the line is
+    # the person's to remove, and a forced reinstall is not the answer.
+    assert "gateway.systemd.env" in outcome.action
+    assert "nexgen openclaw setup" in outcome.action
+    assert "nexgen openclaw restart" in outcome.action
+    assert "openclaw gateway install --force" not in outcome.action
 
 
 def test_the_doctor_is_silent_without_openclaw(tmp_path: Path) -> None:

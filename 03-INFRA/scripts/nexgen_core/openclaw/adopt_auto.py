@@ -8,8 +8,9 @@ with `origin: openclaw` and stay absent from OpenClaw for two consecutive passes
 are retired from the canonical manifest.
 
 Skills are admitted but never retired here: adoption archives the Workshop copy
-they came from, so the OpenClaw side of an adopted skill is gone by design. See
-`adopt_retirement` for the whole reason.
+they came from, so the OpenClaw side of an adopted skill is gone by design. A
+copy OpenClaw installed itself -- from ClawHub, or from a plugin -- stays where
+it is, so it is not evidence either. See `adopt_retirement` for the whole reason.
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ from typing import Any
 
 from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import adopt_scan
+from nexgen_core.openclaw import adopt_render, adopt_scan
 from nexgen_core.openclaw.adopt_mcp import adopt_server
 from nexgen_core.openclaw.adopt_retirement import retire_adopted_server
 from nexgen_core.openclaw.adopt_skills import adopt_skill
@@ -190,7 +191,7 @@ def _process_candidate_skills(
     run: Callable[..., Any] | None,
     which: Callable[[str], str | None] | None,
 ) -> tuple[list[str], list[dict[str, Any]], list[str]]:
-    """Admit SAFE workshop skills; hold REVIEW and BLOCKED for a person."""
+    """Admit SAFE skills OpenClaw created; hold REVIEW and BLOCKED for a person."""
     entered: list[str] = []
     review: list[dict[str, Any]] = []
     lines: list[str] = []
@@ -349,6 +350,29 @@ def _save_run_state(
     })
 
 
+def _render_new_servers(
+    entered: list[str],
+    *,
+    home_dir: Path,
+    vault: Path,
+    engine: Path,
+    emit: Callable[[str], None],
+) -> list[str]:
+    """Render the CLIs when this pass really added a server; the line to report.
+
+    The row is in the manifest and the CLIs still hold the file from before.
+    Rendering here is what lets the person use the server now instead of at the
+    next tick, and a failure is news, never a reason to undo the pass.
+    """
+    if not any(name.startswith("mcp:") for name in entered):
+        return []
+    _rendered, line = adopt_render.render_adopted_servers(
+        home=home_dir, vault_data=vault, engine_root=engine,
+    )
+    emit(line)
+    return [line]
+
+
 def run_auto_adopt(
     *,
     skills: bool = True,
@@ -400,6 +424,8 @@ def run_auto_adopt(
 
     if not dry_run:
         _save_run_state(state_d, consecutive_absent, entered, exited, pending_review)
+        lines.extend(_render_new_servers(entered, home_dir=home_dir, vault=vault,
+                                         engine=engine, emit=emit))
 
     if not lines:
         empty_msg = t("Everything is aligned: no new safe items to adopt, nothing absent to retire.")

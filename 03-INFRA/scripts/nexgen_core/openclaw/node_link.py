@@ -8,7 +8,8 @@ scheduled task on Windows, and a join code is the gateway's to mint, so the
 engine prints what exists instead of wrapping it in a second implementation.
 
 Nothing here touches a local gateway: this module only proposes. The machine-side
-steps live in `node_apply`, which retires a local gateway before enrolling. It has
+steps live in `node_apply`, which records the node role and retires a local gateway
+before enrolling. It has
 to be retired rather than left beside the node, because a gateway's own token
 makes the node authenticate with it instead of its pairing token, and a channel
 on both gateways means two pollers on one bot. A machine with no channels can

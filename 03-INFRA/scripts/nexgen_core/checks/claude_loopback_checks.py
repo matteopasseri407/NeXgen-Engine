@@ -27,6 +27,7 @@ from nexgen_core.i18n import t
 from nexgen_core.openclaw.claude_loopback import pattern_for
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.native_connectors import loopback_deny
+from nexgen_core.openclaw.node_only import detect_node_only, node_only_outcome
 from nexgen_core.paths import claude_config, openclaw_config
 from nexgen_core.report import CheckOutcome, Severity
 
@@ -170,11 +171,14 @@ def check_claude_loopback(
     home: Path,
     vault_data: Path | None = None,
     engine_root: Path | None = None,
+    platform: str | None = None,
 ) -> CheckOutcome | None:
     """One outcome for the whole question, or None when there is nothing here to judge."""
     path = openclaw_config(home)
     if not path.is_file():
         return None
+    if detect_node_only(home, platform=platform):
+        return node_only_outcome(CHECK_ID)
     config, _error = read_config(path)
     if config is None:
         return None

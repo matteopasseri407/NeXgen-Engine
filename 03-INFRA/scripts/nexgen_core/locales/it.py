@@ -368,8 +368,8 @@ MESSAGES: dict[str, str] = {
     "The {count} agent(s) that read their connectors from their own CLI keep every connector off the loopback server, and that CLI's configuration carries them.": "I {count} agenti che leggono i connettori dalla propria CLI li tengono tutti fuori dal server di loopback, e la configurazione di quella CLI li porta.",
     "Took {key} out of {path}: no agent reads it, and the apps cannot update the models while it is there. The value stays in the engine's secret store.": "Ho tolto {key} da {path}: nessun agente la legge, e finché resta le app non riescono ad aggiornare i modelli. Il valore resta nell'archivio segreti del motore.",
     "The apps that read the gateway (Android included) say they cannot update the models, because Anthropic's catalogue discovery fails: ANTHROPIC_API_KEY is in {paths}, and no agent reads it.": "Le app che leggono il gateway (Android compresa) dicono che non riescono ad aggiornare i modelli, perché la scoperta del catalogo Anthropic fallisce: ANTHROPIC_API_KEY è in {paths} e nessun agente la legge.",
-    "Run 'nexgen openclaw setup', then 'openclaw gateway install --force' as the gateway's user: the service reads a copy of .env that only a reinstall rewrites.": "Lancia 'nexgen openclaw setup', poi 'openclaw gateway install --force' come utente del gateway: il servizio legge una copia di .env che solo una reinstallazione riscrive.",
-    "Run 'openclaw gateway install --force' as the gateway's user: the service reads a copy of .env that only a reinstall rewrites, and a restart alone keeps the old key.": "Lancia 'openclaw gateway install --force' come utente del gateway: il servizio legge una copia di .env che solo una reinstallazione riscrive, e un semplice riavvio tiene la chiave vecchia.",
+    "Run 'nexgen openclaw setup', then 'nexgen openclaw restart', as the gateway's user: the setup rewrites {env} without the key, and the gateway reads that file when it starts. Never reinstall the service to refresh it: a reinstall erases the service's other environment variables.": "Lancia 'nexgen openclaw setup', poi 'nexgen openclaw restart', come utente del gateway: il setup riscrive {env} senza la chiave, e il gateway rilegge quel file quando parte. Non reinstallare il servizio per aggiornarlo: una reinstallazione cancella le altre variabili d'ambiente del servizio.",
+    "Run 'nexgen openclaw setup', then 'nexgen openclaw restart', as the gateway's user: the setup rewrites {env} without the key. The unit loads its own copy at {copy}, and the engine never writes that file: delete the line that names {key} there before the restart. Never reinstall the service to refresh it: a reinstall erases the service's other environment variables.": "Lancia 'nexgen openclaw setup', poi 'nexgen openclaw restart', come utente del gateway: il setup riscrive {env} senza la chiave. L'unità del servizio carica una copia propria in {copy}, e il motore non scrive quel file: togli da lì la riga che nomina {key} prima del riavvio. Non reinstallare il servizio per aggiornarlo: una reinstallazione cancella le altre variabili d'ambiente del servizio.",
     "No ANTHROPIC_API_KEY sits in the gateway's environment: the {count} agent(s) on Claude Code's CLI add nothing the model catalogue has to fail over.": "Nessuna ANTHROPIC_API_KEY nell'ambiente del gateway: i {count} agenti sulla CLI di Claude Code non aggiungono niente su cui il catalogo dei modelli debba inciampare.",
     'Antigravity configuration updated': 'Configurazione Antigravity aggiornata',
     'OpenCode configuration updated': 'Configurazione OpenCode aggiornata',
@@ -1417,6 +1417,8 @@ MESSAGES: dict[str, str] = {
     "Nothing was written. 'nexgen openclaw setup' (B2) applies this plan.":
         "Non è stato scritto niente. 'nexgen openclaw setup' (B2) applica questo piano.",
     # Il doctor di OpenClaw
+    "This machine is a node: the agent configuration lives on the gateway.":
+        "Questa macchina è un nodo: la configurazione degli agenti vive sul gateway.",
     "The OpenClaw module is declared on this machine but OpenClaw is not installed.":
         "Il modulo OpenClaw è dichiarato su questa macchina ma OpenClaw non è installato.",
     "Install the pinned release: {command}":
@@ -1611,6 +1613,50 @@ MESSAGES: dict[str, str] = {
         "Il backend CLI locale '{backend}' è configurato: 'agy' conserva il proprio login e OpenClaw non detiene nessuna credenziale Google (permissionMode '{mode}').",
     "The local '{backend}' CLI backend declares permissionMode '{mode}', which is neither 'skip' nor 'sandbox'/'settings': the doctor cannot say whether 'agy' approves a tool call by itself.":
         "Il backend CLI locale '{backend}' dichiara permissionMode '{mode}', che non è né 'skip' né 'sandbox'/'settings': il doctor non può dire se 'agy' approva da solo una chiamata di tool.",
+    "The engine cannot read its Antigravity plugin pin, so it will not install an unpinned plugin. Check agent-universal-layer/openclaw/agy-plugin.json and run the setup again.":
+        "Il motore non riesce a leggere il pin del plugin Antigravity, quindi non installa un plugin senza versione bloccata. Controlla agent-universal-layer/openclaw/agy-plugin.json e rilancia il setup.",
+    "The Antigravity plugin {plugin} is already {version}.":
+        "Il plugin Antigravity {plugin} è già alla versione {version}.",
+    "The Antigravity plugin {plugin} is {version}, not the pinned {pinned}: installing the pin.":
+        "Il plugin Antigravity {plugin} è alla versione {version}, non alla {pinned} bloccata: installo quella bloccata.",
+    "An agent runs on the local 'agy' CLI and the plugin is not installed: installing {pinned}.":
+        "Un agente gira sulla CLI locale 'agy' e il plugin non è installato: installo la versione {pinned}.",
+    "The Antigravity plugin install failed (exit {code}).":
+        "L'installazione del plugin Antigravity non è riuscita (uscita {code}).",
+    "The install finished but the plugin is {version} in {path}, not {pinned}: the configuration was not written.":
+        "L'installazione è finita ma il plugin in {path} è alla versione {version}, non alla {pinned}: la configurazione non è stata scritta.",
+    "The Antigravity plugin {plugin} {version} is installed.":
+        "Il plugin Antigravity {plugin} {version} è installato.",
+    "The 'agy' command is not on PATH: install the Antigravity CLI from Google, then run 'agy' once and sign in. The plugin cannot run an agent until then.":
+        "Il comando 'agy' non è nel PATH: installa la CLI Antigravity di Google, poi lancia 'agy' una volta e fai il login. Fino a quel momento il plugin non può far girare nessun agente.",
+    "The login of 'agy' is kept by the system keyring and cannot be checked from here: run 'agy' once and make sure it answers.":
+        "Il login di 'agy' è custodito dal portachiavi di sistema e da qui non si può controllare: lancia 'agy' una volta e verifica che risponda.",
+    "dry run: 'agy' would be trusted with {count} more agent folders in {settings}; nothing is written.":
+        "prova a vuoto: 'agy' riceverebbe la fiducia per {count} cartelle degli agenti in più in {settings}; non viene scritto nulla.",
+    "'agy' is now trusted with {count} more agent folders; {settings} was created.":
+        "'agy' ha ora la fiducia per {count} cartelle degli agenti in più; {settings} è stato creato.",
+    "'agy' is now trusted with {count} more agent folders; the previous settings are saved as {backup}.":
+        "'agy' ha ora la fiducia per {count} cartelle degli agenti in più; le impostazioni precedenti sono salvate come {backup}.",
+    "The trust list at {settings} could not be written ({error}).":
+        "Non è stato possibile scrivere l'elenco delle cartelle fidate in {settings} ({error}).",
+    "'agy' has not been trusted with these agent folders: {folders}":
+        "'agy' non ha ricevuto la fiducia per queste cartelle degli agenti: {folders}",
+    "Run 'agy' once in each of them and accept the trust prompt; 'agy' records the folder in {settings} under {key}.":
+        "Lancia 'agy' una volta in ciascuna e accetta la richiesta di fiducia; 'agy' registra la cartella in {settings} sotto {key}.",
+    "the Antigravity plugin pin cannot be read: no plugin is installed":
+        "il pin del plugin Antigravity non è leggibile: nessun plugin viene installato",
+    "The configuration runs an agent on '{backend}', but the plugin is not installed in {path}: OpenClaw cannot run that agent.":
+        "La configurazione fa girare un agente su '{backend}', ma il plugin non è installato in {path}: OpenClaw non può far girare quell'agente.",
+    "The '{backend}' plugin is {version}, not the pinned {pinned}: the engine configures and tests one exact release.":
+        "Il plugin '{backend}' è alla versione {version}, non alla {pinned} bloccata: il motore configura e collauda una sola versione esatta.",
+    "Check agent-universal-layer/openclaw/agy-plugin.json: it holds the plugin release the engine expects.":
+        "Controlla agent-universal-layer/openclaw/agy-plugin.json: contiene la versione del plugin che il motore si aspetta.",
+    "The '{backend}' plugin runs the 'agy' command, which is not on PATH: install the Antigravity CLI from Google, then run 'agy' once and sign in.":
+        "Il plugin '{backend}' lancia il comando 'agy', che non è nel PATH: installa la CLI Antigravity di Google, poi lancia 'agy' una volta e fai il login.",
+    "Install the Antigravity CLI from Google, then run 'agy' once and sign in.":
+        "Installa la CLI Antigravity di Google, poi lancia 'agy' una volta e fai il login.",
+    "Run '{command}'.":
+        "Lancia '{command}'.",
     "The ACP bridge allows the 'gemini' agent; its terms do not allow it outside Google's clients.":
         "Il bridge ACP permette l'agente 'gemini'; i termini non lo permettono fuori dai client Google.",
     "Remove 'gemini' from acp.allowedAgents.":
@@ -1717,6 +1763,56 @@ MESSAGES: dict[str, str] = {
         "L'app OpenClaw Companion esegue il gateway su questo PC ({signals}) e non ce n'è uno nativo.",
     "The OpenClaw Companion app points to its own isolated native gateway ({signals}) and there is no native one.":
         "L'app OpenClaw Companion punta al proprio gateway nativo isolato ({signals}) e non ce n'è uno nativo.",
+    "The OpenClaw Companion app has node mode on and the CLI node service '{name}' is installed too: two nodes on the same PC.":
+        "L'app OpenClaw Companion ha il nodo acceso e c'è anche il servizio nodo della CLI '{name}': due nodi sullo stesso PC.",
+    "The node is the app, and the CLI service stays until the app's node is connected: pair the app on the gateway with 'openclaw devices list' and 'openclaw devices approve <id>', then remove the CLI service with 'nexgen openclaw node --use-app --apply'.":
+        "Il nodo è l'app, e il servizio della CLI resta finché il nodo dell'app non è collegato: associa l'app sul gateway con 'openclaw devices list' e 'openclaw devices approve <id>', poi togli il servizio della CLI con 'nexgen openclaw node --use-app --apply'.",
+    "The OpenClaw Companion app has node mode on but no node credential: its log's last node line is 'No node credential available'.":
+        "L'app OpenClaw Companion ha il nodo acceso ma nessuna credenziale per il nodo: l'ultima riga del suo log sul nodo è 'No node credential available'.",
+    "Pair the app again: in OpenClaw Companion leave node mode on and connect it to the gateway, then on the gateway run 'openclaw devices list' and 'openclaw devices approve <id>'; the CLI node service is removed only after the app's node is connected.":
+        "Associa di nuovo l'app: in OpenClaw Companion lascia il nodo acceso e collegala al gateway, poi sul gateway lancia 'openclaw devices list' e 'openclaw devices approve <id>'; il servizio nodo della CLI si toglie solo dopo che il nodo dell'app è collegato.",
+    "The OpenClaw Companion app is the node of this PC":
+        "Il nodo di questo PC è l'app OpenClaw Companion",
+    "- CLI node service '{name}': uninstalled with 'openclaw node uninstall'":
+        "- servizio nodo della CLI '{name}': disinstallato con 'openclaw node uninstall'",
+    "- CLI node service '{name}': not installed, nothing to remove":
+        "- servizio nodo della CLI '{name}': non installato, niente da rimuovere",
+    "- this machine: role 'node' recorded":
+        "- questa macchina: ruolo 'node' registrato",
+    "- the app's files: never written, and the app is not started":
+        "- i file dell'app: mai scritti, e l'app non viene avviata",
+    "Nothing was changed: run the same command with --apply.":
+        "Non è cambiato niente: rilancia lo stesso comando con --apply.",
+    "'openclaw node uninstall' failed (exit code {code}): the CLI node service is still there.":
+        "'openclaw node uninstall' non è riuscito (codice d'uscita {code}): il servizio nodo della CLI è ancora lì.",
+    "The CLI node service '{name}' is gone.":
+        "Il servizio nodo della CLI '{name}' non c'è più.",
+    "This machine is recorded as a node.":
+        "Questa macchina è registrata come nodo.",
+    "The role could not be recorded: run 'nexgen role set node'.":
+        "Il ruolo non è stato registrato: lancia 'nexgen role set node'.",
+    "- the app's node: connected, so the CLI service can go":
+        "- il nodo dell'app: collegato, quindi il servizio della CLI può andare",
+    "- the app's node: not connected, so the CLI service stays until it is":
+        "- il nodo dell'app: non collegato, quindi il servizio della CLI resta finché non lo è",
+    "The CLI node service '{name}' stays: the app's node is not connected yet, and removing it now would leave this PC with no node.":
+        "Il servizio nodo della CLI '{name}' resta: il nodo dell'app non è ancora collegato, e toglierlo adesso lascerebbe questo PC senza nodo.",
+    "1. In OpenClaw Companion open Connections and pair the app with the gateway, leaving node mode on.":
+        "1. In OpenClaw Companion apri Connections e associa l'app al gateway, lasciando il nodo acceso.",
+    "   the app's log ends on 'No node credential available': the app needs a setup code or a shared token, and only the app's own Connections screen can take one.":
+        "   il log dell'app finisce con 'No node credential available': l'app ha bisogno di un setup code o di un token condiviso, e solo la schermata Connections dell'app può riceverlo.",
+    "2. On the gateway run 'openclaw devices list', then 'openclaw devices approve <id>', and 'nexgen openclaw pair --approve-node <node request id>' for the node request.":
+        "2. Sul gateway lancia 'openclaw devices list', poi 'openclaw devices approve <id>', e 'nexgen openclaw pair --approve-node <node request id>' per la richiesta del nodo.",
+    "3. When OpenClaw Companion shows its node connected, run 'nexgen openclaw node --use-app --apply' again: that is the step that removes the CLI node service.":
+        "3. Quando OpenClaw Companion mostra il suo nodo collegato, rilancia 'nexgen openclaw node --use-app --apply': è quello il passo che toglie il servizio nodo della CLI.",
+    "The node of this PC is OpenClaw Companion now: leave node mode on and keep the app connected.":
+        "Il nodo di questo PC ora è OpenClaw Companion: lascia il nodo acceso e tieni l'app collegata.",
+    "The Companion app exists on Windows only: there is no app node to choose here.":
+        "L'app OpenClaw Companion esiste solo su Windows: qui non c'è un nodo dell'app da scegliere.",
+    "A gateway address is needed: pass --host, or --use-app when the Companion app is the node.":
+        "Serve l'indirizzo del gateway: passa --host, oppure --use-app quando il nodo è l'app OpenClaw Companion.",
+    "The OpenClaw Companion app is the node of this PC: remove the CLI node service and record the role (with --apply)":
+        "Il nodo di questo PC è l'app OpenClaw Companion: toglie il servizio nodo della CLI e registra il ruolo (con --apply)",
     "This version of the engine configures the native Node gateway, which is the road it supports, not the app's one: nothing was installed and nothing was written, because a native gateway beside it would fight over the same port.":
         "Questa versione del motore configura il gateway nativo Node, che è la strada che supporta, non quello dell'app: non è stato installato né scritto niente, perché un gateway nativo accanto a quello dell'app si batterebbe per la stessa porta.",
     "To use the app with the engine, open Connections in OpenClaw Companion and choose 'a local Gateway on this PC'.":
@@ -1859,6 +1955,10 @@ MESSAGES: dict[str, str] = {
         "OpenClaw {pinned} è installato.",
     "Note: 'openclaw' is still not on PATH; a new terminal may be needed.":
         "Nota: 'openclaw' non è ancora nel PATH; può servire un terminale nuovo.",
+    "A node needs OpenClaw itself: the pinned release goes in before anything else.":
+        "Un nodo ha bisogno di OpenClaw stesso: la versione fissata va installata prima di tutto il resto.",
+    "The node role stops here: without OpenClaw, this machine's own node state cannot be read.":
+        "Il ruolo nodo si ferma qui: senza OpenClaw non si può leggere lo stato del nodo di questa macchina.",
     "The configuration at {path} already exists.":
         "La configurazione in {path} esiste già.",
     "No configuration yet: letting OpenClaw create the baseline, with no questions.":
@@ -2089,6 +2189,8 @@ MESSAGES: dict[str, str] = {
         "L'agente OpenCode non viene creato: il comando 'opencode' non è nel PATH.",
     "The OpenCode agent is not created: no OpenCode Go key was detected.":
         "L'agente OpenCode non viene creato: non ho rilevato la chiave OpenCode Go.",
+    "No key is registered for agent '{agent}': its model runs on the local {backend} CLI, which keeps its own login.":
+        "Nessuna chiave viene registrata per l'agente '{agent}': il suo modello gira sulla CLI locale {backend}, che tiene il proprio accesso.",
     "OpenClaw, the harness with the interface":
         "OpenClaw, l'harness con l'interfaccia",
     "Install, configure, write the agent manuals and start the gateway":
@@ -2199,6 +2301,10 @@ MESSAGES: dict[str, str] = {
         "Lasciate stare: {items}. Decide una persona; lancia 'nexgen openclaw adopt' per farti chiedere.",
     "Adopt the resources above into the canonical library now?":
         "Adotto adesso nella libreria canonica le risorse qui sopra?",
+    "The adopted MCP servers are in the manifest, but the CLIs were not rewritten ({error}). The next pass will retry.":
+        "I server MCP adottati sono nel manifest, ma non ho riscritto gli assistenti ({error}). Riprovo al prossimo passaggio.",
+    "The adopted MCP servers are in the manifest, but these CLIs were not rewritten: {clis}. The next pass will retry.":
+        "I server MCP adottati sono nel manifest, ma non ho riscritto questi assistenti: {clis}. Riprovo al prossimo passaggio.",
     "the manifest would no longer validate ({problems}); put back as it was":
         "il manifest non sarebbe più valido ({problems}); l'ho rimesso com'era",
     "a skill named '{name}' is already in the Vault: nothing was overwritten":
@@ -2209,6 +2315,10 @@ MESSAGES: dict[str, str] = {
         "non riesco a fare il backup del manifest: non ho scritto niente",
     "archived in the Workshop, so OpenClaw loads the canonical copy":
         "archiviata nel Workshop, così OpenClaw carica la copia canonica",
+    "left in OpenClaw: only a Workshop copy can be archived, and the Vault now holds the canonical one":
+        "lasciata in OpenClaw: solo una copia del Workshop si può archiviare, e adesso la copia canonica sta nel Vault",
+    "the official plugin catalog cannot be read: no plugin skill is offered, and none is taken for the person's":
+        "il catalogo ufficiale dei plugin non si riesce a leggere: non offro nessuna skill dei plugin, e non do per scontato che nessuna sia tua",
     "in the Vault and in the manifest ({changes} views written). OpenClaw: {note}":
         "nel Vault e nel manifest ({changes} viste scritte). OpenClaw: {note}",
     "`openclaw` is not on PATH: archive the learned copy by hand when it is":

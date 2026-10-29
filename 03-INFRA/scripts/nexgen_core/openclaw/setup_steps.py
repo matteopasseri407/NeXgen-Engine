@@ -13,23 +13,26 @@ nothing here ever touches the home or the gateway of the person running it.
 """
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 
 from nexgen_core.i18n import t
 from nexgen_core.modules import current_host, write_state_file
 from nexgen_core.openclaw import host_preflight, setup_commands, setup_write
-from nexgen_core.openclaw.detect import Detection
+from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.governor import governor_section
-from nexgen_core.openclaw.pin import node_satisfies, required_node_version
+from nexgen_core.openclaw.pin import node_satisfies, pinned_version, required_node_version
 from nexgen_core.openclaw.setup_agents import agent_dirs, created_by_openclaw, prepare
 from nexgen_core.openclaw_pairing import qr as pairing_qr
 from nexgen_core.openclaw_processes import is_gateway_process
 from nexgen_core.openclaw_service import OpenClawService, RunResult
-from nexgen_core.paths import resolve_vault_data
+from nexgen_core.paths import openclaw_config, resolve_vault_data
 from nexgen_core.processes import command_line_text, no_window_kwargs
 from nexgen_core.runtimes.openclaw import PLUGIN_ID, OpenClawRuntime
 
@@ -189,6 +192,74 @@ def _check_linux_host(setup: Setup, npm: str | None, needs_install: bool) -> boo
         setup.out(t("Lingering is off for {user}: the gateway stops when your last session closes.", user=user))
         setup.out(t("Run 'loginctl enable-linger {user}' once, then run the setup again.", user=user))
     return True
+
+
+def _two_argument_run(run: Run) -> Callable[..., RunResult]:
+    """The step's own executor, answering the wider call `detect` makes of it.
+
+    `detect` asks npm where its global packages live with a subprocess's keywords,
+    while every step here asks with `(argv, env)`. One executor, two ways of
+    calling it, so the caller still injects exactly one.
+    """
+    def call(argv: list[str], env: Mapping[str, str] | None = None, **_ignored: object) -> RunResult:
+        return run(argv, env)
+
+    return call
+
+
+def _nothing_answers(*_args: object, **_kwargs: object) -> None:
+    """A local-model probe that answers nothing: this step asks no such question."""
+    return None
+
+
+def install_pinned_release(
+    *,
+    home: Path,
+    engine_root: Path | None = None,
+    env: Mapping[str, str] | None = None,
+    which: Which | None = None,
+    run: Run | None = None,
+    platform: str | None = None,
+    out: Emit = print,
+) -> bool:
+    """Step 1 for a caller that is not the whole setup: the pinned release, or no.
+
+    The node role has to have OpenClaw before it can ask whether this machine is a
+    node, and the release it must have is the one the setup installs. The context
+    that step needs is built here, where the pin, the Node check, the host checks
+    and the messages already live: a second entry point that repeated them is a
+    second answer to "which version", and two answers drift apart silently.
+
+    Returns whether the release is there afterwards. The reasons are printed, as
+    they are in the setup, so the person reads the same words from both commands.
+    """
+    values = dict(os.environ) if env is None else {str(k): str(v) for k, v in env.items()}
+    config_path = openclaw_config(home, values)
+    setup = Setup(
+        home=home,
+        env=values,
+        config_path=config_path,
+        engine_root=engine_root,
+        vault_data=resolve_vault_data(home),
+        pinned=pinned_version(engine_root),
+        dry_run=False,
+        out=out,
+        which=which or shutil.which,
+        run=run or default_run,
+        service=OpenClawService(home=home, state_dir=config_path.parent, platform=platform),
+        stamp=datetime.now().strftime("%Y%m%d-%H%M%S"),
+        platform=platform,
+    )
+    snapshot = detect(
+        home=home,
+        env=values,
+        which=setup.which,
+        run=_two_argument_run(setup.run),
+        http_json=_nothing_answers,
+        engine_root=engine_root,
+        platform=platform,
+    )
+    return ensure_installed(setup, snapshot) is not None
 
 
 def ensure_onboarded(setup: Setup) -> bool:

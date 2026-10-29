@@ -287,6 +287,47 @@ with the same id. `nexgen openclaw doctor` gives that backend its own line and n
 plugin was given: `skip` (and omitting it, which is the plugin's default) is a warning, because it lets
 `agy` approve every tool call by itself, while `sandbox` and `settings` keep an approval boundary.
 
+### The `agy` backend: the plugin, and what `agy` itself needs
+
+The plugin is third-party: `google-antigravity-provider`, MIT, from `github.com/jason-allen-oneal/openclaw-google-antigravity-provider`.
+It is published on ClawHub, and it is installed at one exact release, never at `@latest`.
+`agent-universal-layer/openclaw/agy-plugin.json` holds the source, the package and the version, the same way `pin.json` holds OpenClaw's.
+The source is written down because the npm package of the same name does not exist: a setup that assumed npm would fail on a new machine.
+
+When the team puts an agent on `google-antigravity-cli/...`, either in `squad.yaml` or already approved in the file in force, `nexgen openclaw setup` does three things in the write step, in this order:
+
+1. It runs `openclaw plugins install clawhub:<package>@<version> --no-enable`.
+   ClawHub is a trusted source, so a fresh install asks nothing and needs no `--force`.
+   When a copy at another release is already there, the command gains `--force`, which is the flag OpenClaw reads as "overwrite the install target".
+   `--no-enable` keeps activation with the engine, which owns `openclaw.json`.
+2. It proves the release on disk: the `version` in `extensions/google-antigravity-cli/package.json` must be the pinned one, or the setup stops with nothing written.
+   ClawHub records the artifact hash of the release it installed, but `plugins install` takes no hash to check against, so the version is the check this engine can make.
+3. It writes `plugins.allow` with the backend, `enabled: true`, and `permissionMode: sandbox`, or the guarded mode (`sandbox`, `settings`) the file already declared.
+   `skip` is never written.
+
+A team that names no `agy` model gets none of this: no command, no line, the same file as before.
+`--dry-run` prints the install command instead of running it, and `nexgen openclaw plan` shows the `plugins` entries the setup would add.
+
+One thing the setup only reports, because it belongs to the person:
+
+- `agy` on PATH and its login.
+  The credential is not a file the engine reads: `agy` keeps it in the system keyring (on Windows, the Credential Manager entry `gemini:antigravity`), so the doctor never says "not logged in".
+  It says it cannot see the login, and asks the person to run `agy` once.
+
+The trust `agy` asks for every folder is the step's own work, because it is one absolute path written in a file the engine can see.
+`agy` records the answer in `~/.gemini/antigravity-cli/settings.json` under `trustedWorkspaces`, and a path covers only itself: the agent workspaces OpenClaw creates are not in that list on a new machine, and an agent that starts in an untrusted folder stops at the prompt.
+When `agy` is on PATH, the setup appends every agent folder that is missing, in the order the file already has, and leaves every other key alone.
+It backs the file up first (`settings.json.pre-agy-trust-<stamp>.bak`, beside it) and says how many folders it added and where the backup is.
+A missing file is created with the one key; `--dry-run` prints the same plan and writes nothing.
+A file the engine cannot read as a JSON object is never replaced: the setup leaves it as it is, prints the two lines it used to print, and the person runs `agy` once in each folder and accepts the prompt.
+A machine with no `agy` command gets no write at all.
+
+`nexgen openclaw doctor` has three lines for this backend and they do not overlap.
+`openclaw.google.cli_backend` judges the permission mode.
+`openclaw.google.cli_backend.plugin` says the plugin is missing or is not the pinned release, with the exact install command.
+`openclaw.google.cli_backend.agy` says the `agy` command is not on PATH or a workspace is not trusted.
+A missing plugin is never reported as a `permissionMode` problem again.
+
 ## Windows, the traps that cost an afternoon
 
 - `openclaw gateway restart` does not restart on Windows. Stop the processes and relaunch the service, or
@@ -331,6 +372,7 @@ It tells these situations apart, from evidence that starts nothing:
 
 - **Doctor (`nexgen openclaw doctor`)**:
   - `openclaw.companion_gateway`: reports OK when connected to the engine gateway, or when either the isolated native gateway or WSL distribution runs alone as the designated gateway. Warns only when both an engine gateway and an app-managed gateway run simultaneously.
+  - `openclaw.companion_node`: warns when the app's node mode is on beside the CLI node service, or when the app's node has no credential. It takes the place of an OK line above while either is true, and joins a warning line when there is one, because that is the line a person has to act on.
   - `openclaw.store_gateway`: excludes the companion's isolated native gateway MSIX (`OpenClawGatewayMSIX`), preventing false-positive Store package conflict alarms.
 - **Plan (`nexgen openclaw plan`)**:
   - Notes the detected companion gateway mode (`isolated`, `wsl`, `engine`, `remote`).
@@ -353,6 +395,61 @@ written it asks whether the gateway port answers, because two gateways cannot sh
 
 The app's distribution is never started, stopped or written, with or without the option. The app is not
 something to remove, either: the doctor's lines say which gateway is which, never that the app has to go.
+
+### One node per PC: the app, not the CLI service
+
+On Windows the Companion app has its own node mode (`EnableNodeMode` in `%APPDATA%\OpenClawTray\settings.json`),
+and OpenClaw's CLI has one too: `openclaw node install` registers the scheduled task `OpenClaw Node` and leaves
+`~/.openclaw/node.cmd` beside it. Both at once are two nodes on one PC. The owner's decision is that the node is
+the app, so the CLI service is the one that goes.
+
+The order is the part that goes wrong, because the CLI service is the node this PC has today: removing it before
+the app's node works leaves the machine with no node at all. `nexgen openclaw node --use-app --apply` therefore
+refuses while the app has node mode on and its node is not connected, and prints the three steps in the order
+they work:
+
+1. in OpenClaw Companion, open Connections and pair the app with the gateway, leaving node mode on;
+2. on the gateway, `openclaw devices list`, then `openclaw devices approve <id>`, and
+   `nexgen openclaw pair --approve-node <node request id>` for the node request;
+3. when the app shows its node connected, run `--use-app --apply` again: that is the step that removes the CLI
+   node service and records the role `node`.
+
+The engine reads both facts and writes nothing under either app folder:
+
+- node mode off: nothing new, and the doctor's line about the app's gateway is all there is;
+- node mode on and the CLI node service installed: a warning names the two nodes and puts the pairing before the
+  removal, because the removal is the step that can leave this PC with none;
+- node mode on and the app's latest node line in its log is `No node credential available`: a warning says the
+  app could not use its node, with the steps that pair it again (`openclaw devices list`, then
+  `openclaw devices approve <id>` on the gateway) and the sentence that the CLI service goes only after that.
+
+The app's log is read from its end, the last megabyte of it, and only when node mode is on: the last
+`Node status:` line in it is how the engine knows the app's node is connected (`Disconnected` contains
+`connected`, so the two are matched as whole words). The scheduled task is asked with a read-only
+`schtasks /Query` that gives up after five seconds. `nexgen openclaw node --use-app` shows that transition and
+`--apply` carries it out. The engine never writes `settings.json`, never starts the app and never turns node mode
+off itself: that switch is the person's.
+
+#### The setup code the app can take, and why the engine does not hand it over
+
+The app does accept a setup code without the keyboard. Its local MCP server publishes
+`app.connection.applySetupCode` (arg `setupCode`, a string, required; it returns
+`{ outcome, error, gatewayUrl, connected }`) on `http://127.0.0.1:8765/mcp`: POST-only JSON-RPC 2.0,
+`Authorization: Bearer <token>` with the token in `%APPDATA%\OpenClawTray\mcp-token.txt`, loopback only and
+closed to browser contexts. The other side of the same handshake is the gateway's `device.pair.setupCode` RPC,
+which needs `operator.admin` and takes `bootstrapProfile: "node"` for a node: `openclaw devices join-code` is the
+CLI that calls it, and turns the code into a single-use onboarding URL. `openclaw qr` does not go through that
+RPC; it mints a mobile setup code locally, from the configuration of the machine it runs on.
+
+That server is not up when the engine needs it. It is started by the app's node service as the node connects
+(`EnableMcpServer` in the settings, `SetMcpEnabled` in the app), and the app's own log shows it listening only in
+the runs where the node had a credential: with `No node credential available` the node service never attaches
+and port 8765 refuses the connection. A setup code is exactly the credential that is missing, so the route is a
+circle whose only way out is the app's Permissions page and its Connections screen. No command-line argument
+(`--wait-for-pid`, `--post-setup-restart`, `--uninstall`, `--headless`, `--data-dir`, ...) and no `openclaw://`
+path carries a setup code: the URI scheme takes a gateway address and UI commands, and an unknown path is
+rejected. Until that changes, the engine mints nothing it cannot deliver and prints nothing it would have to
+keep, and the transition stays the three steps above.
 
 ### What it does not do yet
 
@@ -606,6 +703,19 @@ On the fixed PC, to see the result: `nexgen openclaw doctor --nodes` adds the pa
 checks that the node accepts the commands an agent asks it to run, and `nexgen openclaw pair` lists them with
 their state. Neither approves anything on its own.
 
+### What the doctor says on a node
+
+On a machine that is only a node, `nexgen doctor` and `nexgen openclaw doctor` stop judging the gateway: bind,
+token, exposure, the port it listens on, the plugin, the agents and their models are not read there, and one line
+says why. The `openclaw.json` the PC kept from when it was a gateway stays where it is, because the node still
+reads `nodeHost` from it, and it is not a fault.
+
+Three facts make the machine a node, in this order: the role it recorded (`nexgen role set node`, also written
+by `install.ps1 -Role node` and by `nexgen openclaw node --apply`); the node service OpenClaw installed, pointing
+at a gateway elsewhere, for a PC migrated before that role existed; the Companion app with its node switch on and
+a gateway elsewhere in `gateways.json`. The app's files are read and never written. A machine that still runs a
+local gateway service is a gateway, and keeps the full report.
+
 ### A gateway behind Tailscale Serve, and a laptop on the same tailnet
 
 On the always-on machine: `nexgen openclaw setup --server`, then `nexgen openclaw restart` if the gateway was
@@ -686,6 +796,13 @@ it redeems the link as a service and waits for the connection, without one it ru
 `openclaw node start` and leaves the two approvals to `nexgen openclaw pair` on the gateway. `--dry-run` prints
 the same plan and changes nothing, `--force` moves a machine that is already a node of another gateway.
 `install.sh --role node` and `install.ps1 -Role node` run this same retirement before attaching.
+
+`nexgen openclaw node --use-app [--apply]` is the other direction, for the Windows PC whose node is the
+Companion app: it reads whether the CLI node service `OpenClaw Node` is installed and whether the app's node
+is connected, and with `--apply` removes the service with `openclaw node uninstall` and records the role
+`node`, but only once the app's node is connected. While the app has node mode on and its node is not up,
+`--apply` refuses and prints the three steps in the only order that works. It never writes under the app's
+folders and never starts the app; the section on the Companion app says what the app itself still needs.
 
 `nexgen openclaw setup` applies that same plan: it installs the pinned release, onboards when there is no
 file, merges the owned sections with a backup beside them, writes the agent manuals, installs and starts the

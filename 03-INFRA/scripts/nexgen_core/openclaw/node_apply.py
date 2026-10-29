@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+from nexgen_core import roles
 from nexgen_core.i18n import t
 from nexgen_core.openclaw.node_attach import (
     DEFAULT_NODE_ATTACH_TIMEOUT_S,
@@ -176,6 +177,9 @@ def apply_node(
                                drop_in_path(resolved_home, systemd_user_dir).is_dir()):
             out(line)
         return 0
+    # From here this machine is a node, whichever route attaches it: the role is what
+    # the doctor reads to stop judging a gateway's file on a machine that has none.
+    roles.declare_role(roles.NODE_ROLE, resolved_home)
     if _already_there(host, existing, join_target, runner, out):
         out(report(RetireResult(None, prepare_config(config_path, out))))
         _finish(link, name, True, out)
