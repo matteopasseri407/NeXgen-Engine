@@ -47,8 +47,11 @@ OpenClaw never mounts itself recursively.
 
 Conversely, ClawHub plugins installed in OpenClaw that wrap external or bundled MCP
 servers can be adopted into the canonical library using `nexgen openclaw adopt --mcp`.
-Once adopted, their underlying servers enter `manifest.yaml` and are materialized for
-all target harnesses across all machines.
+Once adopted, their underlying servers enter `manifest.yaml` and the engine's own
+renderer writes the CLIs at once -- the same render `nexgen sync` runs -- so Claude
+Code, Codex, OpenCode and `agy` can use them in the same minute instead of at the
+next scheduled pass. A render that fails is reported and does not undo the adoption:
+the row is already in the manifest, and the next pass renders it again.
 
 In `mcp.servers.*.env`, every `${VAR}` stays a reference in `openclaw.json`:
 OpenClaw substitutes it itself, and a credential must not be copied out of the
@@ -294,6 +297,7 @@ so both are silent.
 - **Provenance**: an MCP row entered from OpenClaw carries `origin: openclaw` plus its OpenClaw identifier (`openclaw_id`); an adopted skill carries `openclaw_id` and records the same pair in its `SKILL.md` frontmatter (its manifest `origin` stays `vault`, the key that names where a skill is materialized from). An entry without a mark belongs to the library and is never touched.
 - **Two-Pass Exit (MCP servers)**: a server adopted from OpenClaw and absent from `mcp.servers` for two consecutive passes is retired from the manifest (listed under `retired_servers`, unmounted by the next sync). A single missing pass, unreadable configuration, or offline gateway removes nothing and is logged; a retirement that cannot be written is reported as a failure, not as an exit. Skills are never retired this way: adoption archives the Workshop original, so absence would delete what the library just adopted; a ClawHub or plugin copy stays where it is and is not evidence either.
 - **Plugin Job**: `adopt.mjs` registers the `/adopt` command, listens to `skill_changed`, and keeps one bounded pass every 30 minutes on the gateway's own clock (`gateway_start` arms it, `gateway_stop` clears it, one pass at a time). OpenClaw announces no hook for `mcp.servers`, so that tick is what notices a removed server.
+- **Immediate render**: when a pass adds at least one MCP server, it runs the engine's own render straight away, so the server is usable in the other CLIs without waiting for the next 30-minute tick. `--dry-run` writes nothing, and a render failure is reported without undoing the adoption.
 
 ### Evidence
 

@@ -2203,6 +2203,10 @@ MESSAGES: dict[str, str] = {
         "Lasciate stare: {items}. Decide una persona; lancia 'nexgen openclaw adopt' per farti chiedere.",
     "Adopt the resources above into the canonical library now?":
         "Adotto adesso nella libreria canonica le risorse qui sopra?",
+    "The adopted MCP servers are in the manifest, but the CLIs were not rewritten ({error}). The next pass will retry.":
+        "I server MCP adottati sono nel manifest, ma non ho riscritto gli assistenti ({error}). Riprovo al prossimo passaggio.",
+    "The adopted MCP servers are in the manifest, but these CLIs were not rewritten: {clis}. The next pass will retry.":
+        "I server MCP adottati sono nel manifest, ma non ho riscritto questi assistenti: {clis}. Riprovo al prossimo passaggio.",
     "the manifest would no longer validate ({problems}); put back as it was":
         "il manifest non sarebbe più valido ({problems}); l'ho rimesso com'era",
     "a skill named '{name}' is already in the Vault: nothing was overwritten":
