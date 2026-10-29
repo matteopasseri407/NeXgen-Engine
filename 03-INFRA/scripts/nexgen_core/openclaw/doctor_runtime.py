@@ -26,6 +26,7 @@ from nexgen_core.openclaw import companion as app
 from nexgen_core.openclaw import host_preflight
 from nexgen_core.openclaw.companion import Companion
 from nexgen_core.openclaw.node_app import NODE_TASK_NAME, CliNodeService, detect_cli_node_service
+from nexgen_core.openclaw.node_app import pairing_again_sentence, pairing_first_sentence
 from nexgen_core.openclaw.pin import node_satisfies
 from nexgen_core.openclaw.profile import GATEWAY_PORT
 from nexgen_core.openclaw_pairing import names_the_windows_app
@@ -487,6 +488,8 @@ def check_companion_node(
     The owner's rule decides the direction: when the app has node mode on, the
     node is the app, and the CLI service is what has to go. A node mode that is
     off says nothing new, and a node that is on and working says nothing either.
+    The order is the part a person gets wrong, so the sentence comes from the
+    module that owns the transition.
     """
     if not platform.startswith("win") or not companion.wants_node:
         return None
@@ -497,9 +500,7 @@ def check_companion_node(
             severity=Severity.WARN,
             message=t("The OpenClaw Companion app has node mode on and the CLI node service "
                       "'{name}' is installed too: two nodes on the same PC.", name=NODE_TASK_NAME),
-            action=t("The node is the app: remove the CLI service with 'nexgen openclaw node "
-                     "--use-app --apply', then pair the app on the gateway with 'openclaw devices "
-                     "list' and 'openclaw devices approve <id>'."),
+            action=pairing_first_sentence(),
         )
     if companion.node_credential_missing:
         return CheckOutcome(
@@ -507,9 +508,7 @@ def check_companion_node(
             severity=Severity.WARN,
             message=t("The OpenClaw Companion app has node mode on but no node credential: its "
                       "log's last node line is 'No node credential available'."),
-            action=t("Pair the app again: in OpenClaw Companion leave node mode on and connect it "
-                     "to the gateway, then on the gateway run 'openclaw devices list' and "
-                     "'openclaw devices approve <id>'."),
+            action=pairing_again_sentence(),
         )
     return None
 

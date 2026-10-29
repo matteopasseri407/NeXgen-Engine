@@ -1765,12 +1765,12 @@ MESSAGES: dict[str, str] = {
         "L'app OpenClaw Companion punta al proprio gateway nativo isolato ({signals}) e non ce n'è uno nativo.",
     "The OpenClaw Companion app has node mode on and the CLI node service '{name}' is installed too: two nodes on the same PC.":
         "L'app OpenClaw Companion ha il nodo acceso e c'è anche il servizio nodo della CLI '{name}': due nodi sullo stesso PC.",
-    "The node is the app: remove the CLI service with 'nexgen openclaw node --use-app --apply', then pair the app on the gateway with 'openclaw devices list' and 'openclaw devices approve <id>'.":
-        "Il nodo è l'app: togli il servizio della CLI con 'nexgen openclaw node --use-app --apply', poi associa l'app sul gateway con 'openclaw devices list' e 'openclaw devices approve <id>'.",
+    "The node is the app, and the CLI service stays until the app's node is connected: pair the app on the gateway with 'openclaw devices list' and 'openclaw devices approve <id>', then remove the CLI service with 'nexgen openclaw node --use-app --apply'.":
+        "Il nodo è l'app, e il servizio della CLI resta finché il nodo dell'app non è collegato: associa l'app sul gateway con 'openclaw devices list' e 'openclaw devices approve <id>', poi togli il servizio della CLI con 'nexgen openclaw node --use-app --apply'.",
     "The OpenClaw Companion app has node mode on but no node credential: its log's last node line is 'No node credential available'.":
         "L'app OpenClaw Companion ha il nodo acceso ma nessuna credenziale per il nodo: l'ultima riga del suo log sul nodo è 'No node credential available'.",
-    "Pair the app again: in OpenClaw Companion leave node mode on and connect it to the gateway, then on the gateway run 'openclaw devices list' and 'openclaw devices approve <id>'.":
-        "Associa di nuovo l'app: in OpenClaw Companion lascia il nodo acceso e collegala al gateway, poi sul gateway lancia 'openclaw devices list' e 'openclaw devices approve <id>'.",
+    "Pair the app again: in OpenClaw Companion leave node mode on and connect it to the gateway, then on the gateway run 'openclaw devices list' and 'openclaw devices approve <id>'; the CLI node service is removed only after the app's node is connected.":
+        "Associa di nuovo l'app: in OpenClaw Companion lascia il nodo acceso e collegala al gateway, poi sul gateway lancia 'openclaw devices list' e 'openclaw devices approve <id>'; il servizio nodo della CLI si toglie solo dopo che il nodo dell'app è collegato.",
     "The OpenClaw Companion app is the node of this PC":
         "Il nodo di questo PC è l'app OpenClaw Companion",
     "- CLI node service '{name}': uninstalled with 'openclaw node uninstall'":
@@ -1791,8 +1791,22 @@ MESSAGES: dict[str, str] = {
         "Questa macchina è registrata come nodo.",
     "The role could not be recorded: run 'nexgen role set node'.":
         "Il ruolo non è stato registrato: lancia 'nexgen role set node'.",
-    "In OpenClaw Companion leave node mode on and connect the app to the gateway; on the gateway run 'openclaw devices list', then 'openclaw devices approve <id>'.":
-        "In OpenClaw Companion lascia il nodo acceso e collega l'app al gateway, poi sul gateway lancia 'openclaw devices list' e poi 'openclaw devices approve <id>'.",
+    "- the app's node: connected, so the CLI service can go":
+        "- il nodo dell'app: collegato, quindi il servizio della CLI può andare",
+    "- the app's node: not connected, so the CLI service stays until it is":
+        "- il nodo dell'app: non collegato, quindi il servizio della CLI resta finché non lo è",
+    "The CLI node service '{name}' stays: the app's node is not connected yet, and removing it now would leave this PC with no node.":
+        "Il servizio nodo della CLI '{name}' resta: il nodo dell'app non è ancora collegato, e toglierlo adesso lascerebbe questo PC senza nodo.",
+    "1. In OpenClaw Companion open Connections and pair the app with the gateway, leaving node mode on.":
+        "1. In OpenClaw Companion apri Connections e associa l'app al gateway, lasciando il nodo acceso.",
+    "   the app's log ends on 'No node credential available': the app needs a setup code or a shared token, and only the app's own Connections screen can take one.":
+        "   il log dell'app finisce con 'No node credential available': l'app ha bisogno di un setup code o di un token condiviso, e solo la schermata Connections dell'app può riceverlo.",
+    "2. On the gateway run 'openclaw devices list', then 'openclaw devices approve <id>', and 'nexgen openclaw pair --approve-node <node request id>' for the node request.":
+        "2. Sul gateway lancia 'openclaw devices list', poi 'openclaw devices approve <id>', e 'nexgen openclaw pair --approve-node <node request id>' per la richiesta del nodo.",
+    "3. When OpenClaw Companion shows its node connected, run 'nexgen openclaw node --use-app --apply' again: that is the step that removes the CLI node service.":
+        "3. Quando OpenClaw Companion mostra il suo nodo collegato, rilancia 'nexgen openclaw node --use-app --apply': è quello il passo che toglie il servizio nodo della CLI.",
+    "The node of this PC is OpenClaw Companion now: leave node mode on and keep the app connected.":
+        "Il nodo di questo PC ora è OpenClaw Companion: lascia il nodo acceso e tieni l'app collegata.",
     "The Companion app exists on Windows only: there is no app node to choose here.":
         "L'app OpenClaw Companion esiste solo su Windows: qui non c'è un nodo dell'app da scegliere.",
     "A gateway address is needed: pass --host, or --use-app when the Companion app is the node.":

@@ -403,20 +403,53 @@ and OpenClaw's CLI has one too: `openclaw node install` registers the scheduled 
 `~/.openclaw/node.cmd` beside it. Both at once are two nodes on one PC. The owner's decision is that the node is
 the app, so the CLI service is the one that goes.
 
+The order is the part that goes wrong, because the CLI service is the node this PC has today: removing it before
+the app's node works leaves the machine with no node at all. `nexgen openclaw node --use-app --apply` therefore
+refuses while the app has node mode on and its node is not connected, and prints the three steps in the order
+they work:
+
+1. in OpenClaw Companion, open Connections and pair the app with the gateway, leaving node mode on;
+2. on the gateway, `openclaw devices list`, then `openclaw devices approve <id>`, and
+   `nexgen openclaw pair --approve-node <node request id>` for the node request;
+3. when the app shows its node connected, run `--use-app --apply` again: that is the step that removes the CLI
+   node service and records the role `node`.
+
 The engine reads both facts and writes nothing under either app folder:
 
 - node mode off: nothing new, and the doctor's line about the app's gateway is all there is;
-- node mode on and the CLI node service installed: a warning names the two nodes, the command that removes the
-  service (`nexgen openclaw node --use-app --apply`) and the two approvals the app still needs on the gateway;
+- node mode on and the CLI node service installed: a warning names the two nodes and puts the pairing before the
+  removal, because the removal is the step that can leave this PC with none;
 - node mode on and the app's latest node line in its log is `No node credential available`: a warning says the
   app could not use its node, with the steps that pair it again (`openclaw devices list`, then
-  `openclaw devices approve <id>` on the gateway).
+  `openclaw devices approve <id>` on the gateway) and the sentence that the CLI service goes only after that.
 
-The app's log is read from its end, the last megabyte of it, and only when node mode is on; the scheduled task is
-asked with a read-only `schtasks /Query` that gives up after five seconds. `nexgen openclaw node --use-app` shows
-that transition and `--apply` carries it out: it runs `openclaw node uninstall` and records the role `node`. The
-engine never writes `settings.json`, never starts the app and never turns node mode off itself: that switch is
-the person's.
+The app's log is read from its end, the last megabyte of it, and only when node mode is on: the last
+`Node status:` line in it is how the engine knows the app's node is connected (`Disconnected` contains
+`connected`, so the two are matched as whole words). The scheduled task is asked with a read-only
+`schtasks /Query` that gives up after five seconds. `nexgen openclaw node --use-app` shows that transition and
+`--apply` carries it out. The engine never writes `settings.json`, never starts the app and never turns node mode
+off itself: that switch is the person's.
+
+#### The setup code the app can take, and why the engine does not hand it over
+
+The app does accept a setup code without the keyboard. Its local MCP server publishes
+`app.connection.applySetupCode` (arg `setupCode`, a string, required; it returns
+`{ outcome, error, gatewayUrl, connected }`) on `http://127.0.0.1:8765/mcp`: POST-only JSON-RPC 2.0,
+`Authorization: Bearer <token>` with the token in `%APPDATA%\OpenClawTray\mcp-token.txt`, loopback only and
+closed to browser contexts. The other side of the same handshake is the gateway's `device.pair.setupCode` RPC,
+which needs `operator.admin` and takes `bootstrapProfile: "node"` for a node: `openclaw devices join-code` is the
+CLI that calls it, and turns the code into a single-use onboarding URL. `openclaw qr` does not go through that
+RPC; it mints a mobile setup code locally, from the configuration of the machine it runs on.
+
+That server is not up when the engine needs it. It is started by the app's node service as the node connects
+(`EnableMcpServer` in the settings, `SetMcpEnabled` in the app), and the app's own log shows it listening only in
+the runs where the node had a credential: with `No node credential available` the node service never attaches
+and port 8765 refuses the connection. A setup code is exactly the credential that is missing, so the route is a
+circle whose only way out is the app's Permissions page and its Connections screen. No command-line argument
+(`--wait-for-pid`, `--post-setup-restart`, `--uninstall`, `--headless`, `--data-dir`, ...) and no `openclaw://`
+path carries a setup code: the URI scheme takes a gateway address and UI commands, and an unknown path is
+rejected. Until that changes, the engine mints nothing it cannot deliver and prints nothing it would have to
+keep, and the transition stays the three steps above.
 
 ### What it does not do yet
 
@@ -765,9 +798,11 @@ the same plan and changes nothing, `--force` moves a machine that is already a n
 `install.sh --role node` and `install.ps1 -Role node` run this same retirement before attaching.
 
 `nexgen openclaw node --use-app [--apply]` is the other direction, for the Windows PC whose node is the
-Companion app: it reads whether the CLI node service `OpenClaw Node` is installed, and with `--apply` removes
-it with `openclaw node uninstall` and records the role `node`. It never writes under the app's folders and
-never starts the app; the section on the Companion app says what the app itself still needs.
+Companion app: it reads whether the CLI node service `OpenClaw Node` is installed and whether the app's node
+is connected, and with `--apply` removes the service with `openclaw node uninstall` and records the role
+`node`, but only once the app's node is connected. While the app has node mode on and its node is not up,
+`--apply` refuses and prints the three steps in the only order that works. It never writes under the app's
+folders and never starts the app; the section on the Companion app says what the app itself still needs.
 
 `nexgen openclaw setup` applies that same plan: it installs the pinned release, onboards when there is no
 file, merges the owned sections with a backup beside them, writes the agent manuals, installs and starts the

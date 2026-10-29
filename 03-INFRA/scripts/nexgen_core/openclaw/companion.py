@@ -16,9 +16,10 @@ dropped. No URL, token or device key is ever returned, kept or printed, and a
 `device-key*` file is never opened.
 
 The app can also be the node of a gateway, and whether it managed to be one is
-only visible in its log: the last bounded piece of that log is enough to say
-whether its latest node line is the missing-credential error. The log is read
-from its end in one bounded read, never opened whole.
+only visible in its log: `companion_log` reads the last bounded piece of it and
+says whether the latest node line is the missing-credential error and whether
+the latest node status line says the node is connected. This module asks it once,
+for both answers, and never opens the log itself.
 """
 from __future__ import annotations
 
@@ -35,6 +36,11 @@ from nexgen_core.openclaw.companion_isolated import (
     NATIVE_GATEWAY_CONTRACT,
     IsolatedGateway,
     read_isolated_package_state,
+)
+from nexgen_core.openclaw.companion_log import (
+    LOG_FILENAME,
+    log_says_no_node_credential,
+    log_says_node_connected,
 )
 
 #: The distribution the app provisions for its own gateway, and the two folders
@@ -64,17 +70,6 @@ Distros = Callable[[], list[str]]
 #: A gateway the app names on one of these is a gateway on this PC.
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
-#: The app's log, and the tail of it this module reads. Not the whole file: the
-#: app writes a health snapshot about once a minute, and the owner's log had
-#: reached several megabytes with the node error the doctor has to see written
-#: hours before its end.
-LOG_FILENAME = "openclaw-tray.log"
-LOG_TAIL_BYTES = 1024 * 1024
-#: What the app writes when it has node mode on but no credential to use it.
-NODE_CREDENTIAL_ERROR = "no node credential available"
-#: A line saying the app's node did connect, which makes an older error stale.
-NODE_CONNECTED_WORDS = ("connected", "is ready")
-
 
 @dataclass(frozen=True)
 class Companion:
@@ -96,6 +91,9 @@ class Companion:
     #: The app's log ends on "no node credential" rather than on a connected node:
     #: node mode is on and the app cannot use it.
     node_credential_missing: bool = False
+    #: The app's latest node status line says its node is connected, which is the
+    #: one fact that makes the app the node of this PC.
+    node_connected: bool = False
     signals: tuple[str, ...] = ()
     isolated: IsolatedGateway | None = None
     target: str = ""
@@ -144,6 +142,8 @@ class Companion:
             data["wants_node"] = True
         if self.node_credential_missing:
             data["node_credential_missing"] = True
+        if self.node_connected:
+            data["node_connected"] = True
         if self.isolated is not None:
             data["isolated"] = self.isolated.to_dict()
         if self.target:
@@ -309,35 +309,6 @@ def _json(path: Path) -> Any:
         return None
 
 
-def _log_lines(path: Path, limit: int = LOG_TAIL_BYTES) -> list[str]:
-    """The end of the app's log, in one bounded read: absent or unreadable means no lines."""
-    try:
-        with path.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            size = handle.tell()
-            handle.seek(max(0, size - limit))
-            data = handle.read()
-    except OSError:  # nexgen: allow reason="an app that wrote no log says nothing about its node"
-        return []
-    return data.decode("utf-8", errors="replace").splitlines()
-
-
-def log_says_no_node_credential(log_path: Path, limit: int = LOG_TAIL_BYTES) -> bool:
-    """Whether the app's latest node line is the missing-credential error.
-
-    The two facts are taken in the order they were written: an error read after a
-    line saying the node connected is stale and says nothing.
-    """
-    last_error = last_connected = -1
-    for index, line in enumerate(_log_lines(log_path, limit)):
-        lowered = line.casefold()
-        if NODE_CREDENTIAL_ERROR in lowered:
-            last_error = index
-        elif "node" in lowered and any(word in lowered for word in NODE_CONNECTED_WORDS):
-            last_connected = index
-    return last_error > last_connected
-
-
 def engine_port() -> int:
     """The port this engine's gateway uses, imported late and read in one place."""
     from nexgen_core.openclaw.profile import GATEWAY_PORT
@@ -491,9 +462,9 @@ def probe(
     port = settings.port if settings.port is not None else (isolated.port if isolated else None)
     owns_local = distro or storage or settings.owns_local_gateway or has_isolated
     target = _resolve_target(settings, has_isolated, owns_local, distro, storage)
-    credential_missing = log_says_no_node_credential(
-        local_appdata / COMPANION_DIRNAME / LOG_FILENAME,
-    ) if settings.wants_node else False
+    log_path = local_appdata / COMPANION_DIRNAME / LOG_FILENAME
+    credential_missing = log_says_no_node_credential(log_path) if settings.wants_node else False
+    node_connected = log_says_node_connected(log_path) if settings.wants_node else False
 
     return Companion(
         present=bool(unique_signals) or settings.present or has_isolated,
@@ -503,6 +474,7 @@ def probe(
         port=port,
         wants_node=settings.wants_node,
         node_credential_missing=credential_missing,
+        node_connected=node_connected,
         signals=tuple(unique_signals),
         isolated=isolated,
         target=target,
