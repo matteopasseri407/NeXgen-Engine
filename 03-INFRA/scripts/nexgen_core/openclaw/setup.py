@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import claude_native
+from nexgen_core.openclaw import claude_native, setup_write
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.doctor import collect as doctor_collect
 from nexgen_core.openclaw.doctor import render as doctor_render
@@ -216,12 +216,19 @@ def _apply(
     if outcome == "failed":
         return 1
     _record_role(server=server, dry_run=setup.dry_run, home=setup.home, out=setup.out)
-    write_gateway_service_env(setup, plan.config)
+    # Both steps below ask "which agent runs on Claude Code's CLI", and only the document
+    # the write leaves can answer: the merge keeps the `agents.defaults.models` the file
+    # already has and the agents it still declares. This is the same document `write_step`
+    # rendered -- `merged_document` decides it, and the token is the one key it adds -- and
+    # the one the doctor reads at step 9. Asked of the proposal, the key stayed in the
+    # gateway's environment and Claude Code got no connectors at all.
+    written = setup_write.merged_document(plan.current, plan.config)
+    write_gateway_service_env(setup, written)
     # The connectors of a `claude-cli` agent live in Claude Code's own file, which
     # `claude_loopback` has just taken off the loopback server: rendering it is what
     # keeps those agents connected at all.
     claude_native.ensure(
-        plan.config, home=setup.home, vault_data=setup.vault_data,
+        written, home=setup.home, vault_data=setup.vault_data,
         engine_root=setup.engine_root, out=setup.out, dry_run=setup.dry_run,
     )
     from nexgen_core.openclaw.squad import register_model_keys

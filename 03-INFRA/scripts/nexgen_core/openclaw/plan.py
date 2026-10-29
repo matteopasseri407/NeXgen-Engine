@@ -17,10 +17,10 @@ from nexgen_core import quota_policy
 from nexgen_core.i18n import detect_language, t
 from nexgen_core.openclaw import companion as app_gateway
 from nexgen_core.openclaw import claude_loopback, observation
-from nexgen_core.openclaw.claude_cli import claude_cli_agents
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.governor import with_chains
+from nexgen_core.openclaw.native_connectors import loopback_deny
 from nexgen_core.openclaw.profile import (
     CLAUDE_MODEL,
     CODEX_MODEL,
@@ -32,6 +32,7 @@ from nexgen_core.openclaw.profile import (
     agent_models,
     build_config,
 )
+from nexgen_core.openclaw.setup_write import merged_document
 from nexgen_core.openclaw.skills_policy import with_skill_policy
 from nexgen_core.openclaw.squad import apply_squad, find_squad_file, load_squad, unresolved_default
 from nexgen_core.paths import openclaw_config, resolve_home, resolve_vault_data
@@ -361,14 +362,31 @@ def _with_loopback(
     vault_data: Path | None,
     engine_root: Path | None,
 ) -> dict[str, Any]:
-    """A `claude-cli` agent reads its connectors from Claude Code, not from the loopback.
+    """An agent whose own CLI carries the connectors reads them there, not from the loopback.
 
-    Nothing is asked of a proposal with no such agent: a machine whose agents run
-    elsewhere keeps the tool surface it had, byte for byte.
+    The question is asked of the document the write will leave, not of the proposal:
+    the merge keeps every key the proposal does not carry, so `agents.defaults.models`
+    in the file -- and the agents the engine no longer declares -- can put an agent on
+    `claude-cli` or on `agy` while the proposal says nothing about it. The doctor reads
+    that merged file, so a plan that judged the proposal alone wrote its deny for the
+    agents it happened to create and left the loopback open for the others, on every run.
+
+    Who those agents are, and which connectors `agy` may really give up, is
+    `native_connectors`' answer: an `agy` agent keeps only the connectors its own file
+    carries, and a connector it does not carry stays on the loopback, which is its only
+    road to that agent.
+
+    No deny is written for a machine with no such agent: a proposal whose agents run
+    elsewhere keeps the tool surface it had.
     """
-    if not claude_cli_agents(config):
-        return config
-    return claude_loopback.apply(config, _connector_names(home, vault_data, engine_root, current))
+    connectors = _connector_names(home, vault_data, engine_root, current)
+    deny = loopback_deny(merged_document(current, config), connectors, home)
+    updated = config
+    if deny.claude:
+        updated = claude_loopback.apply(updated, connectors, deny.claude)
+    if deny.agy:
+        updated = claude_loopback.apply(updated, deny.agy_connectors, deny.agy)
+    return updated
 
 
 def _squad_notes(squad_data: dict[str, Any] | None) -> list[str]:
@@ -405,10 +423,12 @@ def build_plan(
         # The setup command passes no vault: the squad still lives in the user's one.
         vault_data if vault_data is not None else resolve_vault_data(home), home_dir, current,
     )
-    proposed = _with_loopback(proposed, current, home=home_dir, vault_data=vault_data, engine_root=engine_root)
     config = _with_engine_plugin(
         with_chains(with_skill_policy(proposed, vault_data, current), failover), _plugin_deposited(path, plugin_deposited),
     )
+    # Last, and on purpose: the deny is decided on the document the write will leave,
+    # so it sees what every pass above proposed and what the merge will keep.
+    config = _with_loopback(config, current, home=home_dir, vault_data=vault_data, engine_root=engine_root)
     changes = _diff(config, current)
     notes = [
         *_wanted_notes(config, snapshot, chosen, squad_data),

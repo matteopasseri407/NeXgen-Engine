@@ -312,7 +312,42 @@ def _apply_agent_entry(entry: dict[str, Any], spec: Mapping[str, Any], agent_id:
     elif "exec" in declared_tools:
         # A shape OpenClaw will refuse is copied as declared, not dropped in silence.
         entry.setdefault("tools", {})["exec"] = nested
+    deny = _tools_deny(spec)
+    if deny is not None:
+        # Additive: a pattern already on the entry stays, the squad only adds.
+        tools = entry.setdefault("tools", {})
+        existing = tools.get("deny") if isinstance(tools.get("deny"), list) else []
+        tools["deny"] = list(dict.fromkeys([*existing, *deny]))
     return senders
+
+
+def _tools_deny(spec: Mapping[str, Any]) -> list[str] | None:
+    """The agent's `tools_deny` glob patterns, or None when the field is absent.
+
+    OpenClaw names an MCP tool `server__tool`, so `server__*` hides a whole
+    server from one agent. A field that is not a list is ignored, not guessed.
+    """
+    declared = spec.get("tools_deny")
+    if not isinstance(declared, list):
+        return None
+    return [item.strip() for item in declared if isinstance(item, str) and item.strip()]
+
+
+def get_squad_skills(squad: dict[str, Any] | None) -> dict[str, list[str]]:
+    """The skill names each agent declares under `skills`, by agent id.
+
+    An agent without the field is absent from the result, so its workspace
+    `skills/` folder is left as it is.
+    """
+    found: dict[str, list[str]] = {}
+    agents = (squad or {}).get("agents")
+    if not isinstance(agents, dict):
+        return found
+    for agent_id, spec in agents.items():
+        if isinstance(spec, dict) and isinstance(spec.get("skills"), list):
+            names = [item.strip() for item in spec["skills"] if isinstance(item, str) and item.strip()]
+            found[str(agent_id)] = list(dict.fromkeys(names))
+    return found
 
 
 def _declared_models(squad: dict[str, Any]) -> list[str]:

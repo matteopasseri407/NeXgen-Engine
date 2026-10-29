@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.23.1] - 2026-10-29
+
+### Changed
+
+- OpenClaw setup converges on claude-cli agents inherited from agents.defaults.models: loopback deny, gateway .env (ANTHROPIC_API_KEY retired, phone apps can refresh models again) and Claude Code connectors are decided on the written document.
+
 ## [2.23.0] - 2026-10-28
 
 ### Added

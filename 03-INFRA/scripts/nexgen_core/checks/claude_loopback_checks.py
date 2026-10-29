@@ -1,10 +1,11 @@
-"""The loopback OpenClaw hands Claude Code, judged for the agents that run on `claude-cli`.
+"""The loopback OpenClaw hands a CLI that carries its own connectors, judged per agent.
 
-One job: read the two files in force and say whether a `claude-cli` agent's connectors
-are kept off OpenClaw's `alwaysLoad` loopback server and reachable through Claude Code's
-native configuration instead. Silence when the machine has no OpenClaw, no agent on
-`claude-cli`, or a configuration this engine cannot read: those are other checks'
-answers, not this one's.
+One job: read the files in force and say whether the connectors of every agent that reads
+them from its own CLI stay off OpenClaw's `alwaysLoad` loopback server and are reachable
+through that CLI's own configuration instead -- Claude Code's `~/.claude.json` for an agent
+on `claude-cli`, `agy`'s MCP configuration for one on `google-antigravity-cli`. Silence
+when the machine has no OpenClaw, no such agent, or a configuration this engine cannot
+read: those are other checks' answers, not this one's.
 
 A configuration that fails here is the 943k-token incident: every connector's schema in
 the prompt of every call, on a subscription whose context is not free. The doctor is the
@@ -13,7 +14,9 @@ the machine as it stands now.
 
 The expected connector list comes from the same renderer `nexgen sync` uses
 (`McpRenderer.load_resolved_servers("claude")`), so this check cannot demand a server in
-Claude Code's file that the manifest does not put there.
+Claude Code's file that the manifest does not put there. An `agy` agent is judged, like in
+the plan, only on the connectors `agy`'s own file really carries: the ones it does not
+carry are reachable through the loopback alone, and no deny may take them away.
 """
 from __future__ import annotations
 
@@ -21,9 +24,9 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import t
-from nexgen_core.openclaw.claude_cli import claude_cli_agents
 from nexgen_core.openclaw.claude_loopback import pattern_for
 from nexgen_core.openclaw.config_file import read_config
+from nexgen_core.openclaw.native_connectors import loopback_deny
 from nexgen_core.paths import claude_config, openclaw_config
 from nexgen_core.report import CheckOutcome, Severity
 
@@ -49,7 +52,7 @@ def _deny_of(config: dict[str, Any], agent_id: str) -> set[str]:
 
 
 def _undeclared(config: dict[str, Any], agents: list[str], servers: list[str]) -> list[str]:
-    """The connectors some `claude-cli` agent can still reach through the loopback.
+    """The connectors these agents can still reach through the loopback.
 
     One `agent: server` entry per offender, so the message names the agent a person
     has to look at instead of only the server.
@@ -99,6 +102,70 @@ def _native_connectors_missing(
     return sorted(wanted - carried)
 
 
+def _claude_problems(
+    config: dict[str, Any],
+    home: Path,
+    servers: list[str],
+    agents: list[str],
+    vault_data: Path | None,
+    engine_root: Path | None,
+) -> list[str]:
+    """What is wrong with the agents on Claude Code's CLI, in the words a person reads."""
+    found: list[str] = []
+    reachable = _undeclared(config, agents, servers)
+    if reachable:
+        found.append(t("still on the loopback server: {connectors}", connectors=", ".join(reachable)))
+    path = claude_config(home)
+    if not path.is_file():
+        found.append(t("Claude Code's own configuration does not exist ({path})", path=str(path)))
+        return found
+    missing = _native_connectors_missing(home, servers, vault_data, engine_root)
+    if missing:
+        found.append(t("missing from Claude Code's own configuration: {connectors}",
+                       connectors=", ".join(missing)))
+    return found
+
+
+def _agy_problems(config: dict[str, Any], servers: list[str], agents: list[str]) -> list[str]:
+    """What is wrong with the agents on `agy`, whose only lost road is the loopback one."""
+    reachable = _undeclared(config, agents, servers)
+    if not reachable:
+        return []
+    return [t("still on the loopback server for an agent on 'agy': {connectors}",
+              connectors=", ".join(reachable))]
+
+
+def _message(has_claude: bool, has_agy: bool, problems: list[str]) -> str:
+    """The one line a person reads, in the words of the CLIs really involved here."""
+    joined = "; ".join(problems)
+    if has_claude and has_agy:
+        return t("Agents run on CLIs that carry their own connectors, but they are not where they "
+                 "belong: {problems}.", problems=joined)
+    if has_agy:
+        return t("An agent runs on 'agy', but its connectors are not where they belong: {problems}.",
+                 problems=joined)
+    return t("An agent runs on Claude Code's CLI, but its connectors are not where they belong: "
+             "{problems}.", problems=joined)
+
+
+def _action(has_agy: bool) -> str:
+    """The one thing to run, named for the CLI whose files are the ones out of step."""
+    if has_agy:
+        return t("Run 'nexgen openclaw setup': it denies every connector on the loopback server that "
+                 "'agy' already carries in its own configuration.")
+    return t("Run 'nexgen openclaw setup': it denies every connector on the loopback server and renders "
+             "Claude Code's own configuration, where they load lazily.")
+
+
+def _ok(count: int, has_agy: bool) -> str:
+    """The line said when every agent judged keeps its connectors off the loopback."""
+    if has_agy:
+        return t("The {count} agent(s) that read their connectors from their own CLI keep every connector "
+                 "off the loopback server, and that CLI's configuration carries them.", count=count)
+    return t("The {count} agent(s) on Claude Code's CLI keep every connector off the loopback server, and "
+             "Claude Code's own configuration carries them.", count=count)
+
+
 def check_claude_loopback(
     home: Path,
     vault_data: Path | None = None,
@@ -111,35 +178,27 @@ def check_claude_loopback(
     config, _error = read_config(path)
     if config is None:
         return None
-    agents = claude_cli_agents(config)
-    if not agents:
-        return None
     servers = _servers(config)
-    reachable = _undeclared(config, agents, servers)
-    native_path = claude_config(home)
-    file_missing = not native_path.is_file()
-    native = [] if file_missing else _native_connectors_missing(home, servers, vault_data, engine_root)
-    if reachable or native or file_missing:
-        problems: list[str] = []
-        if reachable:
-            problems.append(t("still on the loopback server: {connectors}", connectors=", ".join(reachable)))
-        if file_missing:
-            problems.append(t("Claude Code's own configuration does not exist ({path})", path=str(native_path)))
-        if native:
-            problems.append(t("missing from Claude Code's own configuration: {connectors}",
-                              connectors=", ".join(native)))
+    deny = loopback_deny(config, servers, home)
+    if not deny.claude and not deny.agy:
+        return None
+    problems: list[str] = []
+    if deny.claude:
+        problems.extend(_claude_problems(config, home, servers, deny.claude, vault_data, engine_root))
+    if deny.agy:
+        problems.extend(_agy_problems(config, deny.agy_connectors, deny.agy))
+    detail = ", ".join([*deny.claude, *deny.agy])
+    if problems:
         return CheckOutcome(
             id=CHECK_ID,
             severity=Severity.BROKEN,
-            message=t("An agent runs on Claude Code's CLI, but its connectors are not where they belong: {problems}.",
-                      problems="; ".join(problems)),
-            action=t("Run 'nexgen openclaw setup': it denies every connector on the loopback server and renders "
-                     "Claude Code's own configuration, where they load lazily."),
-            detail=", ".join(agents),
+            message=_message(bool(deny.claude), bool(deny.agy), problems),
+            action=_action(bool(deny.agy)),
+            detail=detail,
         )
     return CheckOutcome(
         id=CHECK_ID,
         severity=Severity.OK,
-        message=t("The {count} agent(s) on Claude Code's CLI keep every connector off the loopback server, and "
-                  "Claude Code's own configuration carries them.", count=len(agents)),
+        message=_ok(len(deny.claude) + len(deny.agy), bool(deny.agy)),
+        detail=detail,
     )

@@ -1,16 +1,18 @@
-"""The connectors a `claude-cli` agent must not see through OpenClaw's loopback server.
+"""The connectors an agent must not see through OpenClaw's loopback server.
 
-One job: for every agent that runs on Claude Code's own CLI, deny every connector the
-OpenClaw configuration mounts (`<server>__*`) on the loopback MCP server OpenClaw
-hands Claude Code with `alwaysLoad: true`. What stays is the agent's own OpenClaw
-toolset -- messages, sessions, the supervisor's `nexgen_sup_*` -- and what disappears
-is the one thing that made a single call cost 943k tokens: every connector schema in
-the prompt at every request.
+One job: deny the `<server>__*` patterns the caller names, on the agents the caller names --
+the connectors the OpenClaw configuration mounts, kept off the loopback MCP server OpenClaw
+hands a CLI with `alwaysLoad: true`. What stays is the agent's own OpenClaw toolset --
+messages, sessions, the supervisor's `nexgen_sup_*` -- and what disappears is the one thing
+that made a single call cost 943k tokens: every connector schema in the prompt at every
+request. Two kinds of agent need it, for the same reason: one on `claude-cli`, whose
+connectors live in Claude Code's own configuration, and one on `agy`, whose connectors live
+in `agy`'s. `native_connectors` says who they are and which connectors each may give up.
 
-The connectors are not lost. Claude Code reads its own configuration
-(`~/.claude.json`), where the same connectors sit deferred behind ToolSearch exactly
-like a plain Claude Code session, and Claude Code -- not OpenClaw -- owns their
-loading. `claude_native` makes sure that file is the engine's render.
+The connectors are not lost. Claude Code reads its own configuration (`~/.claude.json`),
+where the same connectors sit deferred behind ToolSearch exactly like a plain Claude Code
+session, and Claude Code -- not OpenClaw -- owns their loading. `claude_native` makes sure
+that file is the engine's render; `agy` reads the file `mcp_render.antigravity` writes.
 
 Two rules are not preferences:
 
@@ -58,23 +60,37 @@ def _deny_for(entry: dict[str, Any], added: list[str]) -> list[str]:
     return sorted(merged)
 
 
-def apply(config: dict[str, Any], servers: Iterable[str]) -> dict[str, Any]:
+def apply(
+    config: dict[str, Any],
+    servers: Iterable[str],
+    agents: Iterable[str] | None = None,
+) -> dict[str, Any]:
     """The same configuration with every connector denied on its `claude-cli` agents.
 
     Returns a new document: the caller's proposal is data it may still print, and a
     plan that mutated it would describe a machine that no longer matches the one
     written. Nothing is added when there is no pattern, so an engine on a gateway
     with no connector writes nothing at all.
+
+    `agents` carries that answer when the caller already has it, from the document
+    the write will leave rather than from `config` alone; None means the answer is
+    read from `config` here. An id `config` does not declare yet receives the
+    smallest entry that carries the deny -- the merge puts it inside the entry the
+    file already has -- because an agent the proposal dropped is still an agent the
+    file runs.
     """
     added = patterns(servers)
-    agents = config.get("agents") if isinstance(config.get("agents"), dict) else {}
-    entries = agents.get("entries") if isinstance(agents.get("entries"), dict) else {}
-    agents_to_fix = set(claude_cli_agents(config)) if added else set()
-    if not agents_to_fix:
+    agents_to_fix = set(claude_cli_agents(config)) if agents is None else {str(agent) for agent in agents}
+    if not added or not agents_to_fix:
         return config
+    agents_block = config.get("agents") if isinstance(config.get("agents"), dict) else {}
+    entries = agents_block.get("entries") if isinstance(agents_block.get("entries"), dict) else {}
     updated: dict[str, Any] = {}
-    for agent_id, entry in entries.items():
-        if agent_id not in agents_to_fix or not isinstance(entry, dict):
+    for agent_id in [*entries, *sorted(agents_to_fix - set(entries))]:
+        if agent_id not in agents_to_fix:
+            continue
+        entry = entries.get(agent_id, {})
+        if not isinstance(entry, dict):
             continue
         tools = dict(entry.get("tools")) if isinstance(entry.get("tools"), dict) else {}
         tools["deny"] = _deny_for(entry, added)
@@ -83,5 +99,5 @@ def apply(config: dict[str, Any], servers: Iterable[str]) -> dict[str, Any]:
         return config
     return {
         **config,
-        "agents": {**agents, "entries": {**entries, **updated}},
+        "agents": {**agents_block, "entries": {**entries, **updated}},
     }
