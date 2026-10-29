@@ -193,7 +193,7 @@ def _frontmatter_problems(root: Path) -> tuple[list[str], list[str]]:
 
 
 def vet_skill(skill: WorkshopSkill) -> Verdict:
-    """Whether this learned skill may enter the library, and what a person must see first."""
+    """Whether this skill OpenClaw created may enter the library, and what a person must see first."""
     root = Path(skill.path)
     if not is_safe_skill_name(skill.name):
         return Verdict(BLOCKED, (t("'{name}' cannot become a folder name", name=skill.name),))

@@ -8,8 +8,9 @@ with `origin: openclaw` and stay absent from OpenClaw for two consecutive passes
 are retired from the canonical manifest.
 
 Skills are admitted but never retired here: adoption archives the Workshop copy
-they came from, so the OpenClaw side of an adopted skill is gone by design. See
-`adopt_retirement` for the whole reason.
+they came from, so the OpenClaw side of an adopted skill is gone by design. A
+copy OpenClaw installed itself -- from ClawHub, or from a plugin -- stays where
+it is, so it is not evidence either. See `adopt_retirement` for the whole reason.
 """
 from __future__ import annotations
 
@@ -190,7 +191,7 @@ def _process_candidate_skills(
     run: Callable[..., Any] | None,
     which: Callable[[str], str | None] | None,
 ) -> tuple[list[str], list[dict[str, Any]], list[str]]:
-    """Admit SAFE workshop skills; hold REVIEW and BLOCKED for a person."""
+    """Admit SAFE skills OpenClaw created; hold REVIEW and BLOCKED for a person."""
     entered: list[str] = []
     review: list[dict[str, Any]] = []
     lines: list[str] = []

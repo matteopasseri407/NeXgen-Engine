@@ -2211,6 +2211,8 @@ MESSAGES: dict[str, str] = {
         "non riesco a fare il backup del manifest: non ho scritto niente",
     "archived in the Workshop, so OpenClaw loads the canonical copy":
         "archiviata nel Workshop, così OpenClaw carica la copia canonica",
+    "left in OpenClaw: only a Workshop copy can be archived, and the Vault now holds the canonical one":
+        "lasciata in OpenClaw: solo una copia del Workshop si può archiviare, e adesso la copia canonica sta nel Vault",
     "in the Vault and in the manifest ({changes} views written). OpenClaw: {note}":
         "nel Vault e nel manifest ({changes} viste scritte). OpenClaw: {note}",
     "`openclaw` is not on PATH: archive the learned copy by hand when it is":

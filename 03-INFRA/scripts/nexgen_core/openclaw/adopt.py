@@ -1,10 +1,10 @@
 """`nexgen openclaw adopt`: what OpenClaw created, made canonical, with a person's consent.
 
 The library is the single source every CLI receives, and OpenClaw is a door
-into it: the Workshop learns a skill, a person adds a server from its panel.
-Both live only in OpenClaw's own state until they are adopted, which means
-the other four runtimes have never heard of them and a lost state folder takes
-them with it.
+into it: the Workshop learns a skill, ClawHub installs one, a plugin publishes
+its own, and a person adds a server from its panel. All of them live only in
+OpenClaw's own folders until they are adopted, which means the other four
+runtimes have never heard of them and a lost state folder takes them with it.
 
 This module is the order of the pass and the words a person reads. What may be
 adopted is `adopt_vetting`'s answer, and the writing is `adopt_skills`' and
