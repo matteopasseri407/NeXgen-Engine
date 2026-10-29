@@ -13,7 +13,7 @@ the same code and cannot disagree about what is pending.
 """
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -33,6 +33,13 @@ SERVER = "mcp"
 WORKSHOP = "workshop"
 WORKSPACE = "workspace"
 PLUGIN = "plugin"
+
+#: The skill sources the unattended pass and the doctor consider. A skill the
+#: Workshop taught itself is not one of them: nobody asked for it, the library
+#: carries what a person chose, and a copy that exists only inside OpenClaw is
+#: still where OpenClaw learns. `nexgen openclaw adopt --skills` is the door
+#: that offers those on purpose, one at a time (decided 2026-10-29).
+AUTOMATIC_SOURCES: tuple[str, ...] = (WORKSPACE, PLUGIN)
 
 #: OpenClaw's default agent, the one whose workspace is the state folder's own.
 DEFAULT_AGENT_ID = "main"
@@ -260,6 +267,16 @@ def plugin_skills(state_dir: Path, declared: set[str]) -> tuple[list[WorkshopSki
             continue
         found.append(WorkshopSkill(name, "", target, PLUGIN))
     return found, []
+
+
+def automatic_skills(skills: Iterable[WorkshopSkill]) -> tuple[WorkshopSkill, ...]:
+    """The candidates the unattended pass and the doctor count, in the order given.
+
+    The one rule both lanes read, so they cannot disagree about what is waiting:
+    a source left out of `AUTOMATIC_SOURCES` is invisible to them and still
+    offered by the interactive `--skills` pass.
+    """
+    return tuple(skill for skill in skills if skill.source in AUTOMATIC_SOURCES)
 
 
 def one_per_name(skills: list[WorkshopSkill]) -> list[WorkshopSkill]:

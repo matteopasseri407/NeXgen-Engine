@@ -141,8 +141,14 @@ def test_a_library_that_knows_everything_is_a_pass(tmp_path):
     assert outcome.action is None
 
 
-def test_a_learned_skill_and_a_hand_added_server_are_both_counted(tmp_path):
-    a_skill(tmp_path / "state" / "agents" / "main" / "agent" / "workshop-skills", "fresh", NOW - 60)
+def test_a_clawhub_skill_and_a_hand_added_server_are_both_counted(tmp_path):
+    """One skill a person installed and one server they added: both are waiting.
+
+    The skill lives in the agent's workspace `skills/`, which is where ClawHub
+    installs; the Workshop's own skills are not counted (see
+    test_nexgen_openclaw_workshop_stays.py).
+    """
+    a_skill(tmp_path / "state" / "workspace" / "skills", "fresh", NOW - 60)
 
     outcome = check_unadopted(
         a_hand_added_server_config(), tmp_path / "state" / "openclaw.json", tmp_path / "home",

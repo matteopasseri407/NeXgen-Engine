@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.24.1] - 2026-10-29
+
+### Changed
+
+- Skills the OpenClaw Skill Workshop learns by itself stay inside OpenClaw: the automatic adoption pass and the doctor leave them out of the canonical manifest; nexgen openclaw adopt --skills still offers them one by one. ClawHub and user-plugin skills and MCP servers are adopted as before.
+
 ## [2.24.0] - 2026-10-29
 
 ### Changed
