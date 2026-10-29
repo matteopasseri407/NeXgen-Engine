@@ -138,14 +138,15 @@ def test_auto_adopt_admits_safe_candidate_with_openclaw_provenance(a_machine: Ma
 
 
 def test_auto_adopt_leaves_review_candidates_and_saves_to_review_list(a_machine: Machine):
-    workshop_dir = a_machine.home / ".openclaw" / "agents" / "main" / "agent" / "workshop-skills" / "risky-skill"
-    workshop_dir.mkdir(parents=True)
-    (workshop_dir / "SKILL.md").write_text(
+    # A ClawHub skill: the source the unattended pass still carries.
+    installed = a_machine.home / ".openclaw" / "workspace" / "skills" / "risky-skill"
+    installed.mkdir(parents=True)
+    (installed / "SKILL.md").write_text(
         "---\nname: risky-skill\ndescription: A risky helper\n---\nRun instructions.",
         encoding="utf-8",
     )
     # Executable script triggers REVIEW verdict
-    (workshop_dir / "helper.sh").write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+    (installed / "helper.sh").write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
 
     code = a_machine.auto_adopt()
     assert code == 0
@@ -185,9 +186,10 @@ def test_a_blocked_candidate_is_named_and_never_written(a_machine: Machine):
 
 
 def test_a_blocked_skill_is_named_and_never_written(a_machine: Machine):
-    skill_dir = a_machine.home / ".openclaw" / "agents" / "main" / "agent" / "workshop-skills" / "no-frontmatter"
-    skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text("Just prose, no frontmatter at all.", encoding="utf-8")
+    # A ClawHub skill: the unattended pass vets it, and still writes nothing blocked.
+    installed = a_machine.home / ".openclaw" / "workspace" / "skills" / "no-frontmatter"
+    installed.mkdir(parents=True)
+    (installed / "SKILL.md").write_text("Just prose, no frontmatter at all.", encoding="utf-8")
 
     code = a_machine.auto_adopt()
 
@@ -200,23 +202,27 @@ def test_a_blocked_skill_is_named_and_never_written(a_machine: Machine):
 
 
 def test_an_adopted_skill_is_never_retired_by_absence(a_machine: Machine):
-    """Adoption archives the Workshop copy, so absence is what adoption itself creates.
+    """A skill the library adopted is not retired because OpenClaw stopped carrying it.
 
-    Round one counted that absence and retired the skill on the second pass: the vault
-    copy deleted and the manifest entry gone, one hour after it had been adopted.
+    Round one counted absence for skills and retired one on the second pass: the Vault
+    copy deleted and the manifest entry gone, one hour after it had been adopted. The
+    ClawHub copy adoption never archives is what makes the absence here the person
+    removing it from OpenClaw -- the same evidence the pass has to ignore.
     """
-    safe_skill = a_machine.home / ".openclaw" / "agents" / "main" / "agent" / "workshop-skills" / "release-notes"
-    safe_skill.mkdir(parents=True)
-    (safe_skill / "SKILL.md").write_text(
+    installed = a_machine.home / ".openclaw" / "workspace" / "skills" / "release-notes"
+    installed.mkdir(parents=True)
+    (installed / "SKILL.md").write_text(
         "---\nname: release-notes\ndescription: Writes the release notes\n---\nBody.",
         encoding="utf-8",
     )
     a_machine.auto_adopt()
     manifest = a_machine.skills_manifest.read_text(encoding="utf-8")
     assert "  release-notes:" in manifest
+    # ClawHub's copy is OpenClaw's own: adoption leaves it where it is.
+    assert installed.is_dir()
 
-    # What `openclaw skills workshop archive` does to the adopted copy.
-    shutil.rmtree(safe_skill)
+    # The person uninstalls it from OpenClaw: the library keeps what it adopted.
+    shutil.rmtree(installed)
 
     a_machine.auto_adopt()
     a_machine.auto_adopt()
@@ -450,11 +456,11 @@ def test_doctor_adoption_check_reflects_last_pass_and_warns_on_review(a_machine:
     assert outcome.severity == Severity.OK
     assert "1 entered, 0 exited, 0 waiting for review" in outcome.message
 
-    # When item is pending review
-    workshop_dir = a_machine.home / ".openclaw" / "agents" / "main" / "agent" / "workshop-skills" / "review-skill"
-    workshop_dir.mkdir(parents=True)
-    (workshop_dir / "SKILL.md").write_text("---\nname: review-skill\ndescription: Needs human check\n---\nBody", encoding="utf-8")
-    (workshop_dir / "run.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    # When item is pending review: a ClawHub skill, the source the pass still carries.
+    installed = a_machine.home / ".openclaw" / "workspace" / "skills" / "review-skill"
+    installed.mkdir(parents=True)
+    (installed / "SKILL.md").write_text("---\nname: review-skill\ndescription: Needs human check\n---\nBody", encoding="utf-8")
+    (installed / "run.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     a_machine.auto_adopt()
 
     outcome = check_adopt_doctor(a_machine.state)
@@ -492,13 +498,14 @@ def test_the_adoption_check_names_what_is_waiting_and_why(a_machine: Machine):
 
     The four skills waiting on the server were invisible in the doctor's one line, so
     the only way to know what to decide was to run the interactive command and read.
+    The skill is a ClawHub one: the source the pass still carries and holds for review.
     """
-    workshop_dir = a_machine.home / ".openclaw" / "agents" / "main" / "agent" / "workshop-skills" / "review-skill"
-    workshop_dir.mkdir(parents=True)
-    (workshop_dir / "SKILL.md").write_text(
+    installed = a_machine.home / ".openclaw" / "workspace" / "skills" / "review-skill"
+    installed.mkdir(parents=True)
+    (installed / "SKILL.md").write_text(
         "---\nname: review-skill\ndescription: Needs human check\n---\nBody", encoding="utf-8"
     )
-    (workshop_dir / "run.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (installed / "run.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
 
     a_machine.auto_adopt()
     outcome = check_adopt_doctor(a_machine.state)
