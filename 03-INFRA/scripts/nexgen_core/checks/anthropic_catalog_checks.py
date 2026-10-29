@@ -10,10 +10,15 @@ A key left there is the whole of the bug a person sees: a workspace-scoped key
 answers 400, the provider is recorded `unavailable`, `models.list` comes back with
 `refreshFailed: true`, and the apps that read it (Android included) say they cannot
 update the models on every open. The setup removes the key (`retired_environment_keys`
-is the same rule the writer applies), so the action is one command and no argument.
+is the same rule the writer applies), so the fix is the setup and a restart, not a
+service reinstall.
 
-The service reads its own copy, `gateway.systemd.env`, so both files are judged: a
-clean `.env` with a stale copy beside it keeps the fault alive.
+The systemd unit OpenClaw generates loads a copy of its own, `gateway.systemd.env`,
+through `EnvironmentFile=`, so both files are judged: a clean `.env` with a stale copy
+beside it keeps the fault alive. The engine never writes that copy, and a forced
+service install is not the way to clear it: it rebuilds the unit from the invoking
+shell and erases the variables the service carried (seven of them, measured on the
+owner's gateway). The action names the file and leaves the one line to the person.
 """
 from __future__ import annotations
 
@@ -32,7 +37,8 @@ CHECK_ID = "openclaw.anthropic_catalog"
 
 #: The gateway's environment as OpenClaw reads it, in the state directory beside its
 #: configuration: the file the setup writes, and the copy the systemd unit carries.
-ENVIRONMENT_FILES = (".env", "gateway.systemd.env")
+SERVICE_ENV_COPY = "gateway.systemd.env"
+ENVIRONMENT_FILES = (".env", SERVICE_ENV_COPY)
 
 
 def _carries_key(path: Path, key: str) -> bool:
@@ -82,16 +88,28 @@ def check_anthropic_catalog(home: Path, platform: str | None = None) -> CheckOut
         message=t("The apps that read the gateway (Android included) say they cannot update the models, because "
                   "Anthropic's catalogue discovery fails: ANTHROPIC_API_KEY is in {paths}, and no agent reads it.",
                   paths=", ".join(offenders)),
-        action=_action(offenders),
+        action=_action(state_dir, offenders),
         detail=", ".join(agents),
     )
 
 
-def _action(offenders: list[str]) -> str:
-    """The command that clears what is left: the setup cleans `.env`, and only a
-    reinstall of the service rewrites its systemd copy (a restart reads the old one)."""
-    if ".env" in offenders:
-        return t("Run 'nexgen openclaw setup', then 'openclaw gateway install --force' as the gateway's user: "
-                 "the service reads a copy of .env that only a reinstall rewrites.")
-    return t("Run 'openclaw gateway install --force' as the gateway's user: the service reads a copy of .env "
-             "that only a reinstall rewrites, and a restart alone keeps the old key.")
+def _action(state_dir: Path, offenders: list[str]) -> str:
+    """The commands that clear the key, and the one file a person has to clear by hand.
+
+    The setup rewrites `.env` without the key, and the restart is what makes the gateway
+    read the file again: the setup restarts the process only when the document changed.
+    The unit's own copy is named with its path because the engine never writes it:
+    removing that one line is the person's job, and it is the only non-destructive way
+    to clear it. A forced service install is never the answer.
+    """
+    env_file = state_dir / ".env"
+    if SERVICE_ENV_COPY in offenders:
+        return t("Run 'nexgen openclaw setup', then 'nexgen openclaw restart', as the gateway's user: the setup "
+                 "rewrites {env} without the key. The unit loads its own copy at {copy}, and the engine never writes "
+                 "that file: delete the line that names {key} there before the restart. Never reinstall the service "
+                 "to refresh it: a reinstall erases the service's other environment variables.",
+                 env=env_file, copy=state_dir / SERVICE_ENV_COPY, key=ANTHROPIC_API_KEY)
+    return t("Run 'nexgen openclaw setup', then 'nexgen openclaw restart', as the gateway's user: the setup "
+             "rewrites {env} without the key, and the gateway reads that file when it starts. Never reinstall the "
+             "service to refresh it: a reinstall erases the service's other environment variables.",
+             env=env_file)
