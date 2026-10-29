@@ -1,8 +1,9 @@
 """Which provider a squad model names, and which API key the setup registers for it.
 
-One job: pin that a model running on a local CLI backend (`agy`, Claude Code, Codex)
-never has a provider key pasted into OpenClaw for it, while a plain provider model
-keeps registering the key it needs.
+One job: pin that a model running on a local CLI backend (`agy`, Claude Code, Codex) or
+on a provider whose login the engine wires elsewhere (`opencode-go`, `opencode`) never
+has a provider key pasted into OpenClaw for it, while a plain provider model keeps
+registering the key it needs.
 
 The provider is the prefix before the slash, read the way `openclaw/terms.py` reads
 it. A substring test reads `google-antigravity-cli/gemini-3.8-flash` as `google` and,
@@ -138,17 +139,55 @@ def test_an_anthropic_model_is_unchanged(tmp_path: Path) -> None:
     ]
 
 
+def test_a_deepseek_model_still_registers_its_key(tmp_path: Path) -> None:
+    """The plain DeepSeek road is untouched: `deepseek/...` keeps its own key."""
+    setup = _setup(tmp_path, {"DEEPSEEK_API_KEY": "deepseek-test"})
+
+    registered, run = _register(setup, "deepseek/deepseek-chat")
+
+    assert registered == 1
+    assert _paste_api_key_commands(run) == [
+        ["/bin/openclaw", "models", "auth", "paste-api-key", "--agent", "main", "--provider", "deepseek"]
+    ]
+    assert run.call_args.kwargs["input"] == "deepseek-test\n"
+
+
+def test_an_opencode_go_model_registers_no_key_at_all(tmp_path: Path) -> None:
+    """The Go key is wired by the engine's own profile, not pasted under `deepseek`.
+
+    Both keys are in the environment, so this fails if the prefix is read as anything
+    but `opencode-go`: the setup must paste neither of them.
+    """
+    setup = _setup(tmp_path, {"OPENCODE_GO_KEY": "go-test", "DEEPSEEK_API_KEY": "deepseek-test"})
+
+    registered, run = _register(setup, "opencode-go/deepseek-v4.1-flash")
+
+    assert registered == 0
+    assert run.call_count == 0
+
+
+def test_an_opencode_zen_model_registers_no_key_at_all(tmp_path: Path) -> None:
+    setup = _setup(tmp_path, {"OPENCODE_GO_KEY": "go-test", "OPENAI_API_KEY": "sk-test"})
+
+    registered, run = _register(setup, "opencode/zen-1")
+
+    assert registered == 0
+    assert run.call_count == 0
+
+
 @pytest.mark.parametrize(
     ("model", "expected"),
     [
         ("google-antigravity-cli/gemini-3.8-flash", None),
         ("claude-cli/claude-opus-5-5", None),
         ("codex/gpt-6-luna", None),
+        ("opencode-go/deepseek-v4.1-flash", None),
+        ("opencode/zen-1", None),
         ("google/gemini-2.5-pro", ("google", "GEMINI_API_KEY")),
         ("gemini-2.5-flash", ("google", "GEMINI_API_KEY")),
         ("anthropic/claude-opus-5-5", ("anthropic", "ANTHROPIC_API_KEY")),
         ("openai/gpt-6-luna", ("openai", "OPENAI_API_KEY")),
-        ("opencode-go/deepseek-v4", ("deepseek", "OPENCODE_GO_KEY")),
+        ("deepseek/deepseek-chat", ("deepseek", "DEEPSEEK_API_KEY")),
         ("ollama/qwen3:8b", None),
     ],
 )

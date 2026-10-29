@@ -33,7 +33,6 @@ _PROVIDER_ENV_MAP: dict[str, tuple[str, str]] = {
     "openai": ("openai", "OPENAI_API_KEY"),
     "gpt": ("openai", "OPENAI_API_KEY"),
     "deepseek": ("deepseek", "DEEPSEEK_API_KEY"),
-    "opencode-go": ("deepseek", "OPENCODE_GO_KEY"),
     "google": ("google", "GEMINI_API_KEY"),
     "gemini": ("google", "GEMINI_API_KEY"),
 }
@@ -42,6 +41,12 @@ _PROVIDER_ENV_MAP: dict[str, tuple[str, str]] = {
 #: agent on one of them needs no provider key in OpenClaw. `codex` is the runtime id
 #: `profile._default_models` writes into `agents.defaults.models`.
 _CLI_BACKENDS = (CLAUDE_CLI, "codex", LOCAL_AGY_BACKEND)
+
+#: The providers whose login the engine wires elsewhere, from its own secret store:
+#: `profile.py` allows the `opencode-go` plugin and `detect.py` reads that auth profile,
+#: so pasting the Go key under `deepseek` -- which this map used to do -- would put a
+#: credential in the wrong provider. The Zen `opencode` prefix rides the same road.
+_PROFILE_PROVIDERS = ("opencode-go", "opencode")
 
 #: The keys one agent may set in its `exec` block, which is the whole exec policy
 #: OpenClaw reads for that agent (`agents.entries.<id>.tools.exec`). `host` and
@@ -458,7 +463,7 @@ def _infer_provider(model: str) -> tuple[str, str] | None:
     low = str(model or "").strip().lower()
     prefix, sep, _ = low.partition("/")
     if sep:
-        return _PROVIDER_ENV_MAP.get(prefix)
+        return None if prefix in _PROFILE_PROVIDERS else _PROVIDER_ENV_MAP.get(prefix)
     for name, pair in _PROVIDER_ENV_MAP.items():
         if name in low:
             return pair
