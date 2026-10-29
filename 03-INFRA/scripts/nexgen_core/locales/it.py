@@ -1631,6 +1631,14 @@ MESSAGES: dict[str, str] = {
         "Il comando 'agy' non è nel PATH: installa la CLI Antigravity di Google, poi lancia 'agy' una volta e fai il login. Fino a quel momento il plugin non può far girare nessun agente.",
     "The login of 'agy' is kept by the system keyring and cannot be checked from here: run 'agy' once and make sure it answers.":
         "Il login di 'agy' è custodito dal portachiavi di sistema e da qui non si può controllare: lancia 'agy' una volta e verifica che risponda.",
+    "dry run: 'agy' would be trusted with {count} more agent folders in {settings}; nothing is written.":
+        "prova a vuoto: 'agy' riceverebbe la fiducia per {count} cartelle degli agenti in più in {settings}; non viene scritto nulla.",
+    "'agy' is now trusted with {count} more agent folders; {settings} was created.":
+        "'agy' ha ora la fiducia per {count} cartelle degli agenti in più; {settings} è stato creato.",
+    "'agy' is now trusted with {count} more agent folders; the previous settings are saved as {backup}.":
+        "'agy' ha ora la fiducia per {count} cartelle degli agenti in più; le impostazioni precedenti sono salvate come {backup}.",
+    "The trust list at {settings} could not be written ({error}).":
+        "Non è stato possibile scrivere l'elenco delle cartelle fidate in {settings} ({error}).",
     "'agy' has not been trusted with these agent folders: {folders}":
         "'agy' non ha ricevuto la fiducia per queste cartelle degli agenti: {folders}",
     "Run 'agy' once in each of them and accept the trust prompt; 'agy' records the folder in {settings} under {key}.":

@@ -191,13 +191,48 @@ def untrusted(workspaces: list[str], trusted: tuple[str, ...]) -> list[str]:
     return [folder for folder in workspaces if folder.strip() and _comparable(folder) not in known]
 
 
-def agent_workspaces(config: dict[str, Any] | None) -> list[str]:
-    """Every folder an agent of this configuration works in, without duplicates."""
+def agent_workspaces(
+    config: dict[str, Any] | None,
+    state_dir: Path | None = None,
+    home: Path | None = None,
+) -> list[str]:
+    """Every folder an agent of this configuration works in, without duplicates.
+
+    An entry that declares no `workspace` is not an agent without a folder:
+    OpenClaw resolves one, and that is the folder `agy` asks about. The order
+    is the scan's (`adopt_scan.workspace_dir`), asked rather than repeated, so
+    the folder named here is the folder adopted skills live in. Without a state
+    folder and a home the defaults cannot be resolved, and only the declared
+    folders are named: a caller that cannot see enough says less, never guesses.
+    """
     agents = (config or {}).get("agents")
     entries = agents.get("entries") if isinstance(agents, dict) else None
+    defaults = agents.get("defaults") if isinstance(agents, dict) else None
     found: list[str] = []
-    for entry in entries.values() if isinstance(entries, dict) else ():
-        workspace = entry.get("workspace") if isinstance(entry, dict) else None
-        if isinstance(workspace, str) and workspace.strip() and workspace not in found:
-            found.append(workspace)
+    for agent_id, entry in entries.items() if isinstance(entries, dict) else ():
+        folder = _agent_workspace(str(agent_id), entry, state_dir, home, defaults)
+        if folder and folder not in found:
+            found.append(folder)
     return found
+
+
+def _agent_workspace(
+    agent_id: str,
+    entry: Any,
+    state_dir: Path | None,
+    home: Path | None,
+    defaults: Any,
+) -> str:
+    """One agent's folder: the declared one, or the default OpenClaw resolves."""
+    if state_dir is not None and home is not None:
+        from nexgen_core.openclaw.adopt_scan import workspace_dir
+
+        return str(workspace_dir(Path(state_dir), Path(home), agent_id, entry, _mapping(defaults)))
+    declared = entry.get("workspace") if isinstance(entry, dict) else None
+    return declared.strip() if isinstance(declared, str) and declared.strip() else ""
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    """`workspace_dir` reads defaults as a mapping; anything else is an empty one."""
+    return value if isinstance(value, dict) else {}
+

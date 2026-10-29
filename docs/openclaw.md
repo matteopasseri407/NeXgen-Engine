@@ -308,14 +308,19 @@ When the team puts an agent on `google-antigravity-cli/...`, either in `squad.ya
 A team that names no `agy` model gets none of this: no command, no line, the same file as before.
 `--dry-run` prints the install command instead of running it, and `nexgen openclaw plan` shows the `plugins` entries the setup would add.
 
-Two things the setup only reports, because they belong to the person:
+One thing the setup only reports, because it belongs to the person:
 
 - `agy` on PATH and its login.
   The credential is not a file the engine reads: `agy` keeps it in the system keyring (on Windows, the Credential Manager entry `gemini:antigravity`), so the doctor never says "not logged in".
   It says it cannot see the login, and asks the person to run `agy` once.
-- the trust `agy` asks for every folder.
-  It records the answer in `~/.gemini/antigravity-cli/settings.json` under `trustedWorkspaces`, as absolute paths.
-  The agent workspaces OpenClaw creates are not in that list on a new machine, and an agent that starts in an untrusted folder stops at the prompt, so the setup and the doctor name the folders and the step: run `agy` once in each one and accept the prompt.
+
+The trust `agy` asks for every folder is the step's own work, because it is one absolute path written in a file the engine can see.
+`agy` records the answer in `~/.gemini/antigravity-cli/settings.json` under `trustedWorkspaces`, and a path covers only itself: the agent workspaces OpenClaw creates are not in that list on a new machine, and an agent that starts in an untrusted folder stops at the prompt.
+When `agy` is on PATH, the setup appends every agent folder that is missing, in the order the file already has, and leaves every other key alone.
+It backs the file up first (`settings.json.pre-agy-trust-<stamp>.bak`, beside it) and says how many folders it added and where the backup is.
+A missing file is created with the one key; `--dry-run` prints the same plan and writes nothing.
+A file the engine cannot read as a JSON object is never replaced: the setup leaves it as it is, prints the two lines it used to print, and the person runs `agy` once in each folder and accepts the prompt.
+A machine with no `agy` command gets no write at all.
 
 `nexgen openclaw doctor` has three lines for this backend and they do not overlap.
 `openclaw.google.cli_backend` judges the permission mode.
