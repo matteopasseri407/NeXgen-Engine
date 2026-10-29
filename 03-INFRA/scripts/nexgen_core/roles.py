@@ -50,6 +50,11 @@ from nexgen_core.openclaw.node_transition import (
     start_node_service_safe,
     stop_node_service_safe,
 )
+from nexgen_core.openclaw.setup_steps import (
+    Run as InstallRun,
+    Which as InstallWhich,
+    install_pinned_release,
+)
 from nexgen_core.paths import openclaw_config, resolve_home, resolve_state_dir
 from nexgen_core.server_sudo import FAILURES, install as _install_sudo_policy
 
@@ -495,6 +500,75 @@ def _execute_node_transition(
     return 0
 
 
+def _install_openclaw_for_node(
+    home: Path | None,
+    platform: str | None,
+    runner: Run | None,
+    install_run: InstallRun | None,
+    which: InstallWhich | None,
+    out: Callable[[str], None],
+) -> bool:
+    """Puts the pinned OpenClaw on this machine before the role reads the node state.
+
+    A PC that never had OpenClaw is exactly the machine this role is for, and
+    without the package `openclaw node status` cannot answer at all: the role used
+    to stop there, with "stato del nodo non leggibile", on the one machine where it
+    had work to do. The install is the setup's own step 1, so the pin, the Node
+    check and every message stay the ones `nexgen openclaw setup` prints.
+
+    Nothing is installed when the caller replaced the node commands and did not
+    replace the install executor: such a caller is driving a machine that is not
+    this one, and a real npm install behind a fake host is a write nobody asked for.
+    """
+    if runner is not None and install_run is None:
+        return True
+    out(t("A node needs OpenClaw itself: the pinned release goes in before anything else."))
+    if install_pinned_release(
+        home=resolve_home(home), which=which, run=install_run, platform=platform, out=out,
+    ):
+        return True
+    out(t("The node role stops here: without OpenClaw, this machine's own node state cannot be read."))
+    return False
+
+
+def _stops_before_inspection(
+    exec_policy: str | None,
+    check: bool,
+    home: Path | None,
+    platform: str | None,
+    runner: Run | None,
+    install_run: InstallRun | None,
+    which: InstallWhich | None,
+    out: Callable[[str], None],
+) -> int | None:
+    """The exit code when this run must stop before reading anything, else None.
+
+    Two stops come first. An exec policy this role does not apply is refused before
+    the machine is touched at all. And a PC that never had OpenClaw is the PC this
+    role exists for, so the pinned package goes in before anything asks it a
+    question: `--check` only looks and installs nothing, because a command promised
+    as read-only must not run npm.
+    """
+    if (refused := _refuse_unknown_exec_policy(exec_policy, out)) is not None:
+        return refused
+    if check or _install_openclaw_for_node(home, platform, runner, install_run, which, out):
+        return None
+    return 1
+
+
+def _plan_or_stop(inspection: Any, check: bool, out: Callable[[str], None]) -> int | None:
+    """What `--check` prints, and the stop every run gets when the node state is unreadable."""
+    if check:
+        for line in plan_node_transition(inspection):
+            out(line)
+        return 0 if inspection.node.readable else 1
+    if inspection.node.readable:
+        return None
+    out(t("Passaggio a nodo interrotto: stato del nodo non leggibile ({reason}).",
+          reason=inspection.node.unreadable_reason))
+    return 1
+
+
 def run_node_role(
     root: Path,
     home: Path | None = None,
@@ -515,6 +589,8 @@ def run_node_role(
     systemd_user_dir: Path | None = None,
     exec_policy: str | None = None,
     exec_runner: Callable[[list[str], str], Any] | None = None,
+    install_run: InstallRun | None = None,
+    which: InstallWhich | None = None,
     out: Callable[[str], None] = print,
 ) -> int:
     """Node role: connect to an existing gateway as a headless node host.
@@ -524,23 +600,19 @@ def run_node_role(
     person's. With it, the documented never-prompt body is written locally once the
     node is attached, and the summary says so.
     """
-    if (refused := _refuse_unknown_exec_policy(exec_policy, out)) is not None:
-        return refused
+    stopped = _stops_before_inspection(
+        exec_policy, check, home, platform, runner, install_run, which, out,
+    )
+    if stopped is not None:
+        return stopped
     inspection = inspect_node_transition(
         root=root, home=home, platform=platform, runner=runner,
         appdata=appdata, startup_dir=startup_dir, systemd_user_dir=systemd_user_dir,
         out=out,
     )
     declare_role(NODE_ROLE, home)
-    if check:
-        for line in plan_node_transition(inspection):
-            out(line)
-        return 0 if inspection.node.readable else 1
-
-    if not inspection.node.readable:
-        out(t("Passaggio a nodo interrotto: stato del nodo non leggibile ({reason}).",
-              reason=inspection.node.unreadable_reason))
-        return 1
+    if (stopped := _plan_or_stop(inspection, check, out)) is not None:
+        return stopped
 
     join_target = join or target or gateway_url or os.environ.get("NEXGEN_JOIN_URL")
     name = node_name or "node"

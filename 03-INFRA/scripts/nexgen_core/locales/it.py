@@ -1861,6 +1861,10 @@ MESSAGES: dict[str, str] = {
         "OpenClaw {pinned} è installato.",
     "Note: 'openclaw' is still not on PATH; a new terminal may be needed.":
         "Nota: 'openclaw' non è ancora nel PATH; può servire un terminale nuovo.",
+    "A node needs OpenClaw itself: the pinned release goes in before anything else.":
+        "Un nodo ha bisogno di OpenClaw stesso: la versione fissata va installata prima di tutto il resto.",
+    "The node role stops here: without OpenClaw, this machine's own node state cannot be read.":
+        "Il ruolo nodo si ferma qui: senza OpenClaw non si può leggere lo stato del nodo di questa macchina.",
     "The configuration at {path} already exists.":
         "La configurazione in {path} esiste già.",
     "No configuration yet: letting OpenClaw create the baseline, with no questions.":
