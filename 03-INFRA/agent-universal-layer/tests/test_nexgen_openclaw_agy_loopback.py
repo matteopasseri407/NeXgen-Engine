@@ -5,17 +5,21 @@ OpenClaw, `alwaysLoad` -- inside the MCP configuration `agy` reads, for the leng
 turn, with the tools prefixed `openclaw__`. The engine writes those same connectors directly
 into that file (`mcp_render.antigravity`), so an agent on `agy` sees each of them twice: the
 943k-token shape the engine already removed for Claude Code. The deny this suite asks for is
-the same one, decided the same way -- on the document the write leaves -- and gated on the one
-fact that separates `agy` from Claude Code: the engine writes `agy`'s file only where the
-renderer ran, so the deny is written only where that file exists.
+the same one, decided the same way -- on the document the write leaves -- and gated on what
+`agy`'s file really carries: that file is also written by the plugin itself, which leaves it
+empty at the end of every turn, so a file that exists proves nothing and only the connectors
+it holds may be denied.
 
-Five promises, one per test:
+One promise per test, and the guards beside them:
 
-- an `agy` agent is denied every connector, and none of OpenClaw's own tools;
+- an `agy` agent is denied every connector its file carries, and none of OpenClaw's own tools;
 - an agent that only the file puts on `agy`, through `agents.defaults.models`, is denied too;
 - a machine with no `agy` file is written exactly as before;
+- a file the plugin left empty gives no connector away, so nothing is denied;
+- a file holding only the plugin's `openclaw__` entries gives nothing away either;
+- only the connectors `agy` carries are denied; the others stay on the loopback;
 - the doctor names an `agy` agent still on the loopback, and passes once a setup has written it;
-- a machine with neither a `claude-cli` nor an `agy` agent is written exactly as before.
+- and a machine with neither a `claude-cli` nor an `agy` agent is written exactly as before.
 """
 from __future__ import annotations
 
@@ -37,7 +41,7 @@ from nexgen_core.openclaw import claude_loopback, setup_write  # noqa: E402
 from nexgen_core.openclaw.claude_cli import claude_cli_agents  # noqa: E402
 from nexgen_core.openclaw.claude_loopback import patterns as deny_patterns  # noqa: E402
 from nexgen_core.openclaw.detect import Detection, Installation, LocalModels, Login  # noqa: E402
-from nexgen_core.openclaw.native_connectors import agy_agents, denied_agents  # noqa: E402
+from nexgen_core.openclaw.native_connectors import agy_agents, loopback_deny  # noqa: E402
 from nexgen_core.openclaw.plan import build_plan  # noqa: E402
 from nexgen_core.paths import antigravity_config, openclaw_config  # noqa: E402
 from nexgen_core.report import Severity  # noqa: E402
@@ -128,6 +132,14 @@ def _agy_file(renderer: McpRenderer) -> Path:
     assert renderer.render_antigravity(write=True)[0] is True
     path = antigravity_config(renderer.home)
     assert path.is_file(), "the renderer wrote no agy configuration"
+    return path
+
+
+def _agy_file_with(home: Path, servers: dict) -> Path:
+    """`agy`'s configuration holding exactly these server names, as another writer leaves it."""
+    path = antigravity_config(home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"mcpServers": servers}), encoding="utf-8")
     return path
 
 
@@ -248,11 +260,65 @@ def test_a_machine_with_no_agy_file_is_written_exactly_as_before(tmp_path: Path)
     plan = _plan(home, renderer)
     document = _written(plan, path)
 
-    assert denied_agents(plan.config, home) == []
+    assert loopback_deny(plan.config, SERVERS, home).agy == []
     for agent_id, entry in document["agents"]["entries"].items():
         assert "deny" not in (entry.get("tools") or {}), agent_id
     assert "__*" not in setup_write.render(document), "no connector pattern reached the file"
     assert not [item for item in (*plan.added, *plan.changed) if item.endswith(".deny")]
+
+
+def test_an_empty_agy_file_carries_nothing_so_nothing_is_denied(tmp_path: Path) -> None:
+    """The plugin empties that file at the end of a turn: an empty one gives `agy` nothing."""
+    home = _home(tmp_path)
+    renderer = _renderer(tmp_path, home)
+    path = _put(home, _agy_agent_file())
+    _agy_file_with(home, {})
+
+    plan = _plan(home, renderer)
+    document = _written(plan, path)
+
+    assert loopback_deny(plan.config, SERVERS, home).agy == []
+    assert _deny(document, "gemini") == set()
+    assert "__*" not in setup_write.render(document), "no connector pattern reached the file"
+    assert check_claude_loopback(home, renderer.vault_data, renderer.engine_root) is None, (
+        "there is nothing to fault: the loopback is the only road to those connectors"
+    )
+
+
+def test_a_plugin_only_agy_file_carries_nothing_so_nothing_is_denied(tmp_path: Path) -> None:
+    """The plugin's `openclaw__` entries are the loopback's tools, never a connector `agy` owns."""
+    home = _home(tmp_path)
+    renderer = _renderer(tmp_path, home)
+    path = _put(home, _agy_agent_file())
+    _agy_file_with(home, {
+        "openclaw__vault-library": {"command": "node", "args": ["loopback"]},
+        "openclaw__n8n-mcp": {"command": "node", "args": ["loopback"]},
+    })
+
+    plan = _plan(home, renderer)
+    document = _written(plan, path)
+
+    assert loopback_deny(plan.config, SERVERS, home).agy == []
+    assert _deny(document, "gemini") == set()
+    assert "__*" not in setup_write.render(document)
+    assert check_claude_loopback(home, renderer.vault_data, renderer.engine_root) is None
+
+
+def test_only_the_connectors_agy_carries_are_denied(tmp_path: Path) -> None:
+    """A connector `agy` does not carry stays on the loopback: it is the only road to the agent."""
+    home = _home(tmp_path)
+    renderer = _renderer(tmp_path, home)
+    path = _put(home, _agy_agent_file())
+    _agy_file_with(home, {"vault-library": {"command": "node", "args": ["vault.mjs"]}})
+
+    plan = _plan(home, renderer)
+    document = _written(plan, path)
+
+    assert _deny(document, "gemini") == {"vault-library__*"}
+    assert "n8n-mcp__*" not in _deny(document, "gemini"), "the loopback is its only copy here"
+    outcome = check_claude_loopback(home, renderer.vault_data, renderer.engine_root)
+    assert outcome is not None, "agy carries a connector, so the doctor has an answer"
+    assert outcome.severity == Severity.OK, outcome.message
 
 
 def test_the_doctor_names_an_agy_agent_still_on_the_loopback_and_passes_after_a_setup(tmp_path: Path) -> None:
@@ -289,7 +355,7 @@ def test_a_machine_with_no_native_agent_is_written_exactly_as_before(tmp_path: P
     plan = _plan(home, renderer)
     document = _written(plan, path)
 
-    assert denied_agents(plan.config, home) == []
+    assert loopback_deny(plan.config, SERVERS, home).agy == []
     assert {"main", "automazioni"} <= set(json.loads(setup_write.render(document))["agents"]["entries"])
     for agent_id, entry in document["agents"]["entries"].items():
         assert "deny" not in (entry.get("tools") or {}), agent_id

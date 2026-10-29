@@ -13,10 +13,10 @@ only place that asks, because a guard cycle judges what a render wrote, and this
 the machine as it stands now.
 
 The expected connector list comes from the same renderer `nexgen sync` uses
-(`McpRenderer.load_resolved_servers(<target>)`), so this check cannot demand a server in a
-CLI's file that the manifest does not put there. An `agy` agent is judged only where `agy`'s
-own configuration exists: on a machine that has none, the loopback is the right place for
-its connectors, because the engine never wrote them anywhere else.
+(`McpRenderer.load_resolved_servers("claude")`), so this check cannot demand a server in
+Claude Code's file that the manifest does not put there. An `agy` agent is judged, like in
+the plan, only on the connectors `agy`'s own file really carries: the ones it does not
+carry are reachable through the loopback alone, and no deny may take them away.
 """
 from __future__ import annotations
 
@@ -24,10 +24,9 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import t
-from nexgen_core.openclaw.claude_cli import claude_cli_agents
 from nexgen_core.openclaw.claude_loopback import pattern_for
 from nexgen_core.openclaw.config_file import read_config
-from nexgen_core.openclaw.native_connectors import agy_agents, agy_config
+from nexgen_core.openclaw.native_connectors import loopback_deny
 from nexgen_core.paths import claude_config, openclaw_config
 from nexgen_core.report import CheckOutcome, Severity
 
@@ -68,37 +67,34 @@ def _undeclared(config: dict[str, Any], agents: list[str], servers: list[str]) -
     return sorted(missing)
 
 
-def _native_names(home: Path, vault_data: Path | None, engine_root: Path | None,
-                  target: str) -> set[str] | None:
-    """The connectors one CLI's own configuration must carry, or None when the manifest cannot be read."""
+def _native_names(home: Path, vault_data: Path | None, engine_root: Path | None) -> set[str] | None:
+    """The connectors Claude Code's own configuration must carry, or None when the manifest cannot be read."""
     try:
         from nexgen_core.renderer import McpRenderer
 
         renderer = McpRenderer(home=home, vault_data=vault_data, engine_root=engine_root)
-        return set(renderer.load_resolved_servers(target))
+        return set(renderer.load_resolved_servers("claude"))
     except (OSError, ValueError):  # nexgen: allow reason="an unreadable manifest is reported by mcp.manifest; here it only leaves the file's presence to say"
         return None
 
 
 def _native_connectors_missing(
-    path: Path,
     home: Path,
     servers: list[str],
-    target: str,
     vault_data: Path | None,
     engine_root: Path | None,
 ) -> list[str]:
-    """The connectors the file lacks, among the ones this gateway carries and that CLI receives.
+    """The connectors the file lacks, among the ones this gateway carries and Claude Code receives.
 
-    A server the manifest keeps off the CLI's target legitimately has no entry there,
+    A server the manifest keeps off the `claude` target legitimately has no entry there,
     and asking for it would be a false alarm about a router that works.
     """
-    config, _error = read_config(path)
+    config, _error = read_config(claude_config(home))
     if config is None:
         # A file that does not parse is `mcp.rendered_configs`' answer: this check judges
         # where the connectors live, not whether the JSON is well formed.
         return []
-    expected = _native_names(home, vault_data, engine_root, target)
+    expected = _native_names(home, vault_data, engine_root)
     wanted = {name for name in servers if expected is None or name in expected}
     if not wanted:
         return []
@@ -123,33 +119,20 @@ def _claude_problems(
     if not path.is_file():
         found.append(t("Claude Code's own configuration does not exist ({path})", path=str(path)))
         return found
-    missing = _native_connectors_missing(path, home, servers, "claude", vault_data, engine_root)
+    missing = _native_connectors_missing(home, servers, vault_data, engine_root)
     if missing:
         found.append(t("missing from Claude Code's own configuration: {connectors}",
                        connectors=", ".join(missing)))
     return found
 
 
-def _agy_problems(
-    config: dict[str, Any],
-    home: Path,
-    path: Path,
-    servers: list[str],
-    agents: list[str],
-    vault_data: Path | None,
-    engine_root: Path | None,
-) -> list[str]:
-    """What is wrong with the agents on `agy`, whose connectors live in its own file."""
-    found: list[str] = []
+def _agy_problems(config: dict[str, Any], servers: list[str], agents: list[str]) -> list[str]:
+    """What is wrong with the agents on `agy`, whose only lost road is the loopback one."""
     reachable = _undeclared(config, agents, servers)
-    if reachable:
-        found.append(t("still on the loopback server for an agent on 'agy': {connectors}",
-                       connectors=", ".join(reachable)))
-    missing = _native_connectors_missing(path, home, servers, "antigravity", vault_data, engine_root)
-    if missing:
-        found.append(t("missing from the configuration 'agy' reads ({path}): {connectors}",
-                       path=str(path), connectors=", ".join(missing)))
-    return found
+    if not reachable:
+        return []
+    return [t("still on the loopback server for an agent on 'agy': {connectors}",
+              connectors=", ".join(reachable))]
 
 
 def _message(has_claude: bool, has_agy: bool, problems: list[str]) -> str:
@@ -168,8 +151,8 @@ def _message(has_claude: bool, has_agy: bool, problems: list[str]) -> str:
 def _action(has_agy: bool) -> str:
     """The one thing to run, named for the CLI whose files are the ones out of step."""
     if has_agy:
-        return t("Run 'nexgen openclaw setup': it denies every connector on the loopback server, "
-                 "and 'agy' reads them from its own configuration, which 'nexgen sync' writes.")
+        return t("Run 'nexgen openclaw setup': it denies every connector on the loopback server that "
+                 "'agy' already carries in its own configuration.")
     return t("Run 'nexgen openclaw setup': it denies every connector on the loopback server and renders "
              "Claude Code's own configuration, where they load lazily.")
 
@@ -195,29 +178,27 @@ def check_claude_loopback(
     config, _error = read_config(path)
     if config is None:
         return None
-    claude = claude_cli_agents(config)
-    agy_path = agy_config(home)
-    agy = agy_agents(config) if agy_path is not None else []
-    if not claude and not agy:
-        return None
     servers = _servers(config)
+    deny = loopback_deny(config, servers, home)
+    if not deny.claude and not deny.agy:
+        return None
     problems: list[str] = []
-    if claude:
-        problems.extend(_claude_problems(config, home, servers, claude, vault_data, engine_root))
-    if agy and agy_path is not None:
-        problems.extend(_agy_problems(config, home, agy_path, servers, agy, vault_data, engine_root))
-    detail = ", ".join([*claude, *agy])
+    if deny.claude:
+        problems.extend(_claude_problems(config, home, servers, deny.claude, vault_data, engine_root))
+    if deny.agy:
+        problems.extend(_agy_problems(config, deny.agy_connectors, deny.agy))
+    detail = ", ".join([*deny.claude, *deny.agy])
     if problems:
         return CheckOutcome(
             id=CHECK_ID,
             severity=Severity.BROKEN,
-            message=_message(bool(claude), bool(agy), problems),
-            action=_action(bool(agy)),
+            message=_message(bool(deny.claude), bool(deny.agy), problems),
+            action=_action(bool(deny.agy)),
             detail=detail,
         )
     return CheckOutcome(
         id=CHECK_ID,
         severity=Severity.OK,
-        message=_ok(len(claude) + len(agy), bool(agy)),
+        message=_ok(len(deny.claude) + len(deny.agy), bool(deny.agy)),
         detail=detail,
     )

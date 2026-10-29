@@ -1,16 +1,18 @@
-"""The connectors a `claude-cli` agent must not see through OpenClaw's loopback server.
+"""The connectors an agent must not see through OpenClaw's loopback server.
 
-One job: for every agent that runs on Claude Code's own CLI, deny every connector the
-OpenClaw configuration mounts (`<server>__*`) on the loopback MCP server OpenClaw
-hands Claude Code with `alwaysLoad: true`. What stays is the agent's own OpenClaw
-toolset -- messages, sessions, the supervisor's `nexgen_sup_*` -- and what disappears
-is the one thing that made a single call cost 943k tokens: every connector schema in
-the prompt at every request.
+One job: deny the `<server>__*` patterns the caller names, on the agents the caller names --
+the connectors the OpenClaw configuration mounts, kept off the loopback MCP server OpenClaw
+hands a CLI with `alwaysLoad: true`. What stays is the agent's own OpenClaw toolset --
+messages, sessions, the supervisor's `nexgen_sup_*` -- and what disappears is the one thing
+that made a single call cost 943k tokens: every connector schema in the prompt at every
+request. Two kinds of agent need it, for the same reason: one on `claude-cli`, whose
+connectors live in Claude Code's own configuration, and one on `agy`, whose connectors live
+in `agy`'s. `native_connectors` says who they are and which connectors each may give up.
 
-The connectors are not lost. Claude Code reads its own configuration
-(`~/.claude.json`), where the same connectors sit deferred behind ToolSearch exactly
-like a plain Claude Code session, and Claude Code -- not OpenClaw -- owns their
-loading. `claude_native` makes sure that file is the engine's render.
+The connectors are not lost. Claude Code reads its own configuration (`~/.claude.json`),
+where the same connectors sit deferred behind ToolSearch exactly like a plain Claude Code
+session, and Claude Code -- not OpenClaw -- owns their loading. `claude_native` makes sure
+that file is the engine's render; `agy` reads the file `mcp_render.antigravity` writes.
 
 Two rules are not preferences:
 

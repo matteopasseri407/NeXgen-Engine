@@ -20,7 +20,7 @@ from nexgen_core.openclaw import claude_loopback, observation
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.governor import with_chains
-from nexgen_core.openclaw.native_connectors import denied_agents
+from nexgen_core.openclaw.native_connectors import loopback_deny
 from nexgen_core.openclaw.profile import (
     CLAUDE_MODEL,
     CODEX_MODEL,
@@ -371,19 +371,22 @@ def _with_loopback(
     that merged file, so a plan that judged the proposal alone wrote its deny for the
     agents it happened to create and left the loopback open for the others, on every run.
 
-    Which agents those are, and whether `agy` has a file of its own here to hold the
-    connectors the deny takes off the loopback, is `native_connectors`' answer: it names
-    an `agy` agent only where that file exists.
+    Who those agents are, and which connectors `agy` may really give up, is
+    `native_connectors`' answer: an `agy` agent keeps only the connectors its own file
+    carries, and a connector it does not carry stays on the loopback, which is its only
+    road to that agent.
 
-    Nothing is asked of a machine with no such agent: a proposal whose agents run
-    elsewhere keeps the tool surface it had, byte for byte.
+    No deny is written for a machine with no such agent: a proposal whose agents run
+    elsewhere keeps the tool surface it had.
     """
-    agents = denied_agents(merged_document(current, config), home)
-    if not agents:
-        return config
-    return claude_loopback.apply(
-        config, _connector_names(home, vault_data, engine_root, current), agents,
-    )
+    connectors = _connector_names(home, vault_data, engine_root, current)
+    deny = loopback_deny(merged_document(current, config), connectors, home)
+    updated = config
+    if deny.claude:
+        updated = claude_loopback.apply(updated, connectors, deny.claude)
+    if deny.agy:
+        updated = claude_loopback.apply(updated, deny.agy_connectors, deny.agy)
+    return updated
 
 
 def _squad_notes(squad_data: dict[str, Any] | None) -> list[str]:
