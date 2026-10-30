@@ -545,6 +545,23 @@ jobs:
         working-directory: 03-INFRA/agent-universal-layer/tests
         run: python3 -m pytest test_nexgen_openclaw_contract.py -v
 
+  e2e-install:
+    # A clean Ubuntu 24.04 installs the engine (2026-10-30). The first run of
+    # this driver found five defects no unit test could: PyYAML refused by PEP
+    # 668, a `--check` that crashed, a Node in /usr/local the gateway account
+    # could not install into, a clone in ~/KnowledgeVault taken for a missing
+    # engine, and a first setup that never enabled the engine plugin. It boots a
+    # systemd container, enters a plain account with `sudo -iu` and runs
+    # install.sh as the README says. Nightly and on demand: it takes minutes.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install from scratch in a clean Ubuntu 24.04
+        run: python3 03-INFRA/scripts/e2e_install.py
+
   opencode2-smoke:
     # OpenCode 2 native-contract gate (2026-09-22): the suite above proves
     # Python behavior, but nothing in it proved the V2 schema the engine
