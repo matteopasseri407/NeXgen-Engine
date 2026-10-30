@@ -2,7 +2,8 @@
 # nexgen: allow reason="bootstrap launcher must locate or install Python before Python exists"
 # NeXgen Engine — bootstrap.
 #
-# This file does exactly one thing: find Python and hand off to it.
+# This file does exactly one thing: find Python and hand off to it (telling it
+# which engine it is, when no other one is declared).
 # Everything else — prerequisites, vault structure, detected assistants,
 # recommended profile — lives in 03-INFRA/scripts/nexgen_core/bootstrap.py,
 # in one place only, because you can't use Python to check that Python
@@ -23,6 +24,14 @@ BOOTSTRAP="$ROOT/03-INFRA/scripts/nexgen_core/bootstrap.py"
 if [ ! -f "$BOOTSTRAP" ]; then
     echo "NeXgen: this clone is incomplete, missing $BOOTSTRAP" >&2
     exit 1
+fi
+
+# The engine is this clone unless one is declared or installed in ~/.nexgen-engine:
+# a client clones into ~/KnowledgeVault, and without this the guard units it writes
+# named an engine folder that does not exist.
+if [ -z "${AGENT_ENGINE_ROOT:-}" ] && [ ! -d "$HOME/.nexgen-engine/03-INFRA" ]; then
+    AGENT_ENGINE_ROOT="$ROOT/03-INFRA"
+    export AGENT_ENGINE_ROOT
 fi
 
 FOUND=""
