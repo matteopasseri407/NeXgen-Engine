@@ -488,6 +488,63 @@ jobs:
       - name: Engine smoke (read-only commands + launcher)
         run: python 03-INFRA/scripts/smoke.py
 
+  openclaw-contract:
+    # OpenClaw judges the engine's output (2026-10-30). The suite proves what
+    # the engine believes OpenClaw accepts; twice that belief was wrong and
+    # shipped (`models.entries`, connectors in a file a claude-cli agent never
+    # reads). This job installs the pinned release and lets `openclaw config
+    # validate` judge the profile, the example squad and the MCP render. On the
+    # nightly run and on demand it also judges the latest stable on npm: a red
+    # `latest` leg is the early warning that raising the pin needs work first.
+    # NEXGEN_REQUIRE_OPENCLAW turns the test's skip into a failure, so this
+    # gate can never pass because the binary is missing.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        release: [pinned, latest]
+    steps:
+      - name: Skip the latest leg outside the nightly run
+        if: matrix.release == 'latest' && github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+        run: echo "latest stable is judged on the nightly run and on demand"
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: matrix.release == 'pinned' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        if: matrix.release == 'pinned' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: matrix.release == 'pinned' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        with:
+          node-version: "24"
+
+      - name: Install the engine and the OpenClaw release under test
+        if: matrix.release == 'pinned' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          RELEASE: ${{ matrix.release }}
+        run: |
+          set -euo pipefail
+          pip install . pytest
+          if [ "$RELEASE" = pinned ]; then
+            version=$(python3 -c "import json; print(json.load(open('03-INFRA/agent-universal-layer/openclaw/pin.json'))['version'])")
+          else
+            version=$(npm view openclaw dist-tags.latest)
+          fi
+          echo "OpenClaw under test: $version"
+          npm install -g "openclaw@$version" "--allow-scripts=@google/genai,esbuild,koffi,protobufjs,openclaw"
+          openclaw --version
+
+      - name: OpenClaw validates what the engine writes
+        if: matrix.release == 'pinned' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          NEXGEN_REQUIRE_OPENCLAW: "1"
+        working-directory: 03-INFRA/agent-universal-layer/tests
+        run: python3 -m pytest test_nexgen_openclaw_contract.py -v
+
   opencode2-smoke:
     # OpenCode 2 native-contract gate (2026-09-22): the suite above proves
     # Python behavior, but nothing in it proved the V2 schema the engine
