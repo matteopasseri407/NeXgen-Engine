@@ -139,6 +139,7 @@ def _align(
     runner = run or _default_run
     moment = (clock or _now)()
     pinned = pinned_version(engine_root)
+    values = _owner_node_first(values, lookup)
     node, npm = _owner_tools(lookup, runner, values)
     config = openclaw_config(home_dir, values)
     if not config.is_file():
@@ -270,6 +271,22 @@ def _owner_tools(which: Which, run: Run, env: Mapping[str, str]) -> tuple[str | 
     if folder is None:
         return node, which("npm")
     return _sibling(folder, "node") or node, _sibling(folder, "npm") or _prefix_owner(folder, which, run, env)
+
+
+def _owner_node_first(env: dict[str, str], which: Which) -> dict[str, str]:
+    """The environment with the owning Node's folder first on PATH.
+
+    npm and the `openclaw` CLI start with `#!/usr/bin/env node`: run under another Node
+    found earlier on PATH (a stale `~/.local/bin/node` link on a desktop), npm reads that
+    Node's global prefix, sees the old release there and installs into the wrong folder.
+    """
+    binary = which("openclaw")
+    node = (_sibling(Path(binary).parent, "node") if binary else None) or which("node")
+    if not node:
+        return env
+    folder = str(Path(node).parent)
+    rest = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry and entry != folder]
+    return {**env, "PATH": os.pathsep.join([folder, *rest])}
 
 
 def _prefix_owner(folder: Path, which: Which, run: Run, env: Mapping[str, str]) -> str | None:

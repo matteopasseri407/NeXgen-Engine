@@ -988,3 +988,34 @@ def test_an_npm_that_installs_somewhere_else_is_not_the_owner(tmp_path: Path):
 
     assert outcome.state == version_align.WARN
     assert installs(fake.calls) == []
+
+
+class EnvRun(FakeRun):
+    """Records the PATH every program was started with."""
+
+    def __init__(self, machine: Machine, **kwargs):
+        super().__init__(machine, **kwargs)
+        self.paths: list[str] = []
+
+    def __call__(self, argv: list[str], env=None) -> RunResult:
+        self.paths.append((env or {}).get("PATH", ""))
+        return super().__call__(argv, env)
+
+
+def test_npm_and_the_cli_run_under_the_node_that_owns_openclaw(tmp_path: Path):
+    """Seen on a desktop: `~/.local/bin/node` linked to an older Node came first on PATH. npm's
+    `#!/usr/bin/env node` ran under it, read that Node's global prefix and its old OpenClaw,
+    and tried to install the pin there, where the pin refuses that Node."""
+    machine = a_machine(tmp_path)
+    as_node(machine)
+    stale = tmp_path / "stale-local-bin"
+    stale.mkdir()
+    fake = EnvRun(machine)
+
+    version_align.align(
+        machine.home, machine.engine, env={"PATH": f"{stale}:/usr/bin"}, platform="linux",
+        which=lookup(machine), run=fake, clock=lambda: DAY, node_children=idle_node,
+    )
+
+    assert fake.paths
+    assert all(path.split(":")[0] == str(machine.bin) for path in fake.paths)
