@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from nexgen_core.openclaw import align_window, version_align
+from nexgen_core.openclaw import align_node, align_window, version_align
 from nexgen_core.openclaw_service import RunResult
 
 PIN = "2026.10.7"
@@ -92,6 +92,16 @@ def _english():
     i18n.set_language(None)
 
 
+@pytest.fixture(autouse=True)
+def _no_waiting(monkeypatch):
+    """The pause between two node checks is skipped: a test counts attempts, not seconds."""
+    monkeypatch.setattr(align_node, "_pause", lambda _seconds: None)
+
+
+#: What OpenClaw prints when a command fails while its state database is being migrated.
+BUSY = "[openclaw] The CLI command failed.\n[openclaw] For help, run `openclaw doctor`."
+
+
 class FakeRun:
     """Every external program this phase starts, answered from one place."""
 
@@ -99,7 +109,8 @@ class FakeRun:
                  statuses: tuple[str, ...] = ("running",), foreign_root: Path | None = None,
                  sessions: list[dict] | None = None, sessions_code: int = 0,
                  cron_jobs: list[dict] | None = None, cron_code: int = 0,
-                 node_pid: int | None = SERVICE_PID, node_code: int = 0):
+                 node_pid: int | None = SERVICE_PID, node_code: int = 0,
+                 restart_failures: int = 0):
         self.machine = machine
         self.node = node
         self.install_code = install_code
@@ -111,6 +122,7 @@ class FakeRun:
         self.cron_code = cron_code
         self.node_pid = node_pid
         self.node_code = node_code
+        self.restart_failures = restart_failures
         self.calls: list[list[str]] = []
 
     def __call__(self, argv: list[str], env=None) -> RunResult:
@@ -125,11 +137,16 @@ class FakeRun:
         if program.startswith("npm") and argv[1:2] == ["install"]:
             return RunResult(self.install_code, "", "" if not self.install_code else "npm ERR! boom")
         if program == "openclaw" and argv[1:3] == ["node", "restart"]:
+            if self.restart_failures:
+                self.restart_failures -= 1
+                return RunResult(1, "", BUSY)
             return RunResult(0, "", "")
         if program == "openclaw" and argv[1:3] == ["node", "status"]:
             if self.node_code:
                 return RunResult(self.node_code, "", "the node service cannot be read")
             state = self.statuses.pop(0) if self.statuses else "running"
+            if state is None:
+                return RunResult(1, "", BUSY)
             return RunResult(0, json.dumps(_node_status(state, self.node_pid)), "")
         if program == "openclaw" and argv[1:3] == ["sessions", "list"]:
             if self.sessions_code:
@@ -382,7 +399,7 @@ def test_a_gateway_that_does_not_come_back_puts_the_previous_release_back(tmp_pa
 def test_a_node_that_does_not_report_running_is_rolled_back(tmp_path: Path):
     machine = a_machine(tmp_path)
     as_node(machine)
-    fake = FakeRun(machine, statuses=("running", "stopped"))
+    fake = FakeRun(machine, statuses=("running", *["stopped"] * align_node.ATTEMPTS))
 
     outcome = version_align.align(machine.home, machine.engine, env={}, platform="linux",
                                  which=lookup(machine), run=fake, clock=lambda: NIGHT,
@@ -390,6 +407,46 @@ def test_a_node_that_does_not_report_running_is_rolled_back(tmp_path: Path):
 
     assert outcome.state == version_align.FAILED
     assert "2026.10.7" in outcome.line
+    assert installs(fake.calls)[-1] == an_install(machine.bin / "npm", OLD)
+
+
+def test_a_node_still_migrating_its_state_after_the_restart_is_waited_for(tmp_path: Path):
+    """The first start of a release can answer "The CLI command failed." for a few seconds."""
+    machine = a_machine(tmp_path)
+    as_node(machine)
+    fake = FakeRun(machine, statuses=("running", None, None, "running"))
+
+    outcome = version_align.align(machine.home, machine.engine, env={}, platform="linux",
+                                 which=lookup(machine), run=fake, clock=lambda: DAY,
+                                 node_children=idle_node)
+
+    assert outcome.state == version_align.ALIGNED
+    assert installs(fake.calls) == [an_install(machine.bin / "npm", PIN)]
+
+
+def test_a_node_restart_that_fails_once_is_asked_again(tmp_path: Path):
+    machine = a_machine(tmp_path)
+    as_node(machine)
+    fake = FakeRun(machine, restart_failures=1)
+
+    outcome = version_align.align(machine.home, machine.engine, env={}, platform="linux",
+                                 which=lookup(machine), run=fake, clock=lambda: DAY,
+                                 node_children=idle_node)
+
+    assert outcome.state == version_align.ALIGNED
+    assert installs(fake.calls) == [an_install(machine.bin / "npm", PIN)]
+
+
+def test_a_node_restart_that_never_succeeds_is_rolled_back(tmp_path: Path):
+    machine = a_machine(tmp_path)
+    as_node(machine)
+    fake = FakeRun(machine, restart_failures=align_node.ATTEMPTS)
+
+    outcome = version_align.align(machine.home, machine.engine, env={}, platform="linux",
+                                 which=lookup(machine), run=fake, clock=lambda: DAY,
+                                 node_children=idle_node)
+
+    assert outcome.state == version_align.FAILED
     assert installs(fake.calls)[-1] == an_install(machine.bin / "npm", OLD)
 
 

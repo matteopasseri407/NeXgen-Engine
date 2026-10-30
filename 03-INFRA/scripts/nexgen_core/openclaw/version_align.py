@@ -36,11 +36,10 @@ from pathlib import Path
 
 from nexgen_core import files
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import align_window, setup_commands
+from nexgen_core.openclaw import align_node, align_window, setup_commands
 from nexgen_core.openclaw.detect import Installation, _detect_openclaw
 from nexgen_core.openclaw.host_preflight import npm_prefix, read_node_version
 from nexgen_core.openclaw.node_only import detect_node_only
-from nexgen_core.openclaw.node_status import parse_node_status_payload
 from nexgen_core.openclaw.node_transition import detect_local_gateway
 from nexgen_core.openclaw.pin import node_satisfies, pinned_version, required_node_version
 from nexgen_core.openclaw_service import OpenClawService, RunResult
@@ -401,9 +400,7 @@ def _restart(role: str, service: OpenClawService | None, binary: str | None, run
         result = service.restart()
         return None if result.get("ok") else str(result.get("error") or t("the gateway did not restart"))
     if role == NODE:
-        result = run([binary or "openclaw", "node", "restart"], env)
-        if result.returncode != 0:
-            return _tail(result)
+        return align_node.restart(run, binary or "openclaw", env)
     return None
 
 
@@ -415,21 +412,8 @@ def _verify(role: str, smoke: Callable[[], int] | None, binary: str | None, run:
             return t("no smoke test is available to prove the gateway works")
         return None if smoke() == 0 else t("the smoke test failed")
     if role == NODE:
-        return _node_running(run, binary or "openclaw", env)
+        return align_node.running(run, binary or "openclaw", env)
     return None
-
-
-def _node_running(run: Run, binary: str, env: dict[str, str]) -> str | None:
-    """`openclaw node status` reports a running node, or says why it does not."""
-    result = run([binary, "node", "status", "--json"], env)
-    if result.returncode != 0:
-        return _tail(result)
-    try:
-        status = parse_node_status_payload(json.loads(result.stdout))
-    except ValueError:  # nexgen: allow reason="an older CLI prints text instead of JSON, and the text is judged below"
-        text = f"{result.stdout}\n{result.stderr}".casefold()
-        return None if "running" in text else t("the node service is not running")
-    return None if status.is_running else t("the node service is not running")
 
 
 def _rollback(role: str, service: OpenClawService | None, binary: str | None, npm: str,
@@ -453,10 +437,7 @@ def _success_line(role: str, pinned: str) -> str:
     return t("OpenClaw {pinned} is installed on this machine.", pinned=pinned)
 
 
-def _tail(result: RunResult) -> str:
-    """The last line a failed program printed: the reason, not the whole log."""
-    lines = [line.strip() for line in f"{result.stdout or ''}\n{result.stderr or ''}".splitlines() if line.strip()]
-    return lines[-1] if lines else t("no output")
+_tail = align_node.tail
 
 
 def _state_folder(state_dir: Path | None, home: Path) -> Path:
