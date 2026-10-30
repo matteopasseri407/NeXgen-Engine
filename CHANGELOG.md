@@ -10,6 +10,10 @@ of any engine release.
 
 ## [Unreleased]
 
+### Added
+
+- Every machine follows the OpenClaw release the engine pins, from the guard cycle instead of a setup run by hand. The gateway changes release only between 03:00 and 06:00 local time, with no agent session busy and no automation running. A node changes it at any hour, but only when its service has no command running. A state that cannot be read postpones the cycle. A new release that does not come back is rolled back and not retried for 24 hours. The engine never installs Node, and it uses the npm that owns the running OpenClaw, including a user prefix such as `~/.npm-global`. A postponement is one plain line, never a warning.
+
 ### Fixed
 
 - A retired MCP server leaves every CLI even when nobody wrote a tombstone: the engine remembers every server name it declared at a real render (machine-local MCP state), so removing one from `mcp/manifest.yaml` prunes it on the next sync instead of leaving a connector the CLI fails to start every launch (`lane`, issue #147). Names the engine never declared stay additive, a dry run never writes that memory, and `nexgen doctor` reports the engine's own leftovers as debris the next sync removes rather than as servers to adopt.

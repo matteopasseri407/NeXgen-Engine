@@ -18,7 +18,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 from nexgen_core.guard import GuardMode, GuardResult, GuardRunner  # noqa: E402
 import nexgen_core.guard as guard_module  # noqa: E402
 
-PHASES = ("skills", "mcp", "permissions", "instructions", "launchers", "scheduler", "modules", "runtime")
+PHASES = ("skills", "mcp", "permissions", "instructions", "launchers", "scheduler", "modules", "runtime", "openclaw")
 
 
 def _fake_runner(tmp_path: Path, monkeypatch) -> tuple[GuardRunner, list[str]]:

@@ -387,12 +387,12 @@ def collect(
         app_only = doctor_runtime.check_companion_gateway(app_gateway, False, system)
         return [app_only] if app_only is not None else []
 
-    pinned = _pinned(engine_root)
     path = Path(snapshot.openclaw.config_path)
     config, error = read_config(path)
     node_only = detect_node_only(home_dir, platform=system, env=values)
-    outcomes: list[CheckOutcome] = [check_installed(snapshot, declared, pinned)]
-    outcomes.extend(filter(None, [check_declaration(declared), check_config(path, config, error)]))
+    declaration = check_declaration(declared, node_only=bool(node_only))
+    outcomes: list[CheckOutcome] = [check_installed(snapshot, declared, _pinned(engine_root))]
+    outcomes.extend(filter(None, [declaration, check_config(path, config, error)]))
     if config is not None:
         outcomes.extend(_config_outcomes(
             config, snapshot, path, home_dir, vault_data, failover, connect, node_lister, system,

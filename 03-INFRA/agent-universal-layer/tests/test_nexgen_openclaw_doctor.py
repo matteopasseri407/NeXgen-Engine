@@ -625,8 +625,41 @@ def test_isolated_native_gateway_package_is_not_treated_as_store_conflict_in_doc
 
 
 def test_installed_but_undeclared_is_named_without_the_module(tmp_path):
-    outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()), declared=False)
-    assert by_id(outcomes)["openclaw.declared"].severity == Severity.WARN
+    """A gateway that does not declare the module still deserves the advice, and only that.
+
+    The engine aligns every installed OpenClaw with the pin now, so the old warning
+    that promised it would not be kept aligned was false.
+    """
+    from nexgen_core import i18n
+
+    i18n.set_language("en")
+    try:
+        outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()), declared=False)
+    finally:
+        i18n.set_language(None)
+    declared = by_id(outcomes)["openclaw.declared"]
+    assert declared.severity == Severity.WARN
+    assert "will not keep it aligned" not in declared.message
+    assert "modules.state.yaml" in (declared.action or "")
+
+
+def test_an_undeclared_node_is_told_it_follows_the_pin(tmp_path):
+    """A node is not the gateway: the declaration is the gateway's business, and the pin is followed."""
+    from nexgen_core import i18n
+
+    role = tmp_path / "home" / ".local" / "state" / "nexgen" / "role.json"
+    role.parent.mkdir(parents=True)
+    role.write_text(json.dumps({"role": "node"}), encoding="utf-8")
+    i18n.set_language("it")
+    try:
+        outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()), declared=False)
+    finally:
+        i18n.set_language(None)
+
+    declared = by_id(outcomes)["openclaw.declared"]
+    assert declared.severity is Severity.OK
+    assert declared.message == "Questa macchina è un nodo: OpenClaw segue la versione fissata dal motore."
+    assert declared.action is None
 
 
 def test_an_empty_report_says_why_it_is_empty():

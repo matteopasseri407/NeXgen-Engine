@@ -20,6 +20,8 @@ class ParsedNodeStatus:
     gateway_url: str | None
     gateway_origin: str | None
     raw_status: str | None = None
+    #: The service process, when the payload reports one: it is how an idle node is observed.
+    pid: int | None = None
 
 
 def normalize_gateway_origin(target: str) -> str:
@@ -91,6 +93,15 @@ def parse_node_service_command(args: list[str]) -> tuple[bool, str | None]:
     return True, gw_url
 
 
+def _reported_pid(runtime: dict) -> int | None:
+    """The service process the payload names, or None when it names none that can be watched."""
+    try:
+        pid = int(runtime.get("pid"))
+    except (TypeError, ValueError):  # nexgen: allow reason="a payload without a usable pid is reported as unknown, not guessed"
+        return None
+    return pid if pid > 0 else None
+
+
 def parse_node_status_payload(data: Any) -> ParsedNodeStatus:
     """Parses output from 'openclaw node status --json' (real service shape and legacy)."""
     if not isinstance(data, dict):
@@ -106,8 +117,10 @@ def parse_node_status_payload(data: Any) -> ParsedNodeStatus:
 
         runtime = service.get("runtime") or {}
         status_str = ""
+        pid = None
         if isinstance(runtime, dict):
             status_str = str(runtime.get("status") or "").strip().lower()
+            pid = _reported_pid(runtime)
         is_running = is_node and (status_str == "running")
 
         origin = normalize_gateway_origin(gw_url) if gw_url else None
@@ -117,6 +130,7 @@ def parse_node_status_payload(data: Any) -> ParsedNodeStatus:
             gateway_url=gw_url,
             gateway_origin=origin,
             raw_status=status_str or ("running" if is_running else "stopped"),
+            pid=pid,
         )
 
     # Fallback for direct / legacy payloads
