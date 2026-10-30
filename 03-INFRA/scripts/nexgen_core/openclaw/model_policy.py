@@ -16,6 +16,10 @@ So the engine registers a wildcard per reachable provider, not a frozen list of 
 provider that publishes a model tomorrow keeps it selectable without editing this file,
 and a CLI backend plugin's models appear because their provider does. `model` on an agent
 is only that agent's default; the list here is what it may be changed to.
+
+A CLI runtime is not one of those providers: `claude-cli` names *how* an Anthropic model
+runs, so it is written as a per-model `agentRuntime` pin beside the `anthropic/*` wildcard,
+which is the shape OpenClaw's own model-policy migration produces.
 """
 from __future__ import annotations
 
@@ -99,7 +103,7 @@ def reachable_wildcards(detected: Any, current: dict[str, Any] | None = None) ->
     """One wildcard per provider this machine has a login or a backend for."""
     providers: list[str] = []
     if getattr(detected.claude, "available", False):
-        providers.extend((CLAUDE_PROVIDER, CLAUDE_CLI_PROVIDER))
+        providers.append(CLAUDE_PROVIDER)
     if getattr(detected.codex, "available", False):
         providers.append(CODEX_PROVIDER)
     if getattr(detected, "opencode_go", False):
@@ -112,6 +116,32 @@ def reachable_wildcards(detected: Any, current: dict[str, Any] | None = None) ->
     if approved(current):
         providers.append(LOCAL_AGY_BACKEND)
     return [wildcard(provider) for provider in providers]
+
+
+def runtime_model_pins(detected: Any) -> dict[str, Any]:
+    """The `agents.defaults.models` entries saying which runtime a provider's models run on.
+
+    A Claude login serves every Anthropic model through Claude Code's own CLI. OpenClaw
+    records that as a per-model `agentRuntime` pin, and its model-policy migration writes
+    exactly this entry when it meets the legacy `claude-cli/*` allowlist ref: a runtime is
+    not a catalogue, so the allowlist names `anthropic/*` and the pin says how it runs.
+    """
+    if not getattr(detected.claude, "available", False):
+        return {}
+    return {wildcard(CLAUDE_PROVIDER): {"agentRuntime": {"id": CLAUDE_CLI_PROVIDER}}}
+
+
+def _with_model_pins(config: dict[str, Any], pins: dict[str, Any]) -> dict[str, Any]:
+    """The same proposal with those pins merged into `agents.defaults.models`."""
+    if not pins:
+        return config
+    agents = _dict(config.get("agents"))
+    defaults = dict(_dict(agents.get("defaults")))
+    models = dict(_dict(defaults.get("models")))
+    for ref, entry in pins.items():
+        models[ref] = {**_dict(models.get(ref)), **entry}
+    defaults["models"] = models
+    return {**config, "agents": {**agents, "defaults": defaults}}
 
 
 def with_providers(config: dict[str, Any], providers: Iterable[str]) -> dict[str, Any]:
@@ -157,7 +187,10 @@ def with_reachable(config: dict[str, Any], detected: Any, current: dict[str, Any
         *(wildcard(provider) for provider in named_providers(current)),
         *(wildcard(provider) for provider in named_providers(config)),
     ])
-    return _with_allow(config, refs)
+    # `claude-cli/*` in a file an earlier engine wrote is the legacy shape OpenClaw
+    # migrates on every repair: carried forward, the two would rewrite it forever.
+    refs = [ref for ref in refs if ref != wildcard(CLAUDE_CLI_PROVIDER)]
+    return _with_model_pins(_with_allow(config, refs), runtime_model_pins(detected))
 
 
 def with_declared(config: dict[str, Any], refs: Iterable[str]) -> dict[str, Any]:

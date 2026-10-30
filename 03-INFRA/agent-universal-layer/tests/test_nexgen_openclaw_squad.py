@@ -110,6 +110,40 @@ def test_a_squad_that_names_no_model_adds_no_policy(tmp_path: Path) -> None:
     assert "defaults" not in applied["agents"] or "modelPolicy" not in applied["agents"]["defaults"]
 
 
+def test_a_bound_channel_brings_its_plugin_into_the_allowlist() -> None:
+    """A binding to a channel whose plugin is not allowed routes nothing.
+
+    OpenClaw adds that plugin to `plugins.allow` itself the first time a channel is
+    configured ("Telegram configured, enabled automatically"), so a setup that left it
+    to the doctor had a list the engine owns changed under it on the next run.
+    """
+    squad = {"bindings": [{"match": {"channel": "telegram"}, "agentId": "main"}]}
+
+    applied = apply_squad({"plugins": {"allow": ["browser"], "entries": {}}, "agents": {"entries": {}}}, squad)
+
+    assert "telegram" in applied["plugins"]["allow"]
+    assert applied["bindings"] == [{"match": {"channel": "telegram"}, "agentId": "main"}]
+
+
+def test_a_channel_alias_names_the_plugin_openclaw_ships_for_that_channel() -> None:
+    """OpenClaw's built-in channel table maps `teams` to `msteams`; the plugin id follows it."""
+    squad = {"bindings": [{"match": {"channel": "teams"}, "agentId": "main"}]}
+
+    applied = apply_squad({"plugins": {"allow": ["browser"], "entries": {}}, "agents": {"entries": {}}}, squad)
+
+    assert "msteams" in applied["plugins"]["allow"]
+    assert "teams" not in applied["plugins"]["allow"]
+
+
+def test_a_channel_no_bundled_plugin_serves_gets_no_invented_plugin_id() -> None:
+    """A channel plugin the person installed is already allowed by them, and its id is theirs."""
+    squad = {"bindings": [{"match": {"channel": "my-own-bridge"}, "agentId": "main"}]}
+
+    applied = apply_squad({"plugins": {"allow": ["browser"], "entries": {}}, "agents": {"entries": {}}}, squad)
+
+    assert applied["plugins"]["allow"] == ["browser"]
+
+
 def test_the_squad_models_table_becomes_agents_defaults_models() -> None:
     """The root `models` object is strict: `mode`, `providers`, `catalogRefresh`, nothing else.
 

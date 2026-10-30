@@ -7,6 +7,12 @@ and a `claude-cli` agent was given connectors in a file OpenClaw never lets it
 read. Here the judge is OpenClaw itself: `openclaw config validate` on the file
 the engine produces, from the profile, the example squad and the MCP render.
 
+Validation is not the whole contract: OpenClaw also repairs the file. The last
+test runs `openclaw doctor --fix` on the same document and requires every leaf the
+engine proposed to survive untouched, and the engine's next merge to agree with
+the repaired file -- the engine fills gaps through OpenClaw's own doors and never
+fights it about a value.
+
 Without an `openclaw` binary the test skips. The CI job that installs the pinned
 release sets `NEXGEN_REQUIRE_OPENCLAW=1`, which turns that skip into a failure,
 so the gate can never pass by absence.
@@ -80,18 +86,66 @@ def _machine(config_path: Path) -> Detection:
     )
 
 
+def _env(home: Path, config: Path) -> dict[str, str]:
+    """The environment a run of the pinned binary sees: this file, in this home, and nothing else."""
+    return {**os.environ, "HOME": str(home), "OPENCLAW_STATE_DIR": str(config.parent),
+            "OPENCLAW_CONFIG_PATH": str(config)}
+
+
 def _validate(openclaw: str, home: Path, config: Path) -> subprocess.CompletedProcess[str]:
-    env = {**os.environ, "HOME": str(home), "OPENCLAW_STATE_DIR": str(config.parent),
-           "OPENCLAW_CONFIG_PATH": str(config)}
-    return subprocess.run([openclaw, "config", "validate"], env=env, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", timeout=180, check=False)
+    return subprocess.run([openclaw, "config", "validate"], env=_env(home, config), capture_output=True,
+                          text=True, encoding="utf-8", errors="replace", timeout=180, check=False)
 
 
-def _engine_document(config: Path) -> dict:
+def _doctor(openclaw: str, home: Path, config: Path) -> subprocess.CompletedProcess[str]:
+    """`openclaw doctor --fix`: the run whose repairs the engine must not have to undo."""
+    return subprocess.run([openclaw, "doctor", "--fix", "--non-interactive", "--no-workspace-suggestions"],
+                          env=_env(home, config), capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=300, check=False)
+
+
+def _engine_proposal(config: Path) -> tuple[dict, dict]:
+    """The proposal a setup on this machine builds, and the squad it applies."""
     proposed = build_config(_machine(config))
     squad = load_squad(LAYER / "squad.example.yaml")
     assert squad, "the example squad must load"
+    return proposed, squad
+
+
+def _engine_document(config: Path) -> dict:
+    proposed, squad = _engine_proposal(config)
     return merged_document(None, apply_squad(proposed, squad))
+
+
+def _engine_owned_leaves(document: dict) -> dict[tuple[str, ...], object]:
+    """Every leaf the engine proposed, keyed by its path.
+
+    A dict is walked into; a scalar or a list is a leaf, because the engine writes whole
+    lists (the model policy, a provider's model array) and OpenClaw rewriting one item
+    inside them is the same disagreement as a changed scalar. Anything OpenClaw adds at a
+    path the engine never wrote is not in this map, and is allowed.
+    """
+    leaves: dict[tuple[str, ...], object] = {}
+
+    def walk(value: object, path: tuple[str, ...]) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                walk(child, path + (str(key),))
+        else:
+            leaves[path] = value
+
+    walk(document, ())
+    return leaves
+
+
+def _at(document: object, path: tuple[str, ...]) -> object:
+    """The value at `path`, or a marker when OpenClaw deleted the path entirely."""
+    value = document
+    for key in path:
+        if not isinstance(value, dict) or key not in value:
+            return "<MISSING>"
+        value = value[key]
+    return value
 
 
 @pytest.mark.skipif(OPENCLAW is None and not REQUIRED, reason=WHY_SKIPPED)
@@ -104,6 +158,51 @@ def test_the_profile_and_the_example_squad_are_valid_for_the_pinned_openclaw(tmp
     result = _validate(openclaw, tmp_path, config)
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(OPENCLAW is None and not REQUIRED, reason=WHY_SKIPPED)
+def test_openclaw_doctor_leaves_the_engine_document_alone_and_the_next_merge_agrees(
+    tmp_path: Path,
+) -> None:
+    """The engine fills gaps and never fights OpenClaw: one cycle, and no flip-flop.
+
+    `doctor --fix` is the other author of this file. Whatever it repairs -- the canonical
+    provider refs, the declared system primary, the channel plugin, the Ollama context --
+    must be the shape the engine already proposed, or the two rewrite each other on every
+    run. The second half is the next cycle: merging the same proposal into the repaired
+    file changes nothing, so a setup after a doctor run is not a third version of the file.
+    """
+    openclaw = _openclaw()
+    config = tmp_path / ".openclaw" / "openclaw.json"
+    config.parent.mkdir(parents=True)
+    proposed, squad = _engine_proposal(config)
+    engine = merged_document(None, apply_squad(proposed, squad))
+    config.write_text(json.dumps(engine, indent=2), encoding="utf-8")
+
+    result = _doctor(openclaw, tmp_path, config)
+    assert result.returncode == 0, result.stdout + result.stderr
+    after = json.loads(config.read_text(encoding="utf-8"))
+
+    for path, value in _engine_owned_leaves(engine).items():
+        assert _at(after, path) == value, (
+            f"openclaw doctor --fix changed an engine-owned leaf: {'.'.join(path)} "
+            f"was {value!r}, is {_at(after, path)!r}"
+        )
+
+    # A plugin entry the engine writes without `enabled` is a key OpenClaw adds inside a
+    # path the engine owns, which the leaf walk above cannot see. The engine says it in the
+    # proposal, and the walk then proves the value stands after the repair.
+    for name, entry in engine["plugins"]["entries"].items():
+        assert entry.get("enabled") is True, (
+            f"the engine allows the '{name}' plugin without switching it on"
+        )
+
+    next_cycle = merged_document(after, apply_squad(proposed, squad))
+    for path in _engine_owned_leaves(engine):
+        assert _at(next_cycle, path) == _at(after, path), (
+            f"the next merge would revert OpenClaw's file at {'.'.join(path)}: "
+            f"the file says {_at(after, path)!r}, the merge writes {_at(next_cycle, path)!r}"
+        )
 
 
 @pytest.mark.skipif(OPENCLAW is None and not REQUIRED, reason=WHY_SKIPPED)

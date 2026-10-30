@@ -214,6 +214,13 @@ this machine serves itself, and `google-antigravity-cli/*` when the local `agy` 
 plugin is allowed.
 A wildcard, not a list of ids, so a model a provider publishes tomorrow is selectable
 without another setup.
+A CLI runtime is a pin on the model, never a provider in that list: a Claude login gives
+`anthropic/*` plus `agents.defaults.models["anthropic/*"] = {"agentRuntime": {"id": "claude-cli"}}`,
+which is the shape OpenClaw's own `doctor --fix` migrates a legacy `claude-cli/*` entry to.
+
+The same setup names the assistant's model as the system primary in
+`agents.defaults.model`, unless the file already declares one: with the key absent,
+OpenClaw picks a primary itself, and on a machine with a local model it picks that one.
 
 The squad adds what it names: each `model` on an agent, and each key of its `models` table,
 becomes an `agents.defaults.models` entry, and its provider a wildcard.
@@ -232,6 +239,10 @@ bindings:
       channel: "telegram"
     agentId: "main"
 ```
+A binding also brings that channel's bundled plugin into `plugins.allow` (`telegram` for the
+example above), which is the entry OpenClaw adds itself the first time a channel is
+configured: a channel whose plugin is not allowed routes nothing. A channel no bundled
+plugin serves is left to the plugin the person installed and allowed.
 
 ## Secure Model Authentication
 

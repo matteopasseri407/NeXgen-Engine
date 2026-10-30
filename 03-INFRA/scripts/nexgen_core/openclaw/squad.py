@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import agy_backend, agy_prereqs, model_policy
+from nexgen_core.openclaw import agy_backend, agy_prereqs, channels, model_policy
 from nexgen_core.openclaw.claude_cli import CLAUDE_CLI
 from nexgen_core.openclaw.runtime import apply_runtime
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
@@ -432,7 +432,7 @@ def apply_squad(
         _apply_model_entries(target, squad["models"])
 
     if "bindings" in squad and isinstance(squad["bindings"], list):
-        target["bindings"] = list(squad["bindings"])
+        target = channels.with_bindings(target, squad["bindings"])
 
     # The runtime block decides how many chats each agent gets and how long a
     # manual fork lives. It is policy, so it travels with the squad instead of

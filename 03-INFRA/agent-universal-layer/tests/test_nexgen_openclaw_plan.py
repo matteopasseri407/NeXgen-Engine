@@ -388,8 +388,13 @@ def test_the_plan_lists_the_agents_of_the_configuration_it_proposes(tmp_path):
     assert set(plan.to_dict()["agents"]) == set(plan.config["agents"]["entries"])
 
 
-def test_an_agent_of_the_squad_with_no_model_of_its_own_is_named_but_not_given_one(tmp_path):
-    """No number is invented: an agent with no model says so, and inherits the configured default."""
+def test_an_agent_of_the_squad_with_no_model_of_its_own_runs_the_declared_default(tmp_path):
+    """No number is invented: the agent inherits the default model the proposal names for the assistant.
+
+    The engine now declares `agents.defaults.model` (the assistant's own model), because a
+    file without one let OpenClaw choose a system primary itself. An agent the squad gives
+    no model of its own therefore runs that one, and the plan says so instead of blank.
+    """
     home = tmp_path / "home"
     path = put_config(home, {})
     vault = tmp_path / "vault"
@@ -401,8 +406,9 @@ def test_an_agent_of_the_squad_with_no_model_of_its_own_is_named_but_not_given_o
 
     plan = build_plan(detected=detected(path), home=home, env={}, vault_data=vault)
 
-    assert plan.to_dict()["agents"]["revisore"] == ""
-    assert "revisore: no model declared" in render_plan(plan)
+    assert plan.to_dict()["agents"]["revisore"] == plan.to_dict()["agents"]["main"]
+    assert "revisore: no model declared" not in render_plan(plan)
+    assert plan.to_dict()["agents"]["revisore"] in render_plan(plan)
 
 
 def test_an_agent_with_no_model_inherits_the_configured_default():

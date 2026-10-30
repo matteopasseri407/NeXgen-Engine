@@ -118,6 +118,10 @@ gateway: of the two contexts reading the file, the one that cannot use this gate
 `nexgen openclaw setup` registers one wildcard per reachable provider in
 `agents.defaults.modelPolicy.allow`, and the squad registers each model it names, so every
 agent's picker lists every model this machine can run, the local `agy` backend included.
+A CLI runtime is a pin on the model, not a provider in that list: a Claude login gives
+`anthropic/*` with `agents.defaults.models["anthropic/*"]` pinned to `claude-cli`, and
+`agents.defaults.model` names the assistant's model as the system primary, so OpenClaw's
+`doctor --fix` finds the shape it would have migrated to and changes nothing.
 The rule and its reasons live in `nexgen_core/openclaw/model_policy.py`; what the owner sees
 is in [Squad as data](squad.md#model-choice-per-agent).
 

@@ -186,7 +186,19 @@ def _plugin_entries(
         entries[LOCAL_AGY_BACKEND] = {
             "config": {"permissionMode": agy_backend.mode_for_engine(current, LOCAL_AGY_BACKEND)},
         }
-    return entries
+    return _enabled_entries(entries, _plugin_allow(detected, chosen, current))
+
+
+def _enabled_entries(entries: dict[str, Any], allow: list[str]) -> dict[str, Any]:
+    """Switch on every plugin the allowlist names, which is what OpenClaw writes itself.
+
+    An entry without `enabled` is a plugin OpenClaw repairs on the next `doctor --fix`;
+    saying it here keeps the engine's proposal the one the file ends up holding.
+    """
+    return {
+        name: {"enabled": True, **entry} if name in allow else entry
+        for name, entry in entries.items()
+    }
 
 
 def _first_available(candidates: list[str | None]) -> str | None:
@@ -285,12 +297,30 @@ def _agents_section(
     return {
         "ownership": "explicit",
         "defaults": {
+            **_default_model(agents, current),
             "models": _default_models(detected),
             # Otherwise the system jobs write to the channels continuously.
             "heartbeat": {"every": "0m"},
         },
         "entries": _agent_entries(agents, detected, current, language),
     }
+
+
+def _default_model(agents: dict[str, str], current: dict[str, Any] | None) -> dict[str, Any]:
+    """The `model` key of `agents.defaults`: the assistant's own model, unless the file decides.
+
+    Left undeclared, OpenClaw picks a system primary itself, and on a machine with a
+    local model it picked that one rather than the assistant's. A default the person set
+    is theirs, in either shape the file stores it (`{primary, fallbacks}` or a plain ref),
+    and an empty mapping leaves the key out of the proposal entirely.
+    """
+    block = current.get("agents") if isinstance(current, dict) else None
+    defaults = block.get("defaults") if isinstance(block, dict) else None
+    declared = defaults.get("model") if isinstance(defaults, dict) else None
+    if (isinstance(declared, str) and declared.strip()) or (isinstance(declared, dict) and declared):
+        return {}
+    main = agents.get("main")
+    return {"model": {"primary": main}} if main else {}
 
 
 def _agent_entries(models: dict[str, str], detected: Detection, current: dict[str, Any] | None, language: str) -> dict[str, Any]:
