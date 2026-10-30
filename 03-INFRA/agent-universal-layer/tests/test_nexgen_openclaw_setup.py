@@ -1266,4 +1266,44 @@ def test_a_claude_cli_agent_reads_its_connectors_from_claude_code(tmp_path):
         "the deny is added beside the supervisor's own list, never instead of it"
     native = json.loads((machine.home / ".claude.json").read_text(encoding="utf-8"))["mcpServers"]
     assert set(native) == {"vault-library", "n8n-mcp"}
-    assert "The connectors of capo come from Claude Code's own configuration." in machine.output()
+    assert "The connectors of capo reach it through OpenClaw's gateway, not the loopback server." in machine.output()
+
+
+#: The gateway plus one connector, for the ordering test below.
+GATEWAY_MANIFEST = """schema_version: 1
+servers:
+  lazy-mcp:
+    exposure: eager
+    tier: core
+    transport: stdio
+    command: python3
+    args: ["${AGENT_ENGINE_ROOT}/agent-universal-layer/mcp/lazy-mcp.py"]
+    targets: [claude, codex, antigravity, opencode, openclaw]
+  vault-library:
+    exposure: eager
+    transport: stdio
+    command: node
+    args: ["vault.mjs"]
+"""
+
+
+def test_the_render_mounts_the_gateway_before_the_doctor_judges_it(tmp_path):
+    """One run is enough: the doctor at step 9 reads the file this run already wrote.
+
+    The first setup after the gateway became a `claude-cli` agent's only road used to
+    report `openclaw.mcp.lazy` FAIL, because the render that mounts it ran after the
+    doctor and only a second setup was clean.
+    """
+    machine = Machine(tmp_path)
+    machine.runner.onboard = onboard_writer(machine.config, machine.state_dir / "workspace")
+    manifest = machine.vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(GATEWAY_MANIFEST, encoding="utf-8")
+
+    code = machine.run(detected=detection(machine.config, installed=False, claude=True))
+
+    assert code == 0
+    gateway = machine.config_json()["mcp"]["servers"]["lazy-mcp"]
+    assert gateway["env"]["LAZY_MCP_CLI"] == "openclaw"
+    assert "PASS  openclaw.mcp.lazy" in machine.output()
+    assert "FAIL  openclaw.mcp.lazy" not in machine.output()

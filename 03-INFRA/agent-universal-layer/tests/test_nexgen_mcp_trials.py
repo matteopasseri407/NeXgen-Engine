@@ -134,7 +134,8 @@ def test_the_plan_shows_a_trial_with_its_time_and_the_gateway_serves_it(env):
     assert row["trial"]
     assert row["cells"]["openclaw"] == "direct"
     assert all(row["cells"][cli] == "gateway" for cli in mp.CLIS if cli != "openclaw")
-    assert "spike" not in plan["gateway"]["openclaw"]
+    # OpenClaw mounts everything directly, and its gateway mirrors that: the trial is served there too.
+    assert "spike" in plan["gateway"]["openclaw"]
     assert all("spike" in plan["gateway"][cli] for cli in mp.CLIS if cli != "openclaw")
 
 

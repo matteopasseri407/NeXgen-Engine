@@ -5,17 +5,17 @@ with the precedence OpenClaw's own resolver applies (`resolveModelRuntimePolicy`
 its `model-runtime-policy` module): the agent's own `models` entry, then
 `agents.defaults.models`, then the provider's `models[]` entry, then the agent's
 `provider/*` wildcard, then the provider's own `agentRuntime`. Two decisions depend
-on this one answer -- the connectors kept off the loopback and the native Claude
-Code configuration that carries them instead -- so it is answered here once, as a
-pure function of the file, and nowhere else.
+on this one answer -- the connectors kept off the loopback and the gateway that serves
+them instead -- so it is answered here once, as a pure function of the file, and nowhere
+else.
 
 Why it matters: for a `claude-cli` agent OpenClaw hands Claude Code an MCP server
 of its own named `openclaw`, marked `alwaysLoad: true`, carrying every tool the
 agent has, connectors included. `alwaysLoad` puts every schema in the prompt of
 every call: on a configured gateway that measured 943k tokens for one request,
-74 calls in one turn. A `claude-cli` agent belongs in the configuration a plain
-Claude Code has, connectors deferred behind ToolSearch -- which is what
-`claude_loopback` and `claude_native` arrange.
+74 calls in one turn. A `claude-cli` agent belongs on the engine's `lazy-mcp`
+gateway, which `claude_loopback` keeps off the deny list, and `claude_native` keeps
+Claude Code's own file aligned for the sessions that read it directly.
 """
 from __future__ import annotations
 

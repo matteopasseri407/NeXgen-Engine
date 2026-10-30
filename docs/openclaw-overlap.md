@@ -98,19 +98,19 @@ leaves the execution mode to its own argv, where the engine does not guess.
 Both sides keep the same rule, `agy` never approves its own tool calls, and the mode the
 engine can verify is the one it writes.
 
-### One MCP file, and no gateway inside OpenClaw
+### One MCP file, with the gateway left out
 
 `agy` reads `~/.gemini/antigravity-cli/mcp_config.json`, and the engine writes that file from
 the canonical manifest (`~/.gemini/antigravity/mcp_config.json`, fanned out to the folders
 Antigravity reads).
 
 When OpenClaw drives the local `agy` backend, the antigravity renderer writes the servers
-OpenClaw mounts directly and leaves `lazy-mcp` out.
-OpenClaw never mounts the engine's gateway, because it has its own Tool Search, so a server
-behind that gateway would be dead there; and the plugin starts the same CLI from the same
-home, so one file has to serve both lives.
+OpenClaw mounts directly and leaves `lazy-mcp` out: the gateway entry belongs to OpenClaw
+and carries its CLI identity (`LAZY_MCP_CLI=openclaw`), which is not the one `agy` would
+need, and `agy` reaches those connectors directly through this file. The plugin starts the
+same CLI from the same home, so one file has to serve both lives.
 This is the one dialect where a server declared `exposure: lazy` is not served by the
-gateway: of the two contexts reading the file, the one that cannot see a gateway wins.
+gateway: of the two contexts reading the file, the one that cannot use this gateway wins.
 
 ### The model picker on every agent
 

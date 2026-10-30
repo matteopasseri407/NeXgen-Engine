@@ -695,13 +695,15 @@ def test_tool_search_user_disabled_with_many_mcp_servers_warns(tmp_path):
     assert "openclaw.json" in (ts.action or "")
 
 
-def test_mcp_lazy_absent_passes(tmp_path):
+def test_mcp_lazy_absent_without_a_claude_cli_agent_passes(tmp_path):
+    """Nothing is behind the gateway here, so nothing needs it: OpenClaw mounts every connector."""
     outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()))
     lazy = by_id(outcomes)["openclaw.mcp.lazy"]
     assert lazy.severity == Severity.OK
 
 
-def test_mcp_lazy_mounted_by_engine_fails(tmp_path):
+def test_mcp_lazy_mounted_by_engine_passes(tmp_path):
+    """The engine's gateway is the road a `claude-cli` agent keeps its connectors on."""
     cfg = clean_config()
     cfg["mcp"] = {
         "servers": {
@@ -714,8 +716,21 @@ def test_mcp_lazy_mounted_by_engine_fails(tmp_path):
     }
     outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg))
     lazy = by_id(outcomes)["openclaw.mcp.lazy"]
+    assert lazy.severity == Severity.OK
+    assert "lazy-mcp" in lazy.message
+
+
+def test_mcp_lazy_missing_with_a_claude_cli_agent_fails(tmp_path):
+    """The 943k-token fix denies the connectors on the loopback: without the gateway the agent has nothing."""
+    cfg = clean_config()
+    ref = "anthropic/claude-opus-5-5"
+    cfg["agents"]["defaults"]["models"] = {ref: {"agentRuntime": {"id": "claude-cli"}}}
+    cfg["agents"]["entries"]["capo"]["model"] = ref
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg))
+    lazy = by_id(outcomes)["openclaw.mcp.lazy"]
     assert lazy.severity == Severity.BROKEN
     assert "lazy-mcp" in lazy.message
+    assert "nexgen openclaw setup" in (lazy.action or "")
 
 
 def test_mcp_lazy_mounted_by_user_warns(tmp_path):

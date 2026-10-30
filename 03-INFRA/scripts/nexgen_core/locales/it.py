@@ -352,14 +352,13 @@ MESSAGES: dict[str, str] = {
     "Usage: render.py [--write CLI|--revert CLI|--reset CLI|--adopt CLI [--apply]|--inventory]\n  --write CLI      regenerate the CLI's MCP section from the manifest\n  --revert CLI     restore the CLI's config from its most recent backup\n  --reset CLI      backup + remove the config (antigravity/opencode only)\n  --adopt CLI      manifest stub for live servers outside the manifest (--apply to apply)\n  --inventory      list the MCP servers per CLI (read-only)": "Uso: render.py [--write CLI|--revert CLI|--reset CLI|--adopt CLI [--apply]|--inventory]\n  --write CLI      rigenera la sezione MCP della CLI dal manifest\n  --revert CLI     ripristina la config della CLI dal backup piu' recente\n  --reset CLI      backup + rimozione della config (solo antigravity/opencode)\n  --adopt CLI      stub manifest per i server vivi fuori manifest (--apply per applicare)\n  --inventory      elenca i server MCP per CLI (read-only)",
     'render.py: unknown argument: {arg}': 'render.py: argomento sconosciuto: {arg}',
     'Claude configuration updated': 'Configurazione Claude aggiornata',
-    "The connectors of {agent} come from Claude Code's own configuration.": "I connettori di {agent} arrivano dalla configurazione nativa di Claude Code.",
+    "The connectors of {agent} reach it through OpenClaw's gateway, not the loopback server.": "I connettori di {agent} arrivano dal gateway di OpenClaw, non dal server di loopback.",
     "Claude Code's own MCP configuration was not rendered: {error}": "Non ho potuto scrivere la configurazione MCP nativa di Claude Code: {error}",
     "An agent runs on Claude Code's CLI, but its connectors are not where they belong: {problems}.": "Un agente gira sulla CLI di Claude Code, ma i suoi connettori non sono dove dovrebbero: {problems}.",
     "still on the loopback server: {connectors}": "ancora sul server di loopback: {connectors}",
-    "missing from Claude Code's own configuration: {connectors}": "mancanti dalla configurazione nativa di Claude Code: {connectors}",
-    "Claude Code's own configuration does not exist ({path})": "la configurazione nativa di Claude Code non esiste ({path})",
-    "Run 'nexgen openclaw setup': it denies every connector on the loopback server and renders Claude Code's own configuration, where they load lazily.": "Lancia 'nexgen openclaw setup': nega ogni connettore sul server di loopback e scrive la configurazione nativa di Claude Code, dove vengono caricati in modo lazy.",
-    "The {count} agent(s) on Claude Code's CLI keep every connector off the loopback server, and Claude Code's own configuration carries them.": "I {count} agenti sulla CLI di Claude Code tengono ogni connettore fuori dal server di loopback, e la configurazione nativa di Claude Code li porta.",
+    "the gateway {gateway} is not mounted in OpenClaw, so its connectors reach no road": "il gateway {gateway} non è montato in OpenClaw, quindi i suoi connettori non hanno nessuna strada",
+    "Run 'nexgen openclaw setup': it denies every connector on the loopback server and mounts the gateway in OpenClaw, which is where they load lazily.": "Lancia 'nexgen openclaw setup': nega ogni connettore sul server di loopback e monta il gateway in OpenClaw, dove vengono caricati in modo lazy.",
+    "The {count} agent(s) on Claude Code's CLI keep every connector off the loopback server and reach them through the gateway in OpenClaw.": "I {count} agenti sulla CLI di Claude Code tengono ogni connettore fuori dal server di loopback e li raggiungono tramite il gateway in OpenClaw.",
     "An agent runs on 'agy', but its connectors are not where they belong: {problems}.": "Un agente gira su 'agy', ma i suoi connettori non sono dove dovrebbero: {problems}.",
     "Agents run on CLIs that carry their own connectors, but they are not where they belong: {problems}.": "Gli agenti girano su CLI che portano i propri connettori, ma questi non sono dove dovrebbero: {problems}.",
     "still on the loopback server for an agent on 'agy': {connectors}": "ancora sul server di loopback per un agente su 'agy': {connectors}",
@@ -1581,10 +1580,12 @@ MESSAGES: dict[str, str] = {
         "Tool Search è disattivato dalla configurazione utente ({count} server MCP montati, in uso gli schemi diretti).",
     "No lazy-mcp gateway is mounted in OpenClaw (connectors are direct).":
         "Nessun gateway lazy-mcp è montato in OpenClaw (i connettori sono diretti).",
-    "The lazy-mcp gateway is mounted inside OpenClaw by the engine: OpenClaw connects MCP servers directly.":
-        "Il gateway lazy-mcp è montato dentro OpenClaw dal motore: OpenClaw collega i server MCP direttamente.",
-    "Run 'nexgen sync' or 'nexgen mcp render' to remove the engine's lazy-mcp entry.":
-        "Esegui 'nexgen sync' o 'nexgen mcp render' per rimuovere la voce lazy-mcp del motore.",
+    "The lazy-mcp gateway is mounted in OpenClaw: an agent on 'claude-cli' reaches its connectors through it.":
+        "Il gateway lazy-mcp è montato in OpenClaw: un agente su 'claude-cli' raggiunge i suoi connettori tramite esso.",
+    "The lazy-mcp gateway is not mounted in OpenClaw, and an agent runs on 'claude-cli': its connectors are denied on the loopback server and reach it nowhere.":
+        "Il gateway lazy-mcp non è montato in OpenClaw e un agente gira su 'claude-cli': i suoi connettori sono negati sul server di loopback e non lo raggiungono da nessuna parte.",
+    "Run 'nexgen openclaw setup' or 'nexgen mcp render': it mounts the gateway, which is the road those connectors take.":
+        "Esegui 'nexgen openclaw setup' o 'nexgen mcp render': monta il gateway, che è la strada di quei connettori.",
     "A custom 'lazy-mcp' connector is configured under mcp.servers; OpenClaw does not use the engine gateway.":
         "Un connettore 'lazy-mcp' personalizzato è configurato in mcp.servers; OpenClaw non usa il gateway del motore.",
     "Verify if this custom connector is needed or rename it to avoid collision with the engine gateway.":

@@ -4,7 +4,7 @@ One job: the doctor's checks that read the OpenClaw file and nothing else. The
 heartbeat that starts jobs writing to the channels continuously, a Google
 subscription the terms do not allow, the ACP bridge that would carry one, the
 tool-search mode a large connector list makes matter, and the engine's lazy-mcp
-gateway mounted where OpenClaw cannot use it.
+gateway an agent on `claude-cli` needs to reach its connectors.
 
 They were part of `doctor.py` until that file reached its size ceiling. None of
 them opens a socket, starts a process or writes a file, which is why they need
@@ -129,24 +129,39 @@ def check_tool_search(config: dict[str, Any]) -> CheckOutcome:
 
 
 def check_mcp_lazy(config: dict[str, Any]) -> CheckOutcome:
-    """The lazy-mcp gateway: must never be mounted by the engine in OpenClaw."""
+    """The lazy-mcp gateway: the road a `claude-cli` agent's connectors take.
+
+    Those agents keep every connector off OpenClaw's `alwaysLoad` loopback server, so
+    the engine's entry under `mcp.servers` is what makes the connectors reachable at
+    all. Without such an agent nothing is behind the gateway and its absence is fine.
+    """
     from nexgen_core.mcp_render.openclaw import is_engine_lazy_mcp
+    from nexgen_core.openclaw.claude_cli import claude_cli_agents
 
     mcp = config.get("mcp") if isinstance(config.get("mcp"), dict) else {}
     servers = mcp.get("servers") if isinstance(mcp.get("servers"), dict) else {}
     entry = servers.get("lazy-mcp")
+    if entry is not None and is_engine_lazy_mcp(entry):
+        return CheckOutcome(
+            id="openclaw.mcp.lazy",
+            severity=Severity.OK,
+            message=t("The lazy-mcp gateway is mounted in OpenClaw: an agent on 'claude-cli' reaches its "
+                      "connectors through it."),
+        )
     if entry is None:
+        if claude_cli_agents(config):
+            return CheckOutcome(
+                id="openclaw.mcp.lazy",
+                severity=Severity.BROKEN,
+                message=t("The lazy-mcp gateway is not mounted in OpenClaw, and an agent runs on 'claude-cli': "
+                          "its connectors are denied on the loopback server and reach it nowhere."),
+                action=t("Run 'nexgen openclaw setup' or 'nexgen mcp render': it mounts the gateway, which is the "
+                         "road those connectors take."),
+            )
         return CheckOutcome(
             id="openclaw.mcp.lazy",
             severity=Severity.OK,
             message=t("No lazy-mcp gateway is mounted in OpenClaw (connectors are direct)."),
-        )
-    if is_engine_lazy_mcp(entry):
-        return CheckOutcome(
-            id="openclaw.mcp.lazy",
-            severity=Severity.BROKEN,
-            message=t("The lazy-mcp gateway is mounted inside OpenClaw by the engine: OpenClaw connects MCP servers directly."),
-            action=t("Run 'nexgen sync' or 'nexgen mcp render' to remove the engine's lazy-mcp entry."),
         )
     return CheckOutcome(
         id="openclaw.mcp.lazy",

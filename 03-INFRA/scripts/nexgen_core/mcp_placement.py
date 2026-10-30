@@ -15,6 +15,11 @@ One declaration per server expresses the intent:
 The older knobs (`tier`, `lazy`, `lazy_targets`) are still honoured when `exposure` is absent, so a manifest
 that has not been migrated, and an older engine reading a migrated one, keep working. `targets` is always
 the allow-list of CLIs and `enabled: false` always switches a server off.
+
+OpenClaw is the one exception, and it is still one rule: everything mounted there is direct, and the gateway
+is mounted too because a `claude-cli` agent has its connectors denied on OpenClaw's `alwaysLoad` loopback
+server. `gateway_serves` answers what the gateway in each CLI serves, and both this module's listing and the
+gateway's own manifest module ask it.
 """
 from __future__ import annotations
 
@@ -79,9 +84,14 @@ def _is_gateway(srv: dict[str, Any], name: str | None = None) -> bool:
 
 
 def _place_openclaw(srv: dict[str, Any], name: str | None = None) -> Placement:
-    """Every enabled server targeting OpenClaw is mounted directly; lazy-mcp is never mounted."""
+    """Every enabled server targeting OpenClaw is mounted directly, the gateway included.
+
+    The gateway is mounted here because a `claude-cli` agent has its connectors denied
+    on OpenClaw's `alwaysLoad` loopback server, and `mcp.servers` is the only road left
+    to them (see `gateway_serves`).
+    """
     if _is_gateway(srv, name):
-        return Placement(ABSENT, "openclaw: gateway not mounted")
+        return Placement(DIRECT, "openclaw: gateway for CLI agents")
     exposure = srv.get("exposure")
     if exposure == "eager":
         return Placement(DIRECT, "exposure: eager")
@@ -172,11 +182,25 @@ def problems(servers: dict[str, dict[str, Any]], clis: tuple[str, ...] = CLIS) -
     return _problems_impl(servers, clis)
 
 
+def gateway_serves(srv: dict[str, Any], cli: str, name: str | None = None) -> bool:
+    """Whether the gateway mounted in `cli` serves `srv`.
+
+    Everywhere else it serves the servers the plan routes behind it (`GATEWAY_KIND`).
+    In OpenClaw it mirrors what the file mounts directly: a `claude-cli` agent keeps
+    `<server>__*` out of the `alwaysLoad` loopback server, so the gateway in
+    `mcp.servers` is the road that remains. The gateway itself is never served.
+    """
+    if _is_gateway(srv, name):
+        return False
+    kind = _place_impl(srv, cli, name=name).kind
+    return kind == (DIRECT if cli == "openclaw" else GATEWAY_KIND)
+
+
 def _gateway_servers_for_impl(servers: dict[str, dict[str, Any]], cli: str) -> set[str]:
-    """The servers the gateway mounted in `cli` must serve: exactly those placed behind it for that CLI."""
-    return {name for name, srv in servers.items() if isinstance(srv, dict) and name != GATEWAY and _place_impl(srv, cli, name=name).kind == GATEWAY_KIND}
+    """The servers the gateway mounted in `cli` must serve, by the one rule above."""
+    return {name for name, srv in servers.items() if isinstance(srv, dict) and gateway_serves(srv, cli, name)}
 
 
 def gateway_servers_for(servers: dict[str, dict[str, Any]], cli: str) -> set[str]:
-    """The servers the gateway mounted in `cli` must serve: exactly those placed behind it for that CLI."""
+    """The servers the gateway mounted in `cli` must serve, by the one rule above."""
     return _gateway_servers_for_impl(servers, cli)

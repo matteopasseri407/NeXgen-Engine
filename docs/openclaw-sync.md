@@ -30,14 +30,19 @@ and nothing else in that file is touched: models, channels, gateway settings and
 servers the manifest does not declare are OpenClaw's own. A machine where OpenClaw
 was never set up has no config file, and the renderer does not invent one.
 
-Inside OpenClaw, connectors are always mounted **directly**, never behind `lazy-mcp`. OpenClaw already provides
-native **Tool Search** (active by default when `tools.toolSearch` is unset) to compact tool schemas behind search
-and call controls while applying OpenClaw's own tool policies, inventory, and approval cards. The engine never
-writes `tools.toolSearch` and retires any legacy `tools.toolSearch: false` left by earlier setups. As documented in
-OpenClaw's `docs/gateway/local-models.md`, local routes use structured Tool Search on their own to preserve capabilities
-without blowing prompt context; an operator who explicitly wishes to disable Tool Search globally can do so by configuring
-an object such as `tools.toolSearch: { "enabled": false }` (see `docs/concepts/experimental-features.md`). The MCP renderer
-removes any engine-written `lazy-mcp` entry from `mcp.servers` while preserving any user-defined connector with that name.
+Inside OpenClaw, the manifest's connectors are still mounted **directly** in `mcp.servers`, and the engine also
+mounts its `lazy-mcp` gateway beside them. That entry is what an agent on `claude-cli` uses: OpenClaw starts
+Claude Code with `--strict-mcp-config --mcp-config <its own file>`, so `~/.claude.json` is never read, and the
+engine keeps every connector's `<server>__*` off OpenClaw's `alwaysLoad` loopback server (943k tokens measured
+on one request). The gateway is a normal entry, so OpenClaw's native **Tool Search** (active by default when
+`tools.toolSearch` is unset) still defers it, and it is never put in `tools.deny`. A hand-written entry under
+the same name is replaced on the next render, because the manifest owns that name.
+
+The engine never writes `tools.toolSearch` and retires any legacy `tools.toolSearch: false` left by earlier
+setups. As documented in OpenClaw's `docs/gateway/local-models.md`, local routes use structured Tool Search on
+their own to preserve capabilities without blowing prompt context; an operator who explicitly wishes to disable
+Tool Search globally can do so by configuring an object such as `tools.toolSearch: { "enabled": false }` (see
+`docs/concepts/experimental-features.md`).
 
 OpenClaw can also act as an MCP server for the other harnesses (`claude`, `codex`,
 `antigravity`, `opencode`) via `openclaw mcp serve`. The canonical manifest entry is
@@ -404,7 +409,7 @@ have both CLIs.
 
 | Layer | Claude Code | OpenClaw | Runtime `claude-cli` / `codex` |
 |---|---|---|---|
-| MCP | `mcpServers` in `~/.claude.json` | `mcp.servers` in `openclaw.json` | Claude Code / Codex use their own rendered config |
+| MCP | `mcpServers` in `~/.claude.json` | `mcp.servers` in `openclaw.json` | a `claude-cli` agent reaches them through the `lazy-mcp` entry in OpenClaw's `mcp.servers` (Claude Code's own file is never read there); Codex uses its own rendered config |
 | Instructions | `~/CLAUDE.md` points at the canonical `AGENTS.md` | the managed block in each workspace `AGENTS.md` | the agent's own runtime loads its instructions |
 | Skills | `~/.claude/skills` | `~/.agents/skills` (shared catalog) | the agent's own runtime loads its skills |
 | Guardrail | `PreToolUse` → `claude-guardrail-adapter.mjs` | `before_tool_call` in the plugin | Claude Code's / Codex's own guardrail, installed by this engine |

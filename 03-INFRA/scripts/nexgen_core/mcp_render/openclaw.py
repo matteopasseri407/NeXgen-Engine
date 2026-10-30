@@ -349,6 +349,34 @@ def _apply_servers(
                 logger.warning("OpenClaw connector %r has a URL this machine cannot resolve, skipped", name)
                 continue
         servers_table[name] = _build_entry(srv, (references or {}).get(name))
+    _mount_gateway(servers_table, servers, http_servers)
+
+
+def _mount_gateway(
+    servers_table: dict[str, Any],
+    servers: dict[str, dict[str, Any]],
+    http_servers: dict[str, Any] | None,
+) -> None:
+    """Writes the engine's `lazy-mcp` entry: the road left to a `claude-cli` agent.
+
+    The manifest's gateway is placed directly in OpenClaw (`mcp_placement`), and the
+    entry carries references only, so the busy work lives in `openclaw_gateway`.
+    """
+    from nexgen_core.mcp_render.openclaw_gateway import gateway_entry
+
+    gateway = servers.get("lazy-mcp")
+    if not isinstance(gateway, dict):
+        return
+    bridge_spec = (http_servers or {}).get("lazy-mcp") if http_servers else None
+    if bridge_spec is not None:
+        servers_table["lazy-mcp"] = _bridged_entry("lazy-mcp", gateway, bridge_spec)
+        return
+    served = {name: srv for name, srv in servers.items() if name != "lazy-mcp"}
+    servers_table["lazy-mcp"] = gateway_entry(
+        gateway,
+        served,
+        python=_is_python(str(gateway.get("command") or "")),
+    )
 
 
 def _env_references(renderer) -> dict[str, dict[str, str]]:

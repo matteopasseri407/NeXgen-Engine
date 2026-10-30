@@ -54,15 +54,16 @@ def served_cli() -> str:
 
 
 def served_by_gateway(srv: dict[str, Any], cli: str, placement) -> bool:
-    """Whether this gateway, mounted in `cli`, serves `srv`.
+    """Whether this gateway, mounted in `cli`, serves `srv`: the placement rule's one answer.
 
     It used to serve every `lazy: true` server to every CLI, so a server mounted directly in a CLI was also in
-    that CLI's gateway, and `targets` and `enabled` were ignored. Now it serves exactly what the plan routes
-    behind it for the CLI it is in. A gateway that was never told its CLI (a config written before this) keeps
-    the old behaviour until the next guard cycle rewrites it.
+    that CLI's gateway, and `targets` and `enabled` were ignored. It now asks `mcp_placement.gateway_serves`,
+    which routes behind it for the other CLIs and mirrors what OpenClaw mounts directly, where the gateway is
+    a `claude-cli` agent's only road to a connector. A gateway that was never told its CLI (a config written
+    before this) keeps the old behaviour until the next guard cycle rewrites it.
     """
     if cli and placement is not None:
-        return placement.place(srv, cli).kind == placement.GATEWAY_KIND
+        return placement.gateway_serves(srv, cli)
     return bool(srv.get("lazy")) or srv.get("exposure") == "lazy"
 
 

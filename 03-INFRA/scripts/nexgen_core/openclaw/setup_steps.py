@@ -344,6 +344,25 @@ def write_step(setup: Setup, plan) -> str:
         return "failed"
 
 
+def render_mcp_step(setup: Setup) -> bool:
+    """Step 4, after the write: mount the manifest's connectors, gateway included.
+
+    The doctor at step 9 judges the file as it stands, and the gateway it now demands
+    for a `claude-cli` agent is written by this render: leaving the render to the next
+    `nexgen sync` made the first setup report a fault and only the second one clean.
+    """
+    from nexgen_core.renderer import McpRenderer
+
+    renderer = McpRenderer(vault_data=setup.vault_data, engine_root=setup.engine_root, home=setup.home)
+    try:
+        ok, message = renderer.render_openclaw(write=True)
+    except (OSError, ValueError) as exc:  # nexgen: allow reason="an unreadable manifest or config is reported as a step that did not land, never a crash after the gateway was already written"
+        setup.out(t("The MCP connectors were not rendered: {error}", error=exc))
+        return False
+    setup.out(message)
+    return ok
+
+
 def workspaces_step(setup: Setup, plan, before: set[str]) -> None:
     """Step 5: the folders, the manuals, and the first-run file to remove."""
     from nexgen_core.openclaw.setup_skills import prepare_skills, skill_roots

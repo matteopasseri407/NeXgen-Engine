@@ -128,7 +128,11 @@ def _carried_file() -> dict:
                 "marketing": {"name": "marketing", "workspace": "/home/person/.openclaw/workspace-marketing"},
             },
         },
-        "mcp": {"servers": {"vault-library": {"command": "node", "args": ["vault.mjs"]}}},
+        "mcp": {"servers": {
+            "vault-library": {"command": "node", "args": ["vault.mjs"]},
+            # What the render adds: the gateway a `claude-cli` agent's connectors travel through.
+            "lazy-mcp": {"command": "python3", "args": ["lazy-mcp.py"], "env": {"LAZY_MCP_CLI": "openclaw"}},
+        }},
     }
 
 

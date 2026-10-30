@@ -62,3 +62,20 @@ def test_the_value_never_reaches_the_output(tmp_path):
 
     assert all("valore-che-non-si-stampa" not in line for line in setup.said)
     assert (setup.state_dir / ".env").is_file()
+
+
+def test_a_variable_every_process_has_is_never_frozen_in_the_file(tmp_path):
+    """The HTTP bridge cites `${PATH}` and `${HOME}`: their setup-time values must not
+    land in `.env`, where they would override the real ones on every later start."""
+    import json
+
+    setup = _setup(tmp_path, {"PATH": "/setup/shell/bin", "HOME": str(tmp_path / "setup-home"), "TOOL_TOKEN": "secret"})
+    setup.config_path.write_text(json.dumps({"mcp": {"servers": {"tool": {
+        "command": "node", "args": ["bridge.mjs"],
+        "env": {"PATH": "${PATH}", "HOME": "${HOME}", "TOOL_TOKEN": "${TOOL_TOKEN}"},
+    }}}}), encoding="utf-8")
+
+    written = write_gateway_service_env(setup, {}).read_text(encoding="utf-8")
+
+    assert 'TOOL_TOKEN="secret"' in written
+    assert "PATH=" not in written and "HOME=" not in written

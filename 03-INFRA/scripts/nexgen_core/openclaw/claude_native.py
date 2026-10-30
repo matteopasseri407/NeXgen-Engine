@@ -1,16 +1,17 @@
-"""Claude Code's own MCP configuration is where a `claude-cli` agent's connectors live.
+"""Claude Code's own MCP configuration, kept aligned for the sessions that read it.
 
 One job: for a gateway with at least one `claude-cli` agent, make sure Claude Code's
 native configuration (`~/.claude.json`) is the file the engine renders, and say in
-one line per agent that this is where its connectors come from. It reuses the
-renderer `nexgen sync` already runs for the `claude` target -- the same servers, the
-same deferral behind ToolSearch -- so there is no second implementation and nothing
-about that renderer changes here.
+one line per agent where its connectors come from now. It reuses the renderer
+`nexgen sync` already runs for the `claude` target -- the same servers, the same
+deferral behind ToolSearch -- so there is no second implementation and nothing about
+that renderer changes here.
 
-Why this exists: `claude_loopback` takes the connectors off OpenClaw's loopback
-server, which is the configuration a plain Claude Code has: the connectors a person
-knows are the ones in their own `~/.claude.json`, loaded lazily. Removing them from
-the loopback without this step would leave the agent with no connectors at all.
+Why the agent does not read this file: OpenClaw starts Claude Code with
+`--strict-mcp-config --mcp-config <its own file>`, so a `claude-cli` agent's connectors
+travel through the engine's `lazy-mcp` gateway in `mcp.servers` instead. This file
+still matters to a plain Claude Code session on the same machine, and `claude_loopback`
+takes the connectors off OpenClaw's `alwaysLoad` loopback server either way.
 
 Nothing here writes `alwaysLoad`: the renderer builds every entry from the manifest,
 and an entry the engine manages carries only transport, command and environment. A
@@ -30,7 +31,7 @@ from nexgen_core.openclaw.claude_cli import claude_cli_agents
 def announce(agents: Iterable[str], out: Callable[[str], None] = print) -> None:
     """One line per agent, saying where its connectors come from now."""
     for agent_id in agents:
-        out(t("The connectors of {agent} come from Claude Code's own configuration.",
+        out(t("The connectors of {agent} reach it through OpenClaw's gateway, not the loopback server.",
               agent=agent_id))
 
 
