@@ -235,13 +235,13 @@ def cmd_groom(args) -> int:
     from nexgen_core.openclaw.sessions_groom import groom
 
     try:
-        lines = groom(dry_run=bool(getattr(args, "dry_run", False)))
+        report = groom(dry_run=bool(getattr(args, "dry_run", False)))
     except FileNotFoundError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
-    if not lines:
+    if not report.lines:
         print(t("No agent chat needs compacting."))
-    return 0
+    return 1 if report.failed else 0
 
 
 def cmd_smoke(args) -> int:

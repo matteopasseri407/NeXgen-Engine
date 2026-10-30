@@ -2615,4 +2615,8 @@ MESSAGES: dict[str, str] = {
         '  Guardia del contesto: job orario registrato.',
     '  Context guard: the job was not registered, the gateway refused it.':
         '  Guardia del contesto: il job non è stato registrato, il gateway lo ha rifiutato.',
+    'skipped: the {runtime} backend cannot confirm a native compaction':
+        'saltata: il backend {runtime} non può confermare una compattazione nativa',
+    'timed out after {seconds}s':
+        'tempo scaduto dopo {seconds}s',
 }
