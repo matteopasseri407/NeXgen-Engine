@@ -5,9 +5,12 @@ Contract order and rules:
 1. Canonical manifest (mcp/manifest.yaml) as the single source of truth.
 2. Resolution of stdio commands (command + expanded args) and HTTP servers with env-ref tokens.
 3. Native support for the 5 CLIs: Claude, Codex (TOML), OpenCode, Antigravity (bridge), OpenClaw (JSON `mcp.servers`); plus Claude Desktop (default-deny allowlist, see mcp_render/claude_desktop).
-4. Additive preservation of live servers absent from the manifest, except
-   those listed in `retired_servers`: that's the explicit, cross-CLI removal
-   mechanism, and it always wins over additive preservation.
+4. Additive preservation of live servers absent from the manifest, with two
+   exceptions that always win over it: an exact name in `retired_servers` (a
+   user-authorized tombstone), and a name this engine itself declared at an
+   earlier render and the manifest no longer declares (remembered in the
+   machine-local MCP state, so a removal needs nobody's memory). Every other
+   unknown name is preserved.
    (On Desktop, manifest-known but not allowlisted servers are additionally
    reported, never removed.)
 5. Atomic writes with safety backups and strict error handling.
@@ -15,6 +18,7 @@ Contract order and rules:
 from __future__ import annotations
 
 import contextlib
+import importlib
 import os
 import platform
 import shutil
@@ -36,6 +40,7 @@ from nexgen_core.paths import (  # noqa: E402 - sys.path shim for cloned checkou
 
 from nexgen_core.mcp_render import IS_WINDOWS  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.mcp_placement import DIRECT, GATEWAY, GATEWAY_CLI_ENV, place  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.mcp_retirement import remember_declared, retired_names  # noqa: E402 - sys.path shim for cloned checkout
 
 
 class McpRenderer:
@@ -60,6 +65,9 @@ class McpRenderer:
         #: While not None, writes are collected here instead of performed
         #: (see :meth:`pending_changes`).
         self._pending: dict[Path, str] | None = None
+        #: True during :meth:`render_all`: the memory of declared servers is
+        #: written once, after every dialect has pruned with the old one.
+        self._batching_renders = False
         #: Error text per target from the last :meth:`render_all`, for the
         #: callers that must say why a target failed (the guard does).
         self.last_errors: dict[str, str] = {}
@@ -115,31 +123,37 @@ class McpRenderer:
         return opencode_config_path(self.home)
 
     def retired_server_names(self) -> set[str]:
-        """The names of retired connectors: the explicit removal mechanism.
+        """The names that must disappear from every rendered configuration.
 
-        `load_mcp_manifest` already excludes these names from the active
-        servers, but the four CLIs that additively preserve existing live
-        servers (Claude, Antigravity, OpenCode, OpenClaw) would never drop them on
-        their own: a retired connector must disappear from every rendered
-        configuration, not merely be absent from new ones. Removing it is
-        not a failure and must not be reported as one.
+        Resolution order, and nothing else:
+        1. a name the manifest declares now is live, and is never retired;
+        2. an exact name in `retired_servers`, or a trial that expired or was
+           dropped, is retired: the explicit, user-authorized mechanism;
+        3. a name this engine declared at an earlier real render and the
+           manifest no longer declares is retired too, without a tombstone:
+           the engine remembers what it wrote (`mcp_state`), so a removal
+           reaches every CLI even when nobody wrote one down;
+        4. any other unknown name is preserved additively: someone put it
+           there by hand, and that is not the engine's to delete. A name kept
+           alive some other way (a running trial, an `orphans_allowlist`
+           entry) is preserved even if the memory knows it.
+
+        Read-only by contract: the memory is written by a real render
+        (:meth:`render_all` or one `render_<cli>(write=True)`), never by a
+        check, a plan or a dry run. The decision itself lives in
+        `nexgen_core.mcp_retirement`.
         """
-        return self._retired_server_names_impl()
+        return retired_names(self.manifest_path, self.home)
 
-    def _retired_server_names_impl(self) -> set[str]:
-        retired: set[str] = set()
-        manifest_names: set[str] = set()
-        if self.manifest_path.is_file():
-            data = load_mcp_manifest(self.manifest_path)
-            retired = set(data.get("retired_servers", set()))
-            manifest_names = set(data.get("servers", {}))
-        try:
-            from nexgen_core import mcp_trials
+    def _remember_declared_servers(self, write: bool) -> None:
+        """Records what this render declared, so a later removal needs no tombstone.
 
-            retired |= {n for n in mcp_trials.retired_names() if n not in manifest_names}
-        except Exception:  # nexgen: allow reason="trial state failure must not stop manifest retirements"
-            pass
-        return retired
+        Only a real write counts: a dry run, :meth:`pending_changes` and every
+        doctor check read the memory and leave it as they found it. A render
+        that raised never reaches this call.
+        """
+        if write and not self.previewing and not self._batching_renders:
+            remember_declared(self.manifest_path, self.home)
 
     def _resolve_command_and_args(self, entry: dict[str, Any]) -> None:
         cmd = entry.get("command") or entry.get("cmd")
@@ -363,30 +377,32 @@ class McpRenderer:
                 out.append(name)
         return sorted(out)
 
+    def _render_dialect(self, dialect: str, write: bool, **kwargs: Any) -> tuple[bool, str]:
+        """Runs one CLI's dialect writer, then remembers what a real write declared."""
+        module = importlib.import_module(f"nexgen_core.mcp_render.{dialect}")
+        result = module.render(self, write=write, **kwargs)
+        self._remember_declared_servers(write)
+        return result
+
     def render_claude(self, write: bool = False) -> tuple[bool, str]:
         """Generates the MCP configuration for Claude Code (~/.claude.json)."""
-        from nexgen_core.mcp_render import claude
-        return claude.render(self, write=write)
+        return self._render_dialect("claude", write)
 
     def render_antigravity(self, write: bool = False) -> tuple[bool, str]:
         """Generates Antigravity's MCP configuration and fans it out to its consumers."""
-        from nexgen_core.mcp_render import antigravity
-        return antigravity.render(self, write=write)
+        return self._render_dialect("antigravity", write)
 
     def render_opencode(self, write: bool = False) -> tuple[bool, str]:
         """Generates native OpenCode 2 MCP config and migrates flat V1 entries."""
-        from nexgen_core.mcp_render import opencode
-        return opencode.render(self, write=write)
+        return self._render_dialect("opencode", write)
 
     def render_codex(self, write: bool = False) -> tuple[bool, str]:
         """Generates Codex's native MCP configuration (~/.codex/config.toml)."""
-        from nexgen_core.mcp_render import codex
-        return codex.render(self, write=write)
+        return self._render_dialect("codex", write)
 
     def render_claude_desktop(self, write: bool = False) -> tuple[bool, str]:
         """Generates the Claude Desktop app's MCP configuration (default-deny allowlist)."""
-        from nexgen_core.mcp_render import claude_desktop
-        return claude_desktop.render(self, write=write)
+        return self._render_dialect("claude_desktop", write)
 
     def render_openclaw(
         self,
@@ -394,29 +410,38 @@ class McpRenderer:
         http_servers: dict[str, Any] | None = None,
     ) -> tuple[bool, str]:
         """Writes the connectors into OpenClaw's own config (~/.openclaw/openclaw.json)."""
-        from nexgen_core.mcp_render import openclaw
-        return openclaw.render(self, write=write, http_servers=http_servers)
+        return self._render_dialect("openclaw", write, http_servers=http_servers)
 
     def render_all(self, write: bool = False) -> dict[str, bool]:
-        """Renders for all targets, each isolated: one corrupt live config must not stall the others."""
+        """Renders for all targets, each isolated: one corrupt live config must not stall the others.
+
+        The memory of declared servers is written once, after the whole pass:
+        a per-target write would forget a removed name before the remaining
+        dialects had pruned it.
+        """
         results: dict[str, bool] = {}
         self.last_errors = {}
-        for name, method in (
-            ("claude", self.render_claude),
-            ("claude-desktop", self.render_claude_desktop),
-            ("antigravity", self.render_antigravity),
-            ("opencode", self.render_opencode),
-            ("codex", self.render_codex),
-            ("openclaw", self.render_openclaw),
-        ):
-            try:
-                ok, _ = method(write=write)
-            except Exception as exc:
-                # Keep the message: a bare "failed" tells the user nothing
-                # about which line of which config to fix.
-                ok = False
-                self.last_errors[name] = str(exc) or type(exc).__name__
-            results[name] = ok
+        self._batching_renders = True
+        try:
+            for name, method in (
+                ("claude", self.render_claude),
+                ("claude-desktop", self.render_claude_desktop),
+                ("antigravity", self.render_antigravity),
+                ("opencode", self.render_opencode),
+                ("codex", self.render_codex),
+                ("openclaw", self.render_openclaw),
+            ):
+                try:
+                    ok, _ = method(write=write)
+                except Exception as exc:
+                    # Keep the message: a bare "failed" tells the user nothing
+                    # about which line of which config to fix.
+                    ok = False
+                    self.last_errors[name] = str(exc) or type(exc).__name__
+                results[name] = ok
+        finally:
+            self._batching_renders = False
+        self._remember_declared_servers(write)
         return results
 
     @property

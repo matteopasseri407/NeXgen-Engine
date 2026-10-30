@@ -8,9 +8,17 @@ import re
 import shutil
 import tomllib
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 
+from nexgen_core.checks.mcp_rendered import (  # noqa: F401 - kept importable from this module
+    CLI_RENDER_SPECS as _CLI_RENDER_SPECS,
+    _codex_section_name,
+    expected_and_rendered as _expected_and_rendered,
+    rendered_names_claude_style as _rendered_names_claude_style,
+    rendered_names_codex as _rendered_names_codex,
+    rendered_names_openclaw as _rendered_names_openclaw,
+    rendered_names_opencode as _rendered_names_opencode,
+)
 from nexgen_core.config import load_mcp_manifest
 from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc
@@ -140,93 +148,6 @@ def check_mcp_manifest(manifest_path: Path) -> CheckOutcome:
             message=t("The MCP manifest contains errors: {error}", error=exc),
             action=t("Fix the syntax of mcp/manifest.yaml."),
         )
-
-
-# ---- Rendered-config readers (per-CLI server names) -------------------------
-
-def _rendered_names_claude_style(path: Path) -> set[str]:
-    """Server names for Claude and Antigravity: both write `mcpServers`
-    in plain JSON."""
-    data = json.loads(path.read_text(encoding="utf-8"))
-    servers = data.get("mcpServers", {})
-    return set(servers.keys()) if isinstance(servers, dict) else set()
-
-
-def _rendered_names_opencode(path: Path) -> set[str]:
-    raw = path.read_text(encoding="utf-8")
-    data = parse_jsonc(raw) if path.suffix == ".jsonc" else json.loads(raw)
-    mcp = data.get("mcp", {}) if isinstance(data, dict) else {}
-    # A flat V1 config may still connect via OpenCode's compatibility layer,
-    # but it is not aligned with the native V2 renderer contract.
-    servers = mcp.get("servers", {}) if isinstance(mcp, dict) else {}
-    return set(servers.keys()) if isinstance(servers, dict) else set()
-
-
-def _rendered_names_codex(path: Path) -> set[str]:
-    with path.open("rb") as fh:
-        data = tomllib.load(fh)
-    servers = data.get("mcp_servers", {})
-    return set(servers.keys()) if isinstance(servers, dict) else set()
-
-
-def _rendered_names_openclaw(path: Path) -> set[str]:
-    """OpenClaw keeps its servers under `mcp.servers`, in the same file as its own settings."""
-    data = json.loads(path.read_text(encoding="utf-8-sig"))
-    mcp = data.get("mcp", {}) if isinstance(data, dict) else {}
-    servers = mcp.get("servers", {}) if isinstance(mcp, dict) else {}
-    return set(servers.keys()) if isinstance(servers, dict) else set()
-
-
-def _identity(name: str) -> str:
-    return name
-
-
-def _codex_section_name(name: str) -> str:
-    """Codex normalizes hyphens to underscores in TOML section names
-    (see McpRenderer.render_codex)."""
-    return name.replace("-", "_")
-
-
-@dataclass(frozen=True)
-class _CliRenderSpec:
-    reader: Callable[[Path], set[str]]
-    normalize: Callable[[str], str]
-
-
-#: For each CLI: how to read the server names already rendered in its
-#: native config, and how to normalize an expected name before comparing
-#: (only Codex remaps hyphens).
-_CLI_RENDER_SPECS: dict[str, _CliRenderSpec] = {
-    "claude": _CliRenderSpec(_rendered_names_claude_style, _identity),
-    "claude-desktop": _CliRenderSpec(_rendered_names_claude_style, _identity),
-    "antigravity": _CliRenderSpec(_rendered_names_claude_style, _identity),
-    "codex": _CliRenderSpec(_rendered_names_codex, _codex_section_name),
-    "opencode": _CliRenderSpec(_rendered_names_opencode, _identity),
-    "openclaw": _CliRenderSpec(_rendered_names_openclaw, _identity),
-}
-
-
-def _expected_and_rendered(renderer: McpRenderer, cli: str, path: Path) -> tuple[str | None, set[str], set[str]]:
-    """The expected and rendered server-name sets for one CLI.
-
-    Shared by the drift check and the orphan check so the two cannot
-    disagree about what "rendered" means. The string result is a reason the
-    sets are unknowable: prefixed "template:" for a manifest the renderer
-    cannot resolve (apply would fail the same way — that is drift, not
-    ignorance), plain for an unreadable or never-launched config.
-    """
-    try:
-        expected = set(renderer.load_resolved_servers(cli).keys())
-    except Exception as exc:  # noqa: BLE001 - check failure is reported, never raises
-        return f"template: the manifest cannot be rendered for {cli} ({exc})", set(), set()
-    if not path.is_file():
-        return f"{cli} (never launched: {path} is missing)", expected, set()
-    spec = _CLI_RENDER_SPECS[cli]
-    try:
-        rendered = spec.reader(path)
-    except Exception as exc:  # noqa: BLE001 - check failure is reported, never raises
-        return f"{cli} (unreadable config: {exc})", expected, set()
-    return None, expected, rendered
 
 
 # ---- Rendered-config drift (expected vs rendered names) ---------------------
@@ -614,15 +535,92 @@ def check_mcp_deps(manifest_path: Path, state_dir: Path) -> CheckOutcome:
 
 # ---- Orphans (configured outside the manifest) -----------------------------------
 
+def _orphan_groups(
+    renderer: McpRenderer, cli_paths: dict[str, Path], allowed: set[str]
+) -> tuple[list[str], list[str], int]:
+    """Classifies what the rendered configs hold outside the manifest.
+
+    Two groups, never mixed: `orphan_parts` are entries someone added by hand
+    (the person's decision), `debris_parts` are entries this engine retired and
+    that a later render removes. Both come with the config's path; the third
+    value counts the entries the allowlist already acknowledged.
+    """
+    orphan_parts: list[str] = []
+    debris_parts: list[str] = []
+    ignored_count = 0
+    for cli, path in cli_paths.items():
+        if not path.is_file():
+            continue  # never launched: nothing rendered, nothing to report
+        error, expected, rendered = _expected_and_rendered(renderer, cli, path)
+        if error:
+            continue  # the rendered-configs check already reports unreadable configs
+        spec = _CLI_RENDER_SPECS[cli]
+        # Env-gated manifest servers are never orphans, whoever runs the check.
+        norm_expected = {spec.normalize(name) for name in expected | renderer.env_gated_server_names(cli)}
+        retired = {spec.normalize(name) for name in renderer.retired_server_names()}
+        debris: list[str] = []
+        visible: list[str] = []
+        for name in sorted(rendered - norm_expected):
+            if spec.normalize(name) in retired:
+                # A tombstone, or a name this engine declared and the manifest
+                # no longer does: the next render deletes it, nobody adopts it.
+                debris.append(name)
+                continue
+            # Codex renders section names with underscores; the allowlist
+            # speaks the manifest's names. Both spellings match, plus the
+            # bare form (exempt on every CLI).
+            variants = {name, name.replace("-", "_"), name.replace("_", "-")}
+            if any(v in allowed or f"{cli}:{v}" in allowed for v in variants):
+                ignored_count += 1
+                continue
+            visible.append(name)
+        if debris:
+            debris_parts.append(f"{cli} ({path}): {', '.join(debris)}")
+        if visible:
+            orphan_parts.append(f"{cli} ({path}): {', '.join(visible)}")
+    return orphan_parts, debris_parts, ignored_count
+
+
+def _orphans_outcome(orphan_parts: list[str], debris_parts: list[str]) -> CheckOutcome | None:
+    """The verdict for what the manifest does not declare, or None when there is nothing."""
+    if debris_parts and orphan_parts:
+        return CheckOutcome(
+            id="mcp.orphans",
+            severity=Severity.WARN,
+            message=t(
+                "MCP entries outside the manifest: {retired} were retired by the engine, {orphans} were added by hand.",
+                retired="; ".join(debris_parts),
+                orphans="; ".join(orphan_parts),
+            ),
+            action=t("Adopt only the hand-added ones with 'nexgen import --from <cli>' or declare them in mcp/manifest.yaml; the next 'nexgen sync' removes the retired entries."),
+        )
+    if debris_parts:
+        return CheckOutcome(
+            id="mcp.orphans",
+            severity=Severity.WARN,
+            message=t("MCP entries the engine retired are still configured: {parts}", parts="; ".join(debris_parts)),
+            action=t("No action needed: they are engine debris, and the next 'nexgen sync' removes them."),
+        )
+    if orphan_parts:
+        return CheckOutcome(
+            id="mcp.orphans",
+            severity=Severity.WARN,
+            message=t("MCP servers configured outside the manifest (kept, never removed): {parts}", parts="; ".join(orphan_parts)),
+            action=t("Adopt them with 'nexgen import --from <cli>' or declare them in mcp/manifest.yaml; add them to orphans_allowlist if they are legitimate."),
+        )
+    return None
+
+
 def check_mcp_orphans(vault_data: Path, home: Path) -> CheckOutcome:
     """Servers configured in a CLI but not declared in the manifest.
 
-    WARN-only by design, and never removed: the render additively preserves
-    these entries, which means someone put them there outside the manifest,
-    and the check's only job is to make that visible (with the config's
-    path) instead of letting it drift silently. A legitimate one goes into
-    the manifest's `orphans_allowlist`, not into a memory of things to
-    ignore.
+    WARN-only by design, and split by who owns the entry. One someone added by
+    hand is preserved by every render and surfaced with the config's path: a
+    legitimate one goes into the manifest's `orphans_allowlist`, not into a
+    memory of things to ignore. One this engine retired (`retired_servers`,
+    or a name it declared and the manifest no longer does) is engine debris
+    that the next `nexgen sync` removes, so it is reported as that and never
+    offered for adoption.
     """
     renderer = McpRenderer(vault_data=vault_data, home=home)
     manifest_path = vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
@@ -640,40 +638,10 @@ def check_mcp_orphans(vault_data: Path, home: Path) -> CheckOutcome:
         "openclaw": openclaw_config(home),
     }
 
-    orphan_parts: list[str] = []
-    ignored_count = 0
-    for cli, path in cli_paths.items():
-        if not path.is_file():
-            continue  # never launched: nothing rendered, nothing to report
-        error, expected, rendered = _expected_and_rendered(renderer, cli, path)
-        if error:
-            continue  # the rendered-configs check already reports unreadable configs
-        spec = _CLI_RENDER_SPECS[cli]
-        # Env-gated manifest servers are never orphans, whoever runs the check.
-        norm_expected = {spec.normalize(name) for name in expected | renderer.env_gated_server_names(cli)}
-        orphans = sorted(rendered - norm_expected)
-        if not orphans:
-            continue
-        visible = []
-        for name in orphans:
-            # Codex renders section names with underscores; the allowlist
-            # speaks the manifest's names. Both spellings match, plus the
-            # bare form (exempt on every CLI).
-            variants = {name, name.replace("-", "_"), name.replace("_", "-")}
-            if any(v in allowed or f"{cli}:{v}" in allowed for v in variants):
-                ignored_count += 1
-                continue
-            visible.append(name)
-        if visible:
-            orphan_parts.append(f"{cli} ({path}): {', '.join(visible)}")
-
-    if orphan_parts:
-        return CheckOutcome(
-            id="mcp.orphans",
-            severity=Severity.WARN,
-            message=t("MCP servers configured outside the manifest (kept, never removed): {parts}", parts="; ".join(orphan_parts)),
-            action=t("Adopt them with 'nexgen import --from <cli>' or declare them in mcp/manifest.yaml; add them to orphans_allowlist if they are legitimate."),
-        )
+    orphan_parts, debris_parts, ignored_count = _orphan_groups(renderer, cli_paths, allowed)
+    outcome = _orphans_outcome(orphan_parts, debris_parts)
+    if outcome is not None:
+        return outcome
     if ignored_count:
         return CheckOutcome(
             id="mcp.orphans",

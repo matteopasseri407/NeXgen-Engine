@@ -10,6 +10,10 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- A retired MCP server leaves every CLI even when nobody wrote a tombstone: the engine remembers the server names it declared at its last real render (machine-local MCP state), so removing one from `mcp/manifest.yaml` prunes it on the next sync instead of leaving a connector the CLI fails to start every launch (`lane`, issue #147). Names the engine never declared stay additive, a dry run never writes that memory, and `nexgen doctor` reports the engine's own leftovers as debris the next sync removes rather than as servers to adopt.
+
 ## [2.24.1] - 2026-10-29
 
 ### Changed

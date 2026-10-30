@@ -44,7 +44,11 @@ schema_version: 1
 # Add an exact old server name here only after a deliberate retirement. Live
 # connectors outside `servers` remain additive by default; tombstones are the
 # explicit, cross-CLI removal mechanism.
-retired_servers: []
+retired_servers:
+  # Declared 2026-09-27 for OpenCode and removed 2026-10-24 without a tombstone,
+  # so every sync preserved the stale entry and OpenCode failed to start it on
+  # each launch.
+  - lane
 
 servers:
 

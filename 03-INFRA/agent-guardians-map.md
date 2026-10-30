@@ -22,7 +22,7 @@ One single place decides whether something is broken, one single place tells the
 
 1. resolve `sync/remotes.yaml` and acquire the host-wide lock
 2. fetch the authoritative remote and classify the local state
-3. only for a fresh or local-only state, render MCP config, propagate the rendered Antigravity source, then reconcile skills. MCP is additive except for exact, user-authorized `retired_servers` tombstones
+3. only for a fresh or local-only state, render MCP config, propagate the rendered Antigravity source, then reconcile skills. MCP is additive except for `retired_servers` tombstones and names the engine declared at an earlier render and the manifest no longer declares
 4. aggregate required phase failures into the exit code
 5. `nexgen_core/megaphone.py` (via `agent-doctor`/`bootstrap-alerts` or the heartbeat) notifies ONLY on FAIL
 
@@ -43,7 +43,7 @@ that gated on it no longer exist.
 | `agent-sync` (+ `.timer`) | clock | locked recurring run: prove authoritative freshness, apply config and skills, call the healthcheck. Never publishes. |
 | `agent-doctor` | brain | full alignment diagnosis; the only judge |
 | `nexgen_core/megaphone.py` (`Megaphone`) | megaphone | notifies only on FAIL, with debounce and human-readable format; the only alert |
-| `nexgen_core/renderer.py` + `renderer_cli.py` | executor | generates MCP configs from the manifest (5 CLIs plus the Claude Desktop app on a default-deny allowlist), preserves unknown entries by default, removes only explicit `retired_servers`, and computes drift; `--revert` restores a config from its most recent backup; `--adopt` drafts manifest entries for out-of-manifest live servers |
+| `nexgen_core/renderer.py` + `renderer_cli.py` | executor | generates MCP configs from the manifest (5 CLIs plus the Claude Desktop app on a default-deny allowlist), preserves unknown entries by default, removes `retired_servers` tombstones and the names it declared at an earlier render that the manifest no longer declares, and computes drift; `--revert` restores a config from its most recent backup; `--adopt` drafts manifest entries for out-of-manifest live servers |
 | `nexgen_core/skills.py` | executor | validates the skill manifest, materializes bodies in the non-discovered library, and exposes only declared core or Claude-native views. Codex progressive-discloses discovered bodies, while manual entries remain outside discovery to bound its initial metadata catalog. Legacy discovery folders move only through the explicit, reversible `--migrate-legacy` quarantine. Third-party GitHub sources require a full commit SHA, fetched and verified with noninteractive Git and a bounded timeout. |
 | `skill-check` | executor | advisory security check of a skill (SkillSpector) |
 | authoritative pull inside `nexgen_core/guard.py` | executor | typed freshness gate; unsafe Git states block apply instead of degrading to best effort |

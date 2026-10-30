@@ -536,6 +536,10 @@ MESSAGES: dict[str, str] = {
     "Run 'agent-sync apply' to regenerate them.": "Esegui 'agent-sync apply' per rigenerarle.",
     "Some CLIs have not been started yet on this machine, so their MCP config could not be checked: {parts}": "Alcuni assistenti non risultano ancora avviati su questa macchina, quindi non è stato possibile verificarne la config MCP: {parts}",
     "MCP configuration files generated and aligned for all active CLIs": "File di configurazione MCP generati e allineati per tutti gli assistenti attivi",
+    "MCP entries outside the manifest: {retired} were retired by the engine, {orphans} were added by hand.": "Voci MCP fuori dal manifest: {retired} sono state ritirate dal motore, {orphans} sono state aggiunte a mano.",
+    "Adopt only the hand-added ones with 'nexgen import --from <cli>' or declare them in mcp/manifest.yaml; the next 'nexgen sync' removes the retired entries.": "Adotta solo quelle aggiunte a mano con 'nexgen import --from <cli>' o dichiarale in mcp/manifest.yaml; il prossimo 'nexgen sync' rimuove le voci ritirate.",
+    "MCP entries the engine retired are still configured: {parts}": "Voci MCP ritirate dal motore ma ancora configurate: {parts}",
+    "No action needed: they are engine debris, and the next 'nexgen sync' removes them.": "Non serve fare niente: sono residui del motore e il prossimo 'nexgen sync' li rimuove.",
 
     # --- checks/reachability_checks.py ---
     "MCP connector '{name}' reachable": "Connettore MCP '{name}' raggiungibile",
