@@ -433,6 +433,27 @@ MESSAGES: dict[str, str] = {
     'Assistants found on this machine': 'Assistenti trovati su questa macchina',
     'Something required is missing.': 'Manca qualcosa di necessario.',
     'Fix it and rerun.': 'Sistemalo e rilancia.',
+    (
+        "the installer creates it in the engine's own Python environment "
+        "(on Ubuntu this needs 'sudo apt install python3-venv')"
+    ): (
+        "lo crea l'installer nell'ambiente Python del motore "
+        "(su Ubuntu serve 'sudo apt install python3-venv')"
+    ),
+    (
+        'PyYAML is missing: the engine is creating its own Python environment in {dir} '
+        '(a few minutes, once per machine).'
+    ): (
+        'Manca PyYAML: il motore si crea il proprio ambiente Python in {dir} '
+        '(qualche minuto, una volta sola per macchina).'
+    ),
+    (
+        "The role's detailed plan needs the engine's Python environment, which the install "
+        "creates first: run it once without --check, then --check shows the whole plan."
+    ): (
+        "Il piano dettagliato del ruolo richiede l'ambiente Python del motore, che l'installazione "
+        "crea per primo: lanciala una volta senza --check, poi --check mostra il piano completo."
+    ),
     'Which install do you want': 'Che installazione vuoi',
     'No file gets written: this is just a recommendation.': 'Nessun file viene scritto: è solo un consiglio.',
     'Profile:': 'Profilo:',
@@ -1903,6 +1924,13 @@ MESSAGES: dict[str, str] = {
         "Entra in una normale sessione utente con systemd, o avviane una, poi rilancia il setup.",
     "npm installs global packages under {prefix}, which this user cannot write.":
         "npm installa i pacchetti globali in {prefix}, dove questo utente non può scrivere.",
+    (
+        "npm installs global packages under {prefix}, which this user cannot write: this account's go to "
+        "{moved} from now on (npm config set prefix)."
+    ): (
+        "npm installa i pacchetti globali in {prefix}, dove questo utente non può scrivere: da ora quelli di "
+        "questo account vanno in {moved} (npm config set prefix)."
+    ),
     "Run 'npm config set prefix ~/.local' once, or use a version manager for Node, then run the setup again.":
         "Lancia una volta 'npm config set prefix ~/.local', oppure usa un version manager per Node, poi rilancia il setup.",
     "Lingering is off for {user}: the gateway stops when your last session closes.":

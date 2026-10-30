@@ -54,15 +54,18 @@ def default_runner(argv: list[str]) -> RunResult:
     """Run an external command capturing stdout and stderr."""
     executable = shutil.which(argv[0]) if argv else None
     cmd = [executable, *argv[1:]] if executable else argv
-    proc = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-        **no_window_kwargs(),
-    )
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            **no_window_kwargs(),
+        )
+    except OSError as exc:  # nexgen: allow reason="a program that is not there is an answer the caller reports, not a traceback that ends the install"
+        return RunResult(127, "", str(exc))
     return RunResult(proc.returncode, proc.stdout, proc.stderr)
 
 

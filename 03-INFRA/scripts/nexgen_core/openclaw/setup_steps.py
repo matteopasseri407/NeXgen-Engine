@@ -24,7 +24,7 @@ from pathlib import Path
 
 from nexgen_core.i18n import t
 from nexgen_core.modules import current_host, write_state_file
-from nexgen_core.openclaw import host_preflight, setup_commands, setup_write
+from nexgen_core.openclaw import host_preflight, npm_prefix, setup_commands, setup_write
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.governor import governor_section
 from nexgen_core.openclaw.pin import node_satisfies, pinned_version, required_node_version
@@ -181,13 +181,8 @@ def _check_linux_host(setup: Setup, npm: str | None, needs_install: bool) -> boo
         setup.out(t("The systemd user bus is not available in this session, so the gateway service cannot be managed."))
         setup.out(t("Log in to a normal user session with systemd, or start one, then run the setup again."))
         return False
-    if needs_install and npm:
-        prefix = host_preflight.npm_prefix(setup.run, npm, setup.env)
-        if prefix is not None and not host_preflight.is_writable(prefix):
-            setup.out(t("npm installs global packages under {prefix}, which this user cannot write.", prefix=prefix))
-            setup.out(t("Run 'npm config set prefix ~/.local' once, or use a version manager for Node, "
-                        "then run the setup again."))
-            return False
+    if needs_install and npm and not npm_prefix.ensure_user_prefix(setup.run, npm, setup.env, setup.out):
+        return False
     user = setup.env.get("USER") or setup.env.get("LOGNAME") or ""
     if user and not host_preflight.linger_enabled(user, host_preflight.LINGER_DIR):
         setup.out(t("Lingering is off for {user}: the gateway stops when your last session closes.", user=user))

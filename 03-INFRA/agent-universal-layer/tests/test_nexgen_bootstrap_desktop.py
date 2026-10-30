@@ -180,7 +180,7 @@ def test_non_required_finding_never_blocks_the_install():
 
 
 def test_secret_reader_keeps_bytes_and_never_asks(monkeypatch, capsys):
-    from nexgen_core import bootstrap
+    from nexgen_core import bootstrap_secrets as bootstrap
 
     monkeypatch.setattr(bootstrap.getpass, "getpass", lambda prompt="": "Sk-AbC_-.+/=è")
     monkeypatch.setattr(bootstrap, "_ask", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no _ask")))
@@ -189,7 +189,7 @@ def test_secret_reader_keeps_bytes_and_never_asks(monkeypatch, capsys):
 
 
 def test_secret_reader_eof_and_empty_mean_skip(monkeypatch):
-    from nexgen_core import bootstrap
+    from nexgen_core import bootstrap_secrets as bootstrap
 
     def boom(prompt=""):
         raise EOFError
@@ -219,10 +219,11 @@ def test_literal_desktop_values_become_refs_after_adoption():
 
 def test_masked_servers_reach_the_closing_summary(monkeypatch, capsys):
     from nexgen_core import bootstrap
+    from nexgen_core import bootstrap_secrets
 
     state = _wire_script_stub(monkeypatch, stored={})
-    monkeypatch.setattr(bootstrap, "_ask", lambda prompt, options="": "s")
-    monkeypatch.setattr(bootstrap, "_store_script", lambda root: Path(__file__))
+    monkeypatch.setattr(bootstrap_secrets, "_ask", lambda prompt, options="": "s")
+    monkeypatch.setattr(bootstrap_secrets, "_store_script", lambda root: Path(__file__))
     bootstrap.wire_absorbed_secrets(Path("/vault"), {}, ["db-svc"])
     out = capsys.readouterr().out
     assert "db-svc" in out and "manual fix" in out
@@ -231,6 +232,7 @@ def test_masked_servers_reach_the_closing_summary(monkeypatch, capsys):
 
 def test_failed_materialize_says_so(monkeypatch, capsys):
     from nexgen_core import bootstrap
+    from nexgen_core import bootstrap_secrets
 
     _wire_script_stub(monkeypatch, stored={"A": ("v", True)})
     import subprocess as _sp
@@ -238,22 +240,23 @@ def test_failed_materialize_says_so(monkeypatch, capsys):
     def boom(script):
         raise _sp.SubprocessError
 
-    monkeypatch.setattr(bootstrap, "_store_materialize", boom)
-    monkeypatch.setattr(bootstrap, "_store_script", lambda root: Path(__file__))
+    monkeypatch.setattr(bootstrap_secrets, "_store_materialize", boom)
+    monkeypatch.setattr(bootstrap_secrets, "_store_script", lambda root: Path(__file__))
     bootstrap.wire_absorbed_secrets(Path("/vault"), {"A": ["s"]})
     assert "materialize failed" in capsys.readouterr().out
 
 
 def test_masked_warning_survives_early_exits(monkeypatch, capsys):
     from nexgen_core import bootstrap
+    from nexgen_core import bootstrap_secrets
 
-    monkeypatch.setattr(bootstrap, "_store_script", lambda root: Path("/nonexistent/x.py"))
+    monkeypatch.setattr(bootstrap_secrets, "_store_script", lambda root: Path("/nonexistent/x.py"))
     bootstrap.wire_absorbed_secrets(Path("/vault"), {}, ["db-svc"])
     out = capsys.readouterr().out
     assert "db-svc" in out and "manual fix" in out
 
     _wire_script_stub(monkeypatch, trial_ok=False)
-    monkeypatch.setattr(bootstrap, "_store_script", lambda root: Path(__file__))
+    monkeypatch.setattr(bootstrap_secrets, "_store_script", lambda root: Path(__file__))
     bootstrap.wire_absorbed_secrets(Path("/vault"), {}, ["db-svc"])
     out = capsys.readouterr().out
     assert "db-svc" in out and "manual fix" in out
@@ -270,7 +273,7 @@ def test_stubs_return_the_adopted_entries_for_wiring(tmp_path, monkeypatch, caps
 
 
 def _wire_script_stub(monkeypatch, stored=None, trial_ok=True):
-    from nexgen_core import bootstrap
+    from nexgen_core import bootstrap_secrets
 
     state = {"stored": dict(stored or {}), "materialized": 0}
 
@@ -287,20 +290,21 @@ def _wire_script_stub(monkeypatch, stored=None, trial_ok=True):
         state["materialized"] += 1
         return True
 
-    monkeypatch.setattr(bootstrap, "_store_names", names)
-    monkeypatch.setattr(bootstrap, "_store_set", set_)
-    monkeypatch.setattr(bootstrap, "_store_materialize", materialize)
+    monkeypatch.setattr(bootstrap_secrets, "_store_names", names)
+    monkeypatch.setattr(bootstrap_secrets, "_store_set", set_)
+    monkeypatch.setattr(bootstrap_secrets, "_store_materialize", materialize)
     return state
 
 
 def test_wire_creates_only_and_summarizes(monkeypatch, capsys):
     from nexgen_core import bootstrap
+    from nexgen_core import bootstrap_secrets
 
     state = _wire_script_stub(monkeypatch, stored={"OLD": ("v", True)})
     answers = iter(["", "s"])
-    monkeypatch.setattr(bootstrap, "_ask", lambda prompt, options="": next(answers))
-    monkeypatch.setattr(bootstrap.getpass, "getpass", lambda prompt="": "N3w-V4lue")
-    monkeypatch.setattr(bootstrap, "_store_script", lambda root: Path(__file__))
+    monkeypatch.setattr(bootstrap_secrets, "_ask", lambda prompt, options="": next(answers))
+    monkeypatch.setattr(bootstrap_secrets.getpass, "getpass", lambda prompt="": "N3w-V4lue")
+    monkeypatch.setattr(bootstrap_secrets, "_store_script", lambda root: Path(__file__))
     bootstrap.wire_absorbed_secrets(Path("/vault"), {"NEW": ["srv"], "OLD": ["srv"], "SKIPME": ["srv"]})
     assert state["stored"]["NEW"] == ("N3w-V4lue", True)
     assert state["stored"]["OLD"] == ("v", True)
@@ -312,9 +316,10 @@ def test_wire_creates_only_and_summarizes(monkeypatch, capsys):
 
 def test_wire_without_store_access_prints_names_and_writes_nothing(monkeypatch, capsys):
     from nexgen_core import bootstrap
+    from nexgen_core import bootstrap_secrets
 
     _wire_script_stub(monkeypatch, trial_ok=False)
-    monkeypatch.setattr(bootstrap, "_store_script", lambda root: Path(__file__))
+    monkeypatch.setattr(bootstrap_secrets, "_store_script", lambda root: Path(__file__))
     bootstrap.wire_absorbed_secrets(Path("/vault"), {"A": ["s1"], "B": ["s2"]})
     out = capsys.readouterr().out
     assert "A" in out and "B" in out and "enroll" in out
@@ -352,9 +357,10 @@ def test_hidden_placeholder_is_flagged(tmp_path, monkeypatch):
 
 def test_masked_only_skips_pointless_materialize(monkeypatch, capsys):
     from nexgen_core import bootstrap
+    from nexgen_core import bootstrap_secrets
 
     state = _wire_script_stub(monkeypatch, stored={})
-    monkeypatch.setattr(bootstrap, "_store_script", lambda root: Path(__file__))
+    monkeypatch.setattr(bootstrap_secrets, "_store_script", lambda root: Path(__file__))
     bootstrap.wire_absorbed_secrets(Path("/vault"), {}, ["db-svc"])
     out = capsys.readouterr().out
     assert "db-svc" in out and "manual fix" in out

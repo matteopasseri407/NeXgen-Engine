@@ -222,7 +222,7 @@ def test_the_installer_hands_the_check_flag_to_every_role(tmp_path: Path, monkey
     from nexgen_core import bootstrap
 
     seen: list[tuple[str, dict]] = []
-    monkeypatch.setattr(bootstrap, "preflight", lambda: [])
+    monkeypatch.setattr(bootstrap, "preflight", lambda check=False: [])
     monkeypatch.setattr(bootstrap, "scaffold", lambda root, write: [])
     monkeypatch.setattr(bootstrap, "detect_clis", lambda *a, **k: [])
     monkeypatch.setattr(bootstrap, "desktop_app_orphans", lambda *a, **k: [])
