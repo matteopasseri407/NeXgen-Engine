@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import shutil
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -26,7 +26,7 @@ from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.doctor import collect as doctor_collect
 from nexgen_core.openclaw.doctor import render as doctor_render
 from nexgen_core.openclaw.pin import pinned_version
-from nexgen_core.openclaw.plan import Plan, build_plan, render_plan
+from nexgen_core.openclaw.plan import Plan, build_plan, render_plan, with_engine_plugin
 from nexgen_core.openclaw.profile import GATEWAY_PORT, Choices
 from nexgen_core.openclaw.setup_agents import snapshot_dirs
 from nexgen_core.openclaw.setup_app import app_gateway_stop, app_step, device_line
@@ -46,6 +46,7 @@ from nexgen_core.openclaw.setup_steps import (
     groom_job_step,
     phone_step,
     planned_commands,
+    is_plugin_verified,
     plugin_step,
     render_mcp_step,
     service_step,
@@ -213,6 +214,9 @@ def _apply(
     _step(setup.out, 4, t("Safe write"))
     if not plugin_step(setup):
         return 1
+    # The plan was read before this step deposited the plugin: on a first install it
+    # left `nexgen` out of `plugins.allow`, and the guardrail never loaded.
+    plan = replace(plan, config=with_engine_plugin(plan.config, is_plugin_verified(setup)))
     if not setup_agy.install_step(setup, plan.config):
         return 1
     outcome = write_step(setup, plan)

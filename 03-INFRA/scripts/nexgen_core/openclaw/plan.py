@@ -41,7 +41,7 @@ from nexgen_core.runtimes.openclaw import PLUGIN_ID
 DISPLAY_NAMES = {"main": "assistente", "capo": "capo", "automazioni": "automazioni", "sviluppo": "sviluppo"}
 
 
-def _with_engine_plugin(config: dict[str, Any], deposited: bool) -> dict[str, Any]:
+def with_engine_plugin(config: dict[str, Any], deposited: bool) -> dict[str, Any]:
     """The engine's guardrail plugin, enabled, and allowed to read the conversation.
 
     Enabling a plugin that is not there makes OpenClaw fail to start; the
@@ -423,7 +423,7 @@ def build_plan(
         # The setup command passes no vault: the squad still lives in the user's one.
         vault_data if vault_data is not None else resolve_vault_data(home), home_dir, current,
     )
-    config = _with_engine_plugin(
+    config = with_engine_plugin(
         with_chains(with_skill_policy(proposed, vault_data, current), failover), _plugin_deposited(path, plugin_deposited),
     )
     # Last, and on purpose: the deny is decided on the document the write will leave,

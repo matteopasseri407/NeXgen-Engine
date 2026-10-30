@@ -585,6 +585,28 @@ def test_the_engine_plugin_is_enabled_only_when_it_is_deposited(tmp_path):
     assert written["plugins"]["entries"][PLUGIN_ID]["enabled"] is True
 
 
+def test_a_plugin_this_run_deposits_is_enabled_in_the_file_it_writes(tmp_path, monkeypatch):
+    """A clean Ubuntu 24.04: the plan was read before step 4 deposited the plugin, and the
+    file went out without `nexgen` in `plugins.allow`, so the guardrail never loaded."""
+    machine = Machine(tmp_path)
+    machine.config.parent.mkdir(parents=True)
+    machine.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
+
+    def deposit(setup):
+        folder = setup.state_dir / "extensions" / PLUGIN_ID
+        folder.mkdir(parents=True)
+        (folder / "openclaw.plugin.json").write_text("{}", encoding="utf-8")
+        (folder / "index.mjs").write_text("// plugin\n", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr("nexgen_core.openclaw.setup.plugin_step", deposit)
+
+    assert machine.run() == 0
+    plugins = machine.config_json()["plugins"]
+    assert PLUGIN_ID in plugins["allow"]
+    assert plugins["entries"][PLUGIN_ID]["enabled"] is True
+
+
 def test_a_rejected_configuration_puts_the_previous_file_back(tmp_path):
     machine = Machine(tmp_path)
     machine.config.parent.mkdir(parents=True)
