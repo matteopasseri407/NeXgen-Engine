@@ -20,7 +20,15 @@ agents:
     role: "Frontline assistant and entrypoint for conversations"
     # This agent's own instructions, deposited as its workspace AGENTS.md.
     # agents_md: "squad/main.md"
+    # Who this agent answers to. Omit it and the roster decides: `main` reports
+    # to nobody (it faces the person), `capo` reports to `main`, and every other
+    # agent reports to `capo` when there is one, otherwise to `main`. Each
+    # manual names the lead, the agents reporting to it and its peers.
+    # reportsTo: "main"
     tools:
+      # Optional narrowing: the engine writes no global `agentToAgent.allow`,
+      # because OpenClaw reads an omitted list as every pair allowed. A `send`
+      # here restricts this agent alone; leave it out and it talks to everyone.
       agentToAgent:
         send: ["capo", "sviluppo"]
 
@@ -29,6 +37,7 @@ agents:
     model: "anthropic/claude-opus-5-5"
     role: "Strategic lead, deep planning, and review"
     thinkingDefault: "high"
+    reportsTo: "main"
     # agents_md: "squad/capo.md"
     # The agent's execution policy, written to agents.entries.<id>.tools.exec.
     #
@@ -51,10 +60,12 @@ agents:
     name: "sviluppo"
     model: "opencode-go/deepseek-v4.1-flash"
     role: "Code execution and development tasks"
+    reportsTo: "capo"
     tools:
       exec:
         host: "node"
         node: "node-pc"
+      # A narrowing of this agent only; without it, it may message every agent.
       agentToAgent:
         send: ["capo"]
 

@@ -182,15 +182,12 @@ def test_the_allow_list_drops_the_agent_this_run_leaves_out():
 
 def test_the_allow_list_keeps_the_agent_this_run_creates():
     """The rule is about an agent that does not exist, not about the id itself."""
-    current = {"tools": {"agentToAgent": {"enabled": True, "allow": ["main", "sviluppo"]}}}
-    proposed = {
-        "agents": {"entries": {"main": {}, "sviluppo": {}}},
-        "tools": {"agentToAgent": {"enabled": True, "allow": ["main", "sviluppo"]}},
-    }
+    current = {"agents": {"entries": {"main": {"tools": {"agentToAgent": {"send": ["sviluppo", "personale"]}}}}}}
+    proposed = {"agents": {"entries": {"main": {}, "sviluppo": {}}}}
 
-    allow = setup_write.merged_document(current, proposed)["tools"]["agentToAgent"]["allow"]
+    send = setup_write.merged_document(current, proposed)["agents"]["entries"]["main"]["tools"]["agentToAgent"]["send"]
 
-    assert allow == ["main", "sviluppo"]
+    assert send == ["sviluppo", "personale"]
 
 
 def test_a_send_target_the_run_leaves_out_goes_too():

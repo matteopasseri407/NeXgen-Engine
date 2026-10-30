@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.files import atomic_write_text
+from nexgen_core.openclaw import agent_pairs
 from nexgen_core.openclaw.acp import SVILUPPO_ID
 from nexgen_core.openclaw.profile import PENDING_TOKEN
 
@@ -209,6 +210,7 @@ def merged_document(current: dict[str, Any] | None, proposed: dict[str, Any]) ->
     _drop_uncreated_agent(merged)
     _retire_replaced(merged, proposed)
     _retire(merged)
+    agent_pairs.retire(merged, proposed)
     _drop_squad_model_entries(merged)
     return merged
 

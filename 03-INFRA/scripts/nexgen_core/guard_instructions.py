@@ -3,9 +3,11 @@
 nexgen: one-job reason="every runtime's instruction pointer and every OpenClaw workspace block is one wiring step, written once here so no CLI keeps a stale copy"
 One job: keep the compatibility pointers (`~/CLAUDE.md`, `~/.codex/AGENTS.md`,
 `~/.gemini/config/AGENTS.md`, the OpenCode scope file) aimed at the canonical
-`AGENTS.md`, keep the managed block inside each OpenClaw agent workspace's own
-`AGENTS.md`, drop the dead OpenCode `instructions` entries an older guard
-added, and relink the Windows-only private local-model adapter.
+`AGENTS.md`, run the step that keeps the managed blocks of each OpenClaw agent
+workspace's own `AGENTS.md` current, drop the dead OpenCode `instructions`
+entries an older guard added, and relink the Windows-only private local-model
+adapter. Those blocks are written by `openclaw/org_block.py`, their owner: this
+module only calls it, so one place decides what their bytes are.
 
 The canonical file is the one source; several runtimes reading their own stale
 copy is the opposite of the invariant this engine exists for. It used to be the
@@ -19,19 +21,12 @@ from __future__ import annotations
 import json
 import shutil
 import sys
-from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from nexgen_core.action_notes import WARN
 from nexgen_core.files import atomic_write_text, symlink_write_target
 from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc, set_jsonc_top_level_value
-
-#: Delimiters of the block the engine owns inside an OpenClaw agent workspace's
-#: `AGENTS.md`. Everything outside them is the person's text and is never
-#: rewritten; everything inside is regenerated from the canonical file's path.
-OPENCLAW_BLOCK_BEGIN = "<!-- nexgen:instructions:begin -->"
-OPENCLAW_BLOCK_END = "<!-- nexgen:instructions:end -->"
 
 
 def _same_file(a: str, b: Path) -> bool:
@@ -261,282 +256,17 @@ def _drop_dead_opencode_instructions_array(runner, renderer_cls) -> str | None:
     return t("opencode dead 'instructions' entries removed")
 
 
-def openclaw_instruction_block(canon: Path) -> str:
-    """The managed block: a pointer to the canonical file, nothing duplicated.
-
-    OpenClaw loads the `AGENTS.md` of the agent's own working directory at every
-    session and truncates it (`agents.defaults.bootstrapMaxChars`), which is why
-    this block goes at the top of the file instead of the end.
-    """
-    return "\n".join((
-        OPENCLAW_BLOCK_BEGIN,
-        "# NeXgen Engine instructions",
-        "",
-        "Canonical instructions live at:",
-        str(canon),
-        "",
-        "At session start, read and follow that file before acting: it is the single",
-        "source, and copying its content here would only let the two drift apart.",
-        "Everything outside this block belongs to you and is never rewritten by the engine.",
-        OPENCLAW_BLOCK_END,
-    ))
-
-
-def openclaw_block_state(text: str, block: str) -> str:
-    """How the managed block sits in `text`: ok, missing, different, or broken.
-
-    A file with only one of the two markers is "broken" (a person edited inside
-    the block, or a write was cut short): guessing where the block starts or
-    ends there could delete their text, so the caller reports and leaves it.
-    """
-    begin = text.find(OPENCLAW_BLOCK_BEGIN)
-    end = text.find(OPENCLAW_BLOCK_END)
-    if begin < 0 and end < 0:
-        return "missing"
-    if begin < 0 or end < 0 or end < begin:
-        return "broken"
-    if text[begin:end + len(OPENCLAW_BLOCK_END)] != block:
-        return "different"
-    return "ok" if begin == 0 else "different"
-
-
-def with_openclaw_block(text: str, block: str) -> str:
-    """`text` with the managed block on top and the person's own text kept as it is.
-
-    A block found anywhere else is moved, not duplicated: one file, one pointer.
-    The separator follows the block's own line endings, so a CRLF file stays CRLF
-    instead of ending up with two conventions in one file.
-    """
-    sep = "\r\n" if "\r\n" in block else "\n"
-    begin = text.find(OPENCLAW_BLOCK_BEGIN)
-    end = text.find(OPENCLAW_BLOCK_END)
-    rest = text
-    if 0 <= begin < end:
-        rest = text[:begin] + text[end + len(OPENCLAW_BLOCK_END):]
-        tail = rest[begin:]
-        if tail.startswith("\r\n"):
-            rest = rest[:begin] + rest[begin + 2:]
-        elif tail.startswith("\n"):
-            rest = rest[:begin] + rest[begin + 1:]
-    return f"{block}{sep}{rest}"
-
-
-def openclaw_line_ending(sample: str) -> str:
-    """The line ending a file already uses, so a new block doesn't mix two."""
-    return "\r\n" if "\r\n" in sample else "\n"
-
-
-def openclaw_file_state(text: str, block: str) -> str:
-    """`openclaw_block_state` for a file whose line endings are its own."""
-    return openclaw_block_state(text, block.replace("\n", openclaw_line_ending(text)))
-
-
-def _openclaw_path(value: str, home: Path, base: Path) -> Path:
-    """A path from OpenClaw's own config, expanded against `home`.
-
-    `~` is expanded by hand, not by `expanduser`: this file must resolve the
-    same way for a test pointing at a temporary home as for the real machine,
-    and `expanduser` reads the environment's home regardless.
-    """
-    if value == "~":
-        return home
-    if value.startswith(("~/", "~\\")):
-        return home / value[2:]
-    candidate = Path(value)
-    return candidate if candidate.is_absolute() else base / candidate
-
-
-def _openclaw_default_agent_id(defaults: dict, entries: dict) -> str | None:
-    """The agent that owns the default workspace, as OpenClaw resolves it.
-
-    `agents.defaults.systemAgent.agentId` records it once the roster is explicit
-    (the squad's `default`, written by both the setup and the sync), and `main`
-    is the legacy name; without either, no entry owns the default folder.
-    """
-    system = defaults.get("systemAgent")
-    recorded = system.get("agentId") if isinstance(system, dict) else None
-    if isinstance(recorded, str) and recorded.strip():
-        return recorded.strip()
-    return "main" if "main" in entries else None
-
-
-def openclaw_workspace_owners(config_path: Path, home: Path) -> list[tuple[tuple[str, ...], Path]]:
-    """Every workspace the OpenClaw config resolves, with the agents that live in it.
-
-    The rule is OpenClaw's own (`resolveAgentWorkspaceDir`):
-    `agents.entries.<id>.workspace` when an agent pins one; otherwise the default
-    agent gets `agents.defaults.workspace`, or `<state dir>/workspace` when that
-    key is absent; every other agent gets `<agents.defaults.workspace>/<id>`, or
-    `<state dir>/workspace-<id>` when no default is declared.
-
-    Reading every entry without a `workspace` as the default folder is what made
-    two agents look like they shared one `AGENTS.md`, and the default agent's
-    manual then stopped updating at all. Two agents may still name one folder on
-    purpose, and then one `AGENTS.md` is all of it: the caller is told which ids
-    share it rather than silently picking one. An unreadable config yields
-    nothing: this step cannot fix it, and the MCP checks already name the file.
-    """
-    from nexgen_core.mcp_render import load_json_object
-
-    try:
-        data = load_json_object(config_path)
-    except ValueError:  # nexgen: allow reason="a corrupt config has no workspaces to align; the MCP checks report it"
-        return []
-    agents = data.get("agents") if isinstance(data.get("agents"), dict) else {}
-    defaults = agents.get("defaults") if isinstance(agents.get("defaults"), dict) else {}
-    declared = defaults.get("workspace")
-    pinned_default = isinstance(declared, str) and bool(declared.strip())
-    state_dir = config_path.parent
-    default_path = (
-        _openclaw_path(declared, home, state_dir)
-        if pinned_default
-        else state_dir / "workspace"
-    )
-    entries = agents.get("entries") if isinstance(agents.get("entries"), dict) else {}
-    owner = _openclaw_default_agent_id(defaults, entries)
-    owners: dict[Path, list[str]] = {}
-    for agent_id, agent in entries.items() or [(None, None)]:
-        value = agent.get("workspace") if isinstance(agent, dict) else None
-        if isinstance(value, str) and value.strip():
-            path = _openclaw_path(value, home, state_dir)
-        elif agent_id is None or owner is None or str(agent_id) == owner:
-            path = default_path
-        elif pinned_default:
-            path = default_path / str(agent_id)
-        else:
-            path = state_dir / f"workspace-{agent_id}"
-        ids = owners.setdefault(path, [])
-        if agent_id is not None:
-            ids.append(str(agent_id))
-    return [(tuple(ids), path) for path, ids in owners.items()]
-
-
-def openclaw_workspaces(config_path: Path, home: Path) -> list[Path]:
-    """Every agent workspace the OpenClaw config declares, deduplicated."""
-    return [path for _, path in openclaw_workspace_owners(config_path, home)]
-
-
-def openclaw_squad_manuals(runner) -> dict[str, str]:
-    """The manuals the squad declares, by agent id, read the way the setup reads them.
-
-    `nexgen sync` writes them too: a person who edits `common_md` or one agent's
-    `agents_md` and then runs only the sync must see the new text in the
-    workspace, because that is the command they run without thinking about it.
-    """
-    from nexgen_core.openclaw.squad import find_squad_file, get_squad_instructions, load_squad
-
-    squad_file = find_squad_file(runner.vault_data, home=runner.home)
-    texts, _unreadable = get_squad_instructions(load_squad(squad_file), squad_file)
-    return texts
-
-
-def _with_squad_manual(
-    target: Path, existing: str, agents: Sequence[str], declared: Mapping[str, str],
-) -> tuple[str | None, str | None]:
-    """The file with the squad's manual in it, or why the text was left as it is.
-
-    One folder holds one `AGENTS.md`, so two agents that share a workspace and
-    declare different manuals are a squad mistake with no safe answer: nothing is
-    replaced and the caller says so.
-    """
-    from nexgen_core.openclaw.setup_agents import next_manual_text
-    from nexgen_core.openclaw.templates import shipped_manuals
-
-    texts = {declared[agent] for agent in agents if agent in declared}
-    if not texts:
-        return None, None
-    if len(texts) > 1:
-        return None, WARN + t(
-            "OpenClaw instructions at {path}: the agents sharing this workspace declare "
-            "different AGENTS.md files, so the manual was left as it is",
-            path=target,
-        )
-    shipped = tuple(manual for agent in agents for manual in shipped_manuals(agent))
-    return next_manual_text(existing, texts.pop(), shipped), None
-
-
 def align_openclaw_instructions(runner) -> list[str]:
-    """Puts the managed block, and the squad's own manual, in every agent workspace.
+    """Puts the managed blocks in every OpenClaw workspace: their owner does the work.
 
-    OpenClaw has no instruction pointer file of its own: it reads the
-    `AGENTS.md` of the agent's working directory. That file is the person's, so
-    only the delimited block is written, only when it is missing or different,
-    and a copy is taken first. The squad's own manual is the second thing this
-    cycle writes there, under that block: the setup is not the only command a
-    person runs after editing the squad, and a change that waits for the next
-    setup is a change that looks ignored. A workspace folder that does not exist
-    is left to the setup command that creates it.
+    The blocks, the squad's manual and the workspace resolution live in
+    `openclaw/org_block.py`, which the setup and the doctor read too. This stays
+    as the one name the sync cycle calls, so the step never depends on where the
+    bytes are actually written.
     """
-    from nexgen_core.paths import openclaw_config
+    from nexgen_core.openclaw.org_block import align_openclaw_instructions as align_blocks
 
-    config_path = openclaw_config(runner.home)
-    if not config_path.is_file():
-        return []  # OpenClaw was never set up here: nothing points anywhere
-    canon = runner.vault_data / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
-    if not canon.is_file():
-        return []
-    block = openclaw_instruction_block(canon)
-    declared = openclaw_squad_manuals(runner)
-    actions: list[str] = []
-    for agents, workspace in openclaw_workspace_owners(config_path, runner.home):
-        action = _align_openclaw_workspace(workspace, block, canon, agents, declared)
-        if action:
-            actions.append(action)
-    return actions
-
-
-def _align_openclaw_workspace(
-    workspace: Path,
-    block: str,
-    canon: Path,
-    agents: Sequence[str] = (),
-    declared: Mapping[str, str] | None = None,
-) -> str | None:
-    """One OpenClaw workspace: the block and the squad's manual written, or why not.
-
-    A dotfiles-managed `AGENTS.md` is a symlink into its repository: it is
-    followed, not replaced, except when it points at the canonical file.
-    """
-    target = workspace / "AGENTS.md"
-    if not workspace.is_dir():
-        return None  # the setup command creates the folder; the check reports it
-    write_target = symlink_write_target(target, keep=canon)
-    try:
-        # newline="": the person's line endings are read and written back as they
-        # are. Text mode would turn a CRLF file into CRCRLF on a rewrite.
-        existing = ""
-        if target.is_file():
-            with target.open("r", encoding="utf-8", newline="") as handle:
-                existing = handle.read()
-    except OSError as exc:
-        return WARN + t("OpenClaw instructions at {path} left untouched ({error})", path=target, error=exc)
-    state = openclaw_file_state(existing, block)
-    if state == "broken":
-        return WARN + t(
-            "OpenClaw instructions at {path}: the managed block's markers are incomplete, left untouched",
-            path=target,
-        )
-    updated, warning = _with_squad_manual(target, existing, agents, declared or {})
-    if state == "ok" and updated is None:
-        return warning
-    source = existing if updated is None else updated
-    file_block = block.replace("\n", openclaw_line_ending(source))
-    wanted = with_openclaw_block(source, file_block)
-    if wanted == existing:
-        # The block is aligned and the squad's text is already the one it declares.
-        return warning
-    if target.is_file():
-        from nexgen_core.files import backup_file
-
-        try:
-            backup_file(target, tag="instructions")
-        except OSError as exc:
-            return WARN + t(
-                "OpenClaw instructions at {path} left untouched: safety backup failed ({error})",
-                path=target, error=exc,
-            )
-    atomic_write_text(write_target, wanted, newline="")
-    return t("OpenClaw instructions aligned in {path}", path=target)
+    return align_blocks(runner)
 
 
 def align_local_model_runtime(runner) -> list[str]:

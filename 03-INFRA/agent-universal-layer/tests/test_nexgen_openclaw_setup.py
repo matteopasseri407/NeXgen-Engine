@@ -688,7 +688,9 @@ def test_a_manual_the_person_wrote_is_never_overwritten(tmp_path):
     machine.runner.onboard = onboard_writer(machine.config, machine.state_dir / "workspace")
 
     assert machine.run() == 0
-    assert (capo / "AGENTS.md").read_text(encoding="utf-8") == "il mio manuale\n"
+    text = (capo / "AGENTS.md").read_text(encoding="utf-8")
+    assert text.startswith("il mio manuale\n"), "their manual is not overwritten"
+    assert "<!-- nexgen:org:begin -->" in text, "the engine's chart block is added below it"
     assert (capo / "BOOTSTRAP.md").is_file()
 
 
@@ -735,8 +737,8 @@ def test_the_opencode_agent_appears_only_with_its_command_and_its_key(tmp_path):
     assert written["plugins"]["entries"]["acpx"]["config"]["permissionMode"] == "approve-all"
     assert written["plugins"]["entries"]["acpx"]["config"]["nonInteractivePermissions"] == "deny"
     assert "opencode" in written["acp"]["allowedAgents"]
-    assert {"main", "capo", "sviluppo"} <= set(written["tools"]["agentToAgent"]["allow"])
-    assert set(written["agents"]["entries"]["sviluppo"]["tools"]["agentToAgent"]["send"]) == {"main", "capo"}
+    assert "agentToAgent" not in written["tools"], "OpenClaw's open default is what the engine wants"
+    assert "agentToAgent" not in sviluppo.get("tools", {})
 
     for kwargs, label in (({"opencode": False, "go": True}, "no command"),
                           ({"opencode": True, "go": False}, "no key")):

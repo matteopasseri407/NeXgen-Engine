@@ -71,8 +71,9 @@ bindings:
     assert applied["agents"]["entries"]["main"]["name"] == "MyCustomBot"
     assert applied["agents"]["entries"]["capo"]["name"] == "General"
     assert applied["agents"]["entries"]["capo"]["tools"]["exec"]["node"] == "pc-work"
-    assert "capo" in applied["tools"]["agentToAgent"]["allow"]
-    assert "main" in applied["tools"]["agentToAgent"]["allow"]
+    assert "agentToAgent" not in applied["tools"], "no global allow: OpenClaw's default is open"
+    assert applied["agents"]["entries"]["main"]["tools"]["agentToAgent"] == {"send": ["capo"]}
+    assert "agentToAgent" not in applied["agents"]["entries"]["capo"].get("tools", {})
     assert applied["bindings"][0]["agentId"] == "main"
 
     souls = get_squad_souls(squad)

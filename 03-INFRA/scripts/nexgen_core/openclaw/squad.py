@@ -296,8 +296,13 @@ def get_squad_instructions(
     return texts, tuple(unreadable)
 
 
-def _apply_agent_entry(entry: dict[str, Any], spec: Mapping[str, Any], agent_id: Any) -> set[str]:
-    """One agent's own fields on its entry; returns the ids it declares it may message."""
+def _apply_agent_entry(entry: dict[str, Any], spec: Mapping[str, Any], agent_id: Any) -> None:
+    """One agent's own fields on its entry.
+
+    A `tools.agentToAgent.send` the squad declares is that agent's own narrowing
+    and is written as declared: the engine never adds a global `allow` list, whose
+    absence OpenClaw reads as every pair allowed.
+    """
     name = spec.get("name") or agent_id
     entry["name"] = name
     entry["identity"] = {"name": name}
@@ -307,13 +312,9 @@ def _apply_agent_entry(entry: dict[str, Any], spec: Mapping[str, Any], agent_id:
         entry["workspace"] = spec["workspace"]
     if "thinkingDefault" in spec:
         entry["thinkingDefault"] = spec["thinkingDefault"]
-    senders: set[str] = set()
     declared_tools = spec.get("tools") if isinstance(spec.get("tools"), dict) else {}
     if "agentToAgent" in declared_tools:
         entry.setdefault("tools", {})["agentToAgent"] = declared_tools["agentToAgent"]
-        senders.add(agent_id)
-        for target_id in declared_tools["agentToAgent"].get("send", []):
-            senders.add(str(target_id))
     # `exec` at the agent's own level is the documented place for its policy;
     # the older `tools.exec` shape still works and the newer field wins per key.
     policy = _exec_policy(spec)
@@ -331,7 +332,6 @@ def _apply_agent_entry(entry: dict[str, Any], spec: Mapping[str, Any], agent_id:
         tools = entry.setdefault("tools", {})
         existing = tools.get("deny") if isinstance(tools.get("deny"), list) else []
         tools["deny"] = list(dict.fromkeys([*existing, *deny]))
-    return senders
 
 
 def _tools_deny(spec: Mapping[str, Any]) -> list[str] | None:
@@ -408,10 +408,9 @@ def apply_squad(
     if isinstance(agents_spec, dict):
         agents_block = target.setdefault("agents", {})
         entries = agents_block.setdefault("entries", {})
-        allowed_senders: set[str] = set()
         for agent_id, spec in agents_spec.items():
             if isinstance(spec, dict):
-                allowed_senders |= _apply_agent_entry(entries.setdefault(agent_id, {}), spec, agent_id)
+                _apply_agent_entry(entries.setdefault(agent_id, {}), spec, agent_id)
 
         default_id = default_agent(squad)
         if default_id:
@@ -420,13 +419,6 @@ def apply_squad(
             # the dreaming cron all need one agent named here.
             defaults = agents_block.setdefault("defaults", {})
             defaults.setdefault("systemAgent", {})["agentId"] = default_id
-
-        if allowed_senders:
-            tools_block = target.setdefault("tools", {})
-            a2a = tools_block.setdefault("agentToAgent", {})
-            a2a["enabled"] = True
-            current_allow = set(a2a.get("allow", []))
-            a2a["allow"] = sorted(current_allow | allowed_senders)
 
         # Removing an agent from the squad removes it here too, but only when the
         # squad says so: the engine is additive by default, and a person who added

@@ -38,7 +38,8 @@ def test_a_squad_manual_replaces_the_standard_one_in_a_new_workspace(tmp_path: P
     prepare({"capo": workspace}, {"capo": True}, "en", lambda line: None, instructions={"capo": MARKED})
 
     text = (workspace / INSTRUCTIONS_FILE).read_text(encoding="utf-8")
-    assert text == MARKED
+    assert text.startswith(MARKED)
+    assert "<!-- nexgen:org:begin -->" in text, "the chart arrives even when the squad wrote the body"
     assert "You are the agent that writes and changes code." not in text
 
 
@@ -53,7 +54,10 @@ def test_the_other_manuals_of_a_squad_agent_are_still_written(tmp_path: Path) ->
 
 
 def test_an_agents_file_without_the_engine_mark_is_left_byte_for_byte(tmp_path: Path) -> None:
-    """Hand-written text is not the engine's, whatever it says."""
+    """Hand-written text is not the engine's, whatever it says.
+
+    Only the managed org block is added below it; not one byte of their manual moves.
+    """
     workspace = tmp_path / "workspace-capo"
     workspace.mkdir()
     mine = "# My own notes\n\nDo not touch this.\n"
@@ -62,7 +66,9 @@ def test_an_agents_file_without_the_engine_mark_is_left_byte_for_byte(tmp_path: 
 
     prepare({"capo": workspace}, set(), "en", lines.append, instructions={"capo": MARKED})
 
-    assert (workspace / INSTRUCTIONS_FILE).read_text(encoding="utf-8") == mine
+    text = (workspace / INSTRUCTIONS_FILE).read_text(encoding="utf-8")
+    assert text.startswith(mine)
+    assert text[len(mine):].lstrip("\r\n").startswith("<!-- nexgen:org:begin -->")
     assert any("yours" in line for line in lines)
 
 
@@ -93,7 +99,8 @@ def test_the_manual_the_engine_shipped_before_the_squad_declared_one_is_replaced
     prepare({"capo": workspace}, set(), "en", lambda line: None, instructions={"capo": MARKED})
 
     text = (workspace / INSTRUCTIONS_FILE).read_text(encoding="utf-8")
-    assert text == MARKED
+    assert text.startswith(MARKED)
+    assert "<!-- nexgen:org:begin -->" in text
 
 
 def test_the_shipped_manual_is_replaced_under_the_sync_block_too(tmp_path: Path) -> None:
@@ -119,7 +126,9 @@ def test_the_shipped_manual_of_another_language_is_still_the_engines(tmp_path: P
 
     prepare({"capo": workspace}, set(), "en", lambda line: None, instructions={"capo": MARKED})
 
-    assert (workspace / INSTRUCTIONS_FILE).read_text(encoding="utf-8") == MARKED
+    text = (workspace / INSTRUCTIONS_FILE).read_text(encoding="utf-8")
+    assert text.startswith(MARKED)
+    assert "<!-- nexgen:org:begin -->" in text
 
 
 def test_a_fresh_workspace_is_prepared_and_its_first_run_file_goes(tmp_path: Path) -> None:
@@ -131,7 +140,7 @@ def test_a_fresh_workspace_is_prepared_and_its_first_run_file_goes(tmp_path: Pat
 
     assert made == []
     assert not (workspace / BOOTSTRAP_FILE).exists()
-    assert (workspace / INSTRUCTIONS_FILE).read_text(encoding="utf-8") == MARKED
+    assert (workspace / INSTRUCTIONS_FILE).read_text(encoding="utf-8").startswith(MARKED)
 
 
 def test_the_standard_manual_is_still_written_for_an_agent_without_instructions(tmp_path: Path) -> None:
@@ -267,3 +276,14 @@ def test_the_shipped_manual_is_exactly_what_the_render_writes(tmp_path: Path) ->
     for agent in ("main", "assistente", "capo", "automazioni", "sviluppo"):
         for language in ("it", "en"):
             assert render_workspace(agent, language)["AGENTS.md"] in shipped_manuals(agent), (agent, language)
+
+
+def test_the_manual_the_previous_release_shipped_is_still_the_engines() -> None:
+    """The chart moved out of the body; a workspace that still holds the old wording is ours."""
+    from nexgen_core.openclaw.templates import shipped_manuals
+
+    for agent in ("main", "capo", "automazioni", "sviluppo"):
+        assert len(shipped_manuals(agent)) == 4, agent
+    italian = [text for text in shipped_manuals("main") if "I destinatari possibili sono" in text]
+    english = [text for text in shipped_manuals("main") if "The possible recipients are" in text]
+    assert len(italian) == 1 and len(english) == 1

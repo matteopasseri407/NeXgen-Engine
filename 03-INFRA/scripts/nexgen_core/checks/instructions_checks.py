@@ -217,20 +217,28 @@ def check_opencode_instructions(vault_data: Path, home: Path) -> CheckOutcome | 
 
 
 def _openclaw_workspace_states(
-    workspaces: list[Path], block: str
+    owners: list[tuple[tuple[str, ...], Path]],
+    block: str,
+    roster: tuple[str, ...],
+    leads: dict[str, str],
 ) -> tuple[list[str], list[str], tuple[Path, OSError] | None]:
     """What each workspace's `AGENTS.md` looks like: unaligned, absent folder, unreadable.
 
     Line endings are read as they are (`newline=""`), which is also how the guard
-    writes them: comparing a CRLF file against a block built with `
-` would make
-    every cycle rewrite a file that is already correct.
+    writes them: comparing a CRLF file against a block built with LF would make
+    every cycle rewrite a file that is already correct. Both managed blocks are
+    checked: the instructions pointer and the org chart the roster decides.
     """
-    from nexgen_core.guard_instructions import openclaw_file_state
+    from nexgen_core.openclaw.hierarchy import manual_language
+    from nexgen_core.openclaw.org_block import (
+        OPENCLAW_ORG_MARKERS,
+        openclaw_file_state,
+        openclaw_org_block,
+    )
 
     unaligned: list[str] = []
     absent: list[str] = []
-    for workspace in workspaces:
+    for agents, workspace in owners:
         target = workspace / "AGENTS.md"
         if not workspace.is_dir():
             absent.append(str(workspace))
@@ -242,7 +250,13 @@ def _openclaw_workspace_states(
                     text = handle.read()
         except OSError as exc:
             return unaligned, absent, (target, exc)
-        state = openclaw_file_state(text, block)
+        states = [openclaw_file_state(text, block)]
+        if agents:
+            org = openclaw_org_block(agents, manual_language(text), roster, leads)
+            states.append(
+                openclaw_file_state(text, org, OPENCLAW_ORG_MARKERS, at_top=False)
+            )
+        state = next((value for value in states if value != "ok"), "ok")
         if state != "ok":
             unaligned.append(f"{target} ({state})")
     return unaligned, absent, None
@@ -266,15 +280,20 @@ def _openclaw_unaligned_outcome(unaligned: list[str], absent: list[str]) -> Chec
 
 
 def check_openclaw_instructions(vault_data: Path, home: Path) -> CheckOutcome | None:
-    """OpenClaw reads the `AGENTS.md` of each agent's workspace: the block must be there.
+    """OpenClaw reads the `AGENTS.md` of each agent's workspace: both blocks must be there.
 
     There is no pointer file to check, unlike Codex and Antigravity: OpenClaw
     loads whatever `AGENTS.md` sits in the agent's working directory, truncated,
-    so the engine owns a delimited block at the top of each of those files and
-    nothing else in them. A workspace folder that does not exist yet is not a
-    drift of the block: the setup command creates it.
+    so the engine owns two delimited blocks there and nothing else in it: the
+    pointer to the canonical instructions, on top, and the org chart the roster
+    decides, at the end. A workspace folder that does not exist yet is not a
+    drift of the blocks: the setup command creates it.
     """
-    from nexgen_core.guard_instructions import openclaw_instruction_block, openclaw_workspaces
+    from nexgen_core.openclaw.org_block import (
+        openclaw_instruction_block,
+        openclaw_squad_leads,
+        openclaw_workspace_owners,
+    )
     from nexgen_core.paths import openclaw_config
 
     config = openclaw_config(home)
@@ -283,9 +302,11 @@ def check_openclaw_instructions(vault_data: Path, home: Path) -> CheckOutcome | 
     canon = canonical_instructions(vault_data)
     if not canon.is_file():
         return None  # already reported by instructions.canonical_present
-    workspaces = openclaw_workspaces(config, home)
+    owners = openclaw_workspace_owners(config, home)
+    roster = tuple(dict.fromkeys(agent for agents, _workspace in owners for agent in agents))
+    leads = openclaw_squad_leads(vault_data, home)
     unaligned, absent, unreadable = _openclaw_workspace_states(
-        workspaces, openclaw_instruction_block(canon)
+        owners, openclaw_instruction_block(canon), roster, leads,
     )
     if unreadable is not None:
         path, error = unreadable
@@ -311,7 +332,7 @@ def check_openclaw_instructions(vault_data: Path, home: Path) -> CheckOutcome | 
         severity=Severity.OK,
         message=t(
             "OpenClaw reads the canonical AGENTS.md from {count} agent workspace(s)",
-            count=len(workspaces),
+            count=len(owners),
         ),
     )
 

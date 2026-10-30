@@ -145,7 +145,7 @@ def _expected_skills(vault_data: Path) -> set[str] | None:
 
 def _openclaw_block_present(home: Path, config_path: Path, vault_data: Path) -> bool:
     """Does every existing agent workspace carry the engine's complete block?"""
-    from nexgen_core.guard_instructions import openclaw_file_state, openclaw_instruction_block, openclaw_workspaces
+    from nexgen_core.openclaw.org_block import openclaw_file_state, openclaw_instruction_block, openclaw_workspaces
     from nexgen_core.paths import canonical_instructions
 
     workspaces = openclaw_workspaces(config_path, home)

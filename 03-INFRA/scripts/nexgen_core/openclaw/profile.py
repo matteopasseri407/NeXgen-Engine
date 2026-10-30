@@ -270,11 +270,9 @@ def _sviluppo_entry(model: str, current: dict[str, Any] | None, state_dir: Path 
     return entry
 
 
-def _tools_section(
-    models: tuple[Any, ...], partners: dict[str, list[str]], current: dict[str, Any] | None,
-) -> dict[str, Any]:
+def _tools_section(models: tuple[Any, ...], current: dict[str, Any] | None) -> dict[str, Any]:
     """The tools block, with the exec mode already decided: the one leaf the person owns."""
-    tools = tools_block(models, partners)
+    tools = tools_block(models)
     tools["exec"] = _exec_policy(current)
     return tools
 
@@ -329,30 +327,6 @@ def _default_models(detected: Detection) -> dict[str, Any]:
     if detected.codex.available:
         models[CODEX_MODEL] = {"agentRuntime": {"id": "codex"}}
     return models
-
-
-def _agent_pairs(models: dict[str, str]) -> dict[str, list[str]]:
-    """Which agents may message which, for the agents created: id -> the ids it may send to.
-
-    OpenClaw takes the pairs in two places, not one: `tools.agentToAgent.allow` lists
-    every agent that takes part (ids, not pairs: a list of lists is refused at start),
-    and `agents.entries.<id>.tools.agentToAgent.send` narrows whom each one may reach.
-    Never an empty mapping entry: an agent with no partner is simply left out.
-    """
-    edges: list[tuple[str, str]] = []
-    if "main" in models and "capo" in models:
-        edges.append(("main", "capo"))
-    if "main" in models and "automazioni" in models:
-        edges.append(("main", "automazioni"))
-    if SVILUPPO_ID in models:
-        for other in ("main", "capo"):
-            if other in models:
-                edges.append((other, SVILUPPO_ID))
-    partners: dict[str, list[str]] = {}
-    for left, right in edges:
-        partners.setdefault(left, []).append(right)
-        partners.setdefault(right, []).append(left)
-    return partners
 
 
 def _exec_policy(current: dict[str, Any] | None) -> dict[str, Any]:
@@ -454,8 +428,7 @@ def build_config(
     agents = agent_models(detected, chosen)
     language = _language(chosen)
 
-    partners = _agent_pairs(agents)
-    tools = _tools_section(models, partners, current)
+    tools = _tools_section(models, current)
 
     config: dict[str, Any] = {
         "plugins": {
@@ -474,9 +447,6 @@ def build_config(
     # on an agent is only its default, and this changes none of them.
     config = model_policy.with_reachable(config, detected, current)
     allow_supervisor_tools(config["agents"]["entries"], current)
-    for agent_id, entry in config["agents"]["entries"].items():
-        if agent_id in partners:
-            entry["tools"] = {**entry.get("tools", {}), "agentToAgent": {"send": partners[agent_id]}}
     acp = acp_block(detected, sviluppo=chosen.sviluppo, acpx=chosen.acpx)
     if acp is not None:
         config["acp"] = acp

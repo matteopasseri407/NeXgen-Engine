@@ -377,9 +377,11 @@ MESSAGES: dict[str, str] = {
     'OpenClaw configuration not present: nothing rendered for it': 'Configurazione OpenClaw assente: non ho scritto nulla per lei',
     'OpenClaw instructions at {path} left untouched ({error})': 'Istruzioni OpenClaw in {path} lasciate come sono ({error})',
     "OpenClaw instructions at {path}: the managed block's markers are incomplete, left untouched": 'Istruzioni OpenClaw in {path}: i marcatori del blocco gestito sono incompleti, ho lasciato tutto come sta',
+    "OpenClaw instructions at {path}: the org chart block's markers are incomplete, left untouched": "Istruzioni OpenClaw in {path}: i marcatori del blocco dell'organigramma sono incompleti, ho lasciato tutto come sta",
     "OpenClaw instructions at {path}: the agents sharing this workspace declare different AGENTS.md files, so the manual was left as it is": "Istruzioni OpenClaw in {path}: gli agenti che condividono questa cartella dichiarano AGENTS.md diversi, quindi ho lasciato il manuale com'era",
     'OpenClaw instructions at {path} left untouched: safety backup failed ({error})': 'Istruzioni OpenClaw in {path} lasciate come sono: la copia di sicurezza non e\' riuscita ({error})',
     'OpenClaw instructions aligned in {path}': 'Istruzioni OpenClaw allineate in {path}',
+    'OpenClaw org chart aligned in {path}': 'Organigramma OpenClaw allineato in {path}',
     "Could not read OpenClaw's instructions at {path}: {error}": 'Non ho potuto leggere le istruzioni OpenClaw in {path}: {error}',
     "OpenClaw's AGENTS.md is not aligned in {count} workspace(s): {paths}.": "L'AGENTS.md di OpenClaw non e' allineato in {count} cartella di lavoro: {paths}.",
     "Run 'nexgen sync' to rewrite the managed block; the text outside it is yours and is never touched.": "Lancia 'nexgen sync' per riscrivere il blocco gestito; il testo fuori dal blocco e' tuo e non viene mai toccato.",
@@ -2286,6 +2288,10 @@ MESSAGES: dict[str, str] = {
         "{agent}: {written} file di skill scritti",
     "The squad names {agent} as the default agent but does not declare it: no default was written.":
         "La squadra indica {agent} come agente predefinito ma non lo dichiara: non ho scritto nessun predefinito.",
+    "The squad makes {agent} report to {lead}, which is not an agent this installation declares: {agent} keeps its default lead.":
+        "La squadra fa riportare {agent} a {lead}, che non è un agente di questa installazione: {agent} tiene il suo responsabile predefinito.",
+    "The squad makes {agent} report to {lead}, which closes a loop: {agent} keeps its default lead.":
+        "La squadra fa riportare {agent} a {lead}, che chiude un giro: {agent} tiene il suo responsabile predefinito.",
     "The OpenCode agent is not created: setup was asked to leave it out.":
         "L'agente OpenCode non viene creato: il setup è stato chiesto di lasciarlo fuori.",
     "The OpenCode agent is not created: the 'opencode' command is not on PATH.":

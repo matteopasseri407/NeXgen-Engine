@@ -28,12 +28,52 @@ A map of agent IDs to agent configuration:
 - `agents_md`: Optional path, relative to the squad file, of the instructions this agent receives as its workspace `AGENTS.md`. See [Instructions per role](#agents_md-and-common_md).
 - `default`: Optional `true` mark naming this agent as the installation's default. See [`default`](#default).
 - `exec`: Optional execution policy for this agent, written to `agents.entries.<id>.tools.exec`. See [`exec` and the tool policy](#exec-and-the-tool-policy).
+- `reportsTo`: Optional agent id this agent answers to. See [Who reports to whom](#reportsto).
 - `tools`:
   - `agentToAgent`:
-    - `send`: List of target agent IDs this agent is permitted to message. The engine automatically enables `tools.agentToAgent.allow` for all participating agents. An agent this run does not create is left out of both lists: `--no-sviluppo`, a missing `opencode` command or a missing Go key means no `sviluppo` entry, and an id no entry declares is one OpenClaw cannot route.
+    - `send`: Optional list of target agent IDs that narrows whom this agent is permitted to message. The engine writes no global `tools.agentToAgent.allow`: OpenClaw reads an omitted list as every pair allowed, so an agent without `send` can both write to and hear from everyone. An agent this run does not create is left out of a list the squad declares: `--no-sviluppo`, a missing `opencode` command or a missing Go key means no `sviluppo` entry, and an id no entry declares is one OpenClaw cannot route.
   - `exec`:
     - `host`: `"node"` or `"gateway"`.
     - `node`: Name of the satellite node machine executing commands for this agent.
+
+### `reportsTo`
+
+Hierarchy is data, not a list of names baked into the manuals. Each agent may
+declare who it answers to:
+
+```yaml
+agents:
+  main:
+    name: "assistente"
+  capo:
+    name: "capo"
+    reportsTo: "main"
+  sviluppo:
+    name: "sviluppo"
+    reportsTo: "capo"
+```
+
+Without the field the roster's own shape decides: `main` reports to nobody,
+because it faces the person; `capo` (the agent that supervises) reports to
+`main`; every other agent reports to `capo` when the roster has one, otherwise to
+`main`, and to nobody when neither exists. The same defaults apply to the
+engine's own roster when there is no squad file.
+
+The answer lands in each workspace `AGENTS.md` as a delimited block of its own,
+titled `Organigramma` (or `Org chart`), that names the agent's lead, the agents
+reporting to it and its peers (the agents under the same lead), plus the rule
+that anyone may write to anyone with `sessions_send`: a task is delegated down to
+the specialist who owns it, results and blockers go up to the lead, and a peer is
+asked directly. Both `nexgen openclaw setup` and `nexgen sync` write that block
+when it is missing or different, so an installation that already exists receives
+it too, and the shipped manual body only points at it. Nothing outside the block
+is touched, and a file whose markers are half deleted is reported and left as it
+is.
+
+A `reportsTo` that names an agent the roster does not declare, or one that closes
+a loop (`capo` to `automazioni` while `automazioni` reports to `capo`), is
+reported in the plan and the agent keeps its default lead. Nothing is written
+that OpenClaw cannot resolve.
 
 ### `default`
 

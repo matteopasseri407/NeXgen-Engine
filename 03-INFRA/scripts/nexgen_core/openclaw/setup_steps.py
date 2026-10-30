@@ -377,7 +377,7 @@ def workspaces_step(setup: Setup, plan, before: set[str]) -> None:
     instructions, unreadable = get_squad_instructions(squad, squad_file)
     for path in unreadable:
         setup.out(t("The squad names an instructions file that cannot be read: {path}", path=path))
-    prepare(dirs, created, plan.choices.lang or None, setup.out, souls=souls, instructions=instructions)
+    prepare(dirs, created, plan.choices.lang or None, setup.out, souls=souls, instructions=instructions, squad=squad)
     # Only agents that declare `skills` are in this map: the others keep their folder as it is.
     skills = get_squad_skills(squad)
     if skills:

@@ -14,9 +14,10 @@ from pathlib import Path
 
 from nexgen_core.checks.instructions_checks import check_openclaw_instructions
 from nexgen_core.guard import GuardRunner
-from nexgen_core.guard_instructions import (
+from nexgen_core.openclaw.org_block import (
     OPENCLAW_BLOCK_BEGIN,
     OPENCLAW_BLOCK_END,
+    OPENCLAW_ORG_END,
     openclaw_block_state,
     openclaw_instruction_block,
     openclaw_workspace_owners,
@@ -99,7 +100,8 @@ def test_the_block_goes_on_top_and_the_persons_text_survives_untouched(tmp_path)
 
     written = (workspace / "AGENTS.md").read_text(encoding="utf-8")
     assert written.startswith(OPENCLAW_BLOCK_BEGIN)
-    assert written.endswith(user_text)
+    assert user_text in written, "the person's own text is kept, byte for byte"
+    assert written.endswith(OPENCLAW_ORG_END + "\n"), "the chart goes after their text"
     assert str(vault.joinpath(*CANON_RELATIVE)) in written
     assert touching(actions, workspace / "AGENTS.md")
 
@@ -342,7 +344,8 @@ def test_a_persons_manual_is_never_replaced_by_the_squad_text(tmp_path):
     aligns(vault, home)
 
     written = target.read_text(encoding="utf-8")
-    assert written.endswith("my own rules\n")
+    assert "my own rules\n" in written, "the person's text is not replaced"
+    assert written.endswith(OPENCLAW_ORG_END + "\n")
     assert "Own the code." not in written
 
 

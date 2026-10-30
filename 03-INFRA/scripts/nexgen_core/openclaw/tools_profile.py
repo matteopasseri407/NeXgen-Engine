@@ -110,9 +110,14 @@ def allow_supervisor_tools(entries: dict[str, Any], current: dict[str, Any] | No
     entry["tools"] = {**tools, "alsoAllow": sorted(SUPERVISOR_TOOLS)}
 
 
-def tools_block(models: tuple[LocalModel, ...], partners: dict[str, list[str]]) -> dict[str, Any]:
-    """The tools block: the exec policy, the cage, and who may message whom."""
-    tools: dict[str, Any] = {
+def tools_block(models: tuple[LocalModel, ...]) -> dict[str, Any]:
+    """The tools block: the exec policy and the cage around every local model.
+
+    No `agentToAgent` list is written: OpenClaw reads an omitted `allow` as every
+    pair allowed, and a closed list is how an agent outside it stopped being able
+    to talk to anybody. A squad may still narrow one agent with its own `send`.
+    """
+    return {
         # The normalized policy OpenClaw reads: `auto` is the classifier-reviewed
         # miss, which is what `allowlist` + `ask=on-miss` meant before the field
         # was collapsed. Writing the old pair makes `doctor --fix` migrate it away
@@ -120,6 +125,3 @@ def tools_block(models: tuple[LocalModel, ...], partners: dict[str, list[str]]) 
         "exec": {"mode": "auto"},
         "byProvider": cage_block(models),
     }
-    if partners:
-        tools["agentToAgent"] = {"enabled": True, "allow": sorted(partners)}
-    return tools

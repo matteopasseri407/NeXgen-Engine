@@ -13,6 +13,10 @@ be one of those. A workspace prepared before the squad declared its own manual
 holds exactly the manual this engine ships, mark and all missing, so that text is
 the second fingerprint: byte equality proves nothing of the person's is in it.
 The mark still says where the engine's text starts, and everything above it stays.
+
+The org chart is not part of the manual: it is a second managed block the guard
+writes from the roster, and the setup writes it too so a fresh machine does not
+wait for the next sync to learn who reports to whom.
 """
 from __future__ import annotations
 
@@ -105,7 +109,7 @@ def _split_block(text: str) -> tuple[str, str]:
     again: the sync cycle looks for that exact string, and a second spelling is
     how the block stops being found.
     """
-    from nexgen_core.guard_instructions import OPENCLAW_BLOCK_BEGIN, OPENCLAW_BLOCK_END
+    from nexgen_core.openclaw.org_block import OPENCLAW_BLOCK_BEGIN, OPENCLAW_BLOCK_END
 
     begin = text.find(OPENCLAW_BLOCK_BEGIN)
     end = text.find(OPENCLAW_BLOCK_END)
@@ -195,6 +199,51 @@ def write_instructions(
     return 1
 
 
+def _agents_by_dir(dirs: Mapping[str, Path]) -> dict[Path, list[str]]:
+    """The agents that share each workspace folder, in the order the proposal names them."""
+    grouped: dict[Path, list[str]] = {}
+    for agent_id, directory in dirs.items():
+        grouped.setdefault(directory, []).append(agent_id)
+    return grouped
+
+
+def _write_org_chart(
+    directory: Path,
+    agents: Sequence[str],
+    lang: str | None,
+    roster: Sequence[str],
+    reports_to: Mapping[str, str],
+    emit: Callable[[str], None],
+) -> None:
+    """The chart block for one workspace, once per folder however many agents share it."""
+    from nexgen_core.openclaw.org_block import align_openclaw_org_block
+
+    action = align_openclaw_org_block(directory, agents, lang, roster, reports_to)
+    if action:
+        emit(action)
+
+
+def _close_workspace(
+    directory: Path,
+    agent_id: str,
+    written: int,
+    fresh: bool,
+    emit: Callable[[str], None],
+) -> None:
+    """Remove the first-run file of a fresh workspace and report what it received."""
+    bootstrap = directory / BOOTSTRAP_FILE
+    removed = fresh and bootstrap.is_file()
+    if removed:
+        bootstrap.unlink()
+    emit(t(
+        "{agent}: {path} ({written} manuals written, {bootstrap})",
+        agent=agent_id,
+        path=directory,
+        written=written,
+        bootstrap=t("first-run file removed") if removed else t("first-run file not present"),
+    ))
+
+
 def prepare(
     dirs: Mapping[str, Path],
     created: set[str] | Mapping[str, bool],
@@ -203,12 +252,21 @@ def prepare(
     dry_run: bool = False,
     souls: Mapping[str, str] | None = None,
     instructions: Mapping[str, str] | None = None,
+    roster: Sequence[str] | None = None,
+    squad: Mapping[str, Any] | None = None,
 ) -> list[Path]:
     """Create each workspace, write the missing manuals, drop the first-run file.
 
     Returns the folders this run created. In `dry_run` it only says what it
-    would do: no folder is made and no file is written.
+    would do: no folder is made and no file is written. `roster` is the agents
+    this machine has and `squad` is the one that declares who reports to whom:
+    the org chart block written into each workspace says that instead of a fixed
+    list of names, and the roster's own owner derives it from the squad.
     """
+    from nexgen_core.openclaw.hierarchy import declared_leads
+
+    grouped = _agents_by_dir(dirs)
+    reports_to = declared_leads(squad)
     made: list[Path] = []
     for agent_id, directory in dirs.items():
         fresh = created.get(agent_id, False) if isinstance(created, Mapping) else agent_id in created
@@ -228,6 +286,11 @@ def prepare(
             written += write_instructions(
                 directory / INSTRUCTIONS_FILE, declared, fresh, emit, shipped_manuals(agent_id),
             )
+        if grouped[directory][0] == agent_id:
+            _write_org_chart(
+                directory, grouped[directory], lang,
+                tuple(dirs) if roster is None else roster, reports_to, emit,
+            )
         if souls and agent_id in souls:
             soul_path = directory / "SOUL.md"
             # Always, because it is generated: a SOUL.md kept "only if missing" is a
@@ -235,16 +298,5 @@ def prepare(
             # an agent the other CLIs never see.
             atomic_write_text(soul_path, souls[agent_id])
             written += 1
-        bootstrap = directory / BOOTSTRAP_FILE
-        removed = False
-        if fresh and bootstrap.is_file():
-            bootstrap.unlink()
-            removed = True
-        emit(t(
-            "{agent}: {path} ({written} manuals written, {bootstrap})",
-            agent=agent_id,
-            path=directory,
-            written=written,
-            bootstrap=t("first-run file removed") if removed else t("first-run file not present"),
-        ))
+        _close_workspace(directory, agent_id, written, fresh, emit)
     return made
