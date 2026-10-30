@@ -14,13 +14,13 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { configSection, readPluginConfig } from "./engine-config.mjs";
+import { resolveEngineFile } from "./engine-files.mjs";
 import { sessionOf } from "./session.mjs";
 
-const DIR = dirname(fileURLToPath(import.meta.url));
-const CONFIG_PATH = join(DIR, "nexgen.config.json");
+//: The engine-owned switches: beside the plugin, or in the deposit behind a build copy.
+const CONFIG_PATH = resolveEngineFile("nexgen.config.json");
 const CHECKPOINT_FILENAME = "openclaw-checkpoint.json";
 
 export function resolveStateDir(config = {}, env = process.env) {

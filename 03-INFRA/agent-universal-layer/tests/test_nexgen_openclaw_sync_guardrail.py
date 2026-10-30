@@ -397,3 +397,80 @@ def test_a_denied_command_is_recorded_as_a_denial(tmp_path):
     audit = tmp_path / "state" / "openclaw.json"
     fire(deploy(tmp_path, "deny.mjs", auditFile=str(audit)))
     assert json.loads(audit.read_text(encoding="utf-8"))["last"] == "deny"
+
+
+# ------------------------------------------------- the build copy and the deposit
+#
+# The guardrail found the engine's files through `engine-files.mjs`; the briefing and
+# the governor read the same deposit and had the same defect in silence. These fire
+# those two jobs from a build copy: beside it there is nothing, and the switches and
+# data the engine deposited are the only place the answer can come from.
+
+
+def deposit_engine_file(home: Path, name: str, content: str) -> Path:
+    """Write one engine-owned file beside the deposited plugin, as the engine does."""
+    path = plugin_dir(home) / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def fire_briefing(copy: Path) -> dict:
+    """Load `briefing.mjs` the way OpenClaw does and ask it for the next prompt."""
+    driver = copy / "briefing-driver.mjs"
+    driver.write_text(
+        f"import {{ registerBriefing }} from {json.dumps((copy / 'briefing.mjs').as_uri())};\n"
+        "const handlers = {};\n"
+        "registerBriefing({ on: (name, fn) => { handlers[name] = fn; } });\n"
+        'handlers.after_compaction({}, { sessionId: "s1" });\n'
+        'const answer = handlers.before_prompt_build({}, { sessionId: "s1" });\n'
+        "console.log(JSON.stringify(answer ?? null));\n",
+        encoding="utf-8",
+    )
+    done = subprocess.run([NODE, str(driver)], capture_output=True, text=True, timeout=60, check=False)
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout)
+
+
+def fire_governor(copy: Path, now: float) -> dict:
+    """Load `governor.mjs` the way OpenClaw does and ask what this turn starts on."""
+    driver = copy / "governor-driver.mjs"
+    driver.write_text(
+        f"import {{ decision }} from {json.dumps((copy / 'governor.mjs').as_uri())};\n"
+        f'const answer = decision({{ ctx: {{ agentId: "main", modelProviderId: "anthropic" }}, now: {now} }});\n'
+        "console.log(JSON.stringify(answer ?? null));\n",
+        encoding="utf-8",
+    )
+    done = subprocess.run([NODE, str(driver)], capture_output=True, text=True, timeout=60, check=False)
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_build_copy_reads_the_briefing_the_engine_deposited(tmp_path):
+    """The briefing text is the engine's, never part of the package: the copy must find it."""
+    home = a_home(tmp_path, OPENCLAW_JSON)
+    OpenClawRuntime().install_guardrail(home, a_body(tmp_path), HOOKS)
+    deposit_engine_file(home, "nexgen.config.json", json.dumps({"briefing": {"enabled": True}}))
+    deposit_engine_file(home, "vault-briefing.txt", "the vault is here\n")
+
+    answer = fire_briefing(build_copy(home))
+
+    assert answer == {"prependContext": "the vault is here"}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_build_copy_reads_the_governor_state_the_engine_deposited(tmp_path):
+    """The spent-plan reading is engine state too: without it the governor never moves a turn."""
+    home = a_home(tmp_path, OPENCLAW_JSON)
+    OpenClawRuntime().install_guardrail(home, a_body(tmp_path), HOOKS)
+    deposit_engine_file(home, "nexgen.config.json", json.dumps({
+        "governor": {"block_at": 95, "state_max_age_seconds": 3600, "agents": {"main": ["openai/gpt-5"]}},
+    }))
+    deposit_engine_file(home, "nexgen-quota-state.json", json.dumps({
+        "written_at": 1000, "providers": {"anthropic": {"percent": 99}},
+    }))
+
+    answer = fire_governor(build_copy(home), now=1000)
+
+    assert answer == {"providerOverride": "openai", "modelOverride": "gpt-5"}

@@ -25,40 +25,22 @@
 //     would leave the guardrail unregistered, and an unregistered guardrail is
 //     exactly the silent failure this file exists to prevent. The handler filters
 //     by tool name instead, which costs one string comparison per call.
-import { existsSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { readPluginConfig } from "./engine-config.mjs";
+import { resolveEngineFile } from "./engine-files.mjs";
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 const SIDECAR_PATH = join(DIR, "nexgen-guardrail.config.json");
 const CONFIG_PATH = join(DIR, "nexgen.config.json");
 
-// Where the engine's own files are, per call: beside this one, or -- when OpenClaw runs a
-// build copy of the package it made under its own state folder -- in the deposit the engine
-// wrote. That copy (`tmp/plugin-captures/<id>/captures/openclaw-plugin-build-<id>/package-0/
-// node_modules/nexgen/`) carries the package only, and the sidecar, the body and the switches
-// are never part of it, so looking beside the copy alone blocked every command on a machine
-// whose guardrail was in place, and would have dropped the person's posture with it. The state
-// folder is an ancestor of any such copy, and it is the one holding `openclaw.json`, which is
-// how it is found without guessing a home directory. A file beside this one always wins, and
-// with no sidecar anywhere the caller stays closed, as it must.
-export function resolveEngineFile(name, startDir = DIR) {
-  const beside = join(startDir, name);
-  if (existsSync(beside)) {
-    return beside;
-  }
-  for (let dir = dirname(startDir); ; dir = dirname(dir)) {
-    if (existsSync(join(dir, "openclaw.json"))) {
-      const deposited = join(dir, "extensions", basename(startDir), name);
-      return existsSync(deposited) ? deposited : beside;
-    }
-    if (dirname(dir) === dir) {
-      return beside;
-    }
-  }
-}
+// Where the engine's own files are, per call, is `engine-files.mjs`: beside this one, or
+// in the deposit the engine wrote when OpenClaw runs a build copy of the package. The
+// sidecar, the body and the switches are never part of that copy, so looking beside it
+// alone blocked every command on a machine whose guardrail was in place, and would have
+// dropped the person's posture with it. With no sidecar anywhere the caller stays
+// closed, as it must.
 
 // The documented OpenClaw surfaces that execute something: `exec` is the shell,
 // `process` owns a running session, `terminal` types into an operator terminal,
