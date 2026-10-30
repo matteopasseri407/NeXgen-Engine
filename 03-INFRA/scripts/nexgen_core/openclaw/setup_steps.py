@@ -176,6 +176,7 @@ def _check_linux_host(setup: Setup, npm: str | None, needs_install: bool) -> boo
     """Linux only: the user bus, npm's global prefix, and lingering."""
     if (setup.platform or sys.platform) != "linux" or setup.dry_run:
         return True
+    host_preflight.adopt_session_bus(setup.env)
     if host_preflight.user_bus_missing(setup.env) or host_preflight.user_bus_unreachable(setup.run, setup.env):
         setup.out(t("The systemd user bus is not available in this session, so the gateway service cannot be managed."))
         setup.out(t("Log in to a normal user session with systemd, or start one, then run the setup again."))

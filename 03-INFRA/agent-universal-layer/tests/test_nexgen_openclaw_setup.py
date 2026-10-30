@@ -364,8 +364,14 @@ def test_the_node_floor_of_the_pin_is_checked_against_an_older_install(tmp_path)
     assert "nodejs.org" in machine.output(), "the person is told what to do"
 
 
-def test_a_linux_session_without_the_user_bus_stops_with_an_action(tmp_path):
-    """Simulated Linux on every host: no session bus, so the gateway cannot be managed."""
+def test_a_linux_session_without_the_user_bus_stops_with_an_action(tmp_path, monkeypatch):
+    """Simulated Linux on every host: no session bus, so the gateway cannot be managed.
+
+    The empty runtime root is stated here on purpose: the installer now adopts
+    `/run/user/<uid>/bus` when it exists, so a host that has one must not turn
+    this test into its opposite.
+    """
+    monkeypatch.setattr("nexgen_core.openclaw.host_preflight.RUNTIME_DIR_ROOT", tmp_path / "no-run-user")
     machine = Machine(tmp_path)
 
     code = machine.run(platform="linux", env={})

@@ -14,6 +14,7 @@ sh install.sh --role server
 ```
 
 **What it does:**
+- Needs Python 3.11+ and the venv package that matches it (`sudo apt install python3-venv` on Ubuntu 24.04, or `python3.X-venv`): the engine builds its own environment with it, and without it every alignment fails with `No module named pip`.
 - Verifies system requirements and obtains Python 3.11+ via user-mode `uv` if missing.
 - Refuses unsafe headless configurations (e.g. passwordless `sudo` or user in `docker` group).
 - Writes the agents' sudo policy to `/etc/sudoers.d/nexgen-agents`: fifteen named commands (container logs and restarts, the compose file in your home, `systemctl` status and the two restarts, `journalctl`, `apt`), never root, and never wider than that list. `visudo -cf` reads the file before anything privileged happens. Without passwordless `sudo` it prints the file and the one `sudo install` command, because an unattended install that stops for a password is an install that hangs.
@@ -28,6 +29,10 @@ sh install.sh --role server
 - Records that role in the machine's own state (`nexgen role`, which prints it) as soon as the setup configures the gateway, and a machine already in service records it with `nexgen role set server` instead of a reinstall.
 
 When you enter this machine as the gateway's user, enter its home too (`sudo -iu <user>`, or `cd` before running anything that talks to OpenClaw). OpenClaw starts a small helper with the directory it was called from, and a directory that user cannot read makes it fail with `spawn <node> EACCES`, which reads like a broken Node installation and is only a wrong working directory.
+
+That `sudo -iu` session has no `XDG_RUNTIME_DIR` and no `DBUS_SESSION_BUS_ADDRESS`, even with lingering on, so `systemctl --user` cannot reach the user bus. The installer notices, and when `/run/user/<uid>/bus` exists it points the run at that bus instead of stopping at step 1/9; if the message still appears, check that the bus exists with `ls -l /run/user/$(id -u)/bus` and that `loginctl enable-linger <user>` has run.
+
+Add `--check` to see this role's plan without writing anything: no launcher, no sudoers file, no gateway.
 
 ---
 

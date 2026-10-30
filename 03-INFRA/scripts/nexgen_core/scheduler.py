@@ -24,6 +24,8 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from nexgen_core.scheduler_startup import _install_startup_fallback
+
 IS_WINDOWS = sys.platform == "win32"
 HOST_MUTATIONS_DISABLED_ENV = "NEXGEN_DISABLE_HOST_MUTATIONS"
 
@@ -182,6 +184,18 @@ def _heartbeat_shim(home: Path) -> str:
     return "%h/.local/bin/agent-sync heartbeat"
 
 
+def _environment_file_lines(home: Path) -> list[str]:
+    """The connector environment the guard must load, with the leading dash.
+
+    The gateway `.env` holds the connector keys in systemd's own syntax, which is
+    what a headless server has. The shell deposit (`secrets.env`) is left out on
+    purpose: systemd skips its `export` lines and would load only part of it.
+    Optional: a machine without a gateway still runs the guard, with the keys
+    its `environment.d` gives the user manager.
+    """
+    return [f"EnvironmentFile=-{home / '.openclaw' / '.env'}"]
+
+
 def _systemd_service_content(home: Path, engine_root: Path, vault_data: Path, vault: Path) -> str:
     lines = [
         "[Unit]",
@@ -192,11 +206,13 @@ def _systemd_service_content(home: Path, engine_root: Path, vault_data: Path, va
         "Type=oneshot",
         f"TimeoutStartSec={GUARD_TIMEOUT_START}",
     ]
-    default_engine_root = (vault / "03-INFRA").resolve()
-    if engine_root.resolve() != default_engine_root:
-        lines.append(_systemd_env_line("AGENT_ENGINE_ROOT", str(engine_root)))
+    # The root the engine resolved for this machine, always: leaving it out let
+    # the guard fall back to a default that named another directory, and every
+    # cycle then rewrote configuration with paths that do not exist.
+    lines.append(_systemd_env_line("AGENT_ENGINE_ROOT", str(engine_root)))
     if vault_data.resolve() != vault.resolve():
         lines.append(_systemd_env_line("AGENT_VAULT_DATA", str(vault_data)))
+    lines.extend(_environment_file_lines(home))
     lines.append(_systemd_env_line("PATH", _scheduler_path(home)))
     lines.append(f"ExecStart={_guard_shim(home)}")
     return "\n".join(lines) + "\n"
@@ -211,11 +227,10 @@ def _systemd_heartbeat_content(home: Path, engine_root: Path, vault_data: Path, 
         "Type=oneshot",
         f"TimeoutStartSec={HEARTBEAT_TIMEOUT_START}",
     ]
-    default_engine_root = (vault / "03-INFRA").resolve()
-    if engine_root.resolve() != default_engine_root:
-        lines.append(_systemd_env_line("AGENT_ENGINE_ROOT", str(engine_root)))
+    lines.append(_systemd_env_line("AGENT_ENGINE_ROOT", str(engine_root)))
     if vault_data.resolve() != vault.resolve():
         lines.append(_systemd_env_line("AGENT_VAULT_DATA", str(vault_data)))
+    lines.extend(_environment_file_lines(home))
     lines.append(_systemd_env_line("PATH", _scheduler_path(home)))
     lines.append(f"ExecStart={_heartbeat_shim(home)}")
     return "\n".join(lines) + "\n"
@@ -478,75 +493,6 @@ def install_scheduled_task(
         return heartbeat_ok
     log("scheduled-task: no logon coverage (schtasks denied and APPDATA unset)")
     return False
-
-
-#: How many previous Startup fallback scripts survive rotation.
-STARTUP_FALLBACK_KEEP = 3
-
-
-def _startup_backup_dir(startup_vbs: Path) -> Path:
-    """Sibling of the Startup folder: Windows never executes it."""
-    return startup_vbs.parent.parent / "NeXgen-Backup"
-
-
-def _remove_stray_startup_backups(startup_vbs: Path) -> None:
-    """Drops previous-version backups from inside the Startup folder.
-
-    Every file in there runs at logon, including `.bak` copies, so
-    anything matching our backup stem is a stray and goes away.
-    Best-effort: a locked file is retried on the next cycle.
-    """
-    for stray in sorted(startup_vbs.parent.glob(startup_vbs.name + "*.bak")):
-        try:
-            stray.unlink()
-        except OSError:
-            pass
-
-
-def _install_startup_fallback(startup_dir: Path, content: str, heartbeat_ok: bool, log) -> bool:
-    """Publishes the Startup-folder logon fallback, rotating its backups.
-
-    Writes only when the content changed; keeps the newest
-    STARTUP_FALLBACK_KEEP previous scripts in a sibling directory
-    Windows never executes, so a version flap mid-update cannot leave
-    runnable `.bak` copies behind in the Startup folder.
-    """
-    from nexgen_core.files import atomic_write_text, backup_file
-    startup_vbs = startup_dir / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "KnowledgeVault Agent Sync.vbs"
-    backup_dir = _startup_backup_dir(startup_vbs)
-    startup_vbs.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        _remove_stray_startup_backups(startup_vbs)
-        if startup_vbs.exists() or startup_vbs.is_symlink():
-            existing = startup_vbs.read_bytes()
-            if existing == content.encode("utf-8"):
-                return heartbeat_ok
-            backup = backup_file(startup_vbs, tag="startup", keep=STARTUP_FALLBACK_KEEP)
-            if backup is not None:
-                try:
-                    relocated = backup_dir / backup.name
-                    shutil.move(str(backup), str(relocated))
-                except OSError as exc:
-                    log(f"startup: cannot relocate logon backup ({type(exc).__name__}); previous script preserved")
-                    try:
-                        backup.unlink()
-                    except OSError:
-                        pass
-                    return heartbeat_ok
-                backups = sorted(backup_dir.glob(startup_vbs.name + ".pre-startup-*.bak"))
-                for old in backups[: max(len(backups) - STARTUP_FALLBACK_KEEP, 0)]:
-                    try:
-                        old.unlink()
-                    except OSError:
-                        pass
-                log(f"startup: kept previous logon script as {relocated}")
-        atomic_write_text(startup_vbs, content)
-    except OSError as exc:
-        log(f"startup: cannot safely publish fallback ({type(exc).__name__}); previous script preserved")
-        return heartbeat_ok
-    log(f"startup: fallback logon installed {startup_vbs}")
-    return heartbeat_ok
 
 
 def install_scheduler(

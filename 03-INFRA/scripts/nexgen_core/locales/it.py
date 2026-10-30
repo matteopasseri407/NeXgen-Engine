@@ -2623,4 +2623,21 @@ MESSAGES: dict[str, str] = {
         'saltata: il backend {runtime} non può confermare una compattazione nativa',
     'timed out after {seconds}s':
         'tempo scaduto dopo {seconds}s',
+    # --- I ruoli della macchina: il piano di --check ------------------------
+    'Plan only: --check writes nothing.':
+        'Solo piano: --check non scrive niente.',
+    'Would record the {role} role in {path}':
+        'Registrerei il ruolo {role} in {path}',
+    'Would write the profile, the remotes and the skills manifest under {root}':
+        'Scriverei il profilo, i remote e il manifest delle skill sotto {root}',
+    'Would install the engine commands in ~/.local/bin':
+        'Installerei i comandi del motore in ~/.local/bin',
+    "Would put the agents' sudo policy in place":
+        'Metterei in vigore la politica sudo degli agenti',
+    'Would configure the OpenClaw gateway for loopback and Tailscale Serve':
+        'Configurerei il gateway OpenClaw su loopback e Tailscale Serve',
+    'Would configure the local OpenClaw gateway':
+        'Configurerei il gateway OpenClaw locale',
+    'Would align CLIs, skills and MCP connectors':
+        'Allineerei CLI, skill e connettori MCP',
 }

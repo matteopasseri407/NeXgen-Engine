@@ -700,7 +700,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
         from nexgen_core import roles
 
         if args.role == "server":
-            return roles.run_server_role(root, out=print)
+            return roles.run_server_role(root, check=args.check, out=print)
         if args.role == "node":
             return roles.run_node_role(
                 root,
@@ -714,7 +714,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
                 out=print,
             )
         if args.role == "standalone":
-            return roles.run_standalone_role(root, out=print)
+            return roles.run_standalone_role(root, check=args.check, out=print)
 
     if args.check:
         print(f"\n{c['bold']}{c['cyan']}4 · " + t("Next step") + c['reset'])

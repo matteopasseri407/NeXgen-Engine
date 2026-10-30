@@ -60,13 +60,19 @@ from nexgen_core.server_sudo import FAILURES, install as _install_sudo_policy
 
 
 def installing_user() -> str:
-    """Who the agents' sudo rules are written for: the admin who ran the installer.
+    """Who the agents' sudo rules are written for: the account that runs the gateway.
 
-    `sudo sh install.sh` is how a server is set up, and the gateway still runs as
-    the admin, not as root: a rule written for root would be a rule for a user the
-    agents never are. `SUDO_USER` is set exactly in that case.
+    The supported server install is `sudo -iu <account>` followed by
+    `sh install.sh --role server`. In that session `SUDO_USER` is the admin who
+    escalated, who already has sudo: a rule written for that name grants nothing
+    to the gateway account and fails months later as an agent that cannot restart
+    its own container. The rules therefore name the current account, and only a run
+    that really is root falls back to the admin who invoked it.
     """
-    return os.environ.get("SUDO_USER") or getpass.getuser()
+    getuid = getattr(os, "getuid", None)
+    if getuid is not None and getuid() == 0:
+        return os.environ.get("SUDO_USER") or getpass.getuser()
+    return getpass.getuser()
 
 
 def _default_sudoers_step(home: Path, out: Callable[[str], None]) -> str:
@@ -76,8 +82,11 @@ def _sudoers_step(
     sudoers_fn: Callable[..., str] | None,
     home_dir: Path,
     out: Callable[[str], None],
-) -> str:
-    """Puts the agents' sudo policy in force, and says what happened."""
+    on_linux: bool = True,
+) -> str | None:
+    """Puts the agents' sudo policy in force on Linux, and says what happened."""
+    if not on_linux:
+        return None
     return (sudoers_fn or _default_sudoers_step)(home=home_dir, out=out)
 
 
@@ -200,6 +209,26 @@ def _sync_node_role(
     return 0 if aligned else 1
 
 
+def _plan_role(role: str, root: Path, home: Path, out: Callable[[str], None]) -> int:
+    """What `--check` prints for a whole-machine role: the steps, and where they would land.
+
+    A command promised as read-only has to answer for every role, not only for the
+    node: the server and standalone roles used to ignore the flag and install
+    launchers, a sudoers draft and a gateway from a run that said "check".
+    """
+    out(t("Plan only: --check writes nothing."))
+    out(t("Would record the {role} role in {path}", role=role, path=role_record_path(home)))
+    out(t("Would write the profile, the remotes and the skills manifest under {root}", root=root))
+    out(t("Would install the engine commands in ~/.local/bin"))
+    if role == SERVER_ROLE:
+        out(t("Would put the agents' sudo policy in place"))
+        out(t("Would configure the OpenClaw gateway for loopback and Tailscale Serve"))
+    else:
+        out(t("Would configure the local OpenClaw gateway"))
+    out(t("Would align CLIs, skills and MCP connectors"))
+    return 0
+
+
 def run_standalone_role(
     root: Path,
     home: Path | None = None,
@@ -208,11 +237,14 @@ def run_standalone_role(
     problems_fn: Callable[[], tuple[int, list[str]]] | None = None,
     runner: Run | None = None,
     platform: str | None = None,
+    check: bool = False,
     out: Callable[[str], None] = print,
 ) -> int:
     """Standalone role: local PC with its own gateway."""
     out(t("NeXgen Engine · standalone role (local PC with own gateway)"))
     home_dir = resolve_home(home)
+    if check:
+        return _plan_role(STANDALONE_ROLE, root, home_dir, out)
     profile = "MINIMAL"
 
     node_info = detect_existing_node(runner=runner, home=home_dir)
@@ -264,6 +296,7 @@ def run_server_role(
     problems_fn: Callable[[], tuple[int, list[str]]] | None = None,
     sudoers_fn: Callable[..., str] | None = None,
     platform: str | None = None,
+    check: bool = False,
     out: Callable[[str], None] = print,
 ) -> int:
     """Server role: always-on OpenClaw gateway on headless Linux.
@@ -275,9 +308,13 @@ def run_server_role(
     `visudo` refuses is never installed, and the role reports it at the end with a
     non-zero code: the gateway still gets configured, and the one promise that did
     not hold stays visible instead of being swallowed by the summary.
+
+    With `check` the role only says what it would do: nothing is written.
     """
     out(t("NeXgen Engine · server role (always-on headless Linux gateway)"))
     home_dir = resolve_home(home)
+    if check:
+        return _plan_role(SERVER_ROLE, root, home_dir, out)
     profile = "MULTI"
 
     declare_role(SERVER_ROLE, home_dir)
@@ -285,8 +322,7 @@ def run_server_role(
     write_remotes(root, profile=profile)
     seed_skill_manifest(root)
     _install_launchers_step(root, out, home_dir)
-    on_linux = (platform or sys.platform).startswith("linux")
-    policy = _sudoers_step(sudoers_fn, home_dir, out) if on_linux else None
+    policy = _sudoers_step(sudoers_fn, home_dir, out, on_linux=(platform or sys.platform).startswith("linux"))
 
     commit_setup(root, [
         root / "99-INDEX" / "USER-PROFILE.md",
@@ -310,6 +346,15 @@ def run_server_role(
     if count > 0:
         out(t("{count} problem(s) remain: run 'nexgen doctor'", count=count))
         return 1
+    return _policy_verdict(policy, out)
+
+
+def _policy_verdict(policy: str | None, out: Callable[[str], None]) -> int:
+    """The server role's exit code once the gateway is configured.
+
+    A policy that failed stays visible: the gateway works until the first
+    `docker restart`, and the person has to see that one promise did not hold.
+    """
     if policy in FAILURES:
         out(t("The gateway is configured, but the agents' sudo policy is not in force: see the line above."))
         return 1

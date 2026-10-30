@@ -8,13 +8,16 @@ setup and the doctor cannot disagree about what this host can do.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, MutableMapping
 from pathlib import Path
 
 from nexgen_core.openclaw_service import RunResult
 
 #: Where systemd records the users allowed to keep services after logout.
 LINGER_DIR = Path("/var/lib/systemd/linger")
+
+#: Where systemd puts each user's own runtime directory and session bus.
+RUNTIME_DIR_ROOT = Path("/run/user")
 
 Run = Callable[..., RunResult]
 
@@ -56,6 +59,46 @@ def linger_enabled(user: str, directory: Path | None = None) -> bool:
 def user_bus_missing(env: Mapping[str, str]) -> bool:
     """No session bus is configured in this process at all."""
     return not env.get("XDG_RUNTIME_DIR") and not env.get("DBUS_SESSION_BUS_ADDRESS")
+
+
+def session_bus_values(env: Mapping[str, str], base: Path | None = None) -> dict[str, str]:
+    """The session bus this account should use, when nothing in the session names it.
+
+    `sudo -iu <account>` starts a login shell without the variables a desktop
+    session exports, even when linger is on and the bus exists. systemd already
+    created `/run/user/<uid>/bus` for this account, so the install can point
+    itself at it instead of stopping at 1/9 and asking for a session nobody can
+    open on a headless server.
+
+    Returns nothing when the session already names a bus, when this platform has
+    no uid, or when the socket is not there: inventing a path is worse than
+    saying the bus is missing.
+    """
+    if env.get("XDG_RUNTIME_DIR") or env.get("DBUS_SESSION_BUS_ADDRESS"):
+        return {}
+    getuid = getattr(os, "getuid", None)
+    if getuid is None:
+        return {}
+    directory = (base if base is not None else RUNTIME_DIR_ROOT) / str(getuid())
+    bus = directory / "bus"
+    if not bus.is_socket():
+        return {}
+    return {"XDG_RUNTIME_DIR": str(directory), "DBUS_SESSION_BUS_ADDRESS": f"unix:path={bus}"}
+
+
+def adopt_session_bus(env: MutableMapping[str, str], base: Path | None = None) -> bool:
+    """Points this run at the account's own bus, and says whether it changed anything.
+
+    The process environment is updated too: the service controller starts
+    `systemctl --user` without an explicit environment, and a bus that only some
+    children can see is the same failure one step later.
+    """
+    values = session_bus_values(env, base)
+    if not values:
+        return False
+    env.update(values)
+    os.environ.update(values)
+    return True
 
 
 def user_bus_unreachable(run: Run, env: Mapping[str, str]) -> bool:

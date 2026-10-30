@@ -122,6 +122,36 @@ def _tail(proc: subprocess.CompletedProcess[str]) -> str:
     return " | ".join(text[-3:])[:400] if text else "no output"
 
 
+def _bootstrap_pip(python: Path, runtime_dir: Path, run: Runner) -> None:
+    """Gives an environment built without pip one, or names the package that provides it.
+
+    Ubuntu 24.04 ships `python3` without `ensurepip` unless `python3-venv` is
+    installed. A venv created before that package was there exists and runs, and
+    every later alignment then failed with "No module named pip": the environment
+    was there, so nothing rebuilt it, and nothing said why.
+    """
+    bootstrapped = run(
+        [str(python), "-m", "ensurepip", "--upgrade"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=STEP_TIMEOUT_SECONDS, check=False,
+    )
+    if bootstrapped.returncode != 0:
+        raise RuntimeProvisionError(
+            f"the engine environment at {runtime_dir} has no pip and could not install one ({_tail(bootstrapped)}). "
+            "Install the venv package of this interpreter "
+            f"('sudo apt install python3-venv', or 'python{sys.version_info.major}.{sys.version_info.minor}-venv'), "
+            f"delete {runtime_dir} and rerun 'nexgen runtime ensure'."
+        )
+
+
+def _has_pip(python: Path, run: Runner) -> bool:
+    """Whether this interpreter can run pip at all: asked of it, never assumed."""
+    probe = run(
+        [str(python), "-m", "pip", "--version"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=STEP_TIMEOUT_SECONDS, check=False,
+    )
+    return probe.returncode == 0
+
+
 def verify(python: Path, *, run: Runner = subprocess.run) -> list[str]:
     """The essential modules `python` cannot import (asked of that interpreter, not of this one)."""
     code = (
@@ -168,6 +198,9 @@ def ensure_runtime(
             )
     # A stamp from an older provisioning must not vouch for a half-rebuilt environment.
     (runtime_dir / STAMP_NAME).unlink(missing_ok=True)
+
+    if not _has_pip(python, run):
+        _bootstrap_pip(python, runtime_dir, run)
 
     log(f"runtime: installing {len(dependencies)} dependencies")
     installed = run(

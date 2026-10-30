@@ -105,9 +105,10 @@ def test_provisioning_creates_installs_verifies_and_only_then_stamps(tmp_path):
 
     assert result.changed is True
     kinds = ["venv" if "venv" in c else "pip" if "pip" in c else "verify" for c in run.calls]
-    assert kinds == ["venv", "pip", "verify"]
+    assert kinds == ["venv", "pip", "pip", "verify"]  # venv, pip probe, install, verify
     assert (rt / runtime.STAMP_NAME).is_file()
-    assert "PyYAML>=6.0" in run.calls[1]
+    install = next(call for call in run.calls if "install" in call)
+    assert "PyYAML>=6.0" in install
 
 
 def test_a_current_environment_is_left_alone(tmp_path):
@@ -447,3 +448,59 @@ def test_a_build_without_the_layer_fails_instead_of_shipping_a_hollow_wheel(tmp_
 
     assert built.returncode != 0
     assert "cannot build" in (built.stderr + built.stdout)
+
+
+class PipLessRun:
+    """A runtime venv that exists but has no pip, like Ubuntu 24.04 without python3-venv."""
+
+    def __init__(self, *, ensurepip_rc: int = 0):
+        self.calls: list[list[str]] = []
+        self.ensurepip_rc = ensurepip_rc
+        self._repaired = False
+
+    def __call__(self, args, **_kwargs):
+        args = [str(a) for a in args]
+        self.calls.append(args)
+        if "venv" in args:
+            target = Path(args[-1])
+            py = runtime.runtime_python(target)
+            py.parent.mkdir(parents=True, exist_ok=True)
+            py.write_text("#!/bin/sh\n", encoding="utf-8")
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if "-m" in args and "pip" in args and "--version" in args:
+            rc = 0 if self._repaired else 1
+            return subprocess.CompletedProcess(args, rc, "", "" if rc == 0 else "No module named pip")
+        if "-m" in args and "ensurepip" in args:
+            self._repaired = self.ensurepip_rc == 0
+            return subprocess.CompletedProcess(
+                args, self.ensurepip_rc, "", "" if self.ensurepip_rc == 0 else "ensurepip is not available",
+            )
+        if "pip" in args:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+
+def test_a_venv_without_pip_is_repaired_once_with_ensurepip(tmp_path):
+    """The venv was created before `python3-venv` was installed: pip is absent and every
+    later alignment fails with "No module named pip"."""
+    run = PipLessRun()
+
+    result = runtime.ensure_runtime(tmp_path / "runtime", _checkout(tmp_path), run=run, log=lambda _l: None)
+
+    assert result.changed is True
+    assert [c[1:] for c in run.calls if "-m" in c and "venv" not in c] == [
+        ["-m", "pip", "--version"],
+        ["-m", "ensurepip", "--upgrade"],
+        ["-m", "pip", "install", "--disable-pip-version-check", "--timeout", "30", "--retries", "2", "PyYAML>=6.0"],
+    ]
+    assert (tmp_path / "runtime" / runtime.STAMP_NAME).is_file()
+
+
+def test_a_venv_whose_pip_cannot_be_bootstrapped_names_the_fix_and_the_path(tmp_path):
+    runtime_dir = tmp_path / "runtime"
+    with pytest.raises(runtime.RuntimeProvisionError) as raised:
+        runtime.ensure_runtime(runtime_dir, _checkout(tmp_path), run=PipLessRun(ensurepip_rc=1), log=lambda _l: None)
+
+    assert "python3-venv" in str(raised.value)
+    assert str(runtime_dir) in str(raised.value)
+    assert not (runtime_dir / runtime.STAMP_NAME).exists()
