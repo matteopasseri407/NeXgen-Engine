@@ -11,9 +11,13 @@ from nexgen_core.i18n import t
 from nexgen_core.report import CheckOutcome, Severity
 
 TIMERS = ("agent-sync.timer", "agent-heartbeat.timer")
+#: The units whose `AGENT_ENGINE_ROOT` decides which checkout every cycle reads.
+UNITS = ("agent-sync.service", "agent-heartbeat.service")
 _LAUNCHER_MARKER = "NeXgen Engine"
 #: The path a launcher falls back to: `NEXGEN_ENTRY="..."` in the POSIX one, `set "NEXGEN_ENTRY=..."` in the Windows one.
 _ENTRY_LINE = re.compile(r'^(?:set ")?NEXGEN_ENTRY=?"?([^"\r\n]+)"', re.MULTILINE)
+#: The engine folder a unit declares, in the quoting `scheduler._systemd_env_line` writes.
+_ENGINE_ROOT_LINE = re.compile(r'^Environment="AGENT_ENGINE_ROOT=((?:[^"\\]|\\.)*)"', re.MULTILINE)
 
 
 def _systemctl(args: list[str]) -> tuple[int, str]:
@@ -55,6 +59,53 @@ def check_timers_armed() -> CheckOutcome:
             action=t("Run 'nexgen guard' once to write and enable them. On a machine with no login session, also: loginctl enable-linger $USER."),
         )
     return CheckOutcome(id="host.timers", severity=Severity.OK, message=t("The guard and heartbeat timers are enabled and running"))
+
+
+def check_unit_engine_root(home: Path) -> CheckOutcome:
+    """Does every guard unit point at an engine folder that still exists?
+
+    The unit keeps the path of the checkout it was written for. If that checkout moved
+    or was deleted, every cycle starts a Python that cannot find the engine, and the
+    timer that would repair it is started by the same command. The guard only notices
+    when a person reads the last cycle, so the doctor says it here instead.
+    """
+    if not sys.platform.startswith("linux"):
+        return CheckOutcome(id="host.unit_engine_root", severity=Severity.UNDETERMINED,
+                            message=t("The units' engine folder is checked on Linux/systemd only; not checked here."))
+    missing: list[str] = []
+    declared = False
+    for name in UNITS:
+        text = _unit_text(home, name)
+        if text is None:
+            continue
+        match = _ENGINE_ROOT_LINE.search(text)
+        if not match:
+            continue
+        declared = True
+        value = re.sub(r"\\(.)", r"\1", match.group(1))
+        if not Path(value).is_dir():
+            missing.append(f"{name} -> {value}")
+    if not declared:
+        return CheckOutcome(
+            id="host.unit_engine_root", severity=Severity.UNDETERMINED,
+            message=t("No guard unit declares an engine folder here: nothing was checked."))
+    if missing:
+        return CheckOutcome(
+            id="host.unit_engine_root", severity=Severity.BROKEN,
+            message=t("The guard units name an engine folder that no longer exists: {units}",
+                      units="; ".join(missing)),
+            action=t("Run 'nexgen sync' again so the units are rewritten."),
+        )
+    return CheckOutcome(id="host.unit_engine_root", severity=Severity.OK,
+                        message=t("Every guard unit names an engine folder that exists"))
+
+
+def _unit_text(home: Path, name: str) -> str | None:
+    """One unit file as text, or None when it is not there."""
+    try:
+        return (home / ".config" / "systemd" / "user" / name).read_text(encoding="utf-8")
+    except OSError:  # nexgen: allow reason="a unit that was never installed has no engine folder to judge"
+        return None
 
 
 def _engine_launchers(bin_dir: Path) -> list[Path]:

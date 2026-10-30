@@ -89,7 +89,11 @@ from nexgen_core.checks.skill_checks import (  # noqa: E402 - sys.path shim for 
 )
 from nexgen_core.checks.guardrail_checks import check_guardrail_consulted, check_openclaw_guardrail_plugin  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.marks import safe_mark, safe_text  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.checks.host_checks import check_launchers, check_timers_armed  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.checks.host_checks import (  # noqa: E402 - sys.path shim for cloned checkout
+    check_launchers,
+    check_timers_armed,
+    check_unit_engine_root,
+)
 from nexgen_core.checks.runtime_checks import check_engine_runtime  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.takeover_checks import (  # noqa: E402 - sys.path shim for cloned checkout
     check_engine_version_recorded,
@@ -206,6 +210,7 @@ def _environment_checks(run, doc: Doctor) -> None:
     run("guardrail.consulted", lambda: check_guardrail_consulted(home))
     run("guardrail.openclaw_plugin", lambda: check_openclaw_guardrail_plugin(home))
     run("host.timers", check_timers_armed)
+    run("host.unit_engine_root", lambda: check_unit_engine_root(home))
     run("host.launchers", lambda: check_launchers(home))
     # Which engine last completed a cycle here: the per-machine answer to
     # "are all my machines migrated?".

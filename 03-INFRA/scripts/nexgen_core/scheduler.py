@@ -24,6 +24,7 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from nexgen_core import scheduler_path
 from nexgen_core.scheduler_startup import _install_startup_fallback
 
 IS_WINDOWS = sys.platform == "win32"
@@ -89,16 +90,6 @@ def _systemd_env_line(key: str, value: str) -> str:
     return f'Environment="{key}={escaped}"'
 
 
-_STANDARD_SERVICE_DIRS = (
-    "/usr/local/sbin",
-    "/usr/local/bin",
-    "/usr/sbin",
-    "/usr/bin",
-    "/sbin",
-    "/bin",
-    "/snap/bin",
-)
-
 #: What the guard and its children launch by name. Their directories join the
 #: unit's PATH even when they live outside the standard ones (nvm, volta,
 #: ~/.opencode, a Homebrew prefix).
@@ -128,43 +119,15 @@ def _unit_path_entries(home: Path) -> list[str]:
 
 
 def _scheduler_path(home: Path) -> str:
-    """The PATH a unit declares: the home launchers, the directory of the
-    interpreter running the engine, then the standard system directories.
+    """The PATH a unit declares, assembled by `scheduler_path.compose`.
 
-    The caller's PATH is not copied wholesale. Every shell has its own PATH,
-    so copying it made each shell that ran the install rewrite the unit and
-    reload the timers. The interpreter directory is there
-    because the shim starts whatever `python3` is first on PATH, and that must
-    be the interpreter that installed the engine. Each directory appears once.
-
-    The guard runs with the PATH its own unit declares, so without the
-    deduplication every cycle prepended the same two directories to a value it
-    had itself written: the unit grew 51 bytes per cycle and was rewritten and
-    reloaded every time. Now the unit is a fixed point of its own environment,
-    and a unit that already grew collapses on its next write.
+    What the installed units already declare stays, in its order, and the
+    directories of the tools this shell can see are only ever added: a shell
+    that cannot see nvm therefore never takes `node` away from the guard, and
+    two shells converge on one unit instead of rewriting it against each other.
+    nvm's default Node is the one exception, and `scheduler_path` explains it.
     """
-    entries = [
-        str(home / ".local" / "bin"),
-        str(home / ".opencode" / "bin"),
-        str(Path(sys.executable).parent) if sys.executable else "",
-        # What the installed units already declare stays, in its order, and
-        # the directories of the tools this shell can see are only ever added.
-        # A shell that cannot see nvm therefore never takes `node` away from
-        # the guard, and two shells converge on one unit instead of
-        # rewriting it against each other.
-        *_unit_path_entries(home),
-        *_tool_dirs(),
-        *_STANDARD_SERVICE_DIRS,
-    ]
-    seen: set[str] = set()
-    unique: list[str] = []
-    for entry in entries:
-        key = os.path.normcase(entry)
-        if not entry or key in seen:
-            continue
-        seen.add(key)
-        unique.append(entry)
-    return os.pathsep.join(unique)
+    return scheduler_path.compose(home, _unit_path_entries(home), _tool_dirs(), sys.executable)
 
 
 def _guard_shim(home: Path) -> str:

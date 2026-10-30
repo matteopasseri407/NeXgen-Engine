@@ -1135,6 +1135,14 @@ MESSAGES: dict[str, str] = {
         "Esegui 'nexgen init' dall'engine che vuoi usare: riscrive tutti i launcher.",
     'Every engine command points at an engine that exists ({count} checked)':
         "Ogni comando dell'engine punta a un engine che esiste ({count} controllati)",
+    "The units' engine folder is checked on Linux/systemd only; not checked here.":
+        "La cartella del motore nelle unità si controlla solo su Linux/systemd; qui non è stato controllato.",
+    "No guard unit declares an engine folder here: nothing was checked.":
+        "Nessuna unità della guardia dichiara la cartella del motore: non c'era niente da controllare.",
+    "The guard units name an engine folder that no longer exists: {units}":
+        "Le unità della guardia indicano una cartella del motore che non esiste più: {units}",
+    "Run 'nexgen sync' again so the units are rewritten.":
+        "Rilancia `nexgen sync` per riscrivere le unità.",
     'The leak-scan pattern copies could not be compared: {error}':
         'Non è stato possibile confrontare le copie dei pattern anti-leak: {error}',
     "The Vault's leak-scan patterns match the engine's":
@@ -1457,8 +1465,10 @@ MESSAGES: dict[str, str] = {
         "Allinealo con: {command}",
     "OpenClaw {version} is the pinned release.":
         "OpenClaw {version} è la versione fissata.",
-    "OpenClaw is installed but this machine does not declare the module: the engine will not keep it aligned.":
-        "OpenClaw è installato ma questa macchina non dichiara il modulo: il motore non lo terrà allineato.",
+    "OpenClaw is installed but this machine does not declare the module.":
+        "OpenClaw è installato ma questa macchina non dichiara il modulo.",
+    "This machine is a node: OpenClaw follows the version the engine pins.":
+        "Questa macchina è un nodo: OpenClaw segue la versione fissata dal motore.",
     "Declare 'openclaw: local' under this host in modules.state.yaml, or remove OpenClaw.":
         "Dichiara 'openclaw: local' sotto questa macchina in modules.state.yaml, oppure rimuovi OpenClaw.",
     "The configuration at {path} is valid JSON.":
@@ -1469,6 +1479,66 @@ MESSAGES: dict[str, str] = {
         "OpenClaw non ha ancora una configurazione in {path}.",
     "Run 'nexgen openclaw plan' to see what the engine would write.":
         "Lancia 'nexgen openclaw plan' per vedere cosa scriverebbe il motore.",
+    # Il guard che tiene OpenClaw sulla versione fissata
+    "OpenClaw is not installed on this machine: nothing to align here.":
+        "OpenClaw non è installato su questa macchina: non c'è niente da allineare.",
+    "OpenClaw has no configuration here: nothing runs on this machine.":
+        "OpenClaw non ha una configurazione qui: su questa macchina non gira.",
+    "The engine cannot read its OpenClaw pin, so it cannot align what is installed.":
+        "Il motore non riesce a leggere la versione fissata di OpenClaw, quindi non può allineare quella installata.",
+    "OpenClaw {version} is installed but npm is not beside its Node: it cannot be updated from here.":
+        "OpenClaw {version} è installato ma npm non è accanto al suo Node: da qui non si può aggiornare.",
+    "Install Node from {url}: it brings npm with it.":
+        "Installa Node da {url}: porta npm con sé.",
+    "OpenClaw {version} is installed and the engine pins {pinned}, but Node {node} does not satisfy {requirement}.":
+        "OpenClaw {version} è installato e il motore fissa {pinned}, ma Node {node} non rispetta {requirement}.",
+    "(unknown)":
+        "(sconosciuta)",
+    "Install a Node release in the range {requirement}: the engine never installs Node.":
+        "Installa una versione di Node nel range {requirement}: il motore non installa mai Node.",
+    "The last attempt to install OpenClaw {pinned} failed less than 24 hours ago: the next attempt is after that, or as soon as the pin changes.":
+        "L'ultimo tentativo di installare OpenClaw {pinned} è fallito meno di 24 ore fa: il prossimo parte dopo, o appena cambia la versione fissata.",
+    # Quando l'aggiornamento deve aspettare: chi legge deve capire perché e che non serve fare niente.
+    "Postponed to the night window (03:00-06:00 local time): the next cycle tries again.":
+        "Rimandato alla finestra notturna (03:00-06:00 ora locale): il prossimo ciclo riprova.",
+    "Postponed: {reason}. The next cycle tries again.":
+        "Rimandato: {reason}. Il prossimo ciclo riprova.",
+    "an agent session is busy":
+        "una sessione dell'agente è in corso",
+    "an automation is running":
+        "un'automazione è in corso",
+    "a command is running on this node":
+        "un comando è in corso su questo nodo",
+    "the work state cannot be read":
+        "lo stato del lavoro è illeggibile",
+    "Installing OpenClaw {pinned} failed (exit {code}): {detail}":
+        "Installare OpenClaw {pinned} non è riuscito (uscita {code}): {detail}",
+    "OpenClaw {pinned} did not work here ({problem}): {previous} was put back.{rollback}":
+        "OpenClaw {pinned} non ha funzionato qui ({problem}): ho rimesso {previous}.{rollback}",
+    "OpenClaw {pinned} is installed and the node service answers.":
+        "OpenClaw {pinned} è installato e il servizio nodo risponde.",
+    "OpenClaw {pinned} is installed and the gateway answers.":
+        "OpenClaw {pinned} è installato e il gateway risponde.",
+    "OpenClaw {pinned} is installed on this machine.":
+        "OpenClaw {pinned} è installato su questa macchina.",
+    "Aligning OpenClaw with the pin failed: {error}":
+        "Allineare OpenClaw alla versione fissata non è riuscito: {error}",
+    "the gateway service controller is not available":
+        "il controllo del servizio del gateway non è disponibile",
+    "the gateway did not restart":
+        "il gateway non è ripartito",
+    "no smoke test is available to prove the gateway works":
+        "non c'è un test rapido per provare che il gateway funzioni",
+    "the smoke test failed":
+        "il test rapido è fallito",
+    "the node service is not running":
+        "il servizio nodo non è in esecuzione",
+    "no output":
+        "nessun output",
+    " Reinstalling {previous} failed too ({detail}).":
+        " Anche reinstallare {previous} è fallito ({detail}).",
+    " Restarting it failed too ({error}).":
+        " Anche riavviarlo è fallito ({error}).",
     "Ollama model ids carry ':latest', which OpenClaw does not recognise: {ids}":
         "Gli id dei modelli Ollama hanno ':latest', che OpenClaw non riconosce: {ids}",
     "Write the id without ':latest' and run 'nexgen openclaw setup' again.":

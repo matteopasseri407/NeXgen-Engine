@@ -22,6 +22,7 @@ of any engine release.
 - A clone outside `~/.nexgen-engine`, such as the README's `~/KnowledgeVault`, is the engine its commands and its install use. The launchers export the engine root of the code they run, and `install.sh` / `install.ps1` name their clone when no engine is declared or installed. Before, every command looked for `~/.nexgen-engine/03-INFRA`, the guard's `modules` phase failed, and the units the install wrote named a folder that did not exist.
 - A first OpenClaw setup enables the engine plugin it deposits. The plan was read before step 4 put the plugin in place, so the file went out without `nexgen` in `plugins.allow`: OpenClaw never loaded the guardrail, the governor or the evidence check, while the setup said the plugin was enabled.
 - Every job of the OpenClaw engine plugin finds the engine's files from a build copy, not only the guardrail: the briefing, the governor's state, the checkpoint, the evidence check and the engine runner read through one resolver (`engine-files.mjs`). On a build copy they switched themselves off in silence.
+- The guard units' PATH follows `nvm alias default`: after a Node upgrade the old version's `bin` no longer stays ahead and keeps the guard on the old Node and the old global OpenClaw, and the PATH is a fixed point, so a unit is not rewritten on every cycle. `nexgen doctor` fails when `agent-sync.service` or `agent-heartbeat.service` names an `AGENT_ENGINE_ROOT` that is not a directory.
 
 ## [2.24.1] - 2026-10-29
 
