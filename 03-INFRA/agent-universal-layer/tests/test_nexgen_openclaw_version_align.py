@@ -15,6 +15,7 @@ cannot be read postpones the cycle instead of passing for an idle machine.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -1013,9 +1014,9 @@ def test_npm_and_the_cli_run_under_the_node_that_owns_openclaw(tmp_path: Path):
     fake = EnvRun(machine)
 
     version_align.align(
-        machine.home, machine.engine, env={"PATH": f"{stale}:/usr/bin"}, platform="linux",
+        machine.home, machine.engine, env={"PATH": os.pathsep.join([str(stale), "/usr/bin"])}, platform="linux",
         which=lookup(machine), run=fake, clock=lambda: DAY, node_children=idle_node,
     )
 
     assert fake.paths
-    assert all(path.split(":")[0] == str(machine.bin) for path in fake.paths)
+    assert all(path.split(os.pathsep)[0] == str(machine.bin) for path in fake.paths)

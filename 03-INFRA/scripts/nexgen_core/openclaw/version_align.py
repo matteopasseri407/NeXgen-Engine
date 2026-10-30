@@ -140,7 +140,7 @@ def _align(
     moment = (clock or _now)()
     pinned = pinned_version(engine_root)
     values = _owner_node_first(values, lookup)
-    node, npm = _owner_tools(lookup, runner, values)
+    node, npm = _owner_tools(lookup, runner, values, system)
     config = openclaw_config(home_dir, values)
     if not config.is_file():
         return Outcome(UNCHANGED, t("OpenClaw has no configuration here: nothing runs on this machine."))
@@ -256,7 +256,8 @@ def _now() -> float:
     return time.time()
 
 
-def _owner_tools(which: Which, run: Run, env: Mapping[str, str]) -> tuple[str | None, str | None]:
+def _owner_tools(which: Which, run: Run, env: Mapping[str, str],
+                 system: str) -> tuple[str | None, str | None]:
     """The Node and the npm that own the OpenClaw this machine runs.
 
     An nvm machine keeps one bin folder per Node release, and each `npm` installs into
@@ -270,7 +271,8 @@ def _owner_tools(which: Which, run: Run, env: Mapping[str, str]) -> tuple[str | 
     folder = Path(binary).parent if binary else (Path(node).parent if node else None)
     if folder is None:
         return node, which("npm")
-    return _sibling(folder, "node") or node, _sibling(folder, "npm") or _prefix_owner(folder, which, run, env)
+    owner = _sibling(folder, "npm") or _prefix_owner(folder, which, run, env, system)
+    return _sibling(folder, "node") or node, owner
 
 
 def _owner_node_first(env: dict[str, str], which: Which) -> dict[str, str]:
@@ -289,13 +291,13 @@ def _owner_node_first(env: dict[str, str], which: Which) -> dict[str, str]:
     return {**env, "PATH": os.pathsep.join([folder, *rest])}
 
 
-def _prefix_owner(folder: Path, which: Which, run: Run, env: Mapping[str, str]) -> str | None:
+def _prefix_owner(folder: Path, which: Which, run: Run, env: Mapping[str, str], system: str) -> str | None:
     """The npm on PATH, when the global packages it installs land in `folder`."""
     npm = which("npm")
     prefix = npm_prefix(run, npm, env) if npm else None
     if prefix is None:
         return None
-    installs_into = prefix if sys.platform == "win32" else prefix / "bin"
+    installs_into = prefix if system == "win32" else prefix / "bin"
     return npm if _same_folder(installs_into, folder) else None
 
 
