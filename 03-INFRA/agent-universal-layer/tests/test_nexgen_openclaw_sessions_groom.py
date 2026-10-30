@@ -279,6 +279,8 @@ def test_the_command_fails_only_when_an_attempt_really_failed(monkeypatch, tmp_p
     def exit_code(sessions, reply, scenario):
         monkeypatch.setenv("AGENT_STATE_DIR", str(tmp_path / scenario))
         monkeypatch.setattr(sessions_groom.subprocess, "run", FakeGateway(sessions, reply=reply))
+        # The command resolves the real CLI first: a machine without one must not decide the result.
+        monkeypatch.setattr(sessions_groom, "_resolve_binary", lambda name="openclaw": "openclaw")
         return openclaw_cmds.cmd_groom(Namespace(dry_run=False))
 
     huge = session(totalTokens=HARD_TOKENS + 1)
