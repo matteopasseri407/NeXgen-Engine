@@ -377,6 +377,26 @@ def _declared_models(squad: dict[str, Any]) -> list[str]:
     return refs
 
 
+def _apply_model_entries(config: dict[str, Any], declared: Mapping[str, Any]) -> None:
+    """The squad's `models` table, merged into `agents.defaults.models`.
+
+    That record is `provider/model` -> entry, and it is where OpenClaw reads a
+    per-model setting such as the `agentRuntime: {id: "claude-cli"}` pin
+    `squad.example.yaml` declares. The root `models` object is strict -- only
+    `mode`, `providers` and `catalogRefresh` -- so an `entries` key there makes
+    OpenClaw refuse the whole file ("models: Unrecognized key: entries"), which is
+    what an earlier engine wrote. An entry already on the target keeps every key
+    the squad does not set; the squad's own keys win over it.
+    """
+    agents_block = config.setdefault("agents", {})
+    defaults = agents_block.setdefault("defaults", {})
+    models = defaults.get("models") if isinstance(defaults.get("models"), dict) else {}
+    for ref, entry in declared.items():
+        existing = models.get(ref) if isinstance(models.get(ref), dict) else {}
+        models[str(ref)] = {**existing, **(entry if isinstance(entry, dict) else {})}
+    defaults["models"] = models
+
+
 def apply_squad(
     config: dict[str, Any],
     squad: dict[str, Any],
@@ -416,10 +436,8 @@ def apply_squad(
             for agent_id in [key for key in entries if key not in declared]:
                 entries.pop(agent_id, None)
 
-    if "models" in squad and isinstance(squad["models"], dict):
-        models_block = target.setdefault("models", {})
-        models_entries = models_block.setdefault("entries", {})
-        models_entries.update(squad["models"])
+    if isinstance(squad.get("models"), dict):
+        _apply_model_entries(target, squad["models"])
 
     if "bindings" in squad and isinstance(squad["bindings"], list):
         target["bindings"] = list(squad["bindings"])

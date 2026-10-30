@@ -325,3 +325,26 @@ def test_an_exec_object_never_carries_a_mode_and_a_legacy_key():
         block = merged["tools"]["exec"]
         assert block["mode"] == "auto"
         assert "security" not in block and "ask" not in block, current
+
+
+def test_the_models_entries_a_squad_wrote_into_the_old_key_are_taken_out():
+    """OpenClaw refuses the whole file over that key (`models: Unrecognized key: entries`).
+
+    An earlier engine wrote the squad's `models` table there. No OpenClaw version reads
+    it, so removing it heals the file and costs nobody a key.
+    """
+    current = {
+        "models": {
+            "providers": {"ollama": {"models": [{"id": "qwen3:8b"}]}},
+            "entries": {"anthropic/claude-opus-5-5": {"agentRuntime": {"id": "claude-cli"}}},
+        },
+        "agents": {"entries": {"main": {"model": "anthropic/claude-opus-5-5"}}},
+    }
+    before = copy.deepcopy(current)
+
+    merged = setup_write.merged_document(current, {"agents": {"entries": {}}})
+
+    assert "entries" not in merged["models"]
+    assert merged["models"]["providers"] == {"ollama": {"models": [{"id": "qwen3:8b"}]}}
+    assert merged["agents"]["entries"]["main"]["model"] == "anthropic/claude-opus-5-5"
+    assert current == before

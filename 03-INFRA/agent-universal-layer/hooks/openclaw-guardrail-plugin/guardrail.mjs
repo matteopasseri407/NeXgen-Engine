@@ -25,7 +25,8 @@
 //     would leave the guardrail unregistered, and an unregistered guardrail is
 //     exactly the silent failure this file exists to prevent. The handler filters
 //     by tool name instead, which costs one string comparison per call.
-import { dirname, join } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { readPluginConfig } from "./engine-config.mjs";
@@ -33,6 +34,31 @@ import { readPluginConfig } from "./engine-config.mjs";
 const DIR = dirname(fileURLToPath(import.meta.url));
 const SIDECAR_PATH = join(DIR, "nexgen-guardrail.config.json");
 const CONFIG_PATH = join(DIR, "nexgen.config.json");
+
+// Where the engine's own files are, per call: beside this one, or -- when OpenClaw runs a
+// build copy of the package it made under its own state folder -- in the deposit the engine
+// wrote. That copy (`tmp/plugin-captures/<id>/captures/openclaw-plugin-build-<id>/package-0/
+// node_modules/nexgen/`) carries the package only, and the sidecar, the body and the switches
+// are never part of it, so looking beside the copy alone blocked every command on a machine
+// whose guardrail was in place, and would have dropped the person's posture with it. The state
+// folder is an ancestor of any such copy, and it is the one holding `openclaw.json`, which is
+// how it is found without guessing a home directory. A file beside this one always wins, and
+// with no sidecar anywhere the caller stays closed, as it must.
+export function resolveEngineFile(name, startDir = DIR) {
+  const beside = join(startDir, name);
+  if (existsSync(beside)) {
+    return beside;
+  }
+  for (let dir = dirname(startDir); ; dir = dirname(dir)) {
+    if (existsSync(join(dir, "openclaw.json"))) {
+      const deposited = join(dir, "extensions", basename(startDir), name);
+      return existsSync(deposited) ? deposited : beside;
+    }
+    if (dirname(dir) === dir) {
+      return beside;
+    }
+  }
+}
 
 // The documented OpenClaw surfaces that execute something: `exec` is the shell,
 // `process` owns a running session, `terminal` types into an operator terminal,
@@ -232,7 +258,7 @@ export function decideFor(posture, verdict) {
 
 export function registerGuardrail(api, { sidecarPath = SIDECAR_PATH, configPath = CONFIG_PATH } = {}) {
   api.on("before_tool_call", async (event, ctx) => {
-    const posture = readPosture(configPath);
+    const posture = readPosture(resolveEngineFile("nexgen.config.json", dirname(configPath)));
     const toolName = toolNameOf(event?.toolName);
     const command = commandOfTool(toolName, event?.params);
     if (command === null) {
@@ -251,7 +277,8 @@ export function registerGuardrail(api, { sidecarPath = SIDECAR_PATH, configPath 
         : undefined;
     }
     const workdir = typeof event?.params?.workdir === "string" ? event.params.workdir : undefined;
-    const verdict = await judge(command, workdir, ctx?.sessionId ?? null, sidecarPath);
+    const resolved = resolveEngineFile("nexgen-guardrail.config.json", dirname(sidecarPath));
+    const verdict = await judge(command, workdir, ctx?.sessionId ?? null, resolved);
     return decideFor(posture, verdict);
   });
 }

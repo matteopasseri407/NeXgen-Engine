@@ -84,6 +84,12 @@ engine's own Google token store).
 definitions (about four characters a token), then the total each CLI loads at start. On a CLI that defers tool
 definitions natively that is not what a session pays; on one that does not, it is paid every time.
 
+The index a model reads has a budget of its own: `LAZY_MCP_INDEX_MAX_TOKENS`, 4000 by default. While the whole
+index fits, `lazy_list` carries one line of description per tool and the server's own annotations. Past the
+budget it degrades to names only and says so with `"degraded": true`, which costs the hints and nothing else:
+every tool is still listed, `lazy_load` still hands over the full definition it reads live, and `lazy_call` and
+`lazy_mutate` still forward. A large server mounted beside the others is the usual reason to raise the variable.
+
 ## Hiding tools you never use
 
 A manifest entry can name tools to hide (`tools_deny`) or the only ones to keep (`tools_allow`):

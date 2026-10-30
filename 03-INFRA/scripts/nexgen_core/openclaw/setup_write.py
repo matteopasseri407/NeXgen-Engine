@@ -209,6 +209,7 @@ def merged_document(current: dict[str, Any] | None, proposed: dict[str, Any]) ->
     _drop_uncreated_agent(merged)
     _retire_replaced(merged, proposed)
     _retire(merged)
+    _drop_squad_model_entries(merged)
     return merged
 
 
@@ -319,6 +320,23 @@ def _retire(document: dict[str, Any]) -> None:
                     del parent[path[-1]]
             elif target == value:
                 del parent[path[-1]]
+
+
+def _drop_squad_model_entries(document: dict[str, Any]) -> None:
+    """Takes the `models.entries` an earlier engine wrote out of the file.
+
+    The squad's `models` table belongs in `agents.defaults.models`; before that was
+    fixed the engine merged it into a root `models.entries` instead, and OpenClaw
+    refuses the whole file over it ("models: Unrecognized key: entries"): the root
+    `models` object accepts only `mode`, `providers` and `catalogRefresh`. No version
+    of OpenClaw ever read that key, so nothing a person wrote can live in it, and
+    removing it is how a machine broken by the old engine heals on the next run.
+    """
+    models = document.get("models")
+    if isinstance(models, dict) and "entries" in models:
+        # Rebuilt rather than edited in place: a section only the proposal carries is the
+        # proposal's own object, and this module promises never to change its caller's input.
+        document["models"] = {key: value for key, value in models.items() if key != "entries"}
 
 
 def generate_token() -> str:

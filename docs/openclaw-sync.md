@@ -262,6 +262,11 @@ person; an allow leaves the call alone. A failure never becomes an allow: a miss
 core, an unreadable sidecar or a body that crashes blocks, or asks, and OpenClaw
 itself blocks the call when the handler throws.
 
+The sidecar is found beside the plugin, and -- when OpenClaw runs a copy it builds of
+the package under its own `<state dir>/tmp/plugin-captures/` -- in the deposit, by
+walking up to the state folder that holds `openclaw.json`. A copy with no deposit
+anywhere is still a block, never an allow.
+
 ### Briefing
 
 OpenClaw's `after_compaction` and `session_start` are observations: they have no

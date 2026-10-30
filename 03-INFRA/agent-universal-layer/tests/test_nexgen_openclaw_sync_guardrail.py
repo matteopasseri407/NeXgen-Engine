@@ -292,6 +292,72 @@ def test_a_missing_core_blocks_instead_of_allowing(tmp_path):
     assert "core" in decision["blockReason"]
 
 
+def build_copy(home: Path) -> Path:
+    """The copy OpenClaw builds of the plugin package, under its own state folder.
+
+    It carries the package's files and its core, never the sidecar: that file is the
+    engine's, written beside the deposit and not shipped. The folder name in the path
+    is OpenClaw's; the shape is what the report of issue #147 shows.
+    """
+    copy = (
+        home / ".openclaw" / "tmp" / "plugin-captures" / "0b0e5c1a"
+        / "captures" / "openclaw-plugin-build-1" / "package-0" / "node_modules" / PLUGIN_ID
+    )
+    copy.mkdir(parents=True)
+    for source in sorted(PLUGIN_SOURCE.iterdir()):
+        if source.is_file():
+            shutil.copy2(source, copy / source.name)
+    shutil.copy2(HOOKS / "nexgen-guardrail-core.mjs", copy / "nexgen-guardrail-core.mjs")
+    assert not (copy / "nexgen-guardrail.config.json").exists()
+    return copy
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_build_copy_of_the_plugin_runs_the_guardrail_the_engine_deposited(tmp_path):
+    """A read-only exec must not be blocked just because OpenClaw copied the plugin.
+
+    OpenClaw runs the plugin from a build copy it makes under its state folder, and
+    that copy has no sidecar: without the deposit the guardrail found nothing and
+    blocked every command it was asked to judge.
+    """
+    home = a_home(tmp_path, OPENCLAW_JSON)
+    body = tmp_path / "guardrail-body.mjs"
+    body.write_text(BODIES["deny.mjs"], encoding="utf-8")
+    OpenClawRuntime().install_guardrail(home, body, HOOKS)
+
+    decision = fire(build_copy(home))["decision"]
+
+    assert decision["block"] is True
+    assert "rm -rf is not allowed" in decision["blockReason"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_copy_with_no_deposit_anywhere_still_fails_closed(tmp_path):
+    """The fallback never invents a policy: no sidecar at all is still a block."""
+    home = a_home(tmp_path, OPENCLAW_JSON)
+    copy = build_copy(home)
+
+    decision = fire(copy)["decision"]
+
+    assert decision["block"] is True
+    assert "no guardrail sidecar" in decision["blockReason"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_build_copy_reads_the_posture_the_engine_deposited(tmp_path):
+    """Finding the sidecar but not the switches would run a stricter owner's `ask` as bypass."""
+    home = a_home(tmp_path, OPENCLAW_JSON)
+    body = tmp_path / "guardrail-body.mjs"
+    body.write_text(BODIES["allow.mjs"], encoding="utf-8")
+    runtime = OpenClawRuntime()
+    runtime.install_guardrail(home, body, HOOKS)
+    assert runtime.apply_posture(home, "ask")
+
+    decision = fire(build_copy(home))["decision"]
+
+    assert decision is not None and "requireApproval" in decision
+
+
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_a_corrupt_sidecar_is_not_read_as_no_guardrail(tmp_path):
     target = deploy(tmp_path, "allow.mjs")

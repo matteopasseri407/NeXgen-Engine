@@ -156,6 +156,10 @@ agents:
 ### `models`
 Optional dictionary of model entries and custom provider specifications.
 
+Each key is a `provider/model` ref and its value is that model's entry in `agents.defaults.models`
+(see [Model choice per agent](#model-choice-per-agent)). It never lands in the root `models` object of
+`openclaw.json`: that one is strict and accepts only `mode`, `providers` and `catalogRefresh`.
+
 ## Model choice per agent
 
 `model` on an agent is only that agent's **default**: the model a new session starts on.

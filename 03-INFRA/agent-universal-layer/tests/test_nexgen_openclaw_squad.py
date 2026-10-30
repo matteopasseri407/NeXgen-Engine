@@ -109,6 +109,51 @@ def test_a_squad_that_names_no_model_adds_no_policy(tmp_path: Path) -> None:
     assert "defaults" not in applied["agents"] or "modelPolicy" not in applied["agents"]["defaults"]
 
 
+def test_the_squad_models_table_becomes_agents_defaults_models() -> None:
+    """The root `models` object is strict: `mode`, `providers`, `catalogRefresh`, nothing else.
+
+    An `entries` key there is refused by OpenClaw ("models: Unrecognized key: entries"),
+    and `agents.defaults.models` is the record the per-model entries belong to.
+    """
+    squad = {
+        "models": {
+            "anthropic/claude-opus-5-5": {"agentRuntime": {"id": "claude-cli"}},
+            "openai/gpt-6-luna": {"agentRuntime": {"id": "codex"}},
+        },
+    }
+
+    applied = apply_squad({"agents": {"entries": {}}}, squad)
+
+    assert "entries" not in applied.get("models", {})
+    models = applied["agents"]["defaults"]["models"]
+    assert models["anthropic/claude-opus-5-5"] == {"agentRuntime": {"id": "claude-cli"}}
+    assert models["openai/gpt-6-luna"] == {"agentRuntime": {"id": "codex"}}
+
+
+def test_a_model_entry_the_owner_wrote_keeps_every_key_the_squad_does_not_set() -> None:
+    """The squad adds keys to a model's entry; it never replaces the entry under it."""
+    config = {
+        "agents": {
+            "entries": {},
+            "defaults": {
+                "models": {
+                    "anthropic/claude-opus-5-5": {"contextWindow": 200000},
+                    "openai/gpt-6-luna": {"agentRuntime": {"id": "codex"}},
+                },
+            },
+        },
+    }
+    squad = {"models": {"anthropic/claude-opus-5-5": {"agentRuntime": {"id": "claude-cli"}}}}
+
+    models = apply_squad(config, squad)["agents"]["defaults"]["models"]
+
+    assert models["anthropic/claude-opus-5-5"] == {
+        "contextWindow": 200000,
+        "agentRuntime": {"id": "claude-cli"},
+    }
+    assert models["openai/gpt-6-luna"] == {"agentRuntime": {"id": "codex"}}
+
+
 def test_custom_agent_names_preserved_without_squad() -> None:
     detected = _make_dummy_detection()
     current = {
