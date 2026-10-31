@@ -97,11 +97,15 @@ def _validate(openclaw: str, home: Path, config: Path) -> subprocess.CompletedPr
                           text=True, encoding="utf-8", errors="replace", timeout=180, check=False)
 
 
+#: In a fresh home, doctor installs configured plugins from npm and migrates their state.
+DOCTOR_TIMEOUT_S = 600
+
+
 def _doctor(openclaw: str, home: Path, config: Path) -> subprocess.CompletedProcess[str]:
     """`openclaw doctor --fix`: the run whose repairs the engine must not have to undo."""
     return subprocess.run([openclaw, "doctor", "--fix", "--non-interactive", "--no-workspace-suggestions"],
                           env=_env(home, config), capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=300, check=False)
+                          errors="replace", timeout=DOCTOR_TIMEOUT_S, check=False)
 
 
 def _engine_proposal(config: Path) -> tuple[dict, dict]:
