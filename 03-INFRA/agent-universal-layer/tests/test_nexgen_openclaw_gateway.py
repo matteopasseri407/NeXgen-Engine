@@ -22,7 +22,10 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from nexgen_core.mcp_render.openclaw import is_engine_lazy_mcp  # noqa: E402
 from nexgen_core.paths import openclaw_config  # noqa: E402
-from nexgen_core.renderer import McpRenderer  # noqa: E402
+from nexgen_core.renderer import IS_WINDOWS, McpRenderer  # noqa: E402
+
+#: The renderer writes `python` on Windows, where no `python3` shim exists.
+INTERPRETER = "python" if IS_WINDOWS else "python3"
 
 MANIFEST = """schema_version: 1
 servers:
@@ -90,7 +93,7 @@ def test_openclaw_gets_the_gateway_with_every_served_connectors_variables(render
 
     gateway = _servers(renderer)["lazy-mcp"]
     assert is_engine_lazy_mcp(gateway) is True
-    assert gateway["command"] == "python3"
+    assert gateway["command"] == INTERPRETER
     assert any("lazy-mcp.py" in argument for argument in gateway["args"])
 
     env = gateway["env"]
@@ -125,6 +128,6 @@ def test_a_hand_written_gateway_entry_is_replaced_by_the_engines_own(renderer) -
     assert renderer.render_openclaw(write=True)[0]
 
     gateway = _servers(renderer)["lazy-mcp"]
-    assert gateway["command"] == "python3"
+    assert gateway["command"] == INTERPRETER
     assert gateway["env"]["LAZY_MCP_CLI"] == "openclaw"
     assert gateway["env"]["TOOL_TOKEN"] == "${TOOL_TOKEN}"

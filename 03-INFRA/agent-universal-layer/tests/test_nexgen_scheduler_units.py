@@ -39,7 +39,9 @@ def test_the_unit_records_the_engine_root_actually_in_use(tmp_path: Path, builde
 
     text = getattr(scheduler, builder)(home, engine, vault, vault)
 
-    assert f'Environment="AGENT_ENGINE_ROOT={engine}"' in text
+    # systemd.syntax(7) doubles a backslash inside a quoted value; a Linux path has none.
+    quoted = str(engine).replace("\\", "\\\\")
+    assert f'Environment="AGENT_ENGINE_ROOT={quoted}"' in text
 
 
 @pytest.mark.parametrize("builder", BUILDERS)
