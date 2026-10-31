@@ -2152,6 +2152,8 @@ MESSAGES: dict[str, str] = {
         "Ho aspettato {seconds} secondi.",
     "Requests waiting for approval:":
         "Richieste in attesa di approvazione:",
+    "The pairing query failed: {error}":
+        "La richiesta di accoppiamento non è riuscita: {error}",
     "No device is waiting to be paired.":
         "Nessun dispositivo è in attesa di accoppiamento.",
     "Approve one with 'nexgen openclaw pair --approve <id>'.":
@@ -2650,12 +2652,32 @@ MESSAGES: dict[str, str] = {
         'canali spenti: {names}',
     'session hosting on':
         'session hosting acceso',
+    'browser profile added':
+        'profilo browser aggiunto',
     '- gateway auth block: removed, the node uses its pairing token':
         '- blocco auth del gateway: rimosso, il nodo usa il token del pairing',
     '- channels switched off here: {names}':
         '- canali spenti qui: {names}',
     '- session hosting: switched on, so this node can run agent sessions':
         '- session hosting: acceso, così questo nodo può far girare sessioni degli agenti',
+    'Browser profile \'{name}\': OpenClaw attaches to this PC\'s shared Chrome on {url} and starts none of its own.':
+        'Profilo browser \'{name}\': OpenClaw si collega al Chrome condiviso di questo PC su {url} e non ne avvia uno suo.',
+    'browser.defaultProfile: \'{name}\', so an agent\'s browser tool uses that profile.':
+        'browser.defaultProfile: \'{name}\', così lo strumento browser degli agenti usa quel profilo.',
+    'browser.defaultProfile stays \'{current}\': the \'{name}\' profile is added beside it.':
+        'browser.defaultProfile resta \'{current}\': il profilo \'{name}\' viene aggiunto accanto.',
+    'The browser profile \'{name}\' is already in the file with other values: left as it is.':
+        'Il profilo browser \'{name}\' è già nel file con altri valori: lasciato com\'è.',
+    "Hint: this PC's shared Chrome is not set up, so no browser profile was added here. Run 'agent-chrome --ensure', then 'nexgen openclaw node --apply' again.":
+        "Nota: il Chrome condiviso di questo PC non è configurato, quindi qui non è stato aggiunto nessun profilo browser. Lancia 'agent-chrome --ensure' e poi di nuovo 'nexgen openclaw node --apply'.",
+    "No Chromium that a managed launch can use was found on this server: as the gateway's user run 'npx playwright@latest install chromium', then as root 'npx playwright@latest install-deps chromium', and run this setup again. Do not use the 'chromium' snap package: its AppArmor confinement breaks the managed launch.":
+        "Su questo server non c'è un Chromium che un avvio gestito possa usare: come utente del gateway lancia 'npx playwright@latest install chromium', poi come root 'npx playwright@latest install-deps chromium', e rilancia questa configurazione. Non usare il pacchetto snap 'chromium': la sua confinazione AppArmor rompe l'avvio gestito.",
+    "The browser path in the file was '{declared}', a snap package whose confinement breaks the managed launch: the Chromium at {found} is used instead.":
+        "Il percorso del browser nel file era '{declared}', un pacchetto snap la cui confinazione rompe l'avvio gestito: al suo posto viene usato il Chromium in {found}.",
+    "The browser profile {names} attaches to a browser on this machine through a loopback port without 'attachOnly': OpenClaw reads that port as a profile it manages and reports port ownership errors.":
+        "Il profilo browser {names} si collega a un browser su questa macchina attraverso una porta di loopback senza 'attachOnly': OpenClaw legge quella porta come un profilo che gestisce lui e segnala errori di proprietà della porta.",
+    "Add 'attachOnly': true to browser.profiles.{names} in openclaw.json.":
+        "Aggiungi 'attachOnly': true a browser.profiles.{names} in openclaw.json.",
     'Configuration not readable, left as it is: {reason}':
         "Configurazione non leggibile, lasciata com'è: {reason}",
     'This machine is already a node of {current}.':

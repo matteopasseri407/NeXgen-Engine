@@ -297,6 +297,7 @@ def _config_outcomes(
         ))
     outcomes.extend(filter(None, [
         *node_checks.check_nodes(config, _probe(home_dir, connect), node_lister),
+        node_checks.check_browser_attach(config),
         *node_approvals.check_agents(config, approvals),
         *doctor_runtime.check_workshop_skills(config, path.parent, home_dir),
         doctor_runtime.check_unadopted(config, path, home_dir, resolve_vault_data(home_dir, vault_data)),

@@ -111,6 +111,89 @@ def test_the_node_requirement_comes_from_the_installed_package(tmp_path):
     assert found.openclaw.node_requirement == ">=24.22.1 <25 || >=26.12.1"
 
 
+def test_user_prefix_install_found_via_symlinked_openclaw(tmp_path):
+    system_root = tmp_path / "system" / "node_modules"
+    system_root.mkdir(parents=True)
+
+    user_pkg = tmp_path / "node24" / "lib" / "node_modules" / "openclaw"
+    user_pkg.mkdir(parents=True)
+    (user_pkg / "package.json").write_text(
+        json.dumps({"name": "openclaw", "version": "2026.10.8", "engines": {"node": ">=24.0.0"}}),
+        encoding="utf-8",
+    )
+    entry_file = user_pkg / "openclaw.mjs"
+    entry_file.write_text("// entry", encoding="utf-8")
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    symlink = bin_dir / "openclaw"
+    symlink.symlink_to(entry_file)
+
+    def which_fn(name: str) -> str | None:
+        if name == "openclaw":
+            return str(symlink)
+        if name == "npm":
+            return "/usr/bin/npm"
+        return None
+
+    found = _detect(tmp_path, which=which_fn, run=_runner(system_root, "/usr/bin/npm"))
+    assert found.openclaw.installed is True
+    assert found.openclaw.version == "2026.10.8"
+    assert found.openclaw.node_requirement == ">=24.0.0"
+
+
+def test_windows_style_shim_layout_finds_package(tmp_path):
+    npm_dir = tmp_path / "roaming" / "npm"
+    npm_dir.mkdir(parents=True)
+    shim = npm_dir / "openclaw.cmd"
+    shim.write_text("@ECHO off\nnode %~dp0\\node_modules\\openclaw\\openclaw.mjs %*", encoding="utf-8")
+
+    pkg = npm_dir / "node_modules" / "openclaw"
+    pkg.mkdir(parents=True)
+    (pkg / "package.json").write_text(
+        json.dumps({"name": "openclaw", "version": "2026.10.7"}),
+        encoding="utf-8",
+    )
+
+    def which_fn(name: str) -> str | None:
+        if name == "openclaw":
+            return str(shim)
+        if name == "npm":
+            return str(npm_dir / "npm.cmd")
+        return None
+
+    empty_root = tmp_path / "empty-root"
+    found = _detect(tmp_path, which=which_fn, run=_runner(empty_root, str(npm_dir / "npm.cmd")))
+    assert found.openclaw.installed is True
+    assert found.openclaw.version == "2026.10.7"
+
+
+def test_fallback_to_npm_root_when_openclaw_not_resolvable(tmp_path):
+    root = _npm_tree(tmp_path, "2026.10.6")
+
+    def which_fn(name: str) -> str | None:
+        if name == "npm":
+            return "/usr/bin/npm"
+        return None
+
+    found = _detect(tmp_path, which=which_fn, run=_runner(root, "/usr/bin/npm"))
+    assert found.openclaw.installed is True
+    assert found.openclaw.version == "2026.10.6"
+
+
+def test_openclaw_not_installed_when_neither_binary_nor_npm_root_has_it(tmp_path):
+    empty_root = tmp_path / "empty-root"
+    empty_root.mkdir()
+    found = _detect(
+        tmp_path,
+        which=lambda name: "/usr/bin/npm" if name == "npm" else None,
+        run=_runner(empty_root, "/usr/bin/npm"),
+    )
+    assert found.openclaw.installed is False
+    assert str(empty_root) in found.openclaw.detail
+
+
+
 def test_without_npm_on_path_openclaw_is_not_installed(tmp_path):
     found = _detect(tmp_path, which=lambda name: None)
     assert found.openclaw.installed is False

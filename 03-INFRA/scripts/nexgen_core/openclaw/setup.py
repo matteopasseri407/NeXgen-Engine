@@ -447,7 +447,12 @@ def run_pair(
 ) -> int:
     """`nexgen openclaw pair`: what is waiting in both stages, and the approval of one request."""
     ask = confirm or ask_yes_no
-    devices = pairing_pending(runner=runner).get("devices") or []
+    pending_devices = pairing_pending(runner=runner)
+    if not pending_devices.get("ok"):
+        error = pending_devices.get("error") or t("no reason given")
+        out(t("The pairing query failed: {error}", error=error))
+        return 1
+    devices = pending_devices.get("devices") or []
     requests = pairing_nodes_pending(runner=runner).get("nodes") or []
     _device_lines(devices, out)
     _node_lines(requests, out)

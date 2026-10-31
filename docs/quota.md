@@ -1,7 +1,8 @@
 # The quota: what is left of each plan
 
-No provider offers a local answer to "how much of this plan is left".
-The engine does not invent one.
+🇮🇹 [Italiano](it/quota.md)
+
+No provider offers a local answer to "how much of this plan is left", and the engine does not invent one.
 It reads what the harnesses on this machine have already written about their own usage, repeats the numbers they give, and says plainly which windows cannot be measured from here.
 
 `nexgen quota` prints one row per provider and window.
@@ -18,15 +19,16 @@ It reads what the harnesses on this machine have already written about their own
 | `nexgen usage` / `nexgen usage --json` | the same readings, one block per provider: the spend of the flat lanes, the tokens Claude Code used, the percentage Codex and Antigravity report, and a sentence where a lane cannot be read |
 | `/spend` in OpenClaw | the `lines` of `nexgen usage`, forwarded to the chat |
 
-The strings are formatted once, by the engine.
+The engine formats the strings once.
 The plugin never turns a number into a sentence and never rounds a percentage, so the chat and the terminal cannot disagree about the same reading.
 The command always exits 0: a source that cannot be read is an answer, not a failure.
 
 ## Why the chat command is `/spend` and not `/usage`
 
-OpenClaw has its own `/usage`: the per-response footer, and `/usage cost`, a local summary summed from OpenClaw's own session logs.
-That sum reports `$0` for an agent on a subscription, and it knows nothing about the OpenCode Go spend or a Claude plan window, because neither is in a session log.
-The engine's readings are the answer to that question, so they travel beside OpenClaw's command instead of taking its name: a plugin command is matched before the built-in ones, and registering `/usage` here would remove the footer and the cost summary from the chat.
+OpenClaw has its own `/usage`: the per-response footer, and `/usage cost`, a local summary summed from OpenClaw's session logs.
+That sum reports `$0` for an agent on a subscription and knows nothing about OpenCode Go spend or a Claude plan window, because neither is in a session log.
+The engine's readings answer that question, so they travel beside OpenClaw's command instead of taking its name.
+A plugin command is matched before the built-in ones, so registering `/usage` here would remove the footer and the cost summary from the chat.
 
 ## What each provider gives
 
@@ -43,7 +45,7 @@ Codex writes a token-count event into its session file, and that event carries t
 The engine reads the tail of the newest session, at most 8 MiB, and repeats the numbers without recomputing them.
 
 A reading older than the window it describes is printed as stale and its percentage is dropped.
-After a window has rolled over the old percentage describes a period that has already reset, and repeating it would be worse than saying nothing.
+After a window has rolled over, the old percentage describes a period that has already reset, and repeating it would be worse than saying nothing.
 
 ### OpenCode
 
@@ -58,17 +60,18 @@ An engine installed without that lane says so in one line and shows the other so
 
 `nexgen quota` sums the `message.usage` counters of the transcripts written in the last seven days, split into a 5h and a 7d window, deduplicated by message id.
 
-It prints token counts and no percentage, because Claude Code's plan usage is not in any local file (`~/.claude` settings, cache, or transcripts): `/usage` queries Anthropic's remote plan-usage endpoint dynamically.
+It prints token counts and no percentage, because Claude Code's plan usage is not in any local file (`~/.claude` settings, cache or transcripts): `/usage` queries Anthropic's remote plan-usage endpoint dynamically.
 The line says so: `the limit is not readable on this machine`.
-That is the honest answer, and it is deliberately not turned into a guess.
+That is the honest answer, and the engine does not turn it into a guess.
 
-The transcripts are read by this command only.
-They were 613 MB in eight days on the machine this was written on, which is affordable for a command someone typed and not for an hourly timer: the beat and the doctor use the cheap sources instead.
+This command is the only reader of those transcripts.
+They were 613 MB in eight days on the machine this was written on, which is affordable for a command someone typed and not for an hourly timer, so the beat and the doctor use the cheap sources instead.
 
 ### Antigravity
 
-Antigravity's desktop environment logs prompt credits usage via the `ag-quota` extension into local session logs (`*-Antigravity Quota.log` under `%APPDATA%\Antigravity IDE\logs` or `%APPDATA%\Antigravity\logs`). The engine reads the newest log tail and extracts the monthly prompt credits used percentage for the `30d` window, dropping it as stale if older than 30 days. When no local log exists on disk (such as on a machine using only the `agy` CLI, where quota is fetched in-memory from the Google Cloud Code API without being written to disk), its row reports `not measured`.
-It exists so the list is complete and nobody has to wonder whether it was forgotten.
+Antigravity's desktop environment logs prompt credit usage through the `ag-quota` extension into local session logs (`*-Antigravity Quota.log` under `%APPDATA%\Antigravity IDE\logs` or `%APPDATA%\Antigravity\logs`).
+The engine reads the tail of the newest log and extracts the monthly prompt credits used percentage for the `30d` window, dropping it as stale when it is older than 30 days.
+When no local log exists on disk, such as on a machine that only uses the `agy` CLI, where quota is fetched in memory from the Google Cloud Code API and never written, the row reports `not measured`.
 
 ## A percentage needs a ceiling
 
@@ -94,7 +97,7 @@ No ceiling is ever inferred from a previous month, from a plan name or from a gu
 ## The two alerts
 
 The percentages raise an alert at 80% and again at 95%.
-The thresholds live in one place, `quota.ALERT_AT`, and the alert and the doctor read the same tuple, so they can never disagree about what "high" means.
+The thresholds live in one place, `quota.ALERT_AT`, and the alert and the doctor read the same tuple, so they cannot disagree about what "high" means.
 
 The alert is raised by the beat that already runs every hour, on both platforms, right after the dependency watch.
 It goes through the megaphone, like every other alert, and carries the provider, the window and the reset when the provider gave one.
@@ -104,11 +107,11 @@ Keying on the provider alone would let the 80% alert silence the 95% one, which 
 The megaphone's own four-hour debounce applies on top: one missed repeat is cheaper than an alert every hour on a plan that is simply full.
 
 Only the cheap readings are consulted.
-The Claude Code transcripts are never opened by a timer.
+No timer opens the Claude Code transcripts.
 
 ## What a plan hands over to
 
-The `failover:` section of the same `quota.yaml` is where you declare what a turn should use when a plan runs out, and in which order.
+The `failover:` section of the same `quota.yaml` declares what a turn should use when a plan runs out, and in which order.
 It is empty by default: which providers to pay for, and in which order, is your rule and not the engine's.
 
 ```yaml
@@ -132,10 +135,10 @@ With that section in place, each row of `nexgen quota` ends with the model that 
 Codex (free): 96% of the 30d window used (read 2m ago), resets in 3h 12m, then anthropic/claude-opus-5-5
 ```
 
-The model shown is the first entry of the assistant's chain that runs on a different provider: a spent plan takes its own sibling models with it.
+The model shown is the first entry of the assistant's chain that runs on a different provider, because a spent plan takes its own sibling models with it.
 A provider with no chain declared prints its row as it always did, and no handover is invented.
 
-`nexgen openclaw setup` is what carries the chains to OpenClaw: see [the OpenClaw page](openclaw.md#the-fallback-chain).
+`nexgen openclaw setup` carries the chains to OpenClaw: see [the OpenClaw page](openclaw.md#the-fallback-chain).
 `nexgen doctor` prints one line, `openclaw.fallbacks`, with how many agents carry a chain and which ones carry none.
 
 ## The doctor line
@@ -151,4 +154,4 @@ A machine where nothing is readable says so in one sentence instead of an empty 
 - It keeps no history and makes no forecast. Every run reads the present.
 - It does not treat a stale reading as a current one, and does not carry the last known percentage forward.
 - It does not read any credential file to obtain a number.
-- It does not call remote quota endpoints (such as Claude Code's plan-usage endpoint or Google Cloud Code's fetchAvailableModels) with user credentials to fetch quotas dynamically.
+- It does not call remote quota endpoints, such as Claude Code's plan-usage endpoint or Google Cloud Code's `fetchAvailableModels`, with user credentials to fetch quotas dynamically.

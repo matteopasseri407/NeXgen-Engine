@@ -178,3 +178,33 @@ def test_pair_reports_a_failed_approval_with_a_non_zero_code():
 
     assert code == 1
     assert any("failed" in line for line in lines)
+
+
+def test_pair_when_query_fails_reports_error_and_exits_nonzero():
+    lines: list[str] = []
+
+    def failing_runner(argv):
+        return RunResult(1, "", "requires credentials before opening a websocket\nsecond line ignored")
+
+    code = run_pair(runner=failing_runner, out=lines.append)
+
+    assert code != 0
+    output = "\n".join(lines)
+    assert "requires credentials before opening a websocket" in output
+    assert "No device is waiting" not in output
+
+
+def test_pair_when_query_fails_scrubs_tokens_from_error():
+    lines: list[str] = []
+
+    def failing_runner(argv):
+        return RunResult(1, "", "gateway connection failed token: secret_token_value")
+
+    code = run_pair(runner=failing_runner, out=lines.append)
+
+    assert code != 0
+    output = "\n".join(lines)
+    assert "secret_token_value" not in output
+    assert "[redacted]" in output
+    assert "No device is waiting" not in output
+

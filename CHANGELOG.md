@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.26.0] - 2026-10-31
+
+### Changed
+
+- OpenClaw agents get a browser on the server and on a node; pair and doctor no longer report false results; the public docs are rewritten in English and Italian.
+
 ## [2.25.0] - 2026-10-31
 
 ### Changed

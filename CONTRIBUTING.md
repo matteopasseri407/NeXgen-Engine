@@ -1,22 +1,21 @@
 # Contributing
 
-This is a solo-maintainer project. Contributions are welcome,
-but set expectations accordingly: review can take a while, and not every PR
-fits the project's scope (see "Design boundaries" and "Scope and
-limitations" in `README.md`) even when it's well built.
+🇮🇹 [Italiano](CONTRIBUTING.it.md)
+
+This is a solo-maintainer project. Contributions are welcome, so set expectations accordingly: review can take a while,
+and not every pull request fits the project's scope even when it is well built (see "Design boundaries" and "Scope and
+limitations" in [README.md](README.md)).
 
 ## Before you write code
 
-For an external contribution bigger than a small fix, open an issue describing the
-problem and your proposed approach. This saves you from building something
-that doesn't fit the project's direction. For a small, obvious fix (typo,
-broken link, clear bug with an obvious one-line fix), a PR alone is fine.
+For an external contribution bigger than a small fix, open an issue describing the problem and your proposed approach.
+That saves you from building something that does not fit the project's direction. For a small, obvious fix such as a
+typo, a broken link or a clear bug with a one-line fix, a pull request alone is fine.
 
-For AI-assisted maintainer work, start with [AGENTS.md](AGENTS.md), then the
-owner table below. An authorized maintenance task uses `developer` and an isolated
-worktree; it does not require a new issue or a per-fix branch.
-Read the affected callers and tests before editing. Change the owner, keep
-compatibility at the existing boundary, and integrate after verification.
+For AI-assisted maintainer work, start with [AGENTS.md](AGENTS.md), then the owner table below. An authorized
+maintenance task uses `developer` and an isolated worktree; it does not need a new issue or a per-fix branch. Read the
+affected callers and tests before editing. Change the owner, keep compatibility at the existing boundary, and integrate
+after verification.
 
 ## Dev setup
 
@@ -29,28 +28,20 @@ python -m pip install -e '.[dev]'
 python 03-INFRA/scripts/check_engine.py
 ```
 
-The last command runs the committed Ruff baseline gate, the discipline
-size/shell gate (an oversized file or function may exist but never grow) and the
-full pytest suite. It stops on the first failing gate and never invokes sync or release.
-For a bounded change, pass the relevant test file first; run the full command
-before integration. Fix new lint findings rather than regenerating the baseline.
+The last command runs the committed Ruff baseline gate, the discipline size and shell gate (an oversized file or
+function may exist but never grow) and the full pytest suite. It stops on the first failing gate and never invokes sync
+or release. For a bounded change, pass the relevant test file first and run the full command before integration. Fix
+new lint findings rather than regenerating the baseline.
 
 ### Where the suite puts its temporary files
 
-On Windows `%TEMP%` is `C:\Users\<you>\AppData\Local\Temp`, inside your home, and
-OpenClaw's gateway watches the home with one recursive handle: the thousands of
-files a suite creates and deletes there are the event storm it cannot fold.
-`tests/conftest.py` therefore sets `PYTEST_DEBUG_TEMPROOT` before the first
-`tmp_path` exists, and pytest keeps its numbered trees in
-`%SystemDrive%\Temp\nexgen-<user>`, or in `%PUBLIC%\nexgen-<user>` when that one
-cannot be written.
-Set `NEXGEN_SCRATCH_ROOT` to choose the folder yourself; a `PYTEST_DEBUG_TEMPROOT`
-already set by the caller is never overruled, which is what a CI job pointing at a
-fast disk relies on.
-pytest rotates the last three numbered trees and deletes the rest, so nothing
-accumulates without a policy.
-On Linux the system temporary directory is already outside the home and nothing is
-changed.
+On Windows `%TEMP%` is `C:\Users\<you>\AppData\Local\Temp`, inside your home, and OpenClaw's gateway watches the home
+with one recursive handle: the thousands of files a suite creates and deletes there are an event storm it cannot fold.
+`tests/conftest.py` therefore sets `PYTEST_DEBUG_TEMPROOT` before the first `tmp_path` exists, and pytest keeps its
+numbered trees in `%SystemDrive%\Temp\nexgen-<user>`, or in `%PUBLIC%\nexgen-<user>` when that one cannot be written.
+Set `NEXGEN_SCRATCH_ROOT` to choose the folder yourself; a `PYTEST_DEBUG_TEMPROOT` already set by the caller is never
+overruled, which is what a CI job pointing at a fast disk relies on. pytest rotates the last three numbered trees and
+deletes the rest. On Linux the system temporary directory is already outside the home and nothing changes.
 
 ### Finding the right module
 
@@ -62,7 +53,7 @@ changed.
 | Skill fetch, replacement and pins | `nexgen_core/skill_sources.py` | `test_nexgen_skill_fetch.py`, `test_nexgen_skill_versions.py`, `test_nexgen_lazy_skills.py`, `test_nexgen_quality_regressions.py` |
 | Skill catalog page (`~/.agents/skills/INDEX.md`) | `nexgen_core/skill_index.py` | `test_nexgen_skill_deps.py`, `test_nexgen_openclaw_sync_skills.py` |
 | OpenClaw's unattended jobs and its configuration watcher | `nexgen_core/openclaw/background.py`, `nexgen_core/openclaw/observation.py` | `test_nexgen_openclaw_background.py`, `test_nexgen_openclaw_observation.py` |
-| Where a process puts its scratch files | `nexgen_core/scratch.py`; the callers are `tests/conftest.py` and `nexgen_local/supervision_pytest.py` | `test_nexgen_pytest_scratch_root.py` |
+| Where a process puts its scratch files | `nexgen_core/scratch.py`; callers are `tests/conftest.py` and `nexgen_local/supervision_pytest.py` | `test_nexgen_pytest_scratch_root.py` |
 | Host locking | `nexgen_core/lock.py` | `test_nexgen_lock.py` |
 | Source checkout version fallback | `nexgen_local/version.py` | `test_nexgen_command_surface.py` |
 | Local CLI dispatch and shared config/LLM adapters | `nexgen_local/cli.py`, `nexgen_local/cmds/base.py`; domain commands in `cmds/` | `test_nexgen_command_surface.py`, `test_nexgen_local_help_surface.py`, `test_nexgen_cmdsservicesplit_pinning.py` |
@@ -83,117 +74,93 @@ changed.
 | OCR path gates and bounded image reads | `deploy/ocr/mcp/vault_ocr_mcp.py` | `test_deploy_ocr_mcp.py` |
 | MCP mount policy and private connector preservation | `nexgen_core/renderer.py`; dialect writers in `mcp_render/` | `test_nexgen_mcp_preservation.py`, `test_nexgen_phase2.py`, `test_nexgen_lazy_mcp.py` |
 | Lazy MCP deadlines, framing and reply correlation, concurrency, child environment, read/write split | `03-INFRA/agent-universal-layer/mcp/lazy-mcp.py` (see [lazy-mcp.md](docs/lazy-mcp.md)) | `test_nexgen_mcp_transport.py`, `test_nexgen_lazy_mcp.py`, `test_nexgen_lazy_mcp_serving.py` |
-| Released Engine update and mechanical pin | `nexgen_core/updater.py` | `test_nexgen_update_command.py` |
+| Released engine update and mechanical pin | `nexgen_core/updater.py` | `test_nexgen_update_command.py` |
 | Installed MCP servers and skills: provenance, pins, upstream state (`nexgen info`) | `nexgen_core/extensions.py`; the sections in `nexgen_core/tools/info.py` (see [whats-installed.md](docs/whats-installed.md)) | `test_nexgen_extensions.py` |
 | OpenCode guardrail: plugin directory, V2 hooks, legacy cleanup | `agent-universal-layer/hooks/opencode-guardrail-plugin.mjs`, `nexgen-guardrail-core.mjs`; `nexgen_core/runtimes/opencode.py` | `test_nexgen_guardrail_adapters.py`, `test_runtimes.py`, `test_nexgen_opencode_live.py` (real binary, skipped without one) |
 | Skills the engine ships, kept as frozen Vault copies (`skills adopt`, `skills.engine_copies`) | `nexgen_core/skill_adopt.py`; `check_skill_engine_copies` in `nexgen_core/checks/skill_checks.py` | `test_nexgen_skill_adopt.py` |
 | Where a server's credential comes from (process, `environment.d`, secrets deposit) | `_declared_value` in `agent-universal-layer/mcp/lazy-mcp.py`; `nexgen_core/deposit_env.py` | `test_nexgen_mcp_credentials.py`, `test_nexgen_mcp_trim.py` |
 | Raising third-party pins, trying each MCP server before keeping the change | `nexgen_core/thirdparty_bump.py`; `verify_servers` in `nexgen_core/mcp_check.py` | `test_nexgen_bump.py`, `test_nexgen_mcp_check.py` |
 | Contributor lanes | `nexgen_core/lanes.py` | `test_nexgen_lanes.py` |
-| Size alarm (split queue), shell/PowerShell gate, test integrity, per-commit test proofs; optional review brief and owner's decision | `nexgen_core/discipline/` (`python 03-INFRA/scripts/discipline.py`) | `test_nexgen_discipline_*.py` |
+| Size alarm (split queue), shell and PowerShell gate, test integrity, per-commit test proofs; optional review brief and owner's decision | `nexgen_core/discipline/` (`python 03-INFRA/scripts/discipline.py`) | `test_nexgen_discipline_*.py` |
 
-Check the actual filenames before selecting a test. Graph modules drive the
-existing decision functions; they do not hold a second implementation.
-Import helpers from their owner. `engine.py` retains compatibility exports
-for older callers, but new consumers should use the owning module.
+Check the actual filenames before selecting a test. Graph modules drive the existing decision functions; they do not
+hold a second implementation. Import helpers from their owner. `engine.py` keeps compatibility exports for older
+callers, but new consumers use the owning module.
 
-Internal retrieval uses `ToolRegistry.call_result`: `status` declares `ok`,
-`empty` or `error`, `usable` determines whether to consume the result, and
-`text` holds the content. Never infer an outcome from parentheses or message
-wording. Tool implementations, including test doubles, record empty results
-and errors explicitly. Audit must succeed before a receipt enters the registry.
-Serialize receipts with `ToolCall.receipt()` so research checkpoints retain
-status when resumed. Text-only methods remain available for CLI/MCP callers;
-refusal-text interpretation is limited to older checkpoints without status.
-Pin updates use `nexgen_core/files.py` rather than a second atomic writer.
-Council artefacts and recovery snapshots use this owner too; `backup_file`
-accepts an already-read text snapshot without generating a second filename policy.
-MCP dialects share `McpRenderer.unmounted_server_names` for mount decisions.
-Skill fetch and placement share `github_skill_source` for repository boundaries.
-Skill version records must be readable maps of names to version strings.
-An invalid record is preserved and reported by doctor. A failed pin write
-fails the sync; changed bytes alone cannot certify a completed update.
-The record's own host lock serializes its read and write, preserving pins
-from concurrent writers without nesting the global sync lock.
-Council, lazy MCP and Vault grooming share `nexgen_core/processes.py` for
-terminating owned subprocess trees. Pass only a process group created by the
-caller. Lazy MCP applies manifest startup/tool deadlines to RPC I/O, including
-pipe writes, and limits received bytes to 8 MiB per exchange. Provisioning has
-its own deadlines. A helper process the gateway can reach declares its stdin
-(`DEVNULL`): the gateway's own stdin is the protocol stream, and
-`test_nexgen_subprocess_stdin_contract.py` fails a launch that omits it. A timed-out tool call has an unknown outcome and is never
-automatically retried. Only matching JSON-RPC responses complete a request;
-notifications and replies to other requests do not.
-Council captures at most 8 MiB across stdout and stderr per invocation and
-reads at most 8 MiB from the authoritative result file. Overflow wakes the
-watchdog even when stdout is silent. `output_limit` and `invalid_output` are
-terminal failures; they must not trigger automatic retries or a fallback seat.
-Engine updater commands use the same process owner, with a 120-second Git
-budget and a 600-second command budget. Failures after mutation begins retain
-the previous commit and manual recovery instructions. Do not infer rollback
-from a failed command; verify the actual ref before describing the outcome.
+Internal retrieval uses `ToolRegistry.call_result`: `status` declares `ok`, `empty` or `error`, `usable` determines
+whether to consume the result, and `text` holds the content. Never infer an outcome from parentheses or message
+wording. Tool implementations, including test doubles, record empty results and errors explicitly. Audit must succeed
+before a receipt enters the registry. Serialize receipts with `ToolCall.receipt()` so research checkpoints keep their
+status when resumed. Text-only methods remain available for CLI and MCP callers; refusal-text interpretation is limited
+to older checkpoints without status.
 
-Router JSON field types are validated before paths or keywords are used;
-malformed forms use deterministic routing without another model request.
-The upload gate holds `proposals.proposal_lock` before loading the artifact
-through final storage. A refusal to acquire the lock releases any earlier
-acquisition without consuming the proposal. After validation and the intent
-receipt, `record_attempt` persists `attempted_at` before calling the provider.
-A prior attempt with no saved completion is uncertain and cannot be replayed,
-including after an exception or interruption. Check its real outcome before
-preparing a new proposal; never clear the attempt field to retry.
-`applied_at` remains evidence of a returned and saved completion; an attempt
-alone must not be described as success or as ready for approval.
-Older artifacts omit `attempted_at` and load with its empty default. Proposal
-ids belong to `proposals.py`, which `drive_mcp.py` imports for ids, hashes and
-attempt records. Drive proposal creation and updates use the private atomic
-writer. The older `sending_at` marker is read as `attempted_at`, including in
-lists. Upload metadata is bound at staging with a versioned fingerprint.
-Missing fingerprints require a fresh proposal; old unambiguous fingerprints
-remain readable. Fingerprints detect changed fields; they are not signatures
-against a writer controlling the whole JSON. The artifact id must match the
-locked filename before loading the gate. Changing an id must never redirect
+Pin updates use `nexgen_core/files.py` rather than a second atomic writer. Council artifacts and recovery snapshots use
+the same owner; `backup_file` accepts an already-read text snapshot without generating a second filename policy. MCP
+dialects share `McpRenderer.unmounted_server_names` for mount decisions. Skill fetch and placement share
+`github_skill_source` for repository boundaries. Skill version records must be readable maps of names to version
+strings. An invalid record is preserved and reported by doctor. A failed pin write fails the sync; changed bytes alone
+cannot certify a completed update. The record's own host lock serializes its read and write, preserving pins from
+concurrent writers without nesting the global sync lock.
+
+Council, lazy MCP and Vault grooming share `nexgen_core/processes.py` for terminating owned subprocess trees. Pass only
+a process group created by the caller. Lazy MCP applies manifest startup and tool deadlines to RPC I/O, including pipe
+writes, and limits received bytes to 8 MiB per exchange. Provisioning has its own deadlines. A helper process the
+gateway can reach declares its stdin (`DEVNULL`), because the gateway's own stdin is the protocol stream, and
+`test_nexgen_subprocess_stdin_contract.py` fails a launch that omits it. A timed-out tool call has an unknown outcome
+and is never automatically retried. Only matching JSON-RPC responses complete a request; notifications and replies to
+other requests do not.
+
+Council captures at most 8 MiB across stdout and stderr per invocation and reads at most 8 MiB from the authoritative
+result file. Overflow wakes the watchdog even when stdout is silent. `output_limit` and `invalid_output` are terminal
+failures and must not trigger automatic retries or a fallback seat. Engine updater commands use the same process owner,
+with a 120-second Git budget and a 600-second command budget. Failures after mutation begins retain the previous commit
+and the manual recovery instructions. Do not infer a rollback from a failed command; verify the actual ref before
+describing the outcome.
+
+Router JSON field types are validated before paths or keywords are used; malformed forms use deterministic routing
+without another model request. The upload gate holds `proposals.proposal_lock` before loading the artifact through
+final storage. A refusal to acquire the lock releases any earlier acquisition without consuming the proposal. After
+validation and the intent receipt, `record_attempt` persists `attempted_at` before calling the provider. A prior
+attempt with no saved completion is uncertain and cannot be replayed, including after an exception or interruption.
+Check its real outcome before preparing a new proposal, and never clear the attempt field to retry. `applied_at`
+remains evidence of a returned and saved completion; an attempt alone must not be described as success or as ready for
+approval. Older artifacts omit `attempted_at` and load with its empty default. Proposal ids belong to `proposals.py`,
+which `drive_mcp.py` imports for ids, hashes and attempt records. Drive proposal creation and updates use the private
+atomic writer. The older `sending_at` marker is read as `attempted_at`, including in lists. Upload metadata is bound at
+staging with a versioned fingerprint. Missing fingerprints require a fresh proposal; old unambiguous fingerprints
+remain readable. Fingerprints detect changed fields; they are not signatures against a writer controlling the whole
+JSON. The artifact id must match the locked filename before loading the gate, and changing an id must never redirect
 the durable attempt into a different file.
-Council relay execution and cleanup share `session.session_run_lock`, held
-through removal. Its lock file lives outside the deletable session tree and
-is never removed. Older in-tree locks are also honored. Windows may preserve
-an older session when its open legacy lock prevents removal.
 
-`cmds/base.py` owns the local CLI configuration and model adapter, including
-the compatibility boundary for older callers that patch `cli._config` or
-`cli._llm`. Domain commands import those helpers directly. `update_notifier.py`
-keeps the command entry points; cache, skill notices, prompts and boot hooks
-each have their own owner. Shell hook templates live only in `notifier_boot.py`.
-Google and Outlook share token publication and refresh-payload merging through
-`token_store.py`, while each provider retains its endpoint and scopes.
-Failure diagnostics around credentials and manifests log the operation and
-exception type; raw exception messages can include token URLs or configuration
-contents. Keep those payloads out of logs.
+Council relay execution and cleanup share `session.session_run_lock`, held through removal. Its lock file lives outside
+the deletable session tree and is never removed. Older in-tree locks are also honored. Windows may preserve an older
+session when its open legacy lock prevents removal.
 
-For a bug, first add a test that fails for the reported behavior. Check the
-failure path as well as success: a failed write must preserve the old bytes,
-a failed replacement must restore the active source, and an operational
-model error must not cause an unrequested retry. Re-run the relevant tests
-after the fix, inspect the diff, then run the complete gate before merging.
-Record any untested platform or live provider; a synthetic endpoint proves
-the driver's behavior, not a provider's production availability.
+`cmds/base.py` owns the local CLI configuration and model adapter, including the compatibility boundary for older
+callers that patch `cli._config` or `cli._llm`. Domain commands import those helpers directly. `update_notifier.py`
+keeps the command entry points; cache, skill notices, prompts and boot hooks each have their own owner. Shell hook
+templates live only in `notifier_boot.py`. Google and Outlook share token publication and refresh-payload merging
+through `token_store.py`, while each provider keeps its endpoint and scopes. Failure diagnostics around credentials and
+manifests log the operation and the exception type; raw exception messages can include token URLs or configuration
+contents, so keep those payloads out of logs.
+
+For a bug, first add a test that fails for the reported behaviour. Check the failure path as well as success: a failed
+write must preserve the old bytes, a failed replacement must restore the active source, and an operational model error
+must not cause an unrequested retry. Re-run the relevant tests after the fix, inspect the diff, then run the complete
+gate before merging. Record any untested platform or live provider; a synthetic endpoint proves the driver's behaviour,
+not a provider's production availability.
 
 ### Working beside an installed engine
 
-Follow the developer/main contract in [AGENTS.md](AGENTS.md). If another session
-uses the same checkout, create a separate Git worktree. Switching branches
-in a shared directory does not isolate the two sessions' files.
+Follow the developer and main contract in [AGENTS.md](AGENTS.md). If another session uses the same checkout, create a
+separate Git worktree; switching branches in a shared directory does not isolate the two sessions' files.
 
-Prefer the regression suite's synthetic fixtures for runtime changes. Tests
-redirect the affected paths and disable host mutations. The shared fixture
-removes inherited config/state overrides; override tests supply temporary
-locations explicitly. A manual sync is a
-live write operation unless you deliberately isolate it: `NEXGEN_HOME`
-changes the default home, but `CODEX_HOME`, `XDG_CONFIG_HOME`,
-`AGENT_STATE_DIR` and `AGENT_VAULT_DATA` can still select explicit locations.
-Use disposable locations for all of them and set
-`NEXGEN_DISABLE_HOST_MUTATIONS=1` before a manual experiment. Never point a
-development sync at an installed configuration to see what happens.
+Prefer the regression suite's synthetic fixtures for runtime changes. Tests redirect the affected paths and disable
+host mutations. The shared fixture removes inherited config and state overrides, and override tests supply temporary
+locations explicitly. A manual sync is a live write operation unless you deliberately isolate it: `NEXGEN_HOME` changes
+the default home, but `CODEX_HOME`, `XDG_CONFIG_HOME`, `AGENT_STATE_DIR` and `AGENT_VAULT_DATA` can still select
+explicit locations. Use disposable locations for all of them and set `NEXGEN_DISABLE_HOST_MUTATIONS=1` before a manual
+experiment. Never point a development sync at an installed configuration to see what happens.
 
 ### Before tagging a release
 
@@ -201,70 +168,56 @@ development sync at an installed configuration to see what happens.
 python3 03-INFRA/scripts/nexgen_core/release.py preflight
 ```
 
-It checks the things that have each been forgotten at least once: that
-`VERSION` is a real version and newer than the newest tag, that the launchers
-the previous release's symlinks point at match the table that generates them,
-that no private maintainer tooling reached the public tree, and that the lint
-gate passes rather than having been regenerated.
+It checks the things that have each been forgotten at least once: that `VERSION` is a real version and newer than the
+newest tag, that the launchers the previous release's symlinks point at match the table that generates them, that no
+private maintainer tooling reached the public tree, and that the lint gate passes rather than having been regenerated.
 
-`nexgen release ship` runs this preflight itself, so a maintainer only needs it
-on its own to check a release before starting one.
+`nexgen release ship` runs this preflight itself, so a maintainer needs it on its own only to check a release before
+starting one.
 
 ## What CI checks on every PR
 
 All of these run automatically (`.github/workflows/ci.yml`) and must pass:
 
-- Python/YAML/shell syntax checks, plus `install.sh --check`
-- A leak-scan over every commit newly introduced by the PR (secrets,
-  hardcoded personal paths — see `SECURITY.md`)
-- `ruff` against a committed baseline (`03-INFRA/ruff-baseline.json`) —
-  fails only on a *new* finding or an existing one getting worse, not on
-  pre-existing debt
+- Python, YAML and shell syntax checks, plus `install.sh --check`
+- A leak scan over every commit the PR adds (secrets, hardcoded personal paths; see [SECURITY.md](SECURITY.md))
+- `ruff` against a committed baseline (`03-INFRA/ruff-baseline.json`), failing only on a new finding or an existing one
+  getting worse, not on pre-existing debt
 - `shellcheck` on every `.sh` file
 - `pip-audit` on every `requirements*.txt`
 - `docker compose config` validation for every deploy stack
 - `PSScriptAnalyzer` static analysis on every `.ps1` file
-- A live smoke test of the bundled `vault-mcp` server (build, run, real
-  MCP write path, commit verification)
-- The full pytest regression suite, on both `ubuntu-latest` and
-  `windows-latest`
+- A live smoke test of the bundled `vault-mcp` server: build, run, real MCP write path, commit verification
+- The full pytest regression suite, on both `ubuntu-latest` and `windows-latest`
 
-A PR with red CI won't be merged. If a check fails and you believe it's
-wrong (a false positive in the leak-scan, for instance), say so in the PR —
-don't work around the gate.
+A pull request with red CI will not be merged. If a check fails and you believe it is wrong, a false positive in the
+leak scan for instance, say so in the pull request instead of working around the gate.
 
 ## Scope guardrails worth knowing before you start
 
-- **Notes vs. infra have separate write paths.** If your change touches
-  how the vault is written to, preserve the documented write boundary in
-  `README.md` and test the real MCP commit path.
-- **Cross-platform is part of "done."** A runtime change needs the Linux and Windows test gates, or an explicit
-  documented limit. Put shared behavior in Python; keep shell launchers thin. See the "Definition of done
-  cross-platform" rule in
-  `03-INFRA/agent-universal-layer/instructions/AGENTS.md`.
-- **Don't hand-edit generated files.** `render.py`, `agent_sync.py`, and
-  `skills-sync.py` generate per-CLI configuration from canonical manifests.
-  If a generated dialect is wrong, fix the generator, not the output.
+- **Notes and infrastructure have separate write paths.** If your change touches how the vault is written to, preserve
+  the documented write boundary in [README.md](README.md) and test the real MCP commit path.
+- **Cross-platform is part of "done".** A runtime change needs the Linux and Windows test gates, or an explicit
+  documented limit. Put shared behaviour in Python and keep shell launchers thin. See the "Definition of done
+  cross-platform" rule in `03-INFRA/agent-universal-layer/instructions/AGENTS.md`.
+- **Do not hand-edit generated files.** `render.py`, `agent_sync.py` and `skills-sync.py` generate per-CLI configuration
+  from canonical manifests. If a generated dialect is wrong, fix the generator, not the output.
 
 ## Publishing
 
-Commit development on `developer`, following `AGENTS.md`, with the release notes
-under `## [Unreleased]` in `CHANGELOG.md`.
-A maintainer publishes from the development checkout with one command:
+Commit development on `developer`, following [AGENTS.md](AGENTS.md), with the release notes under `## [Unreleased]` in
+`CHANGELOG.md`. A maintainer publishes from the development checkout with one command:
 
 ```sh
 nexgen release ship minor --install   # or patch / major / X.Y.Z
 ```
 
-It opens the pull request from `developer` to `main`, merges it only after the
-required checks pass, signs the release tag on the verified merge with that
-machine's own key (refusing it if installed copies would not accept the
-signer), waits for the release workflow and for `main` to be merged back into
-`developer`. Both branches are kept. The steps and how a stopped run resumes
-are in [docs/agent-lanes.md](docs/agent-lanes.md#releasing).
+It opens the pull request from `developer` to `main`, merges it only after the required checks pass, signs the release
+tag on the verified merge with that machine's own key (refusing it if installed copies would not accept the signer),
+and waits for the release workflow and for `main` to be merged back into `developer`. Both branches are kept. The steps,
+and how a stopped run resumes, are in [docs/agent-lanes.md](docs/agent-lanes.md#releasing).
 
 ## License
 
-By submitting a pull request, you agree that your contribution may be
-included in this project under its existing license
-([PolyForm Noncommercial 1.0.0](LICENSE)).
+By submitting a pull request, you agree that your contribution may be included in this project under its existing
+license ([PolyForm Noncommercial 1.0.0](LICENSE)).
