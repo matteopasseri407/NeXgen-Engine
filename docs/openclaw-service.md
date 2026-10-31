@@ -1,55 +1,48 @@
-# OpenClaw Gateway Service Architecture and Operational Guide
+# OpenClaw gateway service: architecture and operations
 
-OpenClaw (`openclaw`, npm package version 2026.10.6) acts as an execution harness for NeXgen Engine. The gateway daemon maintains background runtime sessions, connects configured tool providers, and listens by default on port `18789`.
+🇮🇹 [Italiano](it/openclaw-service.md)
 
-This document records the cross-platform service architecture, Windows 11 field-tested behaviors, known pitfalls, and pairing workflows implemented in `nexgen_core.openclaw_service` and `nexgen_core.openclaw_pairing`.
+OpenClaw acts as the execution harness for NeXgen Engine. Its gateway daemon keeps background runtime sessions, connects the configured tool providers, and listens on port `18789` by default. The pinned release is the one in `03-INFRA/agent-universal-layer/openclaw/pin.json`.
 
----
+This page covers the cross-platform service architecture, the Windows 11 behaviours verified in the field, the known pitfalls, and the pairing workflow implemented in `nexgen_core.openclaw_service` and `nexgen_core.openclaw_pairing`.
 
-## 1. Service Mechanics by Platform
+## Service mechanics by platform
 
-The gateway state directory is resolved in order: `$OPENCLAW_CONFIG_PATH` parent, `$OPENCLAW_STATE_DIR`, or `~/.openclaw`.
+The gateway state directory is resolved in this order: the parent of `$OPENCLAW_CONFIG_PATH`, then `$OPENCLAW_STATE_DIR`, then `~/.openclaw`.
 
 ### Windows 11
-- Running `openclaw gateway install` generates `<state dir>/gateway.cmd` which launches:
-  ```cmd
-  node <openclaw_dir>\dist\index.js gateway --port 18789 --task-supervisor
-  ```
-- **Autostart Mechanism**:
-  1. **Task Scheduler**: A scheduled task named `"OpenClaw Gateway"`, queried via `schtasks /Query /TN "OpenClaw Gateway"` and triggered with `schtasks /Run /TN "OpenClaw Gateway"`.
-  2. **Startup VBS Fallback**: When Task Scheduler is unavailable or disabled, an `OpenClaw Gateway.vbs` script is placed in the user's Startup directory (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`), invoking `gateway.cmd` invisibly through `wscript.exe`.
+
+`openclaw gateway install` generates `<state dir>/gateway.cmd`, which launches:
+
+```cmd
+node <openclaw_dir>\dist\index.js gateway --port 18789 --task-supervisor
+```
+
+Autostart works in two ways:
+
+1. Task Scheduler: a task named `"OpenClaw Gateway"`, queried with `schtasks /Query /TN "OpenClaw Gateway"` and started with `schtasks /Run /TN "OpenClaw Gateway"`.
+2. Startup VBS fallback: when Task Scheduler is unavailable or disabled, an `OpenClaw Gateway.vbs` script goes in the user's Startup folder (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`) and runs `gateway.cmd` invisibly through `wscript.exe`.
 
 ### Linux
-- OpenClaw registers a systemd user unit at `~/.config/systemd/user/openclaw-gateway.service`.
-- Managed using standard user-session systemctl commands:
-  ```bash
-  systemctl --user status|start|stop|restart openclaw-gateway.service
-  ```
 
----
+OpenClaw registers a systemd user unit at `~/.config/systemd/user/openclaw-gateway.service`, managed with the usual user-session commands:
 
-## 2. Windows 11 Pitfalls and Verified Remedies
+```bash
+systemctl --user status|start|stop|restart openclaw-gateway.service
+```
 
-### Pitfall 1: `openclaw gateway restart` is Unreliable
-On Windows, `openclaw gateway restart` frequently hangs or leaves orphan child processes running, leading to dual gateway instances competing for the same socket.
+## Windows 11 pitfalls and verified remedies
 
-**Remedy**:
-`nexgen_core.openclaw_service` implements a clean kill-and-relaunch cycle:
-1. Enumerate processes to locate all `node` instances executing `openclaw` and `dist\index.js gateway`, as well as `cmd.exe` executing `gateway.cmd`.
-2. Terminate the process tree cleanly using `taskkill.exe /PID <pid> /T /F`.
-3. Relaunch the service via `wscript.exe "<startup>\OpenClaw Gateway.vbs"` (or `schtasks /Run /TN "OpenClaw Gateway"` if scheduled).
+`openclaw gateway restart` is unreliable. On Windows it often hangs or leaves orphan child processes, and two gateways end up competing for the same socket. `nexgen_core.openclaw_service` runs a clean kill-and-relaunch cycle instead:
 
-### Pitfall 2: Cold Start Port Delay (~5 Minutes)
-A cold start of the OpenClaw gateway daemon can take up to 5 minutes before port `18789` begins accepting connections.
+1. Enumerate processes to find every `node` instance running `openclaw` and `dist\index.js gateway`, plus any `cmd.exe` running `gateway.cmd`.
+2. Terminate the process tree with `taskkill.exe /PID <pid> /T /F`.
+3. Relaunch through `wscript.exe "<startup>\OpenClaw Gateway.vbs"`, or `schtasks /Run /TN "OpenClaw Gateway"` when the task exists.
 
-**Remedy**:
-`restart(wait=True, timeout_s=600.0)` polls TCP port `18789` on loopback with a default 10-minute timeout, reporting the exact elapsed seconds upon readiness or returning a timeout error if unreachable.
+A cold start of the gateway can take up to five minutes before port `18789` accepts connections. `restart(wait=True, timeout_s=600.0)` polls the TCP port on loopback with a default ten-minute timeout, reports the elapsed seconds when it is ready, and returns a timeout error when it is not.
 
-### Pitfall 3: Live Mutation of `plugins.*` Corrupts the Gateway
-Editing the `plugins` block of `openclaw.json` while the gateway is running corrupts the running state and active MCP subscriptions.
+Editing the `plugins` block of `openclaw.json` while the gateway runs corrupts the running state and the active MCP subscriptions. Use the `stopped()` context manager whenever you mutate the configuration:
 
-**Remedy**:
-Use the `stopped()` context manager whenever mutating configuration:
 ```python
 from nexgen_core.openclaw_service import OpenClawService
 
@@ -57,35 +50,24 @@ service = OpenClawService()
 with service.stopped():
     # Safely modify openclaw.json plugins or MCP settings
     update_openclaw_configuration()
-# Gateway is automatically restarted in finally block, even if an exception was raised
+# The gateway is restarted in the finally block, even if an exception was raised
 ```
 
-### Pitfall 4: Conflict with Microsoft Store Companion App
-The OpenClaw Companion application from the Microsoft Store installs a secondary gateway packaged as an MSIX package under `%LOCALAPPDATA%\Packages` and drops an `OpenClaw Companion.lnk` shortcut in the user's Startup folder. Having both active causes continuous configuration contention on port `18789`.
+The OpenClaw Companion app from the Microsoft Store installs a second gateway as an MSIX package under `%LOCALAPPDATA%\Packages` and drops an `OpenClaw Companion.lnk` shortcut in the Startup folder. With both active, the two keep fighting over port `18789`. `OpenClawService.status()` inspects `%LOCALAPPDATA%\Packages` and the Startup folder; when it finds the app it sets `companion_present: True` and suggests the removal command:
 
-**Remedy**:
-`OpenClawService.status()` inspects `%LOCALAPPDATA%\Packages` and the Startup folder. If detected, it sets `companion_present: True` and suggests the non-destructive removal command:
 ```powershell
 Get-AppxPackage *OpenClaw* | Remove-AppxPackage
 Remove-Item "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\OpenClaw Companion.lnk" -Force
 ```
 
-### Pitfall 5: Dual Gateway Process Detection
-Accidental multiple invocations can cause two or more `node` gateway processes to run simultaneously. `status()` reports `dual_gateway: True` when `process_count > 1` or when the Store Companion conflicts with an active gateway.
+Accidental multiple invocations can leave two or more gateway processes running. `status()` reports `dual_gateway: True` when `process_count > 1`, or when the Store Companion conflicts with an active gateway.
 
----
+## Device pairing protocol
 
-## 3. Device Pairing Protocol (`openclaw_pairing.py`)
+Phones running the OpenClaw companion app pair with the local gateway in three steps:
 
-Mobile devices running the OpenClaw companion app pair with the local gateway using the following workflow:
+1. Show the QR code. `pairing.qr()` returns the command `openclaw qr`. The code has to be rendered in the person's interactive terminal, not captured to standard output.
+2. Inspect pending pairings. `pairing.pending()` runs `openclaw devices list --json`, with text parsing as a fallback. Every authentication token, secret and credential key is stripped before the records are returned.
+3. Approve the pairing. `pairing.approve(device_id)` approves the pending registration with `openclaw devices approve <device_id>`.
 
-1. **Display QR Code**:
-   `pairing.qr()` returns the command `"openclaw qr"`. The QR code must be rendered directly in the user's interactive terminal rather than captured to standard output.
-2. **Inspect Pending Pairings**:
-   `pairing.pending()` executes `openclaw devices list --json` (with fallback text parsing). **All authentication tokens, secrets, and credential keys are stripped before returning records.**
-3. **Approve Pairing**:
-   `pairing.approve(device_id)` approves the pending registration:
-   ```bash
-   openclaw devices approve <device_id>
-   ```
-   *Note: Insecure WebSocket (`ws://`) connections provide restricted capabilities.*
+A note on transport: an insecure WebSocket connection (`ws://`) gives restricted capabilities.

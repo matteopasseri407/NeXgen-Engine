@@ -3,7 +3,7 @@
 <p align="center">
   <picture>
     <source srcset="assets/nexgen-architecture-banner.webp" type="image/webp">
-    <img src="assets/nexgen-architecture-banner.png" alt="NeXgen Engine — AI Operating Layer" width="100%" loading="eager">
+    <img src="assets/nexgen-architecture-banner.png" alt="NeXgen Engine, AI operating layer" width="100%" loading="eager">
   </picture>
 </p>
 
@@ -16,26 +16,32 @@
 </p>
 
 <p align="center">
-  <a href="README.it.md">🇮🇹 Leggi in italiano</a> · <a href="#quick-start">Quick Start</a> · <a href="#how-it-compares">Why NeXgen?</a> · <a href="docs/architecture-contract.md">Architecture</a> · <a href="CHANGELOG.md">Changelog</a>
+  <a href="README.it.md">🇮🇹 Italiano</a> · <a href="#quick-start">Quick start</a> · <a href="#how-it-compares">How it compares</a> · <a href="docs/architecture-contract.md">Architecture</a> · <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-**Configure your AI coding CLIs from one Git source, then check the result.**
+**Make the AI subscriptions you already pay for work as one team, across all your machines.**
 
-NeXgen Engine generates configuration for Claude Code, Codex, OpenCode, Antigravity, and OpenClaw from a private KnowledgeVault.
-The Vault holds shared instructions, MCP and skill manifests, encrypted secrets, and Markdown memory.
+NeXgen Engine is one Git repository that configures Claude Code, Codex, OpenCode, Antigravity and OpenClaw from a single source, and keeps them aligned on every PC you use.
 
-Each CLI receives its native format, while machine-specific settings stay local.
-The sync command applies the configuration; doctor checks for drift and reports anything it cannot verify.
+## What you get
 
----
+- More out of the flat plans. `nexgen quota` reads what the harnesses on this machine already wrote about their own usage: what each plan has used, the percentage where the provider publishes one, the reset time when it is known, and how old the reading is. A window it cannot measure from here says so instead of showing a guess. If you declare a fallback chain in `quota.yaml`, `nexgen openclaw setup` writes it into the OpenClaw agents the engine creates: once the last reading is past the line, 95% by default, the next turn starts on the next model instead of running into a spent plan. See [quota.md](docs/quota.md).
+
+- Models from different vendors on the same job. `council` convenes the CLIs you already have as seats, each on its own model, to brainstorm, attack a plan or review code written by another vendor. It is opt-in: with no `seats.yaml` there is no Council. See [council.md](docs/council.md). A supervised task goes further: a frontier model writes the brief, an executor carries it out in a window of its own harness, and the engine keeps the files, the cost register and the gates that run before anyone reviews a diff. That part is a preview, and the docs say what the gates do not guarantee. See [supervision.md](docs/supervision.md).
+
+- Connectors and skills configured once. One MCP manifest and one skills manifest in the Vault are rendered into each CLI's own native format by `nexgen sync`. The merge is additive, so a server you added by hand survives. Claude Desktop is the exception: it gets only the connectors you opt into with `desktop_allow: true`, and only for read-only servers. See [sync-contract.md](docs/sync-contract.md) and [what-gets-written.md](docs/what-gets-written.md).
+
+- Several PCs from one source. `nexgen sync` applies the configuration on each machine and `nexgen doctor` reports what drifted. Secrets live in one age-encrypted file with a key per enrolled machine, and OAuth refresh tokens are stored per host, so a token that rotates on one PC does not break another. See [roles.md](docs/roles.md).
+
+- Memory you can read and diff. The KnowledgeVault is Markdown in Git: notes, decisions and project state. Writes go through the Vault MCP, which checks the note or section hash first and refuses a stale replacement. See [architecture-contract.md](docs/architecture-contract.md).
+
+- One harness for everything, if you want it. OpenClaw is the engine's official harness: a web panel and a phone app over the subscriptions you already pay for, an agent squad declared in `squad.yaml`, one node per PC and channel bindings that route a chat to the right agent. See [openclaw.md](docs/openclaw.md) and [squad.md](docs/squad.md).
 
 ## Demo
 
-Inspect the environment and manage it from the terminal:
-
 ```bash
-nexgen info    # visual dashboard: engine version, runtimes, modules, installed MCP servers and skills (core / yours / third-party, what moved upstream), secrets
-nexgen doctor  # fail-closed checks: git alignment, MCP reachability, link hygiene, permissions
+nexgen info    # dashboard: engine version, runtimes, modules, installed MCP servers and skills, secrets
+nexgen doctor  # checks: git alignment, MCP reachability, modules and skills, secrets and their file modes
 ```
 
 <p align="center">
@@ -46,15 +52,13 @@ nexgen doctor  # fail-closed checks: git alignment, MCP reachability, link hygie
   <br><em><code>nexgen info</code> on Windows, showing host, Vault, runtimes, modules, and diagnostics. Run <code>nexgen doctor</code> for the full report.</em>
 </p>
 
----
+## How it works
 
-## The Three Planes
+The engine keeps three things apart, each with one canonical source in the Vault:
 
-The engine keeps three sources of configuration separate:
-
-1. **Behavior:** Universal operating policies, prompts, and invariant guardrails defined in `AGENTS.md` and symlinked into every runtime.
-2. **Configuration:** Abstract MCP manifests and skills compiled deterministically into each CLI's native configuration format via `nexgen sync`.
-3. **Memory:** Plain Markdown KnowledgeVault with compare-and-swap (CAS) concurrency locking, per-section updates (`update_section`), and automatic Git versioning.
+1. Behavior: operating rules, prompts and guardrails in `AGENTS.md`, linked into every runtime.
+2. Configuration: abstract MCP and skills manifests, compiled into each CLI's native format by `nexgen sync`.
+3. Memory: the Markdown KnowledgeVault, versioned in Git, with hash-checked writes.
 
 ```
                          ┌──────────────┐
@@ -74,101 +78,55 @@ Claude · Codex ·          Zero-Passphrase (0600)        CAS Locked Git Notes
 OpenCode · Antigravity    Per-Host OAuth Slots          Link Hygiene Map
 ```
 
----
+Every file these commands create is listed in [what-gets-written.md](docs/what-gets-written.md). The one write outside your home directory is the server role's sudo policy, described in [roles.md](docs/roles.md).
 
-## How it compares
+## Quick start
 
-NeXgen generates native CLI settings from shared manifests and checks whether the result matches them.
-Its scope includes instructions, MCP connectors, skills, secrets, and Markdown memory.
-The [sync contract](docs/sync-contract.md) describes what it manages, what it preserves, and how it reports failures.
+### Option A, installed (recommended for daily use)
 
----
-
-## What it does
-
-* **Single Python core (`nexgen_core`):** runs natively on Linux and Windows, no shell twins. Automated suite in CI.
-* **Deterministic modules:** 9-module catalog (`memory`, `semantic-rag`, `ocr`, `n8n`, `browser`, `council`, `local-lane`, `openclaw`, `sync`) managed with `nexgen modules list` and `nexgen modules set`.
-* **Local models (optional):** `nexgen-local` builds read-only queries and records the sources used by each answer.
-  Its evaluation gate fails on any injection or unsupported answer in the trap suite.
-  Drive uploads are the only mutation it stages, and they need explicit approval through `nexgen-local drive-propose` / `drive-upload`.
-  Mail, calendar and Drive reads stay available to every agent through the same connectors.
-  See [local-lane.md](docs/local-lane.md).
-* **Secrets store:** asymmetric `age` encryption (`99-SECRETS/secrets.yaml.age`) on machine-local keys (`0600`), isolated per-host OAuth slots, materialized `secrets.env` for shells and systemd services. No passphrase to remember or type.
-* **Operator dashboard:** `nexgen info` status dashboard, so routine inspection never needs an AI assistant open.
-* **Plan quota (`nexgen quota`, `/quota` in OpenClaw):** what is left of each subscription, read from what the harnesses already wrote locally, with the age of every reading. A window that cannot be measured from this machine says so instead of guessing. See [quota.md](docs/quota.md).
-* **Five runtimes plus the Desktop app:** Claude Code, Codex, OpenCode (native V2: scope-file instructions, `plugins`/`permissions`, skill views), Antigravity and OpenClaw, each rendered in its own dialect, Council seats included. OpenClaw is technically the fifth CLI the sync writes, but it is the official NeXgen Engine harness: the interface (web panel, phone app) from which the other harnesses and your subscriptions are used. The Claude Desktop app receives only explicitly allowlisted read-only servers (`desktop_allow`), since it has no guardrail hooks.
-  See [openclaw.md](docs/openclaw.md) for what the engine detects, the three agents, the local model cage and the known Windows traps.
-* **Fail-closed diagnostics (`nexgen doctor`):** automated checks over git alignment, manifest reachability, link hygiene, token presence and permission boundaries. A check that cannot verify reports undetermined instead of passing.
-
----
-
-## Quick Start
-
-### Option A — Installed (recommended for daily use)
+The package is not on PyPI yet, so the install comes from this repository:
 
 ```bash
-# The engine is distributed from this repository (no PyPI package yet):
 uv tool install git+https://github.com/matteopasseri407/NeXgen-Engine   # or: pipx install git+https://github.com/matteopasseri407/NeXgen-Engine
 nexgen info
 nexgen doctor
 ```
 
-Releases include a source archive, a wheel, and `SHA256SUMS` for download verification.
-PyPI and Homebrew publication are separate, pending distribution channels, documented in [release-packages.md](docs/release-packages.md).
+A package install carries the whole engine (the Council, the MCP proxy, the hooks, the templates) and leaves the launchers to the package manager. It has no repository folder, so the Vault comes from the template repository:
 
-A package install carries the whole engine (the Council, the MCP proxy, the hooks, the
-templates), not only the commands, and leaves the launchers to the package manager.
-It has no repository folder, so the vault comes from the template repository, which doubles as one:
-`git clone https://github.com/matteopasseri407/NeXgen-Engine.git ~/KnowledgeVault`, then
-`nexgen init --local --root ~/KnowledgeVault` (`nexgen init --check --root ~/KnowledgeVault` first if you prefer to look).
+```bash
+git clone https://github.com/matteopasseri407/NeXgen-Engine.git ~/KnowledgeVault
+nexgen init --local --root ~/KnowledgeVault          # add --check to look before writing
+```
 
-Package installations are updated through the package manager that installed them.
-For Git checkouts, `nexgen update` asks for confirmation; the scheduled heartbeat can apply patch releases unattended.
-See [upgrade.md](docs/upgrade.md) for requirements and recovery.
+Update a package install with the manager that installed it. Releases publish a source archive, a wheel and `SHA256SUMS`; PyPI and Homebrew are documented but not active yet, see [release-packages.md](docs/release-packages.md).
 
-### Option B — Cloned (recommended for hacking the engine)
+### Option B, cloned (recommended for working on the engine)
 
 ```bash
 git clone https://github.com/matteopasseri407/NeXgen-Engine.git ~/KnowledgeVault
 cd ~/KnowledgeVault
-# Pick the command for your machine role (see docs/roles.md):
-sh install.sh --role server      # Headless Linux always-on gateway
-sh install.sh --role node        # Node connecting to an existing gateway
-sh install.sh --role standalone  # Local PC with its own gateway
+# Pick the command for this machine's role (see docs/roles.md):
+sh install.sh --role server      # headless Linux gateway, always on
+sh install.sh --role node        # node joining an existing gateway
+sh install.sh --role standalone  # local PC with its own gateway
 # Windows PowerShell: .\install.ps1 -Role <server|node|standalone>
 ```
 
-### 1. Bootstrap
-
-The installer has already completed the bootstrap.
-Verify:
+The installer runs the bootstrap. Verify it, then align and check whenever you change something:
 
 ```bash
 nexgen sync
 nexgen doctor --verbose
 ```
 
-### 2. Configure your environment
+On a Git checkout, `nexgen update` asks for confirmation; the scheduled heartbeat can apply patch releases unattended. See [upgrade.md](docs/upgrade.md).
 
-Open `INIT.md` and paste its contents into your preferred agent CLI, Claude Code, Codex, OpenCode, or Antigravity.
-The assistant will guide profile selection and module setup.
+### Configure your environment
 
-### 3. Align and verify (anytime)
+Open `INIT.md` and paste it into the agent CLI you already use: Claude Code, Codex, OpenCode or Antigravity. It walks through the profile and the modules.
 
-```bash
-nexgen sync
-nexgen doctor
-```
-
-### 4. Interactive operator dashboard
-
-```bash
-nexgen info
-```
-
----
-
-## Platform Support
+## Platform support
 
 <!-- platform-status:start -->
 
@@ -187,43 +145,34 @@ nexgen info
 
 <!-- platform-status:end -->
 
+## How it compares
 
----
+|  | A folder of dotfiles | NeXgen Engine |
+|---|---|---|
+| What you edit | the files each CLI reads | one Vault: `AGENTS.md`, the MCP manifest, the skills manifest, the secrets file |
+| What each CLI gets | the same text, copied | its own native format, generated by `nexgen sync` |
+| Drift | you notice it, eventually | `nexgen doctor` exits non-zero and lists what broke |
+| Secrets | in the dotfiles, or in your head | one age-encrypted file, one key per machine |
+| A second PC | another copy to keep in step | the same source, applied on each machine |
+| Memory | none | Markdown in Git, with hash-checked writes |
 
-## Architecture Boundaries
-
-* **Readable data:** memory and configuration use Markdown and YAML in Git.
-* **Concurrent note updates:** the Vault MCP checks the note or section hash before writing, so it refuses a stale replacement.
-* **Runtime boundary:** configuration sync manages CLI settings; it does not intercept model responses. Council separately invokes CLI seats and captures their output.
-
-See `docs/architecture-contract.md` and `docs/sync-contract.md` for the full contracts.
-
----
+The engine writes configuration, reads what the harnesses leave on disk, and starts a CLI when you ask it to. It does not sit between a CLI and its model. The full contracts are in [architecture-contract.md](docs/architecture-contract.md) and [sync-contract.md](docs/sync-contract.md).
 
 ## FAQ
 
 **Can I use this commercially?**
-The repository uses PolyForm Noncommercial 1.0.0.
-See [LICENSE](LICENSE) for its terms and [COMMERCIAL.md](COMMERCIAL.md) for commercial use.
+The repository uses PolyForm Noncommercial 1.0.0. See [LICENSE](LICENSE) for the terms and [COMMERCIAL.md](COMMERCIAL.md) if you need a commercial license.
 
-**How is this different from dotfiles?**
-NeXgen reads one instruction source and shared MCP and skill manifests, then generates each CLI's native configuration.
-It handles different formats and paths on Linux and Windows, and checks the generated result for drift.
+**Does it work with my existing MCP servers?**
+Yes. The sync is additive: a server in a CLI config that the manifest does not know is preserved and left in place, because it may be yours.
 
-**Do I need all five CLIs?**
-No.
-Install the CLIs you use; `nexgen doctor` reports absent CLIs as warnings.
-After adding a runtime, run `nexgen sync`.
+**What happens when doctor cannot check something?**
+It says undetermined and keeps that separate from a failure. Add `--strict` if you want an unverifiable check to fail the run too.
 
 ## Development
 
-Development uses `developer`; releases reach `main` through a verified pull request.
-Maintainers cut a release with `nexgen release ship`, which runs the bump, pull request, checks, signed tag and sync in one command.
-The [branch contract](docs/agent-lanes.md) covers concurrent work, releasing and automatic alignment with `main`.
-See [CONTRIBUTING.md](CONTRIBUTING.md) for module ownership and test requirements.
-
----
+Development happens on `developer`; releases reach `main` through a verified pull request. Maintainers ship with `nexgen release ship`, which runs the bump, the pull request, the checks, the signed tag and the sync in one command. The [branch contract](docs/agent-lanes.md) covers concurrent work and automatic alignment with `main`. Module owners and test requirements are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-PolyForm Noncommercial License 1.0.0. Free for noncommercial use, modification, and self-hosted deployments. See `LICENSE` for details. For commercial inquiries see `COMMERCIAL.md`.
+PolyForm Noncommercial License 1.0.0. Free for noncommercial use, modification and self-hosted deployments. See `LICENSE` for the terms, and `COMMERCIAL.md` for commercial use.

@@ -1,117 +1,89 @@
 # AI Council
 
-`council.py` is a local orchestrator that convenes other agentic CLIs you
-already have as advisors: brainstorming, challenging a plan, or
-cross-vendor code review. It is explicit Python code, not an LLM, that
-decides who speaks and when.
+🇮🇹 [Italiano](it/council.md)
 
-It is an optional expansion. With no `seats.yaml` configured it is
-completely inert. Nothing about the rest of the engine depends on it.
+`council.py` is a local orchestrator that convenes other agentic CLIs you already have as advisors: brainstorming, challenging a plan, or cross-vendor code review.
+It is explicit Python, not an LLM, that decides who speaks and when.
+
+It is an optional expansion.
+With no `seats.yaml` configured it is completely inert, and nothing else in the engine depends on it.
 
 ## Setup
 
-1. Copy the schema template into your data root and fill in seats you
-   actually have:
+1. Copy the schema template into your data root and fill in the seats you actually have:
+
    ```bash
    mkdir -p ~/KnowledgeVault/03-INFRA/agent-universal-layer/council
    cp 03-INFRA/agent-universal-layer/council/seats.yaml.example \
       ~/KnowledgeVault/03-INFRA/agent-universal-layer/council/seats.yaml
    ```
-   (adjust the path if `AGENT_VAULT_DATA`/`KNOWLEDGE_VAULT_PATH` points
-   somewhere else). This file is your data, never committed to the engine.
-   A small team can give each person their own file instead of one shared
-   `seats.yaml` — see the "more than one seats file" comment near the top
-   of `seats.yaml.example` for the `COUNCIL_SEATS_FILE` /
-   `AGENT_TEAM_MEMBER` overrides. Neither is read unless set, so this does
-   not change anything for a single-user install.
-2. Keep `schema_version: 1` at the root, then pick the seats you have,
-   following the comments in the template. Each seat needs `vendor`, `cli`,
-   `model`, and an explicit `zero_retention: true|false`. `cli` must be one
-   of `opencode`, `agy`, `codex`, `claude`, or `ollama`. Those are the CLIs `council.py` knows
-   how to invoke today.
-   Set `zero_retention: true` only if you've confirmed
-   that with a primary source, not a summary. You can also set an optional
-   positive `timeout_seconds` for a seat that is known to need more or less
-   time.
-3. In a MULTI setup, run `agent-sync apply` once to install the `council`
-   launcher on Linux and the `council.cmd` wrapper on Windows.
-   Then run any command below.
+
+   Adjust the path if `AGENT_VAULT_DATA` or `KNOWLEDGE_VAULT_PATH` points somewhere else.
+   This file is your data and is never committed to the engine.
+   A small team can give each person their own file instead of one shared `seats.yaml`: see the "more than one seats file" comment near the top of `seats.yaml.example` for the `COUNCIL_SEATS_FILE` and `AGENT_TEAM_MEMBER` overrides.
+   Neither is read unless set, so a single-user install sees no difference.
+2. Keep `schema_version: 1` at the root, then pick the seats you have, following the comments in the template.
+   Each seat needs `vendor`, `cli`, `model`, and an explicit `zero_retention: true|false`.
+   `cli` must be one of `opencode`, `agy`, `codex`, `claude` or `ollama`, which are the CLIs `council.py` knows how to invoke today.
+   Set `zero_retention: true` only if you have confirmed it with a primary source, not with a summary.
+   You can also set an optional positive `timeout_seconds` for a seat that is known to need more or less time.
+3. In a MULTI setup, run `agent-sync apply` once to install the `council` launcher on Linux and the `council.cmd` wrapper on Windows, then run any command below.
    Without a valid `seats.yaml`, Council stops and reports what is missing.
-   In a MINIMAL setup, or if the launcher is not on your `PATH`, replace
-   `council` below with `python3 03-INFRA/agent-universal-layer/council/council.py`.
+   In a MINIMAL setup, or when the launcher is not on your `PATH`, replace `council` below with `python3 03-INFRA/agent-universal-layer/council/council.py`.
 
-The `council` command (and `council.cmd` on Windows) resolves and executes
-`agent-universal-layer/council/council.py` via `nexgen_core/tools/council.py`.
-All control flow, modes, and guardrails below live in that Python engine.
+The `council` command (and `council.cmd` on Windows) resolves and executes `agent-universal-layer/council/council.py` through `nexgen_core/tools/council.py`.
+All control flow, modes and guardrails below live in that Python engine.
 
-Council does not wrap provider CLIs behind an MCP server. It starts each
-declared CLI as a local subprocess and transports the brief through stdin or a
-protected temporary file. An MCP protocol upgrade therefore does not change
-Council's prompt transport or make a vendor CLI stateless. If that CLI can load
-mounted MCP servers, tools, or persistent state, Council must disable or isolate
-those capabilities separately.
+Council does not wrap provider CLIs behind an MCP server.
+It starts each declared CLI as a local subprocess and transports the brief through stdin or a protected temporary file.
+An MCP protocol upgrade therefore does not change Council's prompt transport or make a vendor CLI stateless.
+If a CLI can load mounted MCP servers, tools or persistent state, Council must disable or isolate those capabilities separately.
 
 ## The four modes
 
-Every seat is expected to obey the "without hands" contract: receive text,
-return text, and use no filesystem, shell, or MCP tools. Council removes
-application secrets from isolated seat environments and applies vendor CLI
-controls where they exist. Enforcement is not identical across vendors, so the
-"Current limitations" section is authoritative. A CLI that cannot be shown to
-honor this contract is refused as a seat.
+Every seat is expected to obey the "without hands" contract: receive text, return text, and use no filesystem, shell or MCP tools.
+Council removes application secrets from isolated seat environments and applies vendor CLI controls where they exist.
+Enforcement is not identical across vendors, so "Current limitations" below is authoritative.
+A CLI that cannot be shown to honour this contract is refused as a seat.
 
-**Brainstorm.** One seat, 1+ rounds. Each round after the first must attack
-its own previous conclusion instead of just restating it:
+**Brainstorm.** One seat, one or more rounds.
+Each round after the first must attack its own previous conclusion instead of restating it:
+
 ```bash
 council brainstorm \
   "Should we cache this at the edge or the origin?" \
   --context notes.md --rounds 2 --seat gemini
 ```
 
-**Challenge.** One seat tries to find the dominant flaw in a plan. `APPROVE`
-is made costly (it has to rule out at least two risk categories explicitly,
-or it doesn't count):
+**Challenge.** One seat looks for the dominant flaw in a plan.
+`APPROVE` is made costly: it has to rule out at least two risk categories explicitly, or it does not count.
+
 ```bash
 council challenge \
   "Single cron job tars the data dir nightly to one S3 bucket." --seat gemini
 ```
 
-**Code review.** It refuses to run if
-`--author-vendor` matches the seat's own vendor:
+**Code review.** It refuses to run when `--author-vendor` matches the seat's own vendor.
+
 ```bash
 council code-review \
   changes.diff --author-vendor anthropic --seat gemini
 ```
 
-**Relay.** A sequential staffage of up to 5 stages, for example
-architect→builder→reviewer→judge), each stage seeing the full original
-brief plus the previous stage's output formatted as a quoted block and
-prefaced with an instruction to evaluate it, not obey it. That framing is a
-prompt-level convention, not a technical control: nothing stops a
-compromised or adversarially steered seat from ignoring the instruction and
-producing a misleading verdict for the next stage to read. Treat a relay's
-final VERDICT as consultative input for your own judgment, never as proof
-that the chain's output is correct. Every supported CLI can participate
-when its seat is declared in the sequence. The OpenCode cost pre-check only
-reorders OpenCode candidates within their original decision-document order;
-it never promotes another provider merely because it has no OpenCode usage
-data.
+**Relay.** A sequential chain of up to 5 stages, for example architect, builder, reviewer and judge.
+Each stage sees the full original brief plus the previous stage's output, formatted as a quoted block and prefaced with an instruction to evaluate it, not obey it.
+That framing is a prompt-level convention and not a technical control: nothing stops a compromised or adversarially steered seat from ignoring the instruction and producing a misleading verdict for the next stage to read.
+Treat a relay's final VERDICT as consultative input for your own judgement, never as proof that the chain is correct.
+Every supported CLI can take part when its seat is declared in the sequence.
+The OpenCode cost pre-check only reorders OpenCode candidates within their original decision-document order, and never promotes another provider merely because it has no OpenCode usage data.
 
-By default, a stage that returns `VERDICT: REJECT` stops the relay before
-the next stage runs — a reject means the plan already isn't worth building
-on, and running the remaining stages anyway would just spend quota on a plan
-the relay has already abandoned. Pass `--continue-on-reject` to run every
-declared stage regardless, if you want each seat's opinion no matter what an
-earlier stage concluded.
+By default a stage that returns `VERDICT: REJECT` stops the relay before the next stage runs: a reject means the plan is not worth building on, and running the remaining stages would spend quota on something the relay already abandoned.
+Pass `--continue-on-reject` to run every declared stage regardless.
 
-Verdict parsing is positional, not textual search: only a response's last
-non-blank line can set that stage's verdict (markdown emphasis and terminal
-punctuation are tolerated; a quote prefix is not). So a stage that quotes an
-earlier stage's `VERDICT: REJECT` while reaching a different conclusion of
-its own is read as that different conclusion, not as a rejection, and a
-verdict cited mid-response — or a rejection quoted anywhere but the final
-line — no longer stops the relay. Only a seat's own standalone closing line
-does.
+Verdict parsing is positional, not a text search: only a response's last non-blank line can set that stage's verdict, with markdown emphasis and terminal punctuation tolerated and a quote prefix not.
+A stage that quotes an earlier `VERDICT: REJECT` while reaching its own different conclusion is read as that conclusion, and a verdict cited mid-response no longer stops the relay.
+Only a seat's own standalone closing line does.
+
 ```bash
 council relay \
   "Design a rate limiter for the public API." \
@@ -120,9 +92,7 @@ council relay \
 
 ## Resumable relay
 
-`council relay --resumable` runs the same sequential relay but checkpoints
-progression into SQLite inside the kept session directory, so an interrupted
-run resumes instead of restarting:
+`council relay --resumable` runs the same sequential relay but checkpoints progression into SQLite inside the kept session directory, so an interrupted run resumes instead of restarting:
 
 ```bash
 council relay "Design a rate limiter." --sequence "architect=glm,builder=qwen" --resumable
@@ -130,124 +100,101 @@ council relay "Design a rate limiter." --sequence "architect=glm,builder=qwen" -
 council relay "Design a rate limiter." --sequence "architect=glm,builder=qwen" --resume council-design-a-rate-limiter-20260927T120000Z
 ```
 
-Resume checks the brief, sequence and selected seats before invoking any seat.
-Changing a seat's model, CLI, reasoning effort, quota pool, retention policy,
-timeout or routing identity refuses the resume. Checkpoints created before
-these seat checks must be restarted as a new relay. Completed stages are never
-re-invoked. One case needs your explicit decision: if the process died
-after a provider responded but before the outcome was saved, resume
-declares which stage/attempt is uncertain and stops — re-invoking may bill
-quota twice, so pass `--allow-uncertain-rerun` only when you accept that.
-Known non-retryable failures are saved before the relay stops.
-Resuming them reports the saved failure without calling a provider again,
-even with `--allow-uncertain-rerun`.
-Only one invocation may advance a session at a time.
-A simultaneous resume stops with a busy-session error before calling a seat.
+Resume checks the brief, the sequence and the selected seats before invoking any seat.
+Changing a seat's model, CLI, reasoning effort, quota pool, retention policy, timeout or routing identity refuses the resume.
+Checkpoints created before these seat checks must be restarted as a new relay.
+Completed stages are never re-invoked.
+
+One case needs your explicit decision: if the process died after a provider responded but before the outcome was saved, resume names the stage and attempt that are uncertain and stops.
+Re-invoking may bill quota twice, so pass `--allow-uncertain-rerun` only when you accept that.
+Known non-retryable failures are saved before the relay stops, and resuming them reports the saved failure without calling a provider again, even with `--allow-uncertain-rerun`.
+
+Only one invocation may advance a session at a time, and a simultaneous resume stops with a busy-session error before calling a seat.
 `calls_made` counts reserved invocation attempts, including uncertain calls and accepted reruns.
-The reservation is checkpointed before invocation, so this count can exceed actual provider calls if a crash or refusal happens before the provider starts.
+The reservation is checkpointed before invocation, so this count can exceed the actual provider calls when a crash or refusal happens before the provider starts.
 It is a conservative quota count, not a billing receipt.
-`council clean` (and TTL expiry) removes checkpoints together with the
-session. LangGraph and its SQLite saver are included in the engine installation.
+
+`council clean` and TTL expiry remove checkpoints together with the session.
+LangGraph and its SQLite saver ship with the engine installation.
 Brainstorm and challenge stay ephemeral.
 
 ## Independent consult
 
-`council consult` asks several seats the SAME brief independently and in
-parallel, then runs at most one aimed rebuttal round on disagreements:
+`council consult` asks several seats the same brief independently and in parallel, then runs at most one aimed rebuttal round on disagreements:
 
 ```bash
 council consult "Is this migration plan safe?" --seat luna --seat kimi --seat glm
 ```
 
-Every seat judges only the original brief (no hand-off, no shared context
-between opinions). Seats that fail abstain with a recorded reason instead
-of aborting the round; if every seat fails the consult refuses rather than
-synthesizing from nothing. Budgets are hard: at most 5 seats, at most 1
-rebuttal round, per-seat timeouts. The transcript (`consult.md`) records
-opinions, rebuttals, abstentions, the verdict tally and the disagreement
-pairs. Measure on comparable cases at equal budget: this earns its place
-only by improving issue coverage or reducing time — more frequent agreement
-is not a quality measure.
+Every seat judges only the original brief, with no hand-off and no shared context between opinions.
+Seats that fail abstain with a recorded reason instead of aborting the round; if every seat fails, the consult refuses rather than synthesizing from nothing.
+Budgets are hard: at most 5 seats, at most 1 rebuttal round, per-seat timeouts.
+The transcript (`consult.md`) records opinions, rebuttals, abstentions, the verdict tally and the disagreement pairs.
+Measure it on comparable cases at equal budget: it earns its place only by improving issue coverage or reducing time, and more frequent agreement is not a quality measure.
+
 Each completed opinion or rebuttal prints to stdout immediately, even while another seat is still running.
-The transcript is updated after each result and marked completed only after the consult finishes.
+The transcript is updated after each result and marked completed only when the consult finishes.
 An unexpected exception cancels the other running seats before propagating the failure.
-With `--keep-session`, completed results remain on disk after interruption.
-Without it, completed results remain in terminal output and the ephemeral files are removed.
+With `--keep-session`, completed results stay on disk after an interruption.
+Without it, completed results remain in the terminal output and the ephemeral files are removed.
 
-Every mode accepts `--context FILE` for extra background. A seat without a
-confirmed zero-retention guarantee remains usable, but Council prints a warning
-to stderr before sending the brief. The old `--allow-training-risk` flag has
-been removed outright, not kept as a no-op: passing it is now a CLI error.
+Every mode accepts `--context FILE` for extra background.
+A seat without a confirmed zero-retention guarantee remains usable, but Council prints a warning to stderr before sending the brief.
+The old `--allow-training-risk` flag has been removed outright rather than kept as a no-op: passing it is now a CLI error.
 
-## Da OpenClaw
+## From OpenClaw
 
-`/council <question>` asks the Council from a chat. A council run takes minutes
-and opens vendor CLIs, so the command does not wait for it: it answers at once
-with an identifier and starts
+`/council <question>` asks the Council from a chat.
+A council run takes minutes and opens vendor CLIs, so the command does not wait for it: it answers at once with an identifier and starts
 
 ```bash
 council brainstorm "<question>" --auto --keep-session --notify --tag <id>
 ```
 
-detached, so the run outlives the chat turn and the gateway itself. `--auto`
-because there is nobody at a terminal to choose a seat; `--keep-session` so the
-full outcome is still on disk afterwards; `--notify` so the end arrives where
-the person is.
+detached, so the run outlives the chat turn and the gateway itself.
+`--auto` because there is nobody at a terminal to choose a seat, `--keep-session` so the full outcome is still on disk afterwards, `--notify` so the end arrives where the person is.
 
-`--notify` is the only thing the engine gained: before the process exits -- on a
-verdict, on a refusal, on any error -- it sends one line through the megaphone,
-the engine's single alert surface, and `--tag` is quoted back so two runs in the
-same hour stay apart. It says the verdict, the identifier, and the session
-directory when the session was kept; a run that stopped says why instead. The
-failure is still raised and still sets the exit code: the notification reports
-it, it never replaces it. The same flag works on every mode, `consult` and
-`relay` included.
+`--notify` sends one line through the megaphone, the engine's single alert surface, before the process exits: on a verdict, on a refusal, on any error.
+`--tag` is quoted back so two runs in the same hour stay apart.
+The line carries the verdict, the identifier and the session directory when the session was kept; a run that stopped says why instead.
+The failure is still raised and still sets the exit code: the notification reports it and never replaces it.
+The same flag works on every mode, `consult` and `relay` included.
 
-`nexgen_council` is the same start, as an agent tool: it returns the identifier.
-`nexgen_council_result` reads back what the run has produced so far -- still
-running, or the end of the log -- and the run's own session directory holds the
-rest. Neither tool is an operator opt-in: asking the Council is not a state
-change.
+`nexgen_council` is the same start as an agent tool: it returns the identifier.
+`nexgen_council_result` reads back what the run has produced so far, still running or the end of the log, and the run's own session directory holds the rest.
+Neither tool is an operator opt-in: asking the Council is not a state change.
 
 ## Human-approved routing proposals
 
-Council works without a Governor. With only `seats.yaml`, `council propose`
-shows the seats the user declared and waits for an explicit choice.
+Council works without a Governor.
+With only `seats.yaml`, `council propose` shows the seats the user declared and waits for an explicit choice.
 
-An optional `routing:` section turns a routing document into a locally verified
-proposal. Set `decision_file` to a relative path inside the private data root.
-Council understands the per-role Markdown tables emitted by the public [LLM Model Routing Governor](https://github.com/matteopasseri407/NeXgen-addon-llm-model-routing-governor),
-and the older flat table for backward compatibility.
+An optional `routing:` section turns a routing document into a locally verified proposal.
+Set `decision_file` to a relative path inside the private data root.
+Council understands the per-role Markdown tables emitted by the public [LLM Model Routing Governor](https://github.com/matteopasseri407/NeXgen-addon-llm-model-routing-governor), and the older flat table for backward compatibility.
 
-Council retains every fallback in the Governor table and resolves the model
-label together with its channel against local seats. Go, free Zen and paid Zen
-remain separate even though all three use OpenCode. Privacy accepts one or more
-local candidates and ignores explicitly excluded rows. Unknown channels and
-malformed candidate rows stop the proposal. An older flat table works only when
-each model maps to one execution pool; ambiguous matches are excluded.
-`propose` and `routing-status` identify the current host and retain the original `prescelto` or `rimpiazzo N` slot.
+Council keeps every fallback in the Governor table and resolves the model label together with its channel against local seats.
+Go, free Zen and paid Zen stay separate even though all three use OpenCode.
+Privacy accepts one or more local candidates and ignores explicitly excluded rows.
+Unknown channels and malformed candidate rows stop the proposal.
+An older flat table works only when each model maps to one execution pool, and ambiguous matches are excluded.
+`propose` and `routing-status` identify the current host and keep the original `prescelto` or `rimpiazzo N` slot.
 A missing prescelto does not promote a fallback to prescelto.
-Both commands show exclusions even when other candidates are available, and list declared seats absent from every routing role as manual choices with their local probe results.
+Both commands show exclusions even when other candidates are available, and list declared seats that no routing role mentions as manual choices with their local probe results.
 
-This is an in-memory adapter. Neither Council nor an external workflow rewrites
-`seats.yaml`. That file remains the local execution allowlist, while the routing
-document supplies the current ordering. A missing CLI, a different model, or a
-different Codex effort removes a candidate from the proposal with an explanation.
-Missing zero-retention does not remove it; the proposal marks it with a warning.
+This is an in-memory adapter.
+Neither Council nor an external workflow rewrites `seats.yaml`: that file stays the local execution allowlist, while the routing document supplies the current ordering.
+A missing CLI, a different model or a different Codex effort removes a candidate from the proposal with an explanation.
+A missing zero-retention does not remove it; the proposal marks it with a warning.
 
-For a `codex` seat, Council checks the declared model and effort against the
-CLI default in `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`).
-An explicit model can differ from that default if `models_cache.json` lists
-the exact model and supports the requested effort. These checks read local
-metadata and do not spend model quota.
+For a `codex` seat, Council checks the declared model and effort against the CLI default in `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`).
+An explicit model can differ from that default when `models_cache.json` lists the exact model and supports the requested effort.
+These checks read local metadata and spend no model quota.
 
-For a `claude` seat, Council first checks that the installed CLI supports
-explicit `--model` selection. It also requires `--effort` when the seat
-declares a `reasoning_effort`. This is enough to include the seat in a proposal
-without spending quota on a probe. When the user invokes that seat, Council
-requests JSON output and checks `modelUsage` against the exact model declared
-in `seats.yaml`. A missing value or a silent fallback to another model stops
-the run instead of accepting an unverified response.
+For a `claude` seat, Council first checks that the installed CLI supports explicit `--model` selection.
+It also requires `--effort` when the seat declares a `reasoning_effort`.
+That is enough to include the seat in a proposal without spending quota on a probe.
+When the user invokes that seat, Council requests JSON output and checks `modelUsage` against the exact model declared in `seats.yaml`: a missing value or a silent fallback to another model stops the run instead of accepting an unverified response.
 
 A `no local seat associated` line means no declared seat matches that exact model and execution channel.
 Align `seats.yaml` with the intended model, or correct the routing document through its producer.
@@ -255,9 +202,9 @@ Different model versions are never treated as aliases.
 Privacy stays blocked when no matching local seat is declared or available on this host.
 Council does not create local or paid fallback seats automatically.
 
-The proposal never executes a model. `brainstorm`, `challenge`, and `code-review`
-require an explicit human `--seat`; `relay` requires an explicit human
-`--sequence`. The human decides the role, the model, and how many seats to call.
+The proposal never executes a model.
+`brainstorm`, `challenge` and `code-review` require an explicit human `--seat`, and `relay` requires an explicit human `--sequence`.
+The human decides the role, the model and how many seats to call.
 
 ```bash
 council routing-status
@@ -266,24 +213,21 @@ council challenge "Find the dominant risk in this plan." --seat code-seat
 council relay "Design a safe migration strategy." --sequence "planner=planner-seat,judge=judge-seat"
 ```
 
-Use `--routing-role L-Sys` to ask for a different proposal. It still requires
-`--seat` before a single-seat invocation. `council propose --mode relay` lists
-the available candidates for the configured relay roles without invoking them.
+Use `--routing-role L-Sys` to ask for a different proposal; it still requires `--seat` before a single-seat invocation.
+`council propose --mode relay` lists the available candidates for the configured relay roles without invoking them.
 
 An explicit `--seat` can choose outside a mode's suggested role, with a visible warning.
 An explicit `--routing-role` or configured `routing.mode_defaults` still restricts eligible seats, and Privacy always excludes cloud seats.
 Payment confirmation applies independently of role membership, including seats without a stated routing price.
 Go prints a prepaid quota warning before each call and never asks for a cash payment confirmation.
-For Codex, an explicit model may differ from the default if its local models cache verifies the model and effort.
-If local metadata cannot verify them, Council warns before forwarding the explicitly selected model.
+For Codex, an explicit model may differ from the default when its local models cache verifies the model and effort; when local metadata cannot verify them, Council warns before forwarding the explicitly selected model.
 
 ## Timeouts
 
-Every seat call is bounded by a conservative default of 300 seconds. Set a
-positive `timeout_seconds` in one seat to make that its normal budget, or use
-`--timeout-seconds` to override the budget for one invocation. The command-line
-value wins over the seat value, which wins over the default. Zero, negative,
-infinite, and boolean values are rejected.
+Every seat call is bounded by a conservative default of 300 seconds.
+Set a positive `timeout_seconds` on one seat to make that its normal budget, or use `--timeout-seconds` to override the budget for one invocation.
+The command-line value wins over the seat value, which wins over the default.
+Zero, negative, infinite and boolean values are rejected.
 
 ```bash
 council challenge "Review this plan" --seat gemini --timeout-seconds 90
@@ -291,33 +235,23 @@ council challenge "Review this plan" --seat gemini --timeout-seconds 90
 
 ## Reasoning effort
 
-An optional `reasoning_effort: low|medium|high|xhigh|max|none` on a seat in
-`seats.yaml` is forwarded to that seat's CLI. The mapping is one source per
-CLI, shared between the actual command and every place that prints the
-effort label, so the two can't drift apart:
+An optional `reasoning_effort: low|medium|high|xhigh|max|none` on a seat in `seats.yaml` is forwarded to that seat's CLI.
+One mapping per CLI serves both the real command and every place that prints the effort label, so the two cannot drift apart:
 
 - `claude`: `--effort <value>`, verbatim.
-- `codex`: `-c model_reasoning_effort=<value>`, verbatim.
-- `opencode`: `--variant <value>`, verbatim (provider-specific; no fixed
-  enum to validate against locally).
-- `ollama`: `--think` only documents `low`/`medium`/`high`. `xhigh` and
-  `max` are downmapped to `--think high`, with the printed label saying so.
-  Any other value is dropped with no flag, and the label says that too.
-- `agy`: `--effort` accepts `low`/`medium`/`high`/`xhigh`/`max`,
-  forwarded verbatim. Any other value is dropped with no flag, and the
-  label says that too.
+- `codex`: `-c model_reasoning_effort="<value>"`, verbatim.
+- `opencode`: no flag. OpenCode 2 dropped `--variant`, so the variant is appended to the model as `provider/model#<value>`, verbatim, and a model that already names a variant keeps it. The value is provider-specific, with no fixed enum to validate against locally.
+- `ollama`: `--think` only documents `low`/`medium`/`high`. `xhigh` and `max` are downmapped to `--think high`, and the printed label says so. Any other value is dropped with no flag, and the label says that too.
+- `agy`: `--effort` accepts `low`/`medium`/`high`/`xhigh`/`max`, forwarded verbatim. Any other value is dropped with no flag, and the label says that too.
 
 ## Session handling
 
-Council creates a private working directory for the brief, per-stage output,
-and the final verdict.
-It removes that directory after returning a result, and after an error, unless
-you pass `--keep-session`.
+Council creates a private working directory for the brief, the per-stage output and the final verdict.
+It removes that directory after returning a result, and after an error, unless you pass `--keep-session`.
 On POSIX, kept session directories use mode `700` and their files use `600`.
 Council removes expired kept sessions when it starts.
 Nothing is written into the vault automatically.
-If a result matters later, save a short decision or diagnosis through your
-normal vault workflow, not the raw Council transcript.
+If a result matters later, save a short decision or diagnosis through your normal vault workflow, not the raw Council transcript.
 
 ```bash
 council brainstorm "Review this plan" --keep-session
@@ -331,66 +265,38 @@ council clean --all           # removes every kept session now
 
 ## Guardrails
 
-- **Egress**: the original brief, including context and diffs, is scanned for
-  likely secrets before any seat receives it. A match stops the call.
-- **Generated output**: if a seat emits a value that looks like a secret,
-  Council redacts the affected line before it reaches the next relay stage or
-  a kept session. The relay can continue with the remaining analysis.
-- Both checks reuse the engine's shared `leak_scan.py` module, but this is a
-  separate, always-on end-user protection, not the repository CI leak-scan
-  that guards publishing to GitHub. See `SECURITY.md`.
+- **Egress**: the original brief, including context and diffs, is scanned for likely secrets before any seat receives it. A match stops the call.
+- **Generated output**: when a seat emits a value that looks like a secret, Council redacts the affected line before it reaches the next relay stage or a kept session, and the relay can continue with the remaining analysis.
+- Both checks reuse the engine's shared `leak_scan.py` module, and they are a separate, always-on end-user protection rather than the repository CI leak scan that guards publishing to GitHub. See [SECURITY.md](../SECURITY.md).
 - **Zero-retention**: every seat must declare `zero_retention: true|false`.
-  A false value prints a clear warning in menus and immediately before the
-  model starts. It is metadata, not an execution gate. Secret scanning remains
-  blocking and is a separate control.
-- **Pay-per-use channels**: paid Zen seats require interactive confirmation
-  before each call, including when routing is disabled or the price is missing
-  or zero. Go consumes prepaid quota and does not trigger the cash payment gate.
-  Other channels use the routing document's stated cost. Without a `y` on the
-  operator's terminal, or when stdin is unavailable, a paid call is refused.
-  Consult collects all confirmations on the main thread before starting any
-  opinion or rebuttal workers.
-- **Cost recap**: after each completed round or relay stage, Council prints
-  a one-line usage recap when the CLI reports it (`tokens` and `cost`,
-  summed across opencode steps; codex reports `total_cost_usd`). CLIs that
-  do not report usage print nothing.
-- **Legacy retention controls**: the old `--allow-training-risk` flag and the
-  `council allow-training` subcommand have been removed, not deprecated into
-  a no-op. Either one is now a plain CLI error; there is no compatibility
-  path for scripts that still pass them.
-- **Quota**: `--max-rounds` (brainstorm) and `--max-seats` (relay) cap how
-  much a session can spend even if you ask for more.
+  A false value prints a clear warning in menus and immediately before the model starts.
+  It is metadata, not an execution gate, and secret scanning stays blocking as a separate control.
+- **Pay-per-use channels**: paid Zen seats require interactive confirmation before each call, including when routing is disabled or the price is missing or zero.
+  Go consumes prepaid quota and does not trigger the cash payment gate, and other channels use the routing document's stated cost.
+  Without a `y` on the operator's terminal, or when stdin is unavailable, a paid call is refused.
+  Consult collects all confirmations on the main thread before starting any opinion or rebuttal worker.
+- **Cost recap**: after each completed round or relay stage, Council prints a one-line usage recap when the CLI reports it (`tokens` and `cost`, summed across opencode steps; codex reports `total_cost_usd`).
+  CLIs that do not report usage print nothing.
+- **Legacy retention controls**: the old `--allow-training-risk` flag and the `council allow-training` subcommand have been removed rather than deprecated into a no-op.
+  Either one is now a plain CLI error, with no compatibility path for scripts that still pass them.
+- **Quota**: `--max-rounds` (brainstorm) and `--max-seats` (relay) cap how much a session can spend even if you ask for more.
 
 ## Current limitations
 
-- `codex` and `opencode` seats are verified live, on all four modes:
-  `challenge` was sent live to a real codex seat (2026-07-13, then again
-  2026-07-15 via `codex-sol`), and reviewing those live runs is how
-  several bugs fixed since then were found — including the `agy` block
-  below. `brainstorm` (opencode, 2026-07-15) produced a genuine second
-  round that attacked its own first-round conclusion, not a restatement.
-  `code-review` (opencode, 2026-07-15) was run against a diff with a real,
-  planted concurrency bug (a non-atomic check-then-decrement on a token
-  bucket) and correctly found it, unprompted, as the dominant flaw. A live
-  3-stage `relay` spanning opencode → codex → agy (2026-07-15) additionally
-  verified that the multi-vendor relay mechanism itself — different CLI
-  wrappers handing off to each other within one staffage — works correctly
-  across opencode and codex. Claude Opus 5 was verified live on 2026-08-01:
-  the CLI accepted the exact `--model` selection and returned the same
-  canonical model through `modelUsage`, with tools disabled and session
-  persistence off. `ollama` seats have not yet been verified live.
-- **`agy` (Antigravity) has a Council adapter**:
-  invoked via `agy --print --model <model> --disable-slash-commands --new-project --sandbox [--effort <level>]` with the prompt on stdin.
+- `codex` and `opencode` seats are verified live on all four modes.
+  `challenge` was sent live to a real codex seat (2026-07-13, then again 2026-07-15 via `codex-sol`), and reviewing those live runs is how several bugs fixed since then were found, including the `agy` block below.
+  `brainstorm` (opencode, 2026-07-15) produced a genuine second round that attacked its own first-round conclusion.
+  `code-review` (opencode, 2026-07-15) ran against a diff with a real, planted concurrency bug, a non-atomic check-then-decrement on a token bucket, and found it unprompted as the dominant flaw.
+  A live 3-stage `relay` spanning opencode, codex and agy (2026-07-15) also verified that the multi-vendor relay mechanism works across CLI wrappers handing off to each other within one chain.
+  Claude Opus 5 was verified live on 2026-08-01: the CLI accepted the exact `--model` selection and returned the same canonical model through `modelUsage`, with tools disabled and session persistence off.
+  `ollama` seats have not been verified live yet.
+- **`agy` (Antigravity) has a Council adapter**, invoked as `agy --print --model <model> --disable-slash-commands --new-project --sandbox [--effort <level>]` with the prompt on stdin.
   The adapter requests a fresh project and strips application tokens.
-  Sandbox flags do not prove that MCP tools are disabled; the CLI isolation limits remain vendor-specific.
-  Regression tests verify transport and effort forwarding. They do not certify live availability of each model or isolation on every host.
-- Automated regression tests cover the control flow for all four modes,
-  session cleanup, relay fallback, all supported vendor CLIs, and the Linux
-  launcher. They use fake seats, so they do not replace live checks of
-  each vendor CLI.
+  Sandbox flags do not prove that MCP tools are disabled, and the CLI isolation limits stay vendor-specific.
+  Regression tests verify transport and effort forwarding; they do not certify live availability of each model or isolation on every host.
+- Automated regression tests cover the control flow for all four modes, session cleanup, relay fallback, all supported vendor CLIs and the Linux launcher.
+  They use fake seats, so they do not replace live checks of each vendor CLI.
 - The Windows launcher has portable regression tests and runs natively under the unified Python core.
-- Large prompts use stdin for Codex, Claude, Ollama and Antigravity, and
-  a protected temporary attachment for OpenCode. The attachment is created
-  inside the private session tree and removed after the seat exits.
-- Seats via CLI are slow (minutes, not seconds): this is for brainstorming,
-  challenging, and review, not a quick question mid-task.
+- Large prompts use stdin for Codex, Claude, Ollama and Antigravity, and a protected temporary attachment for OpenCode.
+  The attachment is created inside the private session tree and removed after the seat exits.
+- Seats via CLI are slow, minutes rather than seconds: this is for brainstorming, challenging and review, not a quick question mid-task.
