@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.25.0] - 2026-10-31
+
+### Changed
+
+- A Windows node no longer rolls back the whole engine update when OpenClaw's first start after the pin upgrade is still migrating its state: the node restart and status check are asked again for about half a minute, and a node that never comes back is still rolled back.
+
 ### Added
 
 - Every machine follows the OpenClaw release the engine pins, from the guard cycle instead of a setup run by hand. The gateway changes release only between 03:00 and 06:00 local time, with no agent session busy and no automation running. A node changes it at any hour, but only when its service has no command running. A state that cannot be read postpones the cycle. A new release that does not come back is rolled back and not retried for 24 hours. The engine never installs Node, and it uses the npm that owns the running OpenClaw, including a user prefix such as `~/.npm-global`. A postponement is one plain line, never a warning.
