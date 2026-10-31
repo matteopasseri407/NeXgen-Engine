@@ -31,6 +31,7 @@ from typing import Any
 
 from nexgen_core.i18n import t
 from nexgen_core.openclaw.companion import Companion, probe as probe_companion
+from nexgen_core.openclaw.package_resolve import resolve_openclaw_package
 from nexgen_core.paths import openclaw_config, resolve_engine_root, resolve_home, resolve_vault_data
 
 #: Ollama's own default, and the variable that overrides it (Ollama reads it too).
@@ -208,6 +209,19 @@ def _npm_root(npm: str, run: Run, env: dict[str, str]) -> Path | None:
     return Path(lines[-1]) if lines else None
 
 
+def _installation_from_manifest(manifest: dict[str, Any], config: Path) -> Installation:
+    """An installed OpenClaw record read from its parsed `package.json`."""
+    engines = manifest.get("engines") if isinstance(manifest.get("engines"), dict) else {}
+    requirement = engines.get("node")
+    return Installation(
+        installed=True,
+        version=str(manifest["version"]),
+        config_path=str(config),
+        config_present=config.is_file(),
+        node_requirement=str(requirement) if isinstance(requirement, str) and requirement.strip() else None,
+    )
+
+
 def _detect_openclaw(home: Path, env: dict[str, str], run: Run | None, which: Which, config: Path) -> Installation:
     """The package, its version from npm's own tree, and the configuration file."""
     run = run or subprocess.run
@@ -224,6 +238,14 @@ def _detect_openclaw(home: Path, env: dict[str, str], run: Run | None, which: Wh
                 else t("npm is not on PATH, so a global OpenClaw cannot be found or installed")
             ),
         )
+
+    binary = which("openclaw")
+    pkg_dir = resolve_openclaw_package(binary) if binary else None
+    if pkg_dir is not None:
+        manifest = _read_json(pkg_dir / "package.json")
+        if isinstance(manifest, dict) and manifest.get("version"):
+            return _installation_from_manifest(manifest, config)
+
     root = _npm_root(npm, run, env)
     if root is None:
         return Installation(
@@ -233,13 +255,7 @@ def _detect_openclaw(home: Path, env: dict[str, str], run: Run | None, which: Wh
     package = root / "openclaw" / "package.json"
     manifest = _read_json(package) if package.is_file() else None
     if isinstance(manifest, dict) and manifest.get("version"):
-        engines = manifest.get("engines") if isinstance(manifest.get("engines"), dict) else {}
-        requirement = engines.get("node")
-        return Installation(
-            installed=True, version=str(manifest["version"]),
-            config_path=str(config), config_present=config.is_file(),
-            node_requirement=str(requirement) if isinstance(requirement, str) and requirement.strip() else None,
-        )
+        return _installation_from_manifest(manifest, config)
     return Installation(
         installed=False, config_path=str(config), config_present=config.is_file(),
         detail=t("no npm package named 'openclaw' under {root}", root=str(root)),
