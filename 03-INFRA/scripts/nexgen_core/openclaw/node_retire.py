@@ -14,6 +14,11 @@ they kill each other's poller every thirty seconds.
 The one thing this module adds is the opposite direction: `nodeHost.workerRuns`
 switched on, because a node that cannot host sessions is half a node.
 
+The browser is the second: a node runs the shared Chrome the engine keeps, so the
+`nexgen` profile is added to point OpenClaw at it instead of at a browser of its
+own. That block comes from `browser_profile`, and `prepare_config` only publishes
+what it returns.
+
 Nothing here deletes state. Sessions, memory and every other key stay; the
 configuration is copied aside before it is touched, and the drop-in is moved
 rather than removed.
@@ -29,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import t
+from nexgen_core.openclaw.browser_profile import plan_node_browser, shared_chrome_ready
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.node_cli import Run
 from nexgen_core.openclaw.node_transition import stop_local_gateway_safe
@@ -50,6 +56,7 @@ class ConfigChange:
     channels_disabled: tuple[str, ...]
     session_hosting_enabled: bool
     backup: Path | None
+    browser_profile_added: bool = False
 
 
 @dataclass(frozen=True)
@@ -138,9 +145,22 @@ def _enable_session_hosting(document: dict[str, Any]) -> tuple[dict[str, Any], b
     return {**document, "nodeHost": node_host}, True
 
 
+def _home_of(path: Path, home: Path | None) -> Path:
+    """The home this configuration belongs to: the caller's, or the one the file sits under."""
+    return Path(home) if home is not None else path.parent.parent
+
+
+def _say(notes: tuple[str, ...], out: Callable[[str], None]) -> None:
+    """One line per note, in the order the nodes were decided."""
+    for note in notes:
+        out(note)
+
+
 def prepare_config(
     path: Path,
     out: Callable[[str], None] = print,
+    *,
+    home: Path | None = None,
 ) -> ConfigChange:
     """Put the configuration in node state with one read, one backup and one write."""
     document, reason = read_config(path)
@@ -152,7 +172,11 @@ def prepare_config(
     document, auth_removed = _strip_gateway_auth(document)
     document, disabled = _switch_channels_off(document)
     document, hosting = _enable_session_hosting(document)
-    if not (auth_removed or disabled or hosting):
+    browser = plan_node_browser(document, ready=shared_chrome_ready(_home_of(path, home)))
+    if browser.section is not None:
+        document = {**document, "browser": browser.section}
+    if not (auth_removed or disabled or hosting or browser.section is not None):
+        _say(browser.notes, out)
         return ConfigChange(False, (), False, None)
 
     backup = backup_file(path, _stamp())
@@ -164,7 +188,8 @@ def prepare_config(
               names=", ".join(disabled)))
     if hosting:
         out(t("Session hosting enabled: this node can run agent sessions, not only commands."))
-    return ConfigChange(auth_removed, disabled, hosting, backup)
+    _say(browser.notes, out)
+    return ConfigChange(auth_removed, disabled, hosting, backup, browser.section is not None)
 
 
 def retire_local_gateway(
@@ -190,7 +215,7 @@ def retire_local_gateway(
         out=out,
     )
     archive = None if plat == "win32" else archive_drop_in(resolved_home, systemd_user_dir, out)
-    change = prepare_config(config_path or openclaw_config(resolved_home), out)
+    change = prepare_config(config_path or openclaw_config(resolved_home), out, home=resolved_home)
     return RetireResult(drop_in_archive=archive, config=change)
 
 
@@ -205,12 +230,14 @@ def report(result: RetireResult) -> str:
         parts.append(t("channels off: {names}", names=", ".join(result.config.channels_disabled)))
     if result.config.session_hosting_enabled:
         parts.append(t("session hosting on"))
+    if result.config.browser_profile_added:
+        parts.append(t("browser profile added"))
     if not parts:
         return t("Nothing left behind by a local gateway.")
     return t("Local gateway retired: {parts}.", parts=", ".join(parts))
 
 
-def describe_config_change(path: Path) -> list[str]:
+def describe_config_change(path: Path, home: Path | None = None) -> list[str]:
     """What `prepare_config` would change, for a dry run: read only, no write."""
     document, _reason = read_config(path)
     if document is None:
@@ -218,6 +245,7 @@ def describe_config_change(path: Path) -> list[str]:
     document_after, auth_removed = _strip_gateway_auth(document)
     _document_after, disabled = _switch_channels_off(document_after)
     _document_after, hosting = _enable_session_hosting(document_after)
+    browser = plan_node_browser(document_after, ready=shared_chrome_ready(_home_of(path, home)))
     lines: list[str] = []
     if auth_removed:
         lines.append(t("- gateway auth block: removed, the node uses its pairing token"))
@@ -225,4 +253,5 @@ def describe_config_change(path: Path) -> list[str]:
         lines.append(t("- channels switched off here: {names}", names=", ".join(disabled)))
     if hosting:
         lines.append(t("- session hosting: switched on, so this node can run agent sessions"))
+    lines.extend(f"- {note}" for note in browser.notes)
     return lines

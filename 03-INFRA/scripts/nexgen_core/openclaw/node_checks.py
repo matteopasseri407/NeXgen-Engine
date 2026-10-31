@@ -1,13 +1,16 @@
-"""What the gateway knows about its nodes, and the network they would need.
+"""What the gateway knows about its nodes, the network they would need, and the browser they drive.
 
-One job: the doctor's two lines about nodes — which machines are paired and how they
-are doing, and whether another PC could reach this gateway at all. They were part of
-`doctor_runtime.py` until that file reached its size ceiling; they are here because the
-question is about the network rather than about what runs on this machine.
+One job: the doctor's lines about a machine in a fleet — which nodes are paired
+and how they are doing, whether another PC could reach this gateway at all, and
+whether the browser profile in the file is one OpenClaw can only attach to. They
+were part of `doctor_runtime.py` until that file reached its size ceiling; they
+are here because the questions are about the fleet rather than about what runs on
+this machine.
 
 The node list is the one thing here that costs a run of OpenClaw's CLI, so it is
 asked only by a caller that asked for it, and never by the doctor on its own
-schedule. The network line is read from the configuration and needs no query.
+schedule. The network line and the browser line are read from the configuration
+and need no query.
 """
 from __future__ import annotations
 
@@ -15,6 +18,7 @@ from collections.abc import Callable
 from typing import Any
 
 from nexgen_core.i18n import t
+from nexgen_core.openclaw.browser_profile import attach_only_missing
 from nexgen_core.openclaw.doctor_runtime import DEFAULT_GATEWAY_PORT, LISTEN_TIMEOUT_SECONDS, Connect
 from nexgen_core.report import CheckOutcome, Severity
 
@@ -105,6 +109,34 @@ def _lan_outcome(bind: Any, *, node_known: bool, served: bool = False) -> CheckO
         message=t("The gateway listens on this machine only ({bind}): a node on another PC cannot reach it.",
                   bind=bind if isinstance(bind, str) and bind else t("(not set)")),
         action=t("Run 'nexgen openclaw setup --lan' here and restart the gateway, when a second machine has to reach it."),
+    )
+
+
+def _quoted(names: tuple[str, ...]) -> str:
+    """The profile names as a person reads them, each one in quotes."""
+    return ", ".join(f"'{name}'" for name in names)
+
+
+def check_browser_attach(config: dict[str, Any]) -> CheckOutcome | None:
+    """A profile pointed at a browser on this machine must say it only attaches.
+
+    OpenClaw reads a loopback `cdpUrl` as a profile it manages, so without
+    `attachOnly` it tries to own a port it did not open and reports port
+    ownership errors: on a node that port belongs to the engine's shared Chrome,
+    which starts browsers of its own on purpose. Nothing is said when no profile
+    names a loopback port, because then there is nothing to fix.
+    """
+    missing = attach_only_missing(config)
+    if not missing:
+        return None
+    return CheckOutcome(
+        id="openclaw.browser.attach",
+        severity=Severity.WARN,
+        message=t("The browser profile {names} attaches to a browser on this machine through a loopback port "
+                  "without 'attachOnly': OpenClaw reads that port as a profile it manages and reports port "
+                  "ownership errors.", names=_quoted(missing)),
+        action=t("Add 'attachOnly': true to browser.profiles.{names} in openclaw.json.",
+                 names=missing[0]),
     )
 
 

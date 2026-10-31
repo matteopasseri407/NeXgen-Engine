@@ -17,6 +17,7 @@ from nexgen_core import quota_policy
 from nexgen_core.i18n import detect_language, t
 from nexgen_core.openclaw import companion as app_gateway
 from nexgen_core.openclaw import claude_loopback, hierarchy, observation
+from nexgen_core.openclaw.browser_profile import server_section
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.governor import with_chains
@@ -389,6 +390,25 @@ def _with_loopback(
     return updated
 
 
+def _with_server_browser(
+    config: dict[str, Any], current: dict[str, Any] | None, *, serve: bool, home: Path | None,
+) -> tuple[dict[str, Any], str | None]:
+    """The browser a gateway with no screen drives, proposed on the server role only.
+
+    A desktop and a node drive a browser that is already there: the shared one on
+    this machine, or the gateway's own, and a path the engine guessed for a server
+    would name a file that does not exist there. The decision itself, including
+    the note a person reads when there is nothing to drive, belongs to
+    `browser_profile`.
+    """
+    if not serve:
+        return config, None
+    section, note = server_section(current or {}, home)
+    if section is None:
+        return config, note
+    return {**config, "browser": section}, note
+
+
 def build_plan(
     detected: Detection | None = None,
     choices: Choices | None = None,
@@ -420,12 +440,14 @@ def build_plan(
     # Last, and on purpose: the deny is decided on the document the write will leave,
     # so it sees what every pass above proposed and what the merge will keep.
     config = _with_loopback(config, current, home=home_dir, vault_data=vault_data, engine_root=engine_root)
+    config, browser_note = _with_server_browser(config, current, serve=chosen.serve, home=home_dir)
     changes = _diff(config, current)
     notes = [
         *_wanted_notes(config, snapshot, chosen, squad_data),
         # A fallback line the engine cannot use is named here too: the plan is what a person
         # reads before the setup writes anything, so a typo in the policy must not be silent.
         *failover_notes,
+        *([browser_note] if browser_note else []),
         *_change_notes(config, changes, current),
     ]
     return Plan(

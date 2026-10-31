@@ -15,17 +15,36 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from nexgen_core.openclaw import node_retire  # noqa: E402
 from nexgen_core.openclaw.node_apply import apply_node  # noqa: E402
 from nexgen_core.openclaw.node_retire import (  # noqa: E402
+    RetireResult,
     archive_drop_in,
     describe_config_change,
     prepare_config,
+    report,
 )
 from nexgen_core.openclaw_service import RunResult  # noqa: E402
+
+#: The profile the engine adds on a node: the shared Chrome keeps its port, OpenClaw only attaches.
+NEXGEN_PROFILE = {"cdpUrl": "http://127.0.0.1:9222", "attachOnly": True}
+
+
+@pytest.fixture(autouse=True)
+def _shared_chrome_absent(monkeypatch):
+    """Whether this machine runs the shared Chrome is a fact about the host, not about the test.
+
+    Pinned to "not set up" for every case here, so the file's expectations do not
+    change with the machine the suite runs on; the browser cases set it themselves.
+    """
+    monkeypatch.setattr(node_retire, "shared_chrome_ready", lambda *_args, **_kwargs: False)
+
 
 STOPPED_NODE = {
     "service": {"label": "systemd user", "loaded": False, "command": None, "runtime": {"status": "stopped"}},
@@ -147,7 +166,113 @@ def test_describe_config_change_reads_without_writing(tmp_path: Path) -> None:
     lines = describe_config_change(path)
 
     assert path.read_text(encoding="utf-8") == before
-    assert len(lines) == 3
+    # The three changes of the document, and the hint that the shared Chrome is not here.
+    assert len(lines) == 4
+    assert all(line.startswith("- ") for line in lines)
+
+
+def test_prepare_config_adds_the_profile_of_the_shared_chrome(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(node_retire, "shared_chrome_ready", lambda *_args, **_kwargs: True)
+    path = _config(tmp_path, _gateway_document())
+    printed: list[str] = []
+
+    prepare_config(path, out=printed.append)
+
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert document["browser"] == {"profiles": {"nexgen": NEXGEN_PROFILE}, "defaultProfile": "nexgen"}
+    # The rest of the node state is written by the same pass: one write, not two.
+    assert "auth" not in document["gateway"]
+    assert document["nodeHost"]["workerRuns"]["enabled"] is True
+    assert len(printed) >= 1
+
+
+def test_prepare_config_changes_no_browser_without_the_shared_chrome(tmp_path: Path) -> None:
+    path = _config(tmp_path, _gateway_document())
+    printed: list[str] = []
+
+    change = prepare_config(path, out=printed.append)
+
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert "browser" not in document
+    assert change.auth_removed is True
+    # The one hint line, and it is the only thing said about the browser.
+    assert len([line for line in printed if "agent-chrome" in line or "Chrome" in line]) == 1
+
+
+def test_prepare_config_keeps_the_default_profile_the_person_set(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(node_retire, "shared_chrome_ready", lambda *_args, **_kwargs: True)
+    document = _gateway_document() | {"browser": {"defaultProfile": "work"}}
+    path = _config(tmp_path, document)
+    printed: list[str] = []
+
+    prepare_config(path, out=printed.append)
+
+    browser = json.loads(path.read_text(encoding="utf-8"))["browser"]
+    assert browser["defaultProfile"] == "work"
+    assert browser["profiles"] == {"nexgen": NEXGEN_PROFILE}
+    assert any("defaultProfile" in line for line in printed)
+
+
+def test_prepare_config_leaves_a_nexgen_profile_with_other_values_alone(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(node_retire, "shared_chrome_ready", lambda *_args, **_kwargs: True)
+    theirs = {"cdpUrl": "http://127.0.0.1:9555", "attachOnly": True}
+    document = _gateway_document() | {"browser": {"profiles": {"nexgen": theirs}}}
+    path = _config(tmp_path, document)
+    printed: list[str] = []
+
+    prepare_config(path, out=printed.append)
+
+    browser = json.loads(path.read_text(encoding="utf-8"))["browser"]
+    assert browser["profiles"]["nexgen"] == theirs
+    assert any("nexgen" in line for line in printed)
+
+
+def test_a_browser_already_in_place_is_not_written_again(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(node_retire, "shared_chrome_ready", lambda *_args, **_kwargs: True)
+    document = _gateway_document() | {
+        "browser": {"defaultProfile": "nexgen", "profiles": {"nexgen": NEXGEN_PROFILE}},
+    }
+    path = _config(tmp_path, document)
+    prepare_config(path, out=lambda _line: None)
+    before = path.read_text(encoding="utf-8")
+
+    again = prepare_config(path, out=lambda _line: None)
+
+    assert again.backup is None
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_a_person_default_with_the_profile_in_place_is_not_rewritten(tmp_path: Path, monkeypatch) -> None:
+    """The line saying the default stays describes an addition: with nothing added, nothing is written."""
+    monkeypatch.setattr(node_retire, "shared_chrome_ready", lambda *_args, **_kwargs: True)
+    document = _gateway_document() | {
+        "browser": {"defaultProfile": "work", "profiles": {"nexgen": NEXGEN_PROFILE}},
+    }
+    path = _config(tmp_path, document)
+    prepare_config(path, out=lambda _line: None)
+    before = path.read_text(encoding="utf-8")
+
+    again = prepare_config(path, out=lambda _line: None)
+
+    assert again.browser_profile_added is False
+    assert again.backup is None
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_the_summary_names_the_browser_when_it_is_the_only_change(tmp_path: Path, monkeypatch) -> None:
+    """A node already in node state that only gained the profile must not read as untouched."""
+    monkeypatch.setattr(node_retire, "shared_chrome_ready", lambda *_args, **_kwargs: True)
+    document = {
+        "gateway": {"bind": "loopback", "mode": "local", "port": 18789},
+        "channels": {"telegram": {"enabled": False}},
+        "nodeHost": {"workerRuns": {"enabled": True}},
+    }
+    path = _config(tmp_path, document)
+
+    change = prepare_config(path, out=lambda _line: None)
+
+    assert change.browser_profile_added is True
+    assert "browser" in report(RetireResult(None, change))
 
 
 def test_apply_node_dry_run_touches_nothing(tmp_path: Path) -> None:

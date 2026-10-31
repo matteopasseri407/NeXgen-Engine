@@ -22,7 +22,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.detect import Detection, Installation, LocalModels, Login  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.doctor import collect  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.openclaw.node_checks import check_nodes  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.node_checks import check_browser_attach, check_nodes  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.report import Severity  # noqa: E402 - sys.path shim for cloned checkout
 
 PINNED = "2026.10.7"
@@ -156,6 +156,58 @@ def test_without_a_node_the_same_sentence_is_information_not_a_warning():
         assert "cannot reach it" in lan.message
 
 
+# ------------------------------------------------------------ the browser on a node
+# The engine's shared Chrome holds loopback port 9222 on this machine. OpenClaw reads a
+# loopback `cdpUrl` as a profile it manages unless the file says `attachOnly`, so the line
+# exists to catch the one key missing before OpenClaw reports port ownership errors.
+
+
+def browser_config(profile: dict) -> dict:
+    config = gateway_config()
+    config["browser"] = {"profiles": {"nexgen": profile}}
+    return config
+
+
+def test_a_loopback_profile_without_attach_only_is_a_warning_that_names_it():
+    outcome = check_browser_attach(browser_config({"cdpUrl": "http://127.0.0.1:9222"}))
+
+    assert outcome.severity == Severity.WARN
+    assert "'nexgen'" in outcome.message
+    assert "attachOnly" in outcome.message
+    assert "browser.profiles.nexgen" in (outcome.action or "")
+
+
+def test_a_profile_that_says_it_only_attaches_is_left_alone():
+    config = browser_config({"cdpUrl": "http://127.0.0.1:9222", "attachOnly": True})
+
+    assert check_browser_attach(config) is None
+
+
+def test_without_a_profile_there_is_nothing_to_say():
+    """The gateway on a server drives a browser it manages, and that is not a defect."""
+    assert check_browser_attach(gateway_config()) is None
+    assert check_browser_attach({}) is None
+
+
+def test_a_browser_on_another_machine_is_not_a_port_of_this_one():
+    config = browser_config({"cdpUrl": "http://browser.example:9222"})
+
+    assert check_browser_attach(config) is None
+
+
+def test_localhost_is_this_machine_under_another_name():
+    config = browser_config({"cdpUrl": "http://localhost:9222"})
+
+    assert check_browser_attach(config).severity == Severity.WARN
+
+
+def test_attach_only_has_to_be_the_boolean_openclaw_reads():
+    """`"attachOnly": "yes"` is a string, and the port is still claimed as managed."""
+    config = browser_config({"cdpUrl": "http://127.0.0.1:9222", "attachOnly": "yes"})
+
+    assert check_browser_attach(config).severity == Severity.WARN
+
+
 # --------------------------------------------------------------- through the doctor
 
 
@@ -170,10 +222,15 @@ def machine(config_path: Path) -> Detection:
     )
 
 
-def run_doctor(tmp_path: Path, *, bind: str, nodes: list[dict] | None, listening_gateway: bool = True):
+def run_doctor(
+    tmp_path: Path, *, bind: str, nodes: list[dict] | None, listening_gateway: bool = True,
+    extra: dict | None = None,
+):
     config_path = tmp_path / "home" / ".openclaw" / "openclaw.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(json.dumps(gateway_config(bind=bind)), encoding="utf-8")
+    config = gateway_config(bind=bind)
+    config.update(extra or {})
+    config_path.write_text(json.dumps(config), encoding="utf-8")
     vault = tmp_path / "vault" / "03-INFRA" / "agent-universal-layer"
     vault.mkdir(parents=True, exist_ok=True)
     (vault / "modules.state.yaml").write_text("schema_version: 2\nmodules:\n  openclaw: local\n", encoding="utf-8")
@@ -204,6 +261,18 @@ def test_the_doctor_with_a_stopped_gateway_says_nothing_about_nodes(tmp_path):
     assert "openclaw.nodes" not in outcomes
     assert "openclaw.gateway.listening" in outcomes
     assert outcomes["openclaw.gateway.lan"].severity == Severity.OK
+
+
+def test_the_doctor_reports_a_loopback_profile_that_forgets_attach_only(tmp_path):
+    """The line comes from the file, so it needs no gateway and no node list."""
+    browser = {"profiles": {"nexgen": {"cdpUrl": "http://127.0.0.1:9222"}}}
+
+    outcomes = by_id(run_doctor(
+        tmp_path, bind="loopback", nodes=None, listening_gateway=False, extra={"browser": browser},
+    ))
+
+    assert outcomes["openclaw.browser.attach"].severity == Severity.WARN
+    assert "nexgen" in outcomes["openclaw.browser.attach"].message
 
 
 def test_the_nodes_flag_is_what_turns_the_question_on():

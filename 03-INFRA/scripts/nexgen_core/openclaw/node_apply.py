@@ -76,7 +76,8 @@ def _already_there(host: str, existing: ExistingNodeInfo, join_target: str | Non
 
 
 def plan_lines(link: NodeLink, port: int, name: str | None, config_path: Path,
-               join_target: str | None, drop_in_present: bool) -> list[str]:
+               join_target: str | None, drop_in_present: bool,
+               home: Path | None = None) -> list[str]:
     """What the apply would do, in the order it would do it: read only."""
     address = f"https://{link.host}" if link.tailnet else f"{link.host}:{port}"
     lines = [
@@ -85,7 +86,7 @@ def plan_lines(link: NodeLink, port: int, name: str | None, config_path: Path,
     ]
     if drop_in_present:
         lines.append(t("- drop-in left without its unit: archived, not deleted"))
-    lines.extend(describe_config_change(config_path))
+    lines.extend(describe_config_change(config_path, home))
     lines.append(t("- node service: installed and started with host {host} port {port}, session hosting on",
                    host=link.host, port=port))
     if join_target:
@@ -174,14 +175,15 @@ def apply_node(
         return refusal
     if dry_run:
         for line in plan_lines(link, effective_port, name, config_path, join_target,
-                               drop_in_path(resolved_home, systemd_user_dir).is_dir()):
+                               drop_in_path(resolved_home, systemd_user_dir).is_dir(),
+                               home=resolved_home):
             out(line)
         return 0
     # From here this machine is a node, whichever route attaches it: the role is what
     # the doctor reads to stop judging a gateway's file on a machine that has none.
     roles.declare_role(roles.NODE_ROLE, resolved_home)
     if _already_there(host, existing, join_target, runner, out):
-        out(report(RetireResult(None, prepare_config(config_path, out))))
+        out(report(RetireResult(None, prepare_config(config_path, out, home=resolved_home))))
         _finish(link, name, True, out)
         return 0
 

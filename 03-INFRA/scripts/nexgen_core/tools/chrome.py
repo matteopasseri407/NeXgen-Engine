@@ -49,6 +49,7 @@ __all__ = [
     "is_cdp_up",
     "launch_chrome",
     "main",
+    "profile_dir_for",
     "singleton_owner_pid",
     "task_xml",
     "windows_desktop",
@@ -139,18 +140,30 @@ def find_chrome_executable() -> str | None:
     return None
 
 
-def get_profile_dir() -> Path:
-    """Returns the Chrome profile directory dedicated to debugging."""
+def profile_dir_for(home: Path | None = None) -> Path:
+    """The debug profile directory under a named home.
+
+    Chrome is started with the home it is started for, and a caller reasoning
+    about another machine's home (the OpenClaw node configuration of a copy, a
+    test) needs the same answer without asking this one. `get_profile_dir` is
+    this function with no home named, so the two can never disagree.
+    """
     env_p = os.environ.get("AGENT_CHROME_PROFILE")
     if env_p:
         return Path(env_p)
+    base_home = resolve_home(home) if home is not None else resolve_home()
     if sys.platform == "win32":
-        canonical = resolve_home() / "ChromeDebugProfile"
+        canonical = base_home / "ChromeDebugProfile"
         if canonical.is_dir():
             return canonical
-        local_app = Path(os.environ.get("LOCALAPPDATA", resolve_home() / "AppData" / "Local"))
+        local_app = Path(os.environ.get("LOCALAPPDATA", base_home / "AppData" / "Local"))
         return local_app / "Google" / "Chrome" / "User Data" / "chrome-agent-debug"
-    return resolve_home() / ".config" / "chrome-agent-debug"
+    return base_home / ".config" / "chrome-agent-debug"
+
+
+def get_profile_dir() -> Path:
+    """Returns the Chrome profile directory dedicated to debugging."""
+    return profile_dir_for(None)
 
 
 def singleton_owner_pid(profile: Path) -> int | None:

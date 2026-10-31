@@ -442,7 +442,8 @@ def _stop_local_gateway_step(
             out=out,
         )
         return [report(result)]
-    change = prepare_config(openclaw_config(resolve_home(home)), out)
+    resolved_home = resolve_home(home)
+    change = prepare_config(openclaw_config(resolved_home), out, home=resolved_home)
     return [report(RetireResult(drop_in_archive=None, config=change))]
 
 

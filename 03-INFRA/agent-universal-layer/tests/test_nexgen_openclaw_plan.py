@@ -17,6 +17,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw import browser_profile  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.companion import Companion  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.detect import Detection, Installation, LocalModelInfo, LocalModels, Login  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.plan import build_plan, render_plan  # noqa: E402 - sys.path shim for cloned checkout
@@ -193,6 +194,130 @@ def test_the_plan_of_a_server_keeps_loopback_and_asks_for_tailscale_serve(tmp_pa
 
     assert payload["config"]["gateway"]["bind"] == "loopback"
     assert payload["config"]["gateway"]["tailscale"] == {"mode": "serve"}
+
+
+# --------------------------------------------------------- the browser of a server
+
+
+def playwright_chrome(home: Path, revision: int, arch: str = "chrome-linux") -> Path:
+    """One Playwright build, where `npx playwright install chromium` leaves it."""
+    binary = home / ".cache" / "ms-playwright" / f"chromium-{revision}" / arch / "chrome"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.write_text("", encoding="utf-8")
+    return binary
+
+
+def no_google_chrome(monkeypatch, tmp_path: Path) -> None:
+    """This suite must not depend on the host having Chrome in /usr/bin."""
+    monkeypatch.setattr(browser_profile, "GOOGLE_CHROME", tmp_path / "no-google-chrome")
+
+
+def test_a_server_drives_the_newest_playwright_chromium(tmp_path, monkeypatch):
+    no_google_chrome(monkeypatch, tmp_path)
+    home = tmp_path / "home"
+    path = put_config(home, {})
+    old = playwright_chrome(home, 1148)
+    newest = playwright_chrome(home, 1200, "chrome-linux-arm64")
+
+    plan = build_plan(detected=detected(path), home=home, env={}, choices=Choices(serve=True))
+
+    browser = plan.config["browser"]
+    assert browser["executablePath"] == str(newest)
+    assert browser["enabled"] is True
+    assert browser["headless"] is True
+    assert browser["noSandbox"] is True
+    # OpenClaw's own managed profile, never a person's.
+    assert browser["defaultProfile"] == "openclaw"
+    assert old != newest
+
+
+def test_googles_package_is_the_fallback_when_playwright_has_none(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    path = put_config(home, {})
+    chrome = tmp_path / "google-chrome-stable"
+    chrome.write_text("", encoding="utf-8")
+    monkeypatch.setattr(browser_profile, "GOOGLE_CHROME", chrome)
+
+    plan = build_plan(detected=detected(path), home=home, env={}, choices=Choices(serve=True))
+
+    assert plan.config["browser"]["executablePath"] == str(chrome)
+
+
+def test_a_browser_path_the_person_wrote_is_kept_untouched(tmp_path, monkeypatch):
+    no_google_chrome(monkeypatch, tmp_path)
+    home = tmp_path / "home"
+    theirs = "/opt/chromium/chrome"
+    path = put_config(home, {"browser": {"enabled": True, "executablePath": theirs}})
+    playwright_chrome(home, 1200)
+
+    plan = build_plan(detected=detected(path), home=home, env={}, choices=Choices(serve=True))
+
+    assert "browser" not in plan.config
+    assert "browser.executablePath" not in plan.changed
+
+
+def test_a_snap_browser_in_the_file_is_replaced_and_named(tmp_path, monkeypatch):
+    """The one path that is not a choice: the snap package breaks the managed launch."""
+    no_google_chrome(monkeypatch, tmp_path)
+    home = tmp_path / "home"
+    path = put_config(home, {"browser": {"executablePath": "/snap/bin/chromium"}})
+    newest = playwright_chrome(home, 1200)
+
+    plan = build_plan(detected=detected(path), home=home, env={}, choices=Choices(serve=True))
+
+    assert plan.config["browser"]["executablePath"] == str(newest)
+    assert any("snap" in note for note in plan.notes)
+
+
+def test_a_server_without_a_browser_gets_the_two_install_commands(tmp_path, monkeypatch):
+    no_google_chrome(monkeypatch, tmp_path)
+    home = tmp_path / "home"
+    path = put_config(home, {})
+
+    plan = build_plan(detected=detected(path), home=home, env={}, choices=Choices(serve=True))
+
+    assert "browser" not in plan.config
+    note = " ".join(plan.notes)
+    assert "npx playwright@latest install chromium" in note
+    assert "npx playwright@latest install-deps chromium" in note
+    assert "snap" in note
+
+
+def test_a_default_profile_the_person_set_is_kept_on_a_server(tmp_path, monkeypatch):
+    no_google_chrome(monkeypatch, tmp_path)
+    home = tmp_path / "home"
+    path = put_config(home, {"browser": {"defaultProfile": "work"}})
+    newest = playwright_chrome(home, 1200)
+
+    plan = build_plan(detected=detected(path), home=home, env={}, choices=Choices(serve=True))
+
+    assert plan.config["browser"]["executablePath"] == str(newest)
+    assert plan.config["browser"]["defaultProfile"] == "work"
+
+
+def test_the_rest_of_the_browser_section_is_never_deleted(tmp_path, monkeypatch):
+    """A server plan merges into `browser`: the profiles a person wrote stay."""
+    no_google_chrome(monkeypatch, tmp_path)
+    home = tmp_path / "home"
+    theirs = {"work": {"cdpUrl": "http://browser.example:9222", "attachOnly": True}}
+    path = put_config(home, {"browser": {"profiles": theirs}})
+    playwright_chrome(home, 1200)
+
+    plan = build_plan(detected=detected(path), home=home, env={}, choices=Choices(serve=True))
+
+    assert plan.config["browser"]["profiles"] == theirs
+    assert not plan.dropped
+
+
+def test_a_desktop_is_never_given_the_browser_of_a_server(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    path = put_config(home, {})
+    playwright_chrome(home, 1200)
+
+    plan = build_plan(detected=detected(path), home=home, env={})
+
+    assert "browser" not in plan.config
+    assert not any("playwright" in note for note in plan.notes)
 
 
 def test_the_plan_command_passes_the_server_flag_to_the_same_choice(monkeypatch):
