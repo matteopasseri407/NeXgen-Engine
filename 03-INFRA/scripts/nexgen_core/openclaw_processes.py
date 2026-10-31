@@ -65,7 +65,7 @@ def default_runner(argv: list[str]) -> RunResult:
             **no_window_kwargs(),
         )
     except OSError as exc:  # nexgen: allow reason="a program that is not there is an answer the caller reports, not a traceback that ends the install"
-        return RunResult(127, "", str(exc))
+        return RunResult(127, "", f"{argv[0] if argv else ''}: {exc}")
     return RunResult(proc.returncode, proc.stdout, proc.stderr)
 
 
