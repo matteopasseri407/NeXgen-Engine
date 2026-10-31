@@ -135,18 +135,20 @@ def _with_id(device: dict[str, Any]) -> dict[str, Any]:
     return clean
 
 
-def _read_devices(runner: Callable[[list[str]], RunResult] | None) -> tuple[bool, str, Any]:
-    """Run the documented query and hand back `(ok, stdout, parsed answer)`."""
+def _read_devices(runner: Callable[[list[str]], RunResult] | None) -> tuple[bool, str, str, Any]:
+    """Run the documented query and hand back `(ok, stdout, stderr, parsed answer)`."""
     cmd = ["openclaw", "devices", "list", "--json"]
     run_cmd = runner or default_runner
     res = run_cmd(cmd)
     data: Any = None
-    if res.stdout.strip():
+    stdout = getattr(res, "stdout", "") or ""
+    stderr = getattr(res, "stderr", "") or ""
+    if stdout.strip():
         try:
-            data = json.loads(res.stdout)
+            data = json.loads(stdout)
         except (json.JSONDecodeError, ValueError):  # nexgen: allow reason="the text table is the fallback when the CLI did not print json"
             data = None
-    return res.returncode == 0, res.stdout, data
+    return getattr(res, "returncode", 0) == 0, stdout, stderr, data
 
 
 def pending(
@@ -159,7 +161,18 @@ def pending(
     if dry_run:
         return {"ok": True, "commands": commands, "devices": [], "dry_run": True}
 
-    ok, stdout, data = _read_devices(runner)
+    ok, stdout, stderr, data = _read_devices(runner)
+    if not ok:
+        err_raw = stderr.strip() or stdout.strip()
+        first_line = err_raw.splitlines()[0].strip() if err_raw else ""
+        return {
+            "ok": False,
+            "commands": commands,
+            "devices": [],
+            "error": _scrub_text(first_line),
+            "dry_run": False,
+        }
+
     if data is None:
         devices = _parse_text_devices(stdout)
     else:
@@ -167,7 +180,7 @@ def pending(
         devices = [_with_id(device) for device in requests]
 
     return {
-        "ok": ok,
+        "ok": True,
         "commands": commands,
         "devices": devices,
         "dry_run": False,
@@ -198,7 +211,7 @@ def listed(runner: Callable[[list[str]], RunResult] | None = None) -> list[dict[
     instead of reporting a fault.
     """
     try:
-        ok, stdout, data = _read_devices(runner)
+        ok, stdout, _stderr, data = _read_devices(runner)
     except OSError:  # nexgen: allow reason="a CLI that cannot be launched is an unanswered question, not a crash"
         return None
     if not ok:

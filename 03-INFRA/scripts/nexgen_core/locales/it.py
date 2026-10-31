@@ -2152,6 +2152,8 @@ MESSAGES: dict[str, str] = {
         "Ho aspettato {seconds} secondi.",
     "Requests waiting for approval:":
         "Richieste in attesa di approvazione:",
+    "The pairing query failed: {error}":
+        "La richiesta di accoppiamento non è riuscita: {error}",
     "No device is waiting to be paired.":
         "Nessun dispositivo è in attesa di accoppiamento.",
     "Approve one with 'nexgen openclaw pair --approve <id>'.":

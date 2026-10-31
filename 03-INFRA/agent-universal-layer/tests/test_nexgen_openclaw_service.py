@@ -879,3 +879,18 @@ def test_the_listed_devices_are_requests_and_devices_together() -> None:
 
     assert devices is not None
     assert [device["id"] for device in devices] == ["req-7c1", "aa11"]
+
+
+def test_pairing_pending_failure_reports_error_without_tokens() -> None:
+    runner = RecordingRunner(
+        default_code=1,
+        default_stdout="",
+        default_stderr="requires credentials before opening a websocket token: secret123",
+    )
+    res = pairing_pending(runner=runner)
+    assert res["ok"] is False
+    assert res["devices"] == []
+    assert "requires credentials before opening a websocket" in res["error"]
+    assert "secret123" not in res["error"]
+    assert "[redacted]" in res["error"]
+
