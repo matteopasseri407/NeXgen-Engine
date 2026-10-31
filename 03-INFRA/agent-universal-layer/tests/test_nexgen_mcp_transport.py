@@ -375,3 +375,48 @@ time.sleep(30)  # peers may keep serving after their stdin closes
                         os.killpg(child["pid"], signal.SIGKILL)
                     except ProcessLookupError:
                         pass
+
+
+def test_http_requests_carry_the_engine_user_agent(proxy, monkeypatch):
+    """`mcp.brevo.com` answers 403 to `Python-urllib/3.x`: every HTTP call names itself.
+
+    A real remote server reads the header before the body, so a fake `urlopen` is
+    enough to prove what the handle sends on the one request it builds.
+    """
+    import lazy_server_handle as handles
+
+    seen = []
+
+    class _Reply:
+        headers = {"Content-Type": "application/json"}
+
+        def __init__(self) -> None:
+            self.body = json.dumps({"jsonrpc": "2.0", "id": 42, "result": {}}).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def read1(self, _size: int) -> bytes:
+            chunk, self.body = self.body, b""
+            return chunk
+
+    def fake_urlopen(request, timeout=None):
+        seen.append(request)
+        return _Reply()
+
+    monkeypatch.setattr(handles.urllib.request, "urlopen", fake_urlopen)
+    handle = handles.ServerHandle(
+        "synthetic",
+        {"url": "https://mcp.invalid/mcp", "timeouts": {"tool": 1}},
+        provisioning=lambda: {},
+        credentials=object(),
+        process_helpers=lambda: (None, None, lambda: {}),
+        reply_limit=lambda: handles.MAX_REPLY_BYTES,
+        client_info={"name": "test", "version": "1"},
+    )
+
+    assert handle.rpc("tools/call", {}, 42)["result"] == {}
+    assert seen[0].get_header("User-agent") == "nexgen-lazy-mcp"

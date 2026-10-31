@@ -51,12 +51,12 @@ def test_the_supervisor_is_the_only_agent_that_can_change_the_engine_state():
         assert not set(SUPERVISOR_TOOLS) & set(entry.get("tools", {}).get("alsoAllow", []))
 
 
-def test_the_allowlist_does_not_erase_the_agent_to_agent_partnership():
-    """The supervisor talks to the assistant: one key must not replace the other."""
+def test_the_allowlist_does_not_erase_the_supervisor_tools():
+    """One key must not replace the other, and the engine writes no messaging list at all."""
     config = build_config(machine(), Choices())
 
     tools = config["agents"]["entries"][SUPERVISOR_AGENT]["tools"]
-    assert tools["agentToAgent"] == {"send": ["main"]}
+    assert "agentToAgent" not in tools
     assert tools["alsoAllow"] == sorted(SUPERVISOR_TOOLS)
 
 
@@ -78,9 +78,8 @@ def test_a_person_allow_list_is_never_contradicted():
 
     config = build_config(machine(), Choices(), current)
 
-    tools = config["agents"]["entries"][SUPERVISOR_AGENT]["tools"]
-    assert "alsoAllow" not in tools
-    assert tools["agentToAgent"] == {"send": ["main"]}
+    entry = config["agents"]["entries"][SUPERVISOR_AGENT]
+    assert "tools" not in entry, "nothing is written beside the person's own `allow`"
 
 
 def test_the_plan_names_the_tools_to_add_by_hand():

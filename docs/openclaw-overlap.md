@@ -98,19 +98,19 @@ leaves the execution mode to its own argv, where the engine does not guess.
 Both sides keep the same rule, `agy` never approves its own tool calls, and the mode the
 engine can verify is the one it writes.
 
-### One MCP file, and no gateway inside OpenClaw
+### One MCP file, with the gateway left out
 
 `agy` reads `~/.gemini/antigravity-cli/mcp_config.json`, and the engine writes that file from
 the canonical manifest (`~/.gemini/antigravity/mcp_config.json`, fanned out to the folders
 Antigravity reads).
 
 When OpenClaw drives the local `agy` backend, the antigravity renderer writes the servers
-OpenClaw mounts directly and leaves `lazy-mcp` out.
-OpenClaw never mounts the engine's gateway, because it has its own Tool Search, so a server
-behind that gateway would be dead there; and the plugin starts the same CLI from the same
-home, so one file has to serve both lives.
+OpenClaw mounts directly and leaves `lazy-mcp` out: the gateway entry belongs to OpenClaw
+and carries its CLI identity (`LAZY_MCP_CLI=openclaw`), which is not the one `agy` would
+need, and `agy` reaches those connectors directly through this file. The plugin starts the
+same CLI from the same home, so one file has to serve both lives.
 This is the one dialect where a server declared `exposure: lazy` is not served by the
-gateway: of the two contexts reading the file, the one that cannot see a gateway wins.
+gateway: of the two contexts reading the file, the one that cannot use this gateway wins.
 
 ### The model picker on every agent
 
@@ -118,6 +118,10 @@ gateway: of the two contexts reading the file, the one that cannot see a gateway
 `nexgen openclaw setup` registers one wildcard per reachable provider in
 `agents.defaults.modelPolicy.allow`, and the squad registers each model it names, so every
 agent's picker lists every model this machine can run, the local `agy` backend included.
+A CLI runtime is a pin on the model, not a provider in that list: a Claude login gives
+`anthropic/*` with `agents.defaults.models["anthropic/*"]` pinned to `claude-cli`, and
+`agents.defaults.model` names the assistant's model as the system primary, so OpenClaw's
+`doctor --fix` finds the shape it would have migrated to and changes nothing.
 The rule and its reasons live in `nexgen_core/openclaw/model_policy.py`; what the owner sees
 is in [Squad as data](squad.md#model-choice-per-agent).
 

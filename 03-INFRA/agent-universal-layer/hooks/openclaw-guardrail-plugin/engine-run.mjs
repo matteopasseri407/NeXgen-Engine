@@ -13,15 +13,13 @@
 import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 import { configSection, readPluginConfig } from "./engine-config.mjs";
-
-const DIR = dirname(fileURLToPath(import.meta.url));
+import { resolveEngineFile } from "./engine-files.mjs";
 
 //: The engine-owned switches beside the plugin: the deposit writes this file.
-export const CONFIG_PATH = join(DIR, "nexgen.config.json");
+export const CONFIG_PATH = resolveEngineFile("nexgen.config.json");
 
 //: Long enough for the engine to read its own state, short enough that a hung child does not
 //: hold a chat hostage.

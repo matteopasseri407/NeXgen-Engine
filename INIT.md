@@ -108,7 +108,7 @@ Verifica con l'utente se ha installato il software necessario. I prerequisiti di
 
 **Per ogni profilo**:
 1. **Git** (per il versionamento del Vault).
-2. **Python 3** con **PyYAML** (`pip install pyyaml`) per gli script del framework.
+2. **Python 3.11+** con il suo pacchetto venv (`sudo apt install python3-venv` su Ubuntu): PyYAML e le altre dipendenze le installa il motore nel proprio ambiente Python.
 
 **Solo per MULTI**:
 3. **Node.js / npm** (per i server MCP e le skill esterne tramite `npx`).
@@ -294,7 +294,7 @@ Check with the user whether they have the required software. Prerequisites depen
 
 **For every profile**:
 1. **Git** (for Vault versioning).
-2. **Python 3** with **PyYAML** (`pip install pyyaml`) for the framework scripts.
+2. **Python 3.11+** with its venv package (`sudo apt install python3-venv` on Ubuntu): the engine installs PyYAML and the other dependencies in its own Python environment.
 
 **MULTI only**:
 3. **Node.js / npm** (for MCP servers and external skills via `npx`).

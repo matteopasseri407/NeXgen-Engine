@@ -4,6 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from nexgen_core import roles, server_sudo
 from nexgen_core.openclaw_service import RunResult
 
@@ -188,3 +190,76 @@ def test_roles_idempotency(tmp_path: Path) -> None:
         out=lambda _: None,
     )
     assert code1 == 0 and code2 == 0
+
+
+# ---------------------------------------------------------------- --check, every role
+
+
+@pytest.mark.parametrize("role", ["server", "standalone"])
+def test_check_prints_the_plan_and_writes_nothing(tmp_path: Path, role: str) -> None:
+    """`--check` is promised as write-nothing for every role, not only for `node`.
+
+    Server and standalone used to ignore the flag entirely: they wrote launchers,
+    a sudoers draft and the role record, and ran `openclaw setup`, from a command
+    advertised as read-only.
+    """
+    root = tmp_path / "engine"
+    home = tmp_path / "home"
+    lines: list[str] = []
+
+    code = getattr(roles, f"run_{role}_role")(
+        root=root, home=home, check=True, platform="linux", out=lines.append,
+    )
+
+    assert code == 0
+    assert lines, "a check run still has to say what it would do"
+    assert not home.exists(), "the role wrote into the home it was only asked to inspect"
+    assert not root.exists(), "the role wrote into the vault it was only asked to inspect"
+
+
+def test_the_installer_hands_the_check_flag_to_every_role(tmp_path: Path, monkeypatch) -> None:
+    """The role functions honour `check`; the argument parser has to pass it to them."""
+    from nexgen_core import bootstrap
+
+    seen: list[tuple[str, dict]] = []
+    monkeypatch.setattr(bootstrap, "preflight", lambda check=False: [])
+    monkeypatch.setattr(bootstrap, "scaffold", lambda root, write: [])
+    monkeypatch.setattr(bootstrap, "detect_clis", lambda *a, **k: [])
+    monkeypatch.setattr(bootstrap, "desktop_app_orphans", lambda *a, **k: [])
+    for name, role in (("run_server_role", "server"), ("run_standalone_role", "standalone")):
+        monkeypatch.setattr(
+            roles, name,
+            lambda root, _role=role, **kw: seen.append((_role, kw)) or 0,
+        )
+
+    assert bootstrap.main(["--role", "server", "--check", "--root", str(tmp_path)]) == 0
+    assert bootstrap.main(["--role", "standalone", "--check", "--root", str(tmp_path)]) == 0
+
+    assert [role for role, _ in seen] == ["server", "standalone"]
+    assert all(kw.get("check") is True for _, kw in seen)
+
+
+# ---------------------------------------------------------------- who the sudo rules name
+
+
+def test_the_sudo_rules_name_the_gateway_account_not_the_admin_who_sudoed(monkeypatch) -> None:
+    """`sudo -iu gateway` then `sh install.sh --role server`: SUDO_USER is the admin.
+
+    A rule written for the admin grants someone who already has sudo, and leaves
+    the account that runs the gateway with nothing.
+    """
+    monkeypatch.setenv("SUDO_USER", "admin")
+    monkeypatch.setattr(roles.getpass, "getuser", lambda: "gateway")
+    monkeypatch.setattr(roles.os, "getuid", lambda: 1000, raising=False)
+
+    assert roles.installing_user() == "gateway"
+
+
+def test_only_a_run_that_really_is_root_falls_back_to_the_admin(monkeypatch) -> None:
+    monkeypatch.setenv("SUDO_USER", "admin")
+    monkeypatch.setattr(roles.getpass, "getuser", lambda: "root")
+    monkeypatch.setattr(roles.os, "getuid", lambda: 0, raising=False)
+    assert roles.installing_user() == "admin"
+
+    monkeypatch.delenv("SUDO_USER")
+    assert roles.installing_user() == "root"

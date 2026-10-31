@@ -625,8 +625,41 @@ def test_isolated_native_gateway_package_is_not_treated_as_store_conflict_in_doc
 
 
 def test_installed_but_undeclared_is_named_without_the_module(tmp_path):
-    outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()), declared=False)
-    assert by_id(outcomes)["openclaw.declared"].severity == Severity.WARN
+    """A gateway that does not declare the module still deserves the advice, and only that.
+
+    The engine aligns every installed OpenClaw with the pin now, so the old warning
+    that promised it would not be kept aligned was false.
+    """
+    from nexgen_core import i18n
+
+    i18n.set_language("en")
+    try:
+        outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()), declared=False)
+    finally:
+        i18n.set_language(None)
+    declared = by_id(outcomes)["openclaw.declared"]
+    assert declared.severity == Severity.WARN
+    assert "will not keep it aligned" not in declared.message
+    assert "modules.state.yaml" in (declared.action or "")
+
+
+def test_an_undeclared_node_is_told_it_follows_the_pin(tmp_path):
+    """A node is not the gateway: the declaration is the gateway's business, and the pin is followed."""
+    from nexgen_core import i18n
+
+    role = tmp_path / "home" / ".local" / "state" / "nexgen" / "role.json"
+    role.parent.mkdir(parents=True)
+    role.write_text(json.dumps({"role": "node"}), encoding="utf-8")
+    i18n.set_language("it")
+    try:
+        outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()), declared=False)
+    finally:
+        i18n.set_language(None)
+
+    declared = by_id(outcomes)["openclaw.declared"]
+    assert declared.severity is Severity.OK
+    assert declared.message == "Questa macchina è un nodo: OpenClaw segue la versione fissata dal motore."
+    assert declared.action is None
 
 
 def test_an_empty_report_says_why_it_is_empty():
@@ -695,13 +728,15 @@ def test_tool_search_user_disabled_with_many_mcp_servers_warns(tmp_path):
     assert "openclaw.json" in (ts.action or "")
 
 
-def test_mcp_lazy_absent_passes(tmp_path):
+def test_mcp_lazy_absent_without_a_claude_cli_agent_passes(tmp_path):
+    """Nothing is behind the gateway here, so nothing needs it: OpenClaw mounts every connector."""
     outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()))
     lazy = by_id(outcomes)["openclaw.mcp.lazy"]
     assert lazy.severity == Severity.OK
 
 
-def test_mcp_lazy_mounted_by_engine_fails(tmp_path):
+def test_mcp_lazy_mounted_by_engine_passes(tmp_path):
+    """The engine's gateway is the road a `claude-cli` agent keeps its connectors on."""
     cfg = clean_config()
     cfg["mcp"] = {
         "servers": {
@@ -714,8 +749,21 @@ def test_mcp_lazy_mounted_by_engine_fails(tmp_path):
     }
     outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg))
     lazy = by_id(outcomes)["openclaw.mcp.lazy"]
+    assert lazy.severity == Severity.OK
+    assert "lazy-mcp" in lazy.message
+
+
+def test_mcp_lazy_missing_with_a_claude_cli_agent_fails(tmp_path):
+    """The 943k-token fix denies the connectors on the loopback: without the gateway the agent has nothing."""
+    cfg = clean_config()
+    ref = "anthropic/claude-opus-5-5"
+    cfg["agents"]["defaults"]["models"] = {ref: {"agentRuntime": {"id": "claude-cli"}}}
+    cfg["agents"]["entries"]["capo"]["model"] = ref
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, cfg))
+    lazy = by_id(outcomes)["openclaw.mcp.lazy"]
     assert lazy.severity == Severity.BROKEN
     assert "lazy-mcp" in lazy.message
+    assert "nexgen openclaw setup" in (lazy.action or "")
 
 
 def test_mcp_lazy_mounted_by_user_warns(tmp_path):

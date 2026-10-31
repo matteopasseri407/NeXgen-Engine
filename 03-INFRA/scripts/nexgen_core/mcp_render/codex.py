@@ -131,8 +131,9 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
     the manifest is preserved verbatim, and one that is env-gated but not
     resolvable right now (e.g. the recurring guard running without the
     user's shell environment) keeps the entry already on disk instead of
-    deleting it. Only `retired_servers` remove entries; manifest servers
-    are always re-emitted fresh.
+    deleting it. Only retirement removes entries, by tombstone or because
+    the engine declared the name at an earlier render and no longer does;
+    manifest servers are always re-emitted fresh.
     """
     servers = renderer.load_resolved_servers("codex")
     cfg_file = codex_config(renderer.home)

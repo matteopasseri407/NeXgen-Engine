@@ -16,7 +16,7 @@ from typing import Any
 from nexgen_core import quota_policy
 from nexgen_core.i18n import detect_language, t
 from nexgen_core.openclaw import companion as app_gateway
-from nexgen_core.openclaw import claude_loopback, observation
+from nexgen_core.openclaw import claude_loopback, hierarchy, observation
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.governor import with_chains
@@ -34,14 +34,14 @@ from nexgen_core.openclaw.profile import (
 )
 from nexgen_core.openclaw.setup_write import merged_document
 from nexgen_core.openclaw.skills_policy import with_skill_policy
-from nexgen_core.openclaw.squad import apply_squad, find_squad_file, load_squad, unresolved_default
+from nexgen_core.openclaw.squad import apply_squad, find_squad_file, load_squad
 from nexgen_core.paths import openclaw_config, resolve_home, resolve_vault_data
 from nexgen_core.runtimes.openclaw import PLUGIN_ID
 
 DISPLAY_NAMES = {"main": "assistente", "capo": "capo", "automazioni": "automazioni", "sviluppo": "sviluppo"}
 
 
-def _with_engine_plugin(config: dict[str, Any], deposited: bool) -> dict[str, Any]:
+def with_engine_plugin(config: dict[str, Any], deposited: bool) -> dict[str, Any]:
     """The engine's guardrail plugin, enabled, and allowed to read the conversation.
 
     Enabling a plugin that is not there makes OpenClaw fail to start; the
@@ -389,15 +389,6 @@ def _with_loopback(
     return updated
 
 
-def _squad_notes(squad_data: dict[str, Any] | None) -> list[str]:
-    """What the squad asked for and the plan must not swallow: a default it never declares."""
-    unknown = unresolved_default(squad_data)
-    if not unknown:
-        return []
-    return [t("The squad names {agent} as the default agent but does not declare it: no default was written.",
-              agent=unknown)]
-
-
 def build_plan(
     detected: Detection | None = None,
     choices: Choices | None = None,
@@ -423,7 +414,7 @@ def build_plan(
         # The setup command passes no vault: the squad still lives in the user's one.
         vault_data if vault_data is not None else resolve_vault_data(home), home_dir, current,
     )
-    config = _with_engine_plugin(
+    config = with_engine_plugin(
         with_chains(with_skill_policy(proposed, vault_data, current), failover), _plugin_deposited(path, plugin_deposited),
     )
     # Last, and on purpose: the deny is decided on the document the write will leave,
@@ -476,8 +467,12 @@ def _diff(config: dict[str, Any], current: dict[str, Any] | None) -> dict[str, t
 def _wanted_notes(
     config: dict[str, Any], detected: Detection, choices: Choices, squad_data: dict[str, Any] | None,
 ) -> list[str]:
-    """What the proposal itself asks for, and where it cannot have it."""
-    return [*_build_notes(config, detected, choices), *_squad_notes(squad_data)]
+    """What the proposal itself asks for, and where it cannot have it.
+
+    The squad's own notes come from the roster's owner: a default it never
+    declares, and a `reportsTo` this installation cannot honour.
+    """
+    return [*_build_notes(config, detected, choices), *hierarchy.roster_notes(squad_data, config)]
 
 
 def _exec_mode_note(current: dict[str, Any] | None) -> str | None:

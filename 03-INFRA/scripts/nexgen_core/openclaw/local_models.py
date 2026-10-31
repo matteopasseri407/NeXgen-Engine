@@ -24,6 +24,10 @@ PROVIDER_EXTRAS: dict[str, dict[str, Any]] = {
 #: and cages, and the only ones the evidence check watches.
 LOCAL_PROVIDERS: tuple[str, ...] = ("ollama", "llama-cpp")
 
+#: The completion budget a local model block declares, and the context an Ollama
+#: server is given when the model reports no window of its own.
+MAX_TOKENS = 8192
+
 
 @dataclass(frozen=True)
 class LocalModel:
@@ -102,7 +106,7 @@ def _model_entry(model: LocalModel, current: dict[str, Any] | None) -> dict[str,
         "name": model.model_id,
         "reasoning": model.reasoning,
         "input": ["text", "image"] if model.vision else ["text"],
-        "maxTokens": 8192,
+        "maxTokens": MAX_TOKENS,
         "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
         "compat": {
             "supportsTools": True,
@@ -113,6 +117,10 @@ def _model_entry(model: LocalModel, current: dict[str, Any] | None) -> dict[str,
     if model.context_window:
         proposed["contextWindow"] = model.context_window
         proposed["contextTokens"] = model.context_window
+    if model.provider == "ollama":
+        # OpenClaw's Ollama pass writes this context on a native model when the block
+        # leaves it out; declaring it here keeps the engine's block the one that stands.
+        proposed["params"] = {"num_ctx": model.context_window or MAX_TOKENS}
     if model.provider == "llama-cpp":
         # Its chat template compiles tool arguments into GBNF, where large
         # `pattern`/`maxLength` constraints break the build. OpenClaw's own

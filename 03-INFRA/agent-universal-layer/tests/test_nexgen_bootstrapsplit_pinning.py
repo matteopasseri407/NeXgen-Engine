@@ -18,6 +18,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core import bootstrap as bootstrap_mod  # noqa: E402
+from nexgen_core import bootstrap_secrets  # noqa: E402
 
 
 def _isolate_fake_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
@@ -46,7 +47,7 @@ def test_wire_absorbed_secrets_su_env_finto_stabile(
     vault.mkdir()
     fake_script = tmp_path / "nexgen-secrets.py"
     fake_script.write_text("# finto\n", encoding="utf-8")
-    monkeypatch.setattr(bootstrap_mod, "_store_script", lambda root: fake_script)
+    monkeypatch.setattr(bootstrap_secrets, "_store_script", lambda root: fake_script)
 
     def _names(script: Path):
         assert script == fake_script
@@ -62,9 +63,9 @@ def test_wire_absorbed_secrets_su_env_finto_stabile(
     def _must_not_set(script: Path, name: str, value: str, *, host_only: bool) -> bool:
         raise AssertionError("nessuna scrittura attesa: tutto e gia memorizzato")
 
-    monkeypatch.setattr(bootstrap_mod, "_store_names", _names)
-    monkeypatch.setattr(bootstrap_mod, "_store_materialize", _materialize)
-    monkeypatch.setattr(bootstrap_mod, "_store_set", _must_not_set)
+    monkeypatch.setattr(bootstrap_secrets, "_store_names", _names)
+    monkeypatch.setattr(bootstrap_secrets, "_store_materialize", _materialize)
+    monkeypatch.setattr(bootstrap_secrets, "_store_set", _must_not_set)
 
     refs = {"SYNTH_SHARED_OLD": ["srv-finto"]}
     bootstrap_mod.wire_absorbed_secrets(vault, refs, [])
@@ -132,13 +133,15 @@ def test_main_check_non_scrive_fuori_tmp(
 
 
 def test_firme_pubbliche_invariate() -> None:
+    # `preflight` guadagna `check` con un default: le chiamate a zero argomenti
+    # restano valide, e il resto delle firme non si muove.
     assert list(inspect.signature(bootstrap_mod.wire_absorbed_secrets).parameters) == [
         "root",
         "refs",
         "masked",
     ]
     assert list(inspect.signature(bootstrap_mod.main).parameters) == ["argv"]
-    assert list(inspect.signature(bootstrap_mod.preflight).parameters) == []
+    assert list(inspect.signature(bootstrap_mod.preflight).parameters) == ["check"]
     assert list(inspect.signature(bootstrap_mod.scaffold).parameters) == ["root", "write"]
     assert list(inspect.signature(bootstrap_mod.detect_clis).parameters) == ["home"]
     assert list(inspect.signature(bootstrap_mod.desktop_app_orphans).parameters) == [

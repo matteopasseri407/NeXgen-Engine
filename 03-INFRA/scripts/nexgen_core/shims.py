@@ -51,6 +51,10 @@ NEXGEN_ENTRY="{entry}"
 if [ -n "${{AGENT_ENGINE_ROOT:-}}" ] && [ -f "$AGENT_ENGINE_ROOT/scripts/nexgen_core/cli/__init__.py" ]; then
     NEXGEN_ENTRY="$AGENT_ENGINE_ROOT/scripts/nexgen_core/cli/__init__.py"
 fi
+# The engine that runs is the engine every command resolves: a clone outside
+# ~/.nexgen-engine (the README's ~/KnowledgeVault) is not a missing engine.
+AGENT_ENGINE_ROOT="${{NEXGEN_ENTRY%/scripts/nexgen_core/cli/__init__.py}}"
+export AGENT_ENGINE_ROOT
 # The engine's own environment, once the guard has provisioned and verified it: it
 # holds the libraries the Council, the local lane and the MCP servers need. A plain
 # file test decides, so no interpreter is started just to choose one. Until then (or
@@ -79,6 +83,8 @@ set "NEXGEN_ENTRY={entry}"
 if defined AGENT_ENGINE_ROOT (
     if exist "%AGENT_ENGINE_ROOT%\\scripts\\nexgen_core\\cli\\__init__.py" set "NEXGEN_ENTRY=%AGENT_ENGINE_ROOT%\\scripts\\nexgen_core\\cli\\__init__.py"
 )
+rem The engine that runs is the engine every command resolves (see the POSIX launcher).
+for %%I in ("%NEXGEN_ENTRY%\\..\\..\\..\\..") do set "AGENT_ENGINE_ROOT=%%~fI"
 rem The engine's own environment, once provisioned and verified (see the POSIX launcher).
 set "NEXGEN_RUNTIME={runtime}"
 if exist "%NEXGEN_RUNTIME%\\.provisioned" if exist "%NEXGEN_RUNTIME%\\Scripts\\python.exe" (

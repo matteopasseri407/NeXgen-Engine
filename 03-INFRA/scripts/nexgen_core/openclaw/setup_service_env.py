@@ -81,6 +81,12 @@ def extract_referenced_env_vars(config: dict[str, Any]) -> set[str]:
     return found
 
 
+#: Variables every process already has. A server entry may cite them (the bridge
+#: does, `${PATH}`), but copying their setup-time value into `.env` would freeze
+#: them for every later start of the gateway and of the units that load the file.
+PROCESS_VARS = frozenset({"PATH", "HOME", "USERPROFILE", "APPDATA", "SYSTEMROOT", "SystemRoot"})
+
+
 def extract_mounted_mcp_env_vars(config_path: Path) -> set[str]:
     """The variables cited by the MCP servers mounted in the file in force.
 
@@ -98,7 +104,7 @@ def extract_mounted_mcp_env_vars(config_path: Path) -> set[str]:
     servers = mcp.get("servers") if isinstance(mcp, dict) else None
     found: set[str] = set()
     _extract_vars_from_val(servers, found)
-    return found
+    return found - PROCESS_VARS
 
 
 def _format_env_line(key: str, value: str) -> str:

@@ -51,7 +51,7 @@ def srv(**kw):
     (srv(lazy=True, enabled=True, lazy_targets=["claude"]), "codex", "direct", "legacy: enabled"),
     (srv(lazy=True, lazy_targets=["claude"]), "codex", "absent", "inert (not core, not enabled)"),
     (srv(lazy=True, targets=["claude", "opencode"], lazy_targets=["claude", "codex"]), "codex", "absent", "not in targets"),
-    # openclaw: every enabled server is direct; lazy-mcp is never mounted
+    # openclaw: every enabled server is direct, and the gateway is mounted too, for the CLI agents
     (srv(exposure="lazy"), "openclaw", "direct", "openclaw: direct"),
     (srv(exposure="eager"), "openclaw", "direct", "exposure: eager"),
     (srv(lazy=True), "openclaw", "direct", "openclaw: direct"),
@@ -59,12 +59,34 @@ def srv(**kw):
     (srv(enabled=True), "openclaw", "direct", "legacy: enabled"),
     (srv(exposure="lazy", targets=["claude"]), "openclaw", "absent", "not in targets"),
     (srv(exposure="lazy", enabled=False), "openclaw", "absent", "disabled"),
-    (srv(name="lazy-mcp", exposure="eager"), "openclaw", "absent", "openclaw: gateway not mounted"),
-    (srv(tier="core", args=["lazy-mcp.py"]), "openclaw", "absent", "openclaw: gateway not mounted"),
+    (srv(name="lazy-mcp", exposure="eager"), "openclaw", "direct", "openclaw: gateway for CLI agents"),
+    (srv(tier="core", args=["lazy-mcp.py"]), "openclaw", "direct", "openclaw: gateway for CLI agents"),
 ])
 def test_the_rule(entry, cli, kind, why):
     placement = mp.place(entry, cli)
     assert (placement.kind, placement.why) == (kind, why)
+
+
+def test_one_rule_says_what_the_gateway_serves_everywhere():
+    """Behind the gateway elsewhere, mirror of what OpenClaw mounts directly here.
+
+    OpenClaw hands a `claude-cli` agent its own `alwaysLoad` loopback server, so the
+    connectors are denied there; the gateway is the road that remains, and what it
+    serves is exactly what the file mounts directly.
+    """
+    servers = {
+        "lazy-mcp": srv(exposure="eager"),
+        "eager": srv(exposure="eager"),
+        "behind": srv(exposure="lazy"),
+        "elsewhere": srv(exposure="lazy", targets=["claude"]),
+    }
+    assert mp.gateway_serves(servers["eager"], "claude") is False
+    assert mp.gateway_serves(servers["behind"], "claude") is True
+    assert mp.gateway_serves(servers["eager"], "openclaw") is True
+    assert mp.gateway_serves(servers["behind"], "openclaw") is True
+    assert mp.gateway_serves(servers["elsewhere"], "openclaw") is False
+    assert mp.gateway_serves(servers["lazy-mcp"], "openclaw", "lazy-mcp") is False
+    assert mp.gateway_serves(servers["lazy-mcp"], "claude", "lazy-mcp") is False
 
 
 def test_an_empty_target_list_mounts_nothing():
@@ -134,10 +156,18 @@ def test_renderer_and_gateway_serve_exactly_what_the_plan_says(manifest, tmp_pat
     direct = set(renderer.load_resolved_servers(cli))
     gateway = set(lazy_module(monkeypatch, cli)._lazy_servers())
     expected_direct = {n for n, s in MIXED.items() if mp.place(s, cli).kind == mp.DIRECT}
-    expected_gateway = {n for n, s in MIXED.items() if mp.place(s, cli).kind == mp.GATEWAY_KIND}
+    if cli == "openclaw":
+        # The gateway is mounted here too, and serves the connectors the file mounts directly.
+        expected_gateway = expected_direct - {mp.GATEWAY}
+    else:
+        expected_gateway = {n for n, s in MIXED.items() if mp.place(s, cli).kind == mp.GATEWAY_KIND}
     assert direct == expected_direct
     assert gateway == expected_gateway
-    assert not direct & gateway, "a server is both mounted directly and behind the gateway"
+    if cli == "openclaw":
+        # The mirror is the point: everything OpenClaw mounts directly is also served by its gateway.
+        assert direct & gateway == expected_gateway
+    else:
+        assert not direct & gateway, "a server is both mounted directly and behind the gateway"
     assert "dormant" not in direct | gateway and "off" not in direct | gateway
 
 
@@ -183,7 +213,8 @@ def test_the_rendered_gateway_entry_carries_its_cli_in_every_dialect(manifest, t
     assert env["LAZY_MCP_CLI"] == cli
 
 
-def test_openclaw_never_renders_gateway_entry(manifest, tmp_path):
+def test_openclaw_renders_the_gateway_entry(manifest, tmp_path):
+    from nexgen_core.mcp_render.openclaw import is_engine_lazy_mcp
     from nexgen_core.paths import openclaw_config
 
     renderer = McpRenderer(vault_data=manifest.parents[3], engine_root=tmp_path / "engine", home=tmp_path / "home")
@@ -192,19 +223,21 @@ def test_openclaw_never_renders_gateway_entry(manifest, tmp_path):
     openclaw_config(home).write_text("{}", encoding="utf-8")
     renderer.render_all(write=True)
     mcp_servers = json.loads(openclaw_config(home).read_text()).get("mcp", {}).get("servers", {})
-    assert "lazy-mcp" not in mcp_servers
+    gateway = mcp_servers["lazy-mcp"]
+    assert is_engine_lazy_mcp(gateway)
+    assert gateway["env"]["LAZY_MCP_CLI"] == "openclaw"
 
 
 def test_everyone_the_same_when_the_manifest_says_so(tmp_path, monkeypatch):
     """The goal: eager servers identical in every CLI, everything else behind the same gateway in every CLI.
-    OpenClaw exception: lazy-mcp is not mounted and all enabled servers are mounted directly."""
+    OpenClaw exception: everything is mounted directly, and the gateway is mounted beside them to serve them."""
     servers = {"lazy-mcp": srv(exposure="eager"), "a": srv(exposure="eager"), "b": srv(exposure="lazy"), "c": srv(exposure="lazy")}
     table = mp.plan(servers)
     for cli in GATEWAY_CLIS:
         assert {n for n, row in table.items() if row[cli].kind == mp.DIRECT} == {"lazy-mcp", "a"}
         assert mp.gateway_servers_for(servers, cli) == {"b", "c"}
-    assert {n for n, row in table.items() if row["openclaw"].kind == mp.DIRECT} == {"a", "b", "c"}
-    assert mp.gateway_servers_for(servers, "openclaw") == set()
+    assert {n for n, row in table.items() if row["openclaw"].kind == mp.DIRECT} == {"lazy-mcp", "a", "b", "c"}
+    assert mp.gateway_servers_for(servers, "openclaw") == {"a", "b", "c"}
     assert mp.problems(servers) == []
 
 

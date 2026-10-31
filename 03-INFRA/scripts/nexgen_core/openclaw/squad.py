@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import agy_backend, agy_prereqs, model_policy
+from nexgen_core.openclaw import agy_backend, agy_prereqs, channels, model_policy
 from nexgen_core.openclaw.claude_cli import CLAUDE_CLI
 from nexgen_core.openclaw.runtime import apply_runtime
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
@@ -296,8 +296,13 @@ def get_squad_instructions(
     return texts, tuple(unreadable)
 
 
-def _apply_agent_entry(entry: dict[str, Any], spec: Mapping[str, Any], agent_id: Any) -> set[str]:
-    """One agent's own fields on its entry; returns the ids it declares it may message."""
+def _apply_agent_entry(entry: dict[str, Any], spec: Mapping[str, Any], agent_id: Any) -> None:
+    """One agent's own fields on its entry.
+
+    A `tools.agentToAgent.send` the squad declares is that agent's own narrowing
+    and is written as declared: the engine never adds a global `allow` list, whose
+    absence OpenClaw reads as every pair allowed.
+    """
     name = spec.get("name") or agent_id
     entry["name"] = name
     entry["identity"] = {"name": name}
@@ -307,13 +312,9 @@ def _apply_agent_entry(entry: dict[str, Any], spec: Mapping[str, Any], agent_id:
         entry["workspace"] = spec["workspace"]
     if "thinkingDefault" in spec:
         entry["thinkingDefault"] = spec["thinkingDefault"]
-    senders: set[str] = set()
     declared_tools = spec.get("tools") if isinstance(spec.get("tools"), dict) else {}
     if "agentToAgent" in declared_tools:
         entry.setdefault("tools", {})["agentToAgent"] = declared_tools["agentToAgent"]
-        senders.add(agent_id)
-        for target_id in declared_tools["agentToAgent"].get("send", []):
-            senders.add(str(target_id))
     # `exec` at the agent's own level is the documented place for its policy;
     # the older `tools.exec` shape still works and the newer field wins per key.
     policy = _exec_policy(spec)
@@ -331,7 +332,6 @@ def _apply_agent_entry(entry: dict[str, Any], spec: Mapping[str, Any], agent_id:
         tools = entry.setdefault("tools", {})
         existing = tools.get("deny") if isinstance(tools.get("deny"), list) else []
         tools["deny"] = list(dict.fromkeys([*existing, *deny]))
-    return senders
 
 
 def _tools_deny(spec: Mapping[str, Any]) -> list[str] | None:
@@ -377,6 +377,26 @@ def _declared_models(squad: dict[str, Any]) -> list[str]:
     return refs
 
 
+def _apply_model_entries(config: dict[str, Any], declared: Mapping[str, Any]) -> None:
+    """The squad's `models` table, merged into `agents.defaults.models`.
+
+    That record is `provider/model` -> entry, and it is where OpenClaw reads a
+    per-model setting such as the `agentRuntime: {id: "claude-cli"}` pin
+    `squad.example.yaml` declares. The root `models` object is strict -- only
+    `mode`, `providers` and `catalogRefresh` -- so an `entries` key there makes
+    OpenClaw refuse the whole file ("models: Unrecognized key: entries"), which is
+    what an earlier engine wrote. An entry already on the target keeps every key
+    the squad does not set; the squad's own keys win over it.
+    """
+    agents_block = config.setdefault("agents", {})
+    defaults = agents_block.setdefault("defaults", {})
+    models = defaults.get("models") if isinstance(defaults.get("models"), dict) else {}
+    for ref, entry in declared.items():
+        existing = models.get(ref) if isinstance(models.get(ref), dict) else {}
+        models[str(ref)] = {**existing, **(entry if isinstance(entry, dict) else {})}
+    defaults["models"] = models
+
+
 def apply_squad(
     config: dict[str, Any],
     squad: dict[str, Any],
@@ -388,10 +408,9 @@ def apply_squad(
     if isinstance(agents_spec, dict):
         agents_block = target.setdefault("agents", {})
         entries = agents_block.setdefault("entries", {})
-        allowed_senders: set[str] = set()
         for agent_id, spec in agents_spec.items():
             if isinstance(spec, dict):
-                allowed_senders |= _apply_agent_entry(entries.setdefault(agent_id, {}), spec, agent_id)
+                _apply_agent_entry(entries.setdefault(agent_id, {}), spec, agent_id)
 
         default_id = default_agent(squad)
         if default_id:
@@ -401,13 +420,6 @@ def apply_squad(
             defaults = agents_block.setdefault("defaults", {})
             defaults.setdefault("systemAgent", {})["agentId"] = default_id
 
-        if allowed_senders:
-            tools_block = target.setdefault("tools", {})
-            a2a = tools_block.setdefault("agentToAgent", {})
-            a2a["enabled"] = True
-            current_allow = set(a2a.get("allow", []))
-            a2a["allow"] = sorted(current_allow | allowed_senders)
-
         # Removing an agent from the squad removes it here too, but only when the
         # squad says so: the engine is additive by default, and a person who added
         # an agent by hand must not lose it to a sync.
@@ -416,13 +428,11 @@ def apply_squad(
             for agent_id in [key for key in entries if key not in declared]:
                 entries.pop(agent_id, None)
 
-    if "models" in squad and isinstance(squad["models"], dict):
-        models_block = target.setdefault("models", {})
-        models_entries = models_block.setdefault("entries", {})
-        models_entries.update(squad["models"])
+    if isinstance(squad.get("models"), dict):
+        _apply_model_entries(target, squad["models"])
 
     if "bindings" in squad and isinstance(squad["bindings"], list):
-        target["bindings"] = list(squad["bindings"])
+        target = channels.with_bindings(target, squad["bindings"])
 
     # The runtime block decides how many chats each agent gets and how long a
     # manual fork lives. It is policy, so it travels with the squad instead of

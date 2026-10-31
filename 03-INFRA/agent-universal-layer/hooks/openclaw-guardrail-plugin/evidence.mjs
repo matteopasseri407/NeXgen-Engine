@@ -36,13 +36,11 @@
 //
 // Every rule here is a pure function of text and receipts, so the whole check is tested without a
 // gateway, a model or a network.
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
 import { configSection, readPluginConfig } from "./engine-config.mjs";
+import { resolveEngineFile } from "./engine-files.mjs";
 
-const DIR = dirname(fileURLToPath(import.meta.url));
-const CONFIG_PATH = join(DIR, "nexgen.config.json");
+//: The engine-owned switches: beside the plugin, or in the deposit behind a build copy.
+const CONFIG_PATH = resolveEngineFile("nexgen.config.json");
 
 //: How many sessions' worth of state the job keeps. A gateway runs for weeks; a map that grows with
 //: it is a leak, and the oldest entry is the one nobody is going to finalize again.

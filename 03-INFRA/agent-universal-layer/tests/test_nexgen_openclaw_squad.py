@@ -71,8 +71,9 @@ bindings:
     assert applied["agents"]["entries"]["main"]["name"] == "MyCustomBot"
     assert applied["agents"]["entries"]["capo"]["name"] == "General"
     assert applied["agents"]["entries"]["capo"]["tools"]["exec"]["node"] == "pc-work"
-    assert "capo" in applied["tools"]["agentToAgent"]["allow"]
-    assert "main" in applied["tools"]["agentToAgent"]["allow"]
+    assert "agentToAgent" not in applied["tools"], "no global allow: OpenClaw's default is open"
+    assert applied["agents"]["entries"]["main"]["tools"]["agentToAgent"] == {"send": ["capo"]}
+    assert "agentToAgent" not in applied["agents"]["entries"]["capo"].get("tools", {})
     assert applied["bindings"][0]["agentId"] == "main"
 
     souls = get_squad_souls(squad)
@@ -107,6 +108,85 @@ def test_a_squad_that_names_no_model_adds_no_policy(tmp_path: Path) -> None:
     applied = apply_squad({"agents": {"entries": {}}}, {"agents": {"main": {"name": "Solo"}}})
 
     assert "defaults" not in applied["agents"] or "modelPolicy" not in applied["agents"]["defaults"]
+
+
+def test_a_bound_channel_brings_its_plugin_into_the_allowlist() -> None:
+    """A binding to a channel whose plugin is not allowed routes nothing.
+
+    OpenClaw adds that plugin to `plugins.allow` itself the first time a channel is
+    configured ("Telegram configured, enabled automatically"), so a setup that left it
+    to the doctor had a list the engine owns changed under it on the next run.
+    """
+    squad = {"bindings": [{"match": {"channel": "telegram"}, "agentId": "main"}]}
+
+    applied = apply_squad({"plugins": {"allow": ["browser"], "entries": {}}, "agents": {"entries": {}}}, squad)
+
+    assert "telegram" in applied["plugins"]["allow"]
+    assert applied["bindings"] == [{"match": {"channel": "telegram"}, "agentId": "main"}]
+
+
+def test_a_channel_alias_names_the_plugin_openclaw_ships_for_that_channel() -> None:
+    """OpenClaw's built-in channel table maps `teams` to `msteams`; the plugin id follows it."""
+    squad = {"bindings": [{"match": {"channel": "teams"}, "agentId": "main"}]}
+
+    applied = apply_squad({"plugins": {"allow": ["browser"], "entries": {}}, "agents": {"entries": {}}}, squad)
+
+    assert "msteams" in applied["plugins"]["allow"]
+    assert "teams" not in applied["plugins"]["allow"]
+
+
+def test_a_channel_no_bundled_plugin_serves_gets_no_invented_plugin_id() -> None:
+    """A channel plugin the person installed is already allowed by them, and its id is theirs."""
+    squad = {"bindings": [{"match": {"channel": "my-own-bridge"}, "agentId": "main"}]}
+
+    applied = apply_squad({"plugins": {"allow": ["browser"], "entries": {}}, "agents": {"entries": {}}}, squad)
+
+    assert applied["plugins"]["allow"] == ["browser"]
+
+
+def test_the_squad_models_table_becomes_agents_defaults_models() -> None:
+    """The root `models` object is strict: `mode`, `providers`, `catalogRefresh`, nothing else.
+
+    An `entries` key there is refused by OpenClaw ("models: Unrecognized key: entries"),
+    and `agents.defaults.models` is the record the per-model entries belong to.
+    """
+    squad = {
+        "models": {
+            "anthropic/claude-opus-5-5": {"agentRuntime": {"id": "claude-cli"}},
+            "openai/gpt-6-luna": {"agentRuntime": {"id": "codex"}},
+        },
+    }
+
+    applied = apply_squad({"agents": {"entries": {}}}, squad)
+
+    assert "entries" not in applied.get("models", {})
+    models = applied["agents"]["defaults"]["models"]
+    assert models["anthropic/claude-opus-5-5"] == {"agentRuntime": {"id": "claude-cli"}}
+    assert models["openai/gpt-6-luna"] == {"agentRuntime": {"id": "codex"}}
+
+
+def test_a_model_entry_the_owner_wrote_keeps_every_key_the_squad_does_not_set() -> None:
+    """The squad adds keys to a model's entry; it never replaces the entry under it."""
+    config = {
+        "agents": {
+            "entries": {},
+            "defaults": {
+                "models": {
+                    "anthropic/claude-opus-5-5": {"contextWindow": 200000},
+                    "openai/gpt-6-luna": {"agentRuntime": {"id": "codex"}},
+                },
+            },
+        },
+    }
+    squad = {"models": {"anthropic/claude-opus-5-5": {"agentRuntime": {"id": "claude-cli"}}}}
+
+    models = apply_squad(config, squad)["agents"]["defaults"]["models"]
+
+    assert models["anthropic/claude-opus-5-5"] == {
+        "contextWindow": 200000,
+        "agentRuntime": {"id": "claude-cli"},
+    }
+    assert models["openai/gpt-6-luna"] == {"agentRuntime": {"id": "codex"}}
 
 
 def test_custom_agent_names_preserved_without_squad() -> None:

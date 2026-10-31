@@ -14,6 +14,7 @@ import json
 from typing import Any
 
 from nexgen_core.i18n import detect_language
+from nexgen_core.openclaw.manual_legacy import PREVIOUS_HANDOVER
 
 #: The agents and how a caller may name them. The id is the key in
 #: `agents.entries` and in the manuals below; the alias is the word the manuals
@@ -63,12 +64,9 @@ richiesta arriva agli altri agenti quando serve.
 
 ## Passare il lavoro
 
-- Scrivi a un altro agente con `sessions_send`. I destinatari possibili sono
-  `capo` e `automazioni`.
-- Passa un compito, non un ordine vago: cosa va fatto, dove, e come si saprà che
-  è fatto.
-- Se il destinatario non è disponibile, dillo alla persona: non fare il suo
-  lavoro al posto suo.
+Per passare il lavoro scrivi con `sessions_send`.
+Chi è il tuo responsabile, chi lavora per te e i tuoi pari sono nel blocco
+«Organigramma» qui sotto, generato dal motore.
 
 ## Strumenti del motore
 
@@ -102,10 +100,9 @@ non una descrizione di quello che andrebbe fatto.
 
 ## Passare il lavoro
 
-- Scrivi all'assistente con `sessions_send` quando il risultato va raccontato
-  alla persona, o quando il compito non è codice.
-- Passa un compito, non un ordine vago: cosa va fatto, dove, e come si saprà che
-  è fatto.
+Per passare il lavoro scrivi con `sessions_send`.
+Chi è il tuo responsabile, chi lavora per te e i tuoi pari sono nel blocco
+«Organigramma» qui sotto, generato dal motore.
 
 ## Strumenti del motore
 
@@ -139,11 +136,9 @@ Il tuo lavoro si vede quando qualcosa parte da solo e arriva dove deve.
 
 ## Passare il lavoro
 
-- Scrivi all'assistente con `sessions_send` quando il risultato va raccontato
-  alla persona.
-- Passa a `capo` le modifiche al codice del motore o dei servizi.
-- Passa un compito, non un ordine vago: cosa va fatto, dove, e come si saprà che
-  è fatto.
+Per passare il lavoro scrivi con `sessions_send`.
+Chi è il tuo responsabile, chi lavora per te e i tuoi pari sono nel blocco
+«Organigramma» qui sotto, generato dal motore.
 
 ## Strumenti del motore
 
@@ -184,10 +179,9 @@ tu lo apri, gli passi il compito, controlli il risultato e lo riferisci.
 
 ## Passare il lavoro
 
-- Quando il risultato va raccontato alla persona, scrivi all'assistente con
-  `sessions_send`.
-- Passa un compito, non un ordine vago: cosa va fatto, dove, e come si saprà che
-  è fatto.
+Per passare il lavoro scrivi con `sessions_send`.
+Chi è il tuo responsabile, chi lavora per te e i tuoi pari sono nel blocco
+«Organigramma» qui sotto, generato dal motore.
 
 ## Strumenti del motore
 
@@ -222,11 +216,9 @@ voice through which a request reaches the other agents when it has to.
 
 ## Handing work over
 
-- Write to another agent with `sessions_send`. The possible recipients are
-  `capo` and `automazioni`.
-- Hand over a task, not a vague order: what has to be done, where, and how it
-  will be known to be done.
-- If the recipient is unavailable, tell the person: do not do their work for them.
+Hand work over with `sessions_send`.
+Who your lead is, who works for you and who your peers are is in the "Org chart"
+block below, written by the engine.
 
 ## Engine tools
 
@@ -260,10 +252,9 @@ a description of what should be done.
 
 ## Handing work over
 
-- Write to the assistant with `sessions_send` when the result has to be told to
-  the person, or when the task is not code.
-- Hand over a task, not a vague order: what has to be done, where, and how it
-  will be known to be done.
+Hand work over with `sessions_send`.
+Who your lead is, who works for you and who your peers are is in the "Org chart"
+block below, written by the engine.
 
 ## Engine tools
 
@@ -298,11 +289,9 @@ jobs. Your work shows when something starts by itself and lands where it should.
 
 ## Handing work over
 
-- Write to the assistant with `sessions_send` when the result has to be told to
-  the person.
-- Hand engine or service code changes to `capo`.
-- Hand over a task, not a vague order: what has to be done, where, and how it
-  will be known to be done.
+Hand work over with `sessions_send`.
+Who your lead is, who works for you and who your peers are is in the "Org chart"
+block below, written by the engine.
 
 ## Engine tools
 
@@ -343,10 +332,9 @@ one: you open it, hand it the task, check the result and report it.
 
 ## Handing work over
 
-- When the result has to be told to the person, write to the assistant with
-  `sessions_send`.
-- Hand over a task, not a vague order: what has to be done, where, and how it
-  will be known to be done.
+Hand work over with `sessions_send`.
+Who your lead is, who works for you and who your peers are is in the "Org chart"
+block below, written by the engine.
 
 ## Engine tools
 
@@ -390,12 +378,30 @@ _VAULT_WRITE_RULE = {
 }
 
 
+#: What the shipped manual says in place of the chart itself. The chart is a
+#: managed block the guard writes into the workspace, so this body never names
+#: an agent: the same text ships on every machine, whatever roster it has.
+_HANDOVER = {
+    "it": """## Passare il lavoro
+
+Per passare il lavoro scrivi con `sessions_send`.
+Chi è il tuo responsabile, chi lavora per te e i tuoi pari sono nel blocco
+«Organigramma» qui sotto, generato dal motore.""",
+    "en": """## Handing work over
+
+Hand work over with `sessions_send`.
+Who your lead is, who works for you and who your peers are is in the "Org chart"
+block below, written by the engine.""",
+}
+
+
 def render_workspace(agent: str, lang: str | None = None) -> dict[str, str]:
     """The files one agent's workspace holds, path -> text.
 
     The `capo` also gets the two files Claude Code reads on its own, so the same
     agent behaves the same way whether it is reached through OpenClaw or through
-    Claude Code.
+    Claude Code. The text names no other agent: the org chart arrives as the
+    managed block `nexgen sync` writes from the roster.
     """
     name = AGENTS.get(agent)
     if name is None:
@@ -408,6 +414,13 @@ def render_workspace(agent: str, lang: str | None = None) -> dict[str, str]:
     return files
 
 
+def _previous_manual(agent: str, language: str) -> str:
+    """The manual the previous release shipped for this agent, handover section included."""
+    name = AGENTS[agent]
+    text = _MANUALS[language][name] + _VAULT_WRITE_RULE[language]
+    return text.replace(_HANDOVER[language], PREVIOUS_HANDOVER[language][name], 1)
+
+
 def shipped_manuals(agent: str) -> tuple[str, ...]:
     """The `AGENTS.md` this engine ships for one agent, in every language it writes.
 
@@ -415,9 +428,18 @@ def shipped_manuals(agent: str) -> tuple[str, ...]:
     compares against, and a workspace prepared while the engine spoke another
     language is still the engine's file. An agent the engine knows no manual for
     (one a squad declares for itself) has none, and nothing is ever replaced on
-    that account.
+    that account. The previous release's wording is in the answer too: a
+    workspace it prepared still holds exactly that text, and must not start
+    looking like the person's now that the chart moved to its own block.
     """
-    name = AGENTS.get(agent)
-    if name is None:
+    if AGENTS.get(agent) is None:
         return ()
-    return tuple(render_workspace(agent, language)["AGENTS.md"] for language in _MANUALS)
+    manuals: list[str] = []
+    for language in _MANUALS:
+        for text in (
+            render_workspace(agent, language)["AGENTS.md"],
+            _previous_manual(agent, language),
+        ):
+            if text not in manuals:
+                manuals.append(text)
+    return tuple(manuals)

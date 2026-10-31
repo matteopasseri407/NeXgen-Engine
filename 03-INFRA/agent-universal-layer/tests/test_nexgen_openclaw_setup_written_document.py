@@ -39,9 +39,16 @@ from nexgen_core.checks.claude_loopback_checks import check_claude_loopback  # n
 from nexgen_core.paths import claude_config  # noqa: E402
 from nexgen_core.report import Severity  # noqa: E402
 
-#: Two connectors, mounted directly by both CLIs, so the deny and the render have something to name.
+#: Two connectors mounted directly by both CLIs, plus the gateway a `claude-cli` agent reads them through.
 MANIFEST = """schema_version: 1
 servers:
+  lazy-mcp:
+    exposure: eager
+    tier: core
+    transport: stdio
+    command: python3
+    args: ["${AGENT_ENGINE_ROOT}/agent-universal-layer/mcp/lazy-mcp.py"]
+    targets: [claude, codex, antigravity, opencode, openclaw]
   vault-library:
     exposure: eager
     transport: stdio
@@ -149,14 +156,16 @@ def test_a_carried_claude_cli_agent_takes_the_anthropic_key_out_of_the_gateway_e
     assert 'ALTRA="resta"' in env_text, "a line the engine does not know is the person's"
 
 
-def test_the_carried_claude_cli_agents_get_their_connectors_in_claude_code(tmp_path: Path) -> None:
-    """What the deny took off the loopback has to reach the agents somewhere."""
+def test_the_carried_claude_cli_agents_get_their_connectors_through_the_gateway(tmp_path: Path) -> None:
+    """What the deny took off the loopback has to reach the agents somewhere: the gateway."""
     machine = _machine(tmp_path)
 
     _run(machine)
 
     native = json.loads(claude_config(machine.home).read_text(encoding="utf-8"))["mcpServers"]
-    assert set(native) == {"vault-library", "n8n-mcp"}
+    assert set(native) == {"lazy-mcp", "vault-library", "n8n-mcp"}
+    gateway = machine.config_json()["mcp"]["servers"]["lazy-mcp"]
+    assert gateway["env"]["LAZY_MCP_CLI"] == "openclaw"
     outcome = check_claude_loopback(machine.home, machine.vault, ENGINE_ROOT)
     assert outcome is not None, "three agents run on claude-cli here, so the doctor has an answer"
     assert outcome.severity == Severity.OK, outcome.message

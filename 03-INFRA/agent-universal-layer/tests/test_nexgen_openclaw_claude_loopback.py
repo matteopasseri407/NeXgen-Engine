@@ -67,8 +67,20 @@ def _config(
     claude_ref: str = CLAUDE_REF,
     go_ref: str = GO_REF,
     servers: tuple[str, ...] = ("vault-library", "n8n-mcp"),
+    gateway: bool = True,
 ) -> dict:
-    """The shape the engine writes: the pin on `agents.defaults.models`, connectors beside it."""
+    """The shape the engine writes: the pin on `agents.defaults.models`, connectors beside it.
+
+    The engine's `lazy-mcp` entry is the road a `claude-cli` agent keeps once the
+    connectors are denied on the loopback, so it is part of the shape by default.
+    """
+    mounted = {name: {"command": "node", "args": [f"{name}.mjs"]} for name in servers}
+    if gateway:
+        mounted["lazy-mcp"] = {
+            "command": "python3",
+            "args": ["lazy-mcp.py"],
+            "env": {"LAZY_MCP_CLI": "openclaw"},
+        }
     return {
         "agents": {
             "defaults": {"models": {claude_ref: {"agentRuntime": {"id": "claude-cli"}}}},
@@ -83,7 +95,7 @@ def _config(
                 "main": {"model": go_ref},
             },
         },
-        "mcp": {"servers": {name: {"command": "node", "args": [f"{name}.mjs"]} for name in servers}},
+        "mcp": {"servers": mounted},
     }
 
 
@@ -184,6 +196,15 @@ def test_running_the_deny_twice_changes_nothing_the_second_time() -> None:
     assert twice == once
 
 
+def test_the_gateway_is_never_denied_because_it_is_the_road_that_remains() -> None:
+    """The connectors are denied on the loopback; the gateway that serves them is not."""
+    config = _config()
+    after = apply_loopback(config, list(config["mcp"]["servers"]))
+    deny = after["agents"]["entries"]["capo"]["tools"]["deny"]
+    assert "lazy-mcp__*" not in deny
+    assert {"vault-library__*", "n8n-mcp__*"} <= set(deny)
+
+
 def test_a_gateway_without_connectors_is_left_untouched() -> None:
     config = _config(servers=())
     assert apply_loopback(config, []) is config
@@ -253,7 +274,7 @@ def test_the_native_config_is_rendered_and_says_where_the_connectors_come_from(t
 
     written = json.loads(claude_config(home).read_text(encoding="utf-8"))["mcpServers"]
     assert set(written) == {"vault-library", "n8n-mcp"}
-    assert lines[0] == "The connectors of capo come from Claude Code's own configuration."
+    assert lines[0] == "The connectors of capo reach it through OpenClaw's gateway, not the loopback server."
     assert lines[-1] == "Claude configuration updated"
 
 
@@ -335,6 +356,17 @@ def test_the_doctor_is_silent_when_no_agent_runs_on_claude_cli(tmp_path: Path) -
     assert check_claude_loopback(home, renderer.vault_data, renderer.engine_root) is None
 
 
+def test_the_doctor_does_not_demand_a_gateway_when_no_connector_is_mounted(tmp_path: Path) -> None:
+    """Nothing is denied, so there is nothing behind the gateway to reach."""
+    home = _home(tmp_path)
+    renderer = _renderer(tmp_path, home)
+    _write_openclaw(home, _config(servers=(), gateway=False))
+
+    outcome = check_claude_loopback(home, renderer.vault_data, renderer.engine_root)
+    assert outcome is not None
+    assert outcome.severity == Severity.OK
+
+
 def test_the_doctor_passes_a_configuration_this_change_writes(tmp_path: Path) -> None:
     home, renderer = _healthy(tmp_path)
     outcome = check_claude_loopback(home, renderer.vault_data, renderer.engine_root)
@@ -356,31 +388,37 @@ def test_the_doctor_reports_a_connector_still_on_the_loopback(tmp_path: Path) ->
     assert "nexgen openclaw setup" in (outcome.action or "")
 
 
-def test_the_doctor_reports_a_missing_native_configuration(tmp_path: Path) -> None:
+def test_the_doctor_reports_a_missing_gateway(tmp_path: Path) -> None:
+    """Without the gateway in OpenClaw, a `claude-cli` agent has no road to its connectors at all."""
     home, renderer = _healthy(tmp_path)
-    claude_config(home).unlink()
+    config = json.loads(openclaw_config(home).read_text(encoding="utf-8"))
+    config["mcp"]["servers"].pop("lazy-mcp")
+    _write_openclaw(home, config)
 
     outcome = check_claude_loopback(home, renderer.vault_data, renderer.engine_root)
     assert outcome is not None
     assert outcome.severity == Severity.BROKEN
-    assert ".claude.json" in outcome.message
+    assert "lazy-mcp" in outcome.message
+    assert "nexgen openclaw setup" in (outcome.action or "")
 
 
-def test_the_doctor_reports_a_connector_missing_from_the_native_configuration(tmp_path: Path) -> None:
+def test_the_doctor_reports_a_gateway_that_is_not_the_engines_one(tmp_path: Path) -> None:
+    """A hand-written proxy under the same name is not the engine's gateway, and proves nothing."""
     home, renderer = _healthy(tmp_path)
-    path = claude_config(home)
-    text = json.loads(path.read_text(encoding="utf-8"))
-    text["mcpServers"].pop("n8n-mcp")
-    path.write_text(json.dumps(text), encoding="utf-8")
+    config = json.loads(openclaw_config(home).read_text(encoding="utf-8"))
+    config["mcp"]["servers"]["lazy-mcp"] = {"command": "node", "args": ["custom-proxy.js"]}
+    _write_openclaw(home, config)
 
     outcome = check_claude_loopback(home, renderer.vault_data, renderer.engine_root)
     assert outcome is not None
     assert outcome.severity == Severity.BROKEN
-    assert "n8n-mcp" in outcome.message
+    assert "lazy-mcp" in outcome.message
+    assert "Claude Code's own configuration" not in outcome.message
 
 
-def test_the_doctor_only_demands_the_connectors_the_claude_target_receives(tmp_path: Path) -> None:
-    """A server the manifest keeps off `claude` has no entry there, and that is not a fault."""
+def test_a_connector_the_manifest_keeps_off_claude_is_still_denied_and_reachable(tmp_path: Path) -> None:
+    """Every connector the OpenClaw file mounts belongs off the loopback, whatever target it names:
+    the gateway makes it reachable, so the deny costs the agent nothing."""
     manifest = """schema_version: 1
 servers:
   vault-library:
@@ -402,8 +440,8 @@ servers:
     ensure_native(config, home=home, vault_data=renderer.vault_data, engine_root=renderer.engine_root,
                   out=lambda _line: None)
 
-    native = json.loads(claude_config(home).read_text(encoding="utf-8"))["mcpServers"]
-    assert set(native) == {"vault-library"}
+    deny = json.loads(openclaw_config(home).read_text(encoding="utf-8"))["agents"]["entries"]["capo"]["tools"]["deny"]
+    assert "openclaw-only__*" in deny
     outcome = check_claude_loopback(home, renderer.vault_data, renderer.engine_root)
     assert outcome is not None
     assert outcome.severity == Severity.OK

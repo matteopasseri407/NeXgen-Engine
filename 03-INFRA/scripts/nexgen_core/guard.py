@@ -19,7 +19,8 @@ Phases of the guard cycle (guard / apply):
 5. MCP configuration generation (renderer.py)
 6. Instruction-pointer alignment (AGENTS.md -> CLAUDE.md / .gemini / .codex)
 7. Alignment check execution
-8. Liveness registration (agent-guard-liveness)
+8. OpenClaw version alignment (`openclaw/version_align.py`, the pin)
+9. Liveness registration (agent-guard-liveness)
 """
 from __future__ import annotations
 
@@ -243,7 +244,7 @@ class GuardRunner:
         return failed
 
     def _phase_run(self, actions: list[str], branch: str) -> list[str]:
-        """Remaining run phases: instructions + launchers + scheduler + modules + runtime."""
+        """Remaining run phases: instructions + launchers + scheduler + modules + runtime + OpenClaw."""
         failed: list[str] = []
         for name, run_phase in (
             ("instructions", lambda: self._phase_instructions(actions)),
@@ -252,6 +253,8 @@ class GuardRunner:
             ("modules", lambda: self._phase_modules(actions)),
             # Last: it may spend minutes on pip, and the safety phases above do not wait for it.
             ("runtime", lambda: self._phase_runtime(actions)),
+            # Last of all: it may install a global package over the network.
+            ("openclaw", lambda: self._phase_openclaw(actions)),
         ):
             try:
                 run_phase()
@@ -445,6 +448,25 @@ class GuardRunner:
         result = runtime.ensure_runtime(resolve_runtime_dir(self.home), checkout, log=actions.append)
         if result.changed:
             actions.append(t("Engine environment provisioned ({detail})", detail=result.detail))
+
+    def _phase_openclaw(self, actions: list[str]) -> None:
+        """The OpenClaw release this machine runs follows the engine's pin.
+
+        A machine merely behind is not a failed cycle: the install either lands or
+        the outcome says why. Only an install that cannot work is a failed phase.
+        """
+        from nexgen_core.openclaw import version_align
+
+        outcome = version_align.align(
+            home=self.home, engine_root=self.engine_root, state_dir=self.state_dir,
+        )
+        text = outcome.line if not outcome.action else f"{outcome.line} {outcome.action}"
+        if outcome.state == version_align.FAILED:
+            raise AlignmentError(text)
+        if outcome.state == version_align.WARN:
+            actions.append(WARN + text)
+        elif text:
+            actions.append(text)
 
     def _phase_liveness(
         self, actions: list[str], is_guard: bool, mode: GuardMode, failed: list[str] | None = None,

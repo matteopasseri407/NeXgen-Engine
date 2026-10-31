@@ -352,14 +352,13 @@ MESSAGES: dict[str, str] = {
     "Usage: render.py [--write CLI|--revert CLI|--reset CLI|--adopt CLI [--apply]|--inventory]\n  --write CLI      regenerate the CLI's MCP section from the manifest\n  --revert CLI     restore the CLI's config from its most recent backup\n  --reset CLI      backup + remove the config (antigravity/opencode only)\n  --adopt CLI      manifest stub for live servers outside the manifest (--apply to apply)\n  --inventory      list the MCP servers per CLI (read-only)": "Uso: render.py [--write CLI|--revert CLI|--reset CLI|--adopt CLI [--apply]|--inventory]\n  --write CLI      rigenera la sezione MCP della CLI dal manifest\n  --revert CLI     ripristina la config della CLI dal backup piu' recente\n  --reset CLI      backup + rimozione della config (solo antigravity/opencode)\n  --adopt CLI      stub manifest per i server vivi fuori manifest (--apply per applicare)\n  --inventory      elenca i server MCP per CLI (read-only)",
     'render.py: unknown argument: {arg}': 'render.py: argomento sconosciuto: {arg}',
     'Claude configuration updated': 'Configurazione Claude aggiornata',
-    "The connectors of {agent} come from Claude Code's own configuration.": "I connettori di {agent} arrivano dalla configurazione nativa di Claude Code.",
+    "The connectors of {agent} reach it through OpenClaw's gateway, not the loopback server.": "I connettori di {agent} arrivano dal gateway di OpenClaw, non dal server di loopback.",
     "Claude Code's own MCP configuration was not rendered: {error}": "Non ho potuto scrivere la configurazione MCP nativa di Claude Code: {error}",
     "An agent runs on Claude Code's CLI, but its connectors are not where they belong: {problems}.": "Un agente gira sulla CLI di Claude Code, ma i suoi connettori non sono dove dovrebbero: {problems}.",
     "still on the loopback server: {connectors}": "ancora sul server di loopback: {connectors}",
-    "missing from Claude Code's own configuration: {connectors}": "mancanti dalla configurazione nativa di Claude Code: {connectors}",
-    "Claude Code's own configuration does not exist ({path})": "la configurazione nativa di Claude Code non esiste ({path})",
-    "Run 'nexgen openclaw setup': it denies every connector on the loopback server and renders Claude Code's own configuration, where they load lazily.": "Lancia 'nexgen openclaw setup': nega ogni connettore sul server di loopback e scrive la configurazione nativa di Claude Code, dove vengono caricati in modo lazy.",
-    "The {count} agent(s) on Claude Code's CLI keep every connector off the loopback server, and Claude Code's own configuration carries them.": "I {count} agenti sulla CLI di Claude Code tengono ogni connettore fuori dal server di loopback, e la configurazione nativa di Claude Code li porta.",
+    "the gateway {gateway} is not mounted in OpenClaw, so its connectors reach no road": "il gateway {gateway} non è montato in OpenClaw, quindi i suoi connettori non hanno nessuna strada",
+    "Run 'nexgen openclaw setup': it denies every connector on the loopback server and mounts the gateway in OpenClaw, which is where they load lazily.": "Lancia 'nexgen openclaw setup': nega ogni connettore sul server di loopback e monta il gateway in OpenClaw, dove vengono caricati in modo lazy.",
+    "The {count} agent(s) on Claude Code's CLI keep every connector off the loopback server and reach them through the gateway in OpenClaw.": "I {count} agenti sulla CLI di Claude Code tengono ogni connettore fuori dal server di loopback e li raggiungono tramite il gateway in OpenClaw.",
     "An agent runs on 'agy', but its connectors are not where they belong: {problems}.": "Un agente gira su 'agy', ma i suoi connettori non sono dove dovrebbero: {problems}.",
     "Agents run on CLIs that carry their own connectors, but they are not where they belong: {problems}.": "Gli agenti girano su CLI che portano i propri connettori, ma questi non sono dove dovrebbero: {problems}.",
     "still on the loopback server for an agent on 'agy': {connectors}": "ancora sul server di loopback per un agente su 'agy': {connectors}",
@@ -378,9 +377,11 @@ MESSAGES: dict[str, str] = {
     'OpenClaw configuration not present: nothing rendered for it': 'Configurazione OpenClaw assente: non ho scritto nulla per lei',
     'OpenClaw instructions at {path} left untouched ({error})': 'Istruzioni OpenClaw in {path} lasciate come sono ({error})',
     "OpenClaw instructions at {path}: the managed block's markers are incomplete, left untouched": 'Istruzioni OpenClaw in {path}: i marcatori del blocco gestito sono incompleti, ho lasciato tutto come sta',
+    "OpenClaw instructions at {path}: the org chart block's markers are incomplete, left untouched": "Istruzioni OpenClaw in {path}: i marcatori del blocco dell'organigramma sono incompleti, ho lasciato tutto come sta",
     "OpenClaw instructions at {path}: the agents sharing this workspace declare different AGENTS.md files, so the manual was left as it is": "Istruzioni OpenClaw in {path}: gli agenti che condividono questa cartella dichiarano AGENTS.md diversi, quindi ho lasciato il manuale com'era",
     'OpenClaw instructions at {path} left untouched: safety backup failed ({error})': 'Istruzioni OpenClaw in {path} lasciate come sono: la copia di sicurezza non e\' riuscita ({error})',
     'OpenClaw instructions aligned in {path}': 'Istruzioni OpenClaw allineate in {path}',
+    'OpenClaw org chart aligned in {path}': 'Organigramma OpenClaw allineato in {path}',
     "Could not read OpenClaw's instructions at {path}: {error}": 'Non ho potuto leggere le istruzioni OpenClaw in {path}: {error}',
     "OpenClaw's AGENTS.md is not aligned in {count} workspace(s): {paths}.": "L'AGENTS.md di OpenClaw non e' allineato in {count} cartella di lavoro: {paths}.",
     "Run 'nexgen sync' to rewrite the managed block; the text outside it is yours and is never touched.": "Lancia 'nexgen sync' per riscrivere il blocco gestito; il testo fuori dal blocco e' tuo e non viene mai toccato.",
@@ -434,6 +435,27 @@ MESSAGES: dict[str, str] = {
     'Assistants found on this machine': 'Assistenti trovati su questa macchina',
     'Something required is missing.': 'Manca qualcosa di necessario.',
     'Fix it and rerun.': 'Sistemalo e rilancia.',
+    (
+        "the installer creates it in the engine's own Python environment "
+        "(on Ubuntu this needs 'sudo apt install python3-venv')"
+    ): (
+        "lo crea l'installer nell'ambiente Python del motore "
+        "(su Ubuntu serve 'sudo apt install python3-venv')"
+    ),
+    (
+        'PyYAML is missing: the engine is creating its own Python environment in {dir} '
+        '(a few minutes, once per machine).'
+    ): (
+        'Manca PyYAML: il motore si crea il proprio ambiente Python in {dir} '
+        '(qualche minuto, una volta sola per macchina).'
+    ),
+    (
+        "The role's detailed plan needs the engine's Python environment, which the install "
+        "creates first: run it once without --check, then --check shows the whole plan."
+    ): (
+        "Il piano dettagliato del ruolo richiede l'ambiente Python del motore, che l'installazione "
+        "crea per primo: lanciala una volta senza --check, poi --check mostra il piano completo."
+    ),
     'Which install do you want': 'Che installazione vuoi',
     'No file gets written: this is just a recommendation.': 'Nessun file viene scritto: è solo un consiglio.',
     'Profile:': 'Profilo:',
@@ -536,6 +558,10 @@ MESSAGES: dict[str, str] = {
     "Run 'agent-sync apply' to regenerate them.": "Esegui 'agent-sync apply' per rigenerarle.",
     "Some CLIs have not been started yet on this machine, so their MCP config could not be checked: {parts}": "Alcuni assistenti non risultano ancora avviati su questa macchina, quindi non è stato possibile verificarne la config MCP: {parts}",
     "MCP configuration files generated and aligned for all active CLIs": "File di configurazione MCP generati e allineati per tutti gli assistenti attivi",
+    "MCP entries outside the manifest: {retired} were retired by the engine, {orphans} were added by hand.": "Voci MCP fuori dal manifest: {retired} sono state ritirate dal motore, {orphans} sono state aggiunte a mano.",
+    "Adopt only the hand-added ones with 'nexgen import --from <cli>' or declare them in mcp/manifest.yaml; the next 'nexgen sync' removes the retired entries.": "Adotta solo quelle aggiunte a mano con 'nexgen import --from <cli>' o dichiarale in mcp/manifest.yaml; il prossimo 'nexgen sync' rimuove le voci ritirate.",
+    "MCP entries the engine retired are still configured: {parts}": "Voci MCP ritirate dal motore ma ancora configurate: {parts}",
+    "No action needed: they are engine debris, and the next 'nexgen sync' removes them.": "Non serve fare niente: sono residui del motore e il prossimo 'nexgen sync' li rimuove.",
 
     # --- checks/reachability_checks.py ---
     "MCP connector '{name}' reachable": "Connettore MCP '{name}' raggiungibile",
@@ -1111,6 +1137,14 @@ MESSAGES: dict[str, str] = {
         "Esegui 'nexgen init' dall'engine che vuoi usare: riscrive tutti i launcher.",
     'Every engine command points at an engine that exists ({count} checked)':
         "Ogni comando dell'engine punta a un engine che esiste ({count} controllati)",
+    "The units' engine folder is checked on Linux/systemd only; not checked here.":
+        "La cartella del motore nelle unità si controlla solo su Linux/systemd; qui non è stato controllato.",
+    "No guard unit declares an engine folder here: nothing was checked.":
+        "Nessuna unità della guardia dichiara la cartella del motore: non c'era niente da controllare.",
+    "The guard units name an engine folder that no longer exists: {units}":
+        "Le unità della guardia indicano una cartella del motore che non esiste più: {units}",
+    "Run 'nexgen sync' again so the units are rewritten.":
+        "Rilancia `nexgen sync` per riscrivere le unità.",
     'The leak-scan pattern copies could not be compared: {error}':
         'Non è stato possibile confrontare le copie dei pattern anti-leak: {error}',
     "The Vault's leak-scan patterns match the engine's":
@@ -1433,8 +1467,10 @@ MESSAGES: dict[str, str] = {
         "Allinealo con: {command}",
     "OpenClaw {version} is the pinned release.":
         "OpenClaw {version} è la versione fissata.",
-    "OpenClaw is installed but this machine does not declare the module: the engine will not keep it aligned.":
-        "OpenClaw è installato ma questa macchina non dichiara il modulo: il motore non lo terrà allineato.",
+    "OpenClaw is installed but this machine does not declare the module.":
+        "OpenClaw è installato ma questa macchina non dichiara il modulo.",
+    "This machine is a node: OpenClaw follows the version the engine pins.":
+        "Questa macchina è un nodo: OpenClaw segue la versione fissata dal motore.",
     "Declare 'openclaw: local' under this host in modules.state.yaml, or remove OpenClaw.":
         "Dichiara 'openclaw: local' sotto questa macchina in modules.state.yaml, oppure rimuovi OpenClaw.",
     "The configuration at {path} is valid JSON.":
@@ -1445,6 +1481,66 @@ MESSAGES: dict[str, str] = {
         "OpenClaw non ha ancora una configurazione in {path}.",
     "Run 'nexgen openclaw plan' to see what the engine would write.":
         "Lancia 'nexgen openclaw plan' per vedere cosa scriverebbe il motore.",
+    # Il guard che tiene OpenClaw sulla versione fissata
+    "OpenClaw is not installed on this machine: nothing to align here.":
+        "OpenClaw non è installato su questa macchina: non c'è niente da allineare.",
+    "OpenClaw has no configuration here: nothing runs on this machine.":
+        "OpenClaw non ha una configurazione qui: su questa macchina non gira.",
+    "The engine cannot read its OpenClaw pin, so it cannot align what is installed.":
+        "Il motore non riesce a leggere la versione fissata di OpenClaw, quindi non può allineare quella installata.",
+    "OpenClaw {version} is installed but npm is not beside its Node: it cannot be updated from here.":
+        "OpenClaw {version} è installato ma npm non è accanto al suo Node: da qui non si può aggiornare.",
+    "Install Node from {url}: it brings npm with it.":
+        "Installa Node da {url}: porta npm con sé.",
+    "OpenClaw {version} is installed and the engine pins {pinned}, but Node {node} does not satisfy {requirement}.":
+        "OpenClaw {version} è installato e il motore fissa {pinned}, ma Node {node} non rispetta {requirement}.",
+    "(unknown)":
+        "(sconosciuta)",
+    "Install a Node release in the range {requirement}: the engine never installs Node.":
+        "Installa una versione di Node nel range {requirement}: il motore non installa mai Node.",
+    "The last attempt to install OpenClaw {pinned} failed less than 24 hours ago: the next attempt is after that, or as soon as the pin changes.":
+        "L'ultimo tentativo di installare OpenClaw {pinned} è fallito meno di 24 ore fa: il prossimo parte dopo, o appena cambia la versione fissata.",
+    # Quando l'aggiornamento deve aspettare: chi legge deve capire perché e che non serve fare niente.
+    "Postponed to the night window (03:00-06:00 local time): the next cycle tries again.":
+        "Rimandato alla finestra notturna (03:00-06:00 ora locale): il prossimo ciclo riprova.",
+    "Postponed: {reason}. The next cycle tries again.":
+        "Rimandato: {reason}. Il prossimo ciclo riprova.",
+    "an agent session is busy":
+        "una sessione dell'agente è in corso",
+    "an automation is running":
+        "un'automazione è in corso",
+    "a command is running on this node":
+        "un comando è in corso su questo nodo",
+    "the work state cannot be read":
+        "lo stato del lavoro è illeggibile",
+    "Installing OpenClaw {pinned} failed (exit {code}): {detail}":
+        "Installare OpenClaw {pinned} non è riuscito (uscita {code}): {detail}",
+    "OpenClaw {pinned} did not work here ({problem}): {previous} was put back.{rollback}":
+        "OpenClaw {pinned} non ha funzionato qui ({problem}): ho rimesso {previous}.{rollback}",
+    "OpenClaw {pinned} is installed and the node service answers.":
+        "OpenClaw {pinned} è installato e il servizio nodo risponde.",
+    "OpenClaw {pinned} is installed and the gateway answers.":
+        "OpenClaw {pinned} è installato e il gateway risponde.",
+    "OpenClaw {pinned} is installed on this machine.":
+        "OpenClaw {pinned} è installato su questa macchina.",
+    "Aligning OpenClaw with the pin failed: {error}":
+        "Allineare OpenClaw alla versione fissata non è riuscito: {error}",
+    "the gateway service controller is not available":
+        "il controllo del servizio del gateway non è disponibile",
+    "the gateway did not restart":
+        "il gateway non è ripartito",
+    "no smoke test is available to prove the gateway works":
+        "non c'è un test rapido per provare che il gateway funzioni",
+    "the smoke test failed":
+        "il test rapido è fallito",
+    "the node service is not running":
+        "il servizio nodo non è in esecuzione",
+    "no output":
+        "nessun output",
+    " Reinstalling {previous} failed too ({detail}).":
+        " Anche reinstallare {previous} è fallito ({detail}).",
+    " Restarting it failed too ({error}).":
+        " Anche riavviarlo è fallito ({error}).",
     "Ollama model ids carry ':latest', which OpenClaw does not recognise: {ids}":
         "Gli id dei modelli Ollama hanno ':latest', che OpenClaw non riconosce: {ids}",
     "Write the id without ':latest' and run 'nexgen openclaw setup' again.":
@@ -1577,10 +1673,12 @@ MESSAGES: dict[str, str] = {
         "Tool Search è disattivato dalla configurazione utente ({count} server MCP montati, in uso gli schemi diretti).",
     "No lazy-mcp gateway is mounted in OpenClaw (connectors are direct).":
         "Nessun gateway lazy-mcp è montato in OpenClaw (i connettori sono diretti).",
-    "The lazy-mcp gateway is mounted inside OpenClaw by the engine: OpenClaw connects MCP servers directly.":
-        "Il gateway lazy-mcp è montato dentro OpenClaw dal motore: OpenClaw collega i server MCP direttamente.",
-    "Run 'nexgen sync' or 'nexgen mcp render' to remove the engine's lazy-mcp entry.":
-        "Esegui 'nexgen sync' o 'nexgen mcp render' per rimuovere la voce lazy-mcp del motore.",
+    "The lazy-mcp gateway is mounted in OpenClaw: an agent on 'claude-cli' reaches its connectors through it.":
+        "Il gateway lazy-mcp è montato in OpenClaw: un agente su 'claude-cli' raggiunge i suoi connettori tramite esso.",
+    "The lazy-mcp gateway is not mounted in OpenClaw, and an agent runs on 'claude-cli': its connectors are denied on the loopback server and reach it nowhere.":
+        "Il gateway lazy-mcp non è montato in OpenClaw e un agente gira su 'claude-cli': i suoi connettori sono negati sul server di loopback e non lo raggiungono da nessuna parte.",
+    "Run 'nexgen openclaw setup' or 'nexgen mcp render': it mounts the gateway, which is the road those connectors take.":
+        "Esegui 'nexgen openclaw setup' o 'nexgen mcp render': monta il gateway, che è la strada di quei connettori.",
     "A custom 'lazy-mcp' connector is configured under mcp.servers; OpenClaw does not use the engine gateway.":
         "Un connettore 'lazy-mcp' personalizzato è configurato in mcp.servers; OpenClaw non usa il gateway del motore.",
     "Verify if this custom connector is needed or rename it to avoid collision with the engine gateway.":
@@ -1898,6 +1996,13 @@ MESSAGES: dict[str, str] = {
         "Entra in una normale sessione utente con systemd, o avviane una, poi rilancia il setup.",
     "npm installs global packages under {prefix}, which this user cannot write.":
         "npm installa i pacchetti globali in {prefix}, dove questo utente non può scrivere.",
+    (
+        "npm installs global packages under {prefix}, which this user cannot write: this account's go to "
+        "{moved} from now on (npm config set prefix)."
+    ): (
+        "npm installa i pacchetti globali in {prefix}, dove questo utente non può scrivere: da ora quelli di "
+        "questo account vanno in {moved} (npm config set prefix)."
+    ),
     "Run 'npm config set prefix ~/.local' once, or use a version manager for Node, then run the setup again.":
         "Lancia una volta 'npm config set prefix ~/.local', oppure usa un version manager per Node, poi rilancia il setup.",
     "Lingering is off for {user}: the gateway stops when your last session closes.":
@@ -2183,6 +2288,10 @@ MESSAGES: dict[str, str] = {
         "{agent}: {written} file di skill scritti",
     "The squad names {agent} as the default agent but does not declare it: no default was written.":
         "La squadra indica {agent} come agente predefinito ma non lo dichiara: non ho scritto nessun predefinito.",
+    "The squad makes {agent} report to {lead}, which is not an agent this installation declares: {agent} keeps its default lead.":
+        "La squadra fa riportare {agent} a {lead}, che non è un agente di questa installazione: {agent} tiene il suo responsabile predefinito.",
+    "The squad makes {agent} report to {lead}, which closes a loop: {agent} keeps its default lead.":
+        "La squadra fa riportare {agent} a {lead}, che chiude un giro: {agent} tiene il suo responsabile predefinito.",
     "The OpenCode agent is not created: setup was asked to leave it out.":
         "L'agente OpenCode non viene creato: il setup è stato chiesto di lasciarlo fuori.",
     "The OpenCode agent is not created: the 'opencode' command is not on PATH.":
@@ -2615,4 +2724,25 @@ MESSAGES: dict[str, str] = {
         '  Guardia del contesto: job orario registrato.',
     '  Context guard: the job was not registered, the gateway refused it.':
         '  Guardia del contesto: il job non è stato registrato, il gateway lo ha rifiutato.',
+    'skipped: the {runtime} backend cannot confirm a native compaction':
+        'saltata: il backend {runtime} non può confermare una compattazione nativa',
+    'timed out after {seconds}s':
+        'tempo scaduto dopo {seconds}s',
+    # --- I ruoli della macchina: il piano di --check ------------------------
+    'Plan only: --check writes nothing.':
+        'Solo piano: --check non scrive niente.',
+    'Would record the {role} role in {path}':
+        'Registrerei il ruolo {role} in {path}',
+    'Would write the profile, the remotes and the skills manifest under {root}':
+        'Scriverei il profilo, i remote e il manifest delle skill sotto {root}',
+    'Would install the engine commands in ~/.local/bin':
+        'Installerei i comandi del motore in ~/.local/bin',
+    "Would put the agents' sudo policy in place":
+        'Metterei in vigore la politica sudo degli agenti',
+    'Would configure the OpenClaw gateway for loopback and Tailscale Serve':
+        'Configurerei il gateway OpenClaw su loopback e Tailscale Serve',
+    'Would configure the local OpenClaw gateway':
+        'Configurerei il gateway OpenClaw locale',
+    'Would align CLIs, skills and MCP connectors':
+        'Allineerei CLI, skill e connettori MCP',
 }

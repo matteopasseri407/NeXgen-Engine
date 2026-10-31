@@ -35,6 +35,11 @@ if (-not (Test-Path $bootstrap)) {
     exit 1
 }
 
+# The engine is this clone unless one is declared or installed in ~/.nexgen-engine (see install.sh).
+if (-not $env:AGENT_ENGINE_ROOT -and -not (Test-Path (Join-Path $HOME '.nexgen-engine\03-INFRA'))) {
+    $env:AGENT_ENGINE_ROOT = Join-Path $root '03-INFRA'
+}
+
 $forward = @()
 if ($Check)  { $forward += '--check' }
 if ($Role)   { $forward += @('--role', $Role) }

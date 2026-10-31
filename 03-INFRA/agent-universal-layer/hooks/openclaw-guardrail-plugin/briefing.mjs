@@ -15,15 +15,14 @@
 // write, never break a session. Every failure here is swallowed on purpose; a session that
 // loses its briefing is a worse session, not a broken one.
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { configSection, readPluginConfig } from "./engine-config.mjs";
+import { resolveEngineFile } from "./engine-files.mjs";
 import { sessionOf } from "./session.mjs";
 
-const DIR = dirname(fileURLToPath(import.meta.url));
-const CONFIG_PATH = join(DIR, "nexgen.config.json");
-const BRIEFING_PATH = join(DIR, "vault-briefing.txt");
+//: The engine's own files: beside the plugin, or in the deposit behind a build copy.
+const CONFIG_PATH = resolveEngineFile("nexgen.config.json");
+const BRIEFING_PATH = resolveEngineFile("vault-briefing.txt");
 
 //: Sessions waiting for their briefing. Bounded so a gateway that runs for weeks does not
 //: accumulate the ids of sessions that were marked and never prompted again.

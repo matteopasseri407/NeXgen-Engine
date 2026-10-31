@@ -295,7 +295,7 @@ class ServerHandle:
             params = self._request_params(method, params)
             body = json.dumps({"jsonrpc": "2.0", "id": rid, "method": method, "params": params}).encode()
             req = urllib.request.Request(self.spec["url"], data=body, headers={
-                "Content-Type": "application/json", "Accept": SSE_ACCEPT,
+                "Content-Type": "application/json", "Accept": SSE_ACCEPT, "User-Agent": "nexgen-lazy-mcp",
             })
             auth = self.spec.get("auth") or {}
             auth_env = auth.get("env") if isinstance(auth, dict) else None

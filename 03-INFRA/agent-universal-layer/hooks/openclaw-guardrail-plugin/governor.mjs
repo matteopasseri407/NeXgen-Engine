@@ -15,14 +15,13 @@
 // missing, old or unreadable, when the provider of the turn has no reading, or when every
 // chain entry runs on that same spent plan. A turn that cannot be improved is left alone.
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { configSection, readPluginConfig } from "./engine-config.mjs";
+import { resolveEngineFile } from "./engine-files.mjs";
 
-const DIR = dirname(fileURLToPath(import.meta.url));
-const CONFIG_PATH = join(DIR, "nexgen.config.json");
-const STATE_PATH = join(DIR, "nexgen-quota-state.json");
+//: The engine's own files: beside the plugin, or in the deposit behind a build copy.
+const CONFIG_PATH = resolveEngineFile("nexgen.config.json");
+const STATE_PATH = resolveEngineFile("nexgen-quota-state.json");
 
 //: The engine writes both numbers on every setup; these are what a sidecar written by an
 //: older engine (or edited by hand) falls back to, so the arithmetic never sees a hole.

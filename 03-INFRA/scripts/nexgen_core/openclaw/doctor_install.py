@@ -49,14 +49,26 @@ def check_installed(snapshot: Detection, declared: bool, pinned: str | None) -> 
     )
 
 
-def check_declaration(declared: bool) -> CheckOutcome | None:
-    """Installed but not declared: the engine will not keep it aligned."""
+def check_declaration(declared: bool, node_only: bool = False) -> CheckOutcome | None:
+    """Installed but not declared: advice, never a claim about alignment.
+
+    The guard aligns every installed OpenClaw with the pin, declared or not, so the
+    old warning about not being kept aligned was false once the cycle does it. On a
+    node the declaration is not that machine's business at all: the gateway decides
+    what the node runs, and the node follows the pin like every other machine.
+    """
     if declared:
         return None
+    if node_only:
+        return CheckOutcome(
+            id="openclaw.declared",
+            severity=Severity.OK,
+            message=t("This machine is a node: OpenClaw follows the version the engine pins."),
+        )
     return CheckOutcome(
         id="openclaw.declared",
         severity=Severity.WARN,
-        message=t("OpenClaw is installed but this machine does not declare the module: the engine will not keep it aligned."),
+        message=t("OpenClaw is installed but this machine does not declare the module."),
         action=t("Declare 'openclaw: local' under this host in modules.state.yaml, or remove OpenClaw."),
     )
 

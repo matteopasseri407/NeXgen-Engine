@@ -28,12 +28,52 @@ A map of agent IDs to agent configuration:
 - `agents_md`: Optional path, relative to the squad file, of the instructions this agent receives as its workspace `AGENTS.md`. See [Instructions per role](#agents_md-and-common_md).
 - `default`: Optional `true` mark naming this agent as the installation's default. See [`default`](#default).
 - `exec`: Optional execution policy for this agent, written to `agents.entries.<id>.tools.exec`. See [`exec` and the tool policy](#exec-and-the-tool-policy).
+- `reportsTo`: Optional agent id this agent answers to. See [Who reports to whom](#reportsto).
 - `tools`:
   - `agentToAgent`:
-    - `send`: List of target agent IDs this agent is permitted to message. The engine automatically enables `tools.agentToAgent.allow` for all participating agents. An agent this run does not create is left out of both lists: `--no-sviluppo`, a missing `opencode` command or a missing Go key means no `sviluppo` entry, and an id no entry declares is one OpenClaw cannot route.
+    - `send`: Optional list of target agent IDs that narrows whom this agent is permitted to message. The engine writes no global `tools.agentToAgent.allow`: OpenClaw reads an omitted list as every pair allowed, so an agent without `send` can both write to and hear from everyone. An agent this run does not create is left out of a list the squad declares: `--no-sviluppo`, a missing `opencode` command or a missing Go key means no `sviluppo` entry, and an id no entry declares is one OpenClaw cannot route.
   - `exec`:
     - `host`: `"node"` or `"gateway"`.
     - `node`: Name of the satellite node machine executing commands for this agent.
+
+### `reportsTo`
+
+Hierarchy is data, not a list of names baked into the manuals. Each agent may
+declare who it answers to:
+
+```yaml
+agents:
+  main:
+    name: "assistente"
+  capo:
+    name: "capo"
+    reportsTo: "main"
+  sviluppo:
+    name: "sviluppo"
+    reportsTo: "capo"
+```
+
+Without the field the roster's own shape decides: `main` reports to nobody,
+because it faces the person; `capo` (the agent that supervises) reports to
+`main`; every other agent reports to `capo` when the roster has one, otherwise to
+`main`, and to nobody when neither exists. The same defaults apply to the
+engine's own roster when there is no squad file.
+
+The answer lands in each workspace `AGENTS.md` as a delimited block of its own,
+titled `Organigramma` (or `Org chart`), that names the agent's lead, the agents
+reporting to it and its peers (the agents under the same lead), plus the rule
+that anyone may write to anyone with `sessions_send`: a task is delegated down to
+the specialist who owns it, results and blockers go up to the lead, and a peer is
+asked directly. Both `nexgen openclaw setup` and `nexgen sync` write that block
+when it is missing or different, so an installation that already exists receives
+it too, and the shipped manual body only points at it. Nothing outside the block
+is touched, and a file whose markers are half deleted is reported and left as it
+is.
+
+A `reportsTo` that names an agent the roster does not declare, or one that closes
+a loop (`capo` to `automazioni` while `automazioni` reports to `capo`), is
+reported in the plan and the agent keeps its default lead. Nothing is written
+that OpenClaw cannot resolve.
 
 ### `default`
 
@@ -156,6 +196,10 @@ agents:
 ### `models`
 Optional dictionary of model entries and custom provider specifications.
 
+Each key is a `provider/model` ref and its value is that model's entry in `agents.defaults.models`
+(see [Model choice per agent](#model-choice-per-agent)). It never lands in the root `models` object of
+`openclaw.json`: that one is strict and accepts only `mode`, `providers` and `catalogRefresh`.
+
 ## Model choice per agent
 
 `model` on an agent is only that agent's **default**: the model a new session starts on.
@@ -170,6 +214,13 @@ this machine serves itself, and `google-antigravity-cli/*` when the local `agy` 
 plugin is allowed.
 A wildcard, not a list of ids, so a model a provider publishes tomorrow is selectable
 without another setup.
+A CLI runtime is a pin on the model, never a provider in that list: a Claude login gives
+`anthropic/*` plus `agents.defaults.models["anthropic/*"] = {"agentRuntime": {"id": "claude-cli"}}`,
+which is the shape OpenClaw's own `doctor --fix` migrates a legacy `claude-cli/*` entry to.
+
+The same setup names the assistant's model as the system primary in
+`agents.defaults.model`, unless the file already declares one: with the key absent,
+OpenClaw picks a primary itself, and on a machine with a local model it picks that one.
 
 The squad adds what it names: each `model` on an agent, and each key of its `models` table,
 becomes an `agents.defaults.models` entry, and its provider a wildcard.
@@ -188,6 +239,10 @@ bindings:
       channel: "telegram"
     agentId: "main"
 ```
+A binding also brings that channel's bundled plugin into `plugins.allow` (`telegram` for the
+example above), which is the entry OpenClaw adds itself the first time a channel is
+configured: a channel whose plugin is not allowed routes nothing. A channel no bundled
+plugin serves is left to the plugin the person installed and allowed.
 
 ## Secure Model Authentication
 

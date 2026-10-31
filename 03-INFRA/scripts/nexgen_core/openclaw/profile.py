@@ -186,7 +186,19 @@ def _plugin_entries(
         entries[LOCAL_AGY_BACKEND] = {
             "config": {"permissionMode": agy_backend.mode_for_engine(current, LOCAL_AGY_BACKEND)},
         }
-    return entries
+    return _enabled_entries(entries, _plugin_allow(detected, chosen, current))
+
+
+def _enabled_entries(entries: dict[str, Any], allow: list[str]) -> dict[str, Any]:
+    """Switch on every plugin the allowlist names, which is what OpenClaw writes itself.
+
+    An entry without `enabled` is a plugin OpenClaw repairs on the next `doctor --fix`;
+    saying it here keeps the engine's proposal the one the file ends up holding.
+    """
+    return {
+        name: {"enabled": True, **entry} if name in allow else entry
+        for name, entry in entries.items()
+    }
 
 
 def _first_available(candidates: list[str | None]) -> str | None:
@@ -270,11 +282,9 @@ def _sviluppo_entry(model: str, current: dict[str, Any] | None, state_dir: Path 
     return entry
 
 
-def _tools_section(
-    models: tuple[Any, ...], partners: dict[str, list[str]], current: dict[str, Any] | None,
-) -> dict[str, Any]:
+def _tools_section(models: tuple[Any, ...], current: dict[str, Any] | None) -> dict[str, Any]:
     """The tools block, with the exec mode already decided: the one leaf the person owns."""
-    tools = tools_block(models, partners)
+    tools = tools_block(models)
     tools["exec"] = _exec_policy(current)
     return tools
 
@@ -287,12 +297,30 @@ def _agents_section(
     return {
         "ownership": "explicit",
         "defaults": {
+            **_default_model(agents, current),
             "models": _default_models(detected),
             # Otherwise the system jobs write to the channels continuously.
             "heartbeat": {"every": "0m"},
         },
         "entries": _agent_entries(agents, detected, current, language),
     }
+
+
+def _default_model(agents: dict[str, str], current: dict[str, Any] | None) -> dict[str, Any]:
+    """The `model` key of `agents.defaults`: the assistant's own model, unless the file decides.
+
+    Left undeclared, OpenClaw picks a system primary itself, and on a machine with a
+    local model it picked that one rather than the assistant's. A default the person set
+    is theirs, in either shape the file stores it (`{primary, fallbacks}` or a plain ref),
+    and an empty mapping leaves the key out of the proposal entirely.
+    """
+    block = current.get("agents") if isinstance(current, dict) else None
+    defaults = block.get("defaults") if isinstance(block, dict) else None
+    declared = defaults.get("model") if isinstance(defaults, dict) else None
+    if (isinstance(declared, str) and declared.strip()) or (isinstance(declared, dict) and declared):
+        return {}
+    main = agents.get("main")
+    return {"model": {"primary": main}} if main else {}
 
 
 def _agent_entries(models: dict[str, str], detected: Detection, current: dict[str, Any] | None, language: str) -> dict[str, Any]:
@@ -329,30 +357,6 @@ def _default_models(detected: Detection) -> dict[str, Any]:
     if detected.codex.available:
         models[CODEX_MODEL] = {"agentRuntime": {"id": "codex"}}
     return models
-
-
-def _agent_pairs(models: dict[str, str]) -> dict[str, list[str]]:
-    """Which agents may message which, for the agents created: id -> the ids it may send to.
-
-    OpenClaw takes the pairs in two places, not one: `tools.agentToAgent.allow` lists
-    every agent that takes part (ids, not pairs: a list of lists is refused at start),
-    and `agents.entries.<id>.tools.agentToAgent.send` narrows whom each one may reach.
-    Never an empty mapping entry: an agent with no partner is simply left out.
-    """
-    edges: list[tuple[str, str]] = []
-    if "main" in models and "capo" in models:
-        edges.append(("main", "capo"))
-    if "main" in models and "automazioni" in models:
-        edges.append(("main", "automazioni"))
-    if SVILUPPO_ID in models:
-        for other in ("main", "capo"):
-            if other in models:
-                edges.append((other, SVILUPPO_ID))
-    partners: dict[str, list[str]] = {}
-    for left, right in edges:
-        partners.setdefault(left, []).append(right)
-        partners.setdefault(right, []).append(left)
-    return partners
 
 
 def _exec_policy(current: dict[str, Any] | None) -> dict[str, Any]:
@@ -454,8 +458,7 @@ def build_config(
     agents = agent_models(detected, chosen)
     language = _language(chosen)
 
-    partners = _agent_pairs(agents)
-    tools = _tools_section(models, partners, current)
+    tools = _tools_section(models, current)
 
     config: dict[str, Any] = {
         "plugins": {
@@ -474,9 +477,6 @@ def build_config(
     # on an agent is only its default, and this changes none of them.
     config = model_policy.with_reachable(config, detected, current)
     allow_supervisor_tools(config["agents"]["entries"], current)
-    for agent_id, entry in config["agents"]["entries"].items():
-        if agent_id in partners:
-            entry["tools"] = {**entry.get("tools", {}), "agentToAgent": {"send": partners[agent_id]}}
     acp = acp_block(detected, sviluppo=chosen.sviluppo, acpx=chosen.acpx)
     if acp is not None:
         config["acp"] = acp

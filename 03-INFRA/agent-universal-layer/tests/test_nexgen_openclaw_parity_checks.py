@@ -15,7 +15,7 @@ from pathlib import Path
 
 from conftest import REAL_UL
 from nexgen_core.checks.openclaw_parity_checks import check_openclaw_parity
-from nexgen_core.guard_instructions import OPENCLAW_BLOCK_BEGIN, openclaw_instruction_block
+from nexgen_core.openclaw.org_block import OPENCLAW_BLOCK_BEGIN, openclaw_instruction_block
 from nexgen_core.paths import claude_settings, openclaw_config
 from nexgen_core.report import Severity
 from nexgen_core.runtimes.openclaw import OpenClawRuntime

@@ -9,10 +9,12 @@ request. Two kinds of agent need it, for the same reason: one on `claude-cli`, w
 connectors live in Claude Code's own configuration, and one on `agy`, whose connectors live
 in `agy`'s. `native_connectors` says who they are and which connectors each may give up.
 
-The connectors are not lost. Claude Code reads its own configuration (`~/.claude.json`),
-where the same connectors sit deferred behind ToolSearch exactly like a plain Claude Code
-session, and Claude Code -- not OpenClaw -- owns their loading. `claude_native` makes sure
-that file is the engine's render; `agy` reads the file `mcp_render.antigravity` writes.
+The connectors are not lost. They reach the agent through the engine's `lazy-mcp`
+gateway, which OpenClaw mounts in `mcp.servers` beside them (a normal entry, so
+OpenClaw's own Tool Search still defers it): OpenClaw starts Claude Code with
+`--strict-mcp-config`, so Claude Code's own `~/.claude.json` is not what the agent
+reads. `claude_native` keeps that file aligned for the sessions that read it
+directly; `agy` reads the file `mcp_render.antigravity` writes.
 
 Two rules are not preferences:
 
@@ -35,8 +37,10 @@ SUFFIX = "__*"
 
 #: Names that are not connectors of the configuration: OpenClaw's own loopback
 #: server lives in the same namespace, and denying it would deny the agent's own
-#: toolset -- the whole point of the deny is to keep exactly that.
-NOT_A_CONNECTOR = frozenset({"openclaw"})
+#: toolset -- the whole point of the deny is to keep exactly that. `lazy-mcp` is the
+#: gateway that serves the connectors once they are off the loopback: denying it
+#: would leave the agent with no road at all.
+NOT_A_CONNECTOR = frozenset({"openclaw", "lazy-mcp"})
 
 
 def pattern_for(server: str) -> str | None:

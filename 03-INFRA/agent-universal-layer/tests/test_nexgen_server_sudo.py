@@ -267,13 +267,21 @@ def test_a_machine_that_is_not_the_server_leaves_the_sudoers_file_alone(tmp_path
     assert code == 0
 
 
-def test_the_rules_are_written_for_the_admin_who_ran_the_installer(tmp_path, monkeypatch):
-    """`sudo sh install.sh` sets SUDO_USER: root is not the user the gateway runs as."""
-    monkeypatch.setenv("SUDO_USER", "admin")
-    monkeypatch.delenv("USER", raising=False)
-    monkeypatch.delenv("LOGNAME", raising=False)
+def test_the_rules_are_written_for_the_account_that_runs_the_gateway(tmp_path, monkeypatch):
+    """`sudo -iu gateway` then `sh install.sh --role server`: SUDO_USER is the admin.
 
-    assert roles.installing_user() == "admin"
+    A rule written for the admin grants someone who already has sudo, and the
+    account that runs the gateway gets nothing.
+    """
+    monkeypatch.setenv("SUDO_USER", "admin")
+    monkeypatch.setattr(roles.getpass, "getuser", lambda: "gateway")
+    monkeypatch.setattr(roles.os, "getuid", lambda: 1000, raising=False)
+
+    assert roles.installing_user() == "gateway"
+
+    monkeypatch.setattr(roles.os, "getuid", lambda: 0, raising=False)
+    monkeypatch.setattr(roles.getpass, "getuser", lambda: "root")
+    assert roles.installing_user() == "admin", "a run that really is root names the admin who escalated"
 
 
 def test_the_default_sudoers_step_reads_the_home_by_that_name(tmp_path, monkeypatch):

@@ -364,8 +364,14 @@ def test_the_node_floor_of_the_pin_is_checked_against_an_older_install(tmp_path)
     assert "nodejs.org" in machine.output(), "the person is told what to do"
 
 
-def test_a_linux_session_without_the_user_bus_stops_with_an_action(tmp_path):
-    """Simulated Linux on every host: no session bus, so the gateway cannot be managed."""
+def test_a_linux_session_without_the_user_bus_stops_with_an_action(tmp_path, monkeypatch):
+    """Simulated Linux on every host: no session bus, so the gateway cannot be managed.
+
+    The empty runtime root is stated here on purpose: the installer now adopts
+    `/run/user/<uid>/bus` when it exists, so a host that has one must not turn
+    this test into its opposite.
+    """
+    monkeypatch.setattr("nexgen_core.openclaw.host_preflight.RUNTIME_DIR_ROOT", tmp_path / "no-run-user")
     machine = Machine(tmp_path)
 
     code = machine.run(platform="linux", env={})
@@ -579,6 +585,28 @@ def test_the_engine_plugin_is_enabled_only_when_it_is_deposited(tmp_path):
     assert written["plugins"]["entries"][PLUGIN_ID]["enabled"] is True
 
 
+def test_a_plugin_this_run_deposits_is_enabled_in_the_file_it_writes(tmp_path, monkeypatch):
+    """A clean Ubuntu 24.04: the plan was read before step 4 deposited the plugin, and the
+    file went out without `nexgen` in `plugins.allow`, so the guardrail never loaded."""
+    machine = Machine(tmp_path)
+    machine.config.parent.mkdir(parents=True)
+    machine.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
+
+    def deposit(setup):
+        folder = setup.state_dir / "extensions" / PLUGIN_ID
+        folder.mkdir(parents=True)
+        (folder / "openclaw.plugin.json").write_text("{}", encoding="utf-8")
+        (folder / "index.mjs").write_text("// plugin\n", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr("nexgen_core.openclaw.setup.plugin_step", deposit)
+
+    assert machine.run() == 0
+    plugins = machine.config_json()["plugins"]
+    assert PLUGIN_ID in plugins["allow"]
+    assert plugins["entries"][PLUGIN_ID]["enabled"] is True
+
+
 def test_a_rejected_configuration_puts_the_previous_file_back(tmp_path):
     machine = Machine(tmp_path)
     machine.config.parent.mkdir(parents=True)
@@ -660,7 +688,9 @@ def test_a_manual_the_person_wrote_is_never_overwritten(tmp_path):
     machine.runner.onboard = onboard_writer(machine.config, machine.state_dir / "workspace")
 
     assert machine.run() == 0
-    assert (capo / "AGENTS.md").read_text(encoding="utf-8") == "il mio manuale\n"
+    text = (capo / "AGENTS.md").read_text(encoding="utf-8")
+    assert text.startswith("il mio manuale\n"), "their manual is not overwritten"
+    assert "<!-- nexgen:org:begin -->" in text, "the engine's chart block is added below it"
     assert (capo / "BOOTSTRAP.md").is_file()
 
 
@@ -707,8 +737,8 @@ def test_the_opencode_agent_appears_only_with_its_command_and_its_key(tmp_path):
     assert written["plugins"]["entries"]["acpx"]["config"]["permissionMode"] == "approve-all"
     assert written["plugins"]["entries"]["acpx"]["config"]["nonInteractivePermissions"] == "deny"
     assert "opencode" in written["acp"]["allowedAgents"]
-    assert {"main", "capo", "sviluppo"} <= set(written["tools"]["agentToAgent"]["allow"])
-    assert set(written["agents"]["entries"]["sviluppo"]["tools"]["agentToAgent"]["send"]) == {"main", "capo"}
+    assert "agentToAgent" not in written["tools"], "OpenClaw's open default is what the engine wants"
+    assert "agentToAgent" not in sviluppo.get("tools", {})
 
     for kwargs, label in (({"opencode": False, "go": True}, "no command"),
                           ({"opencode": True, "go": False}, "no key")):
@@ -1260,4 +1290,44 @@ def test_a_claude_cli_agent_reads_its_connectors_from_claude_code(tmp_path):
         "the deny is added beside the supervisor's own list, never instead of it"
     native = json.loads((machine.home / ".claude.json").read_text(encoding="utf-8"))["mcpServers"]
     assert set(native) == {"vault-library", "n8n-mcp"}
-    assert "The connectors of capo come from Claude Code's own configuration." in machine.output()
+    assert "The connectors of capo reach it through OpenClaw's gateway, not the loopback server." in machine.output()
+
+
+#: The gateway plus one connector, for the ordering test below.
+GATEWAY_MANIFEST = """schema_version: 1
+servers:
+  lazy-mcp:
+    exposure: eager
+    tier: core
+    transport: stdio
+    command: python3
+    args: ["${AGENT_ENGINE_ROOT}/agent-universal-layer/mcp/lazy-mcp.py"]
+    targets: [claude, codex, antigravity, opencode, openclaw]
+  vault-library:
+    exposure: eager
+    transport: stdio
+    command: node
+    args: ["vault.mjs"]
+"""
+
+
+def test_the_render_mounts_the_gateway_before_the_doctor_judges_it(tmp_path):
+    """One run is enough: the doctor at step 9 reads the file this run already wrote.
+
+    The first setup after the gateway became a `claude-cli` agent's only road used to
+    report `openclaw.mcp.lazy` FAIL, because the render that mounts it ran after the
+    doctor and only a second setup was clean.
+    """
+    machine = Machine(tmp_path)
+    machine.runner.onboard = onboard_writer(machine.config, machine.state_dir / "workspace")
+    manifest = machine.vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(GATEWAY_MANIFEST, encoding="utf-8")
+
+    code = machine.run(detected=detection(machine.config, installed=False, claude=True))
+
+    assert code == 0
+    gateway = machine.config_json()["mcp"]["servers"]["lazy-mcp"]
+    assert gateway["env"]["LAZY_MCP_CLI"] == "openclaw"
+    assert "PASS  openclaw.mcp.lazy" in machine.output()
+    assert "FAIL  openclaw.mcp.lazy" not in machine.output()

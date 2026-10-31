@@ -35,9 +35,18 @@ A skill only gets a native per-CLI view when its manifest entry declares `exposu
 
 Antigravity is the one CLI whose skill views fan out: a skill targeting `antigravity` is written into all three of `~/.gemini/antigravity-cli/skills/`, `~/.gemini/config/skills/`, and `~/.gemini/skills/` (the legacy root), because different ways of launching Antigravity have been observed reading different folders.
 
-MCP sections are additive by default. A server is removed from generated CLI
-configs only when its exact old name is deliberately added to the canonical
-manifest's `retired_servers` list. Authenticated Antigravity HTTP entries use
+MCP sections are additive by default: a server already in a CLI's config but not
+in the manifest is preserved, because it may be yours. Two kinds of name leave
+every generated CLI config anyway: an exact name the manifest lists under
+`retired_servers` (an explicit tombstone), and a name this engine declared at an
+earlier sync that the manifest no longer declares. The engine remembers the
+names it declared at its last real render in the machine-local MCP state
+(`mcp-state.json` in the state directory), so a removal reaches every CLI even
+when nobody writes a tombstone; a name the engine never declared is never
+touched, and a running trial or an `orphans_allowlist` entry keeps its name
+alive. `nexgen doctor` reports a stale entry of the second kind as engine debris
+that the next `nexgen sync` removes, never as something to adopt.
+Authenticated Antigravity HTTP entries use
 the engine-owned `mcp-http-bridge.mjs`; generated JSON stores only the bearer
 environment-variable name, never its value.
 

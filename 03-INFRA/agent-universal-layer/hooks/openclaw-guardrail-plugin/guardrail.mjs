@@ -29,10 +29,18 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { readPluginConfig } from "./engine-config.mjs";
+import { resolveEngineFile } from "./engine-files.mjs";
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 const SIDECAR_PATH = join(DIR, "nexgen-guardrail.config.json");
 const CONFIG_PATH = join(DIR, "nexgen.config.json");
+
+// Where the engine's own files are, per call, is `engine-files.mjs`: beside this one, or
+// in the deposit the engine wrote when OpenClaw runs a build copy of the package. The
+// sidecar, the body and the switches are never part of that copy, so looking beside it
+// alone blocked every command on a machine whose guardrail was in place, and would have
+// dropped the person's posture with it. With no sidecar anywhere the caller stays
+// closed, as it must.
 
 // The documented OpenClaw surfaces that execute something: `exec` is the shell,
 // `process` owns a running session, `terminal` types into an operator terminal,
@@ -232,7 +240,7 @@ export function decideFor(posture, verdict) {
 
 export function registerGuardrail(api, { sidecarPath = SIDECAR_PATH, configPath = CONFIG_PATH } = {}) {
   api.on("before_tool_call", async (event, ctx) => {
-    const posture = readPosture(configPath);
+    const posture = readPosture(resolveEngineFile("nexgen.config.json", dirname(configPath)));
     const toolName = toolNameOf(event?.toolName);
     const command = commandOfTool(toolName, event?.params);
     if (command === null) {
@@ -251,7 +259,8 @@ export function registerGuardrail(api, { sidecarPath = SIDECAR_PATH, configPath 
         : undefined;
     }
     const workdir = typeof event?.params?.workdir === "string" ? event.params.workdir : undefined;
-    const verdict = await judge(command, workdir, ctx?.sessionId ?? null, sidecarPath);
+    const resolved = resolveEngineFile("nexgen-guardrail.config.json", dirname(sidecarPath));
+    const verdict = await judge(command, workdir, ctx?.sessionId ?? null, resolved);
     return decideFor(posture, verdict);
   });
 }

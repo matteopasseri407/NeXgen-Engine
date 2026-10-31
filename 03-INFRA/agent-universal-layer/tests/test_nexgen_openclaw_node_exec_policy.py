@@ -143,7 +143,7 @@ def test_the_shell_launcher_forwards_every_argument_it_is_given():
 def test_the_bootstrap_passes_the_option_to_the_role(tmp_path, monkeypatch):
     captured: dict = {}
 
-    monkeypatch.setattr(bootstrap, "preflight", list)
+    monkeypatch.setattr(bootstrap, "preflight", lambda check=False: [])
     monkeypatch.setattr(bootstrap, "scaffold", lambda root, write=True: [])
     monkeypatch.setattr(bootstrap, "detect_clis", list)
     monkeypatch.setattr(bootstrap, "render", lambda *args, **kwargs: 0)

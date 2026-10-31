@@ -270,6 +270,7 @@ def test_the_adopted_server_goes_behind_the_gateway_and_agy_gets_openclaws_file(
     opencode = json.loads(opencode_config_path(a_machine.home).read_text(encoding="utf-8"))
     assert "lazy-mcp" in opencode["mcp"]["servers"] and "posted-by-hand" not in opencode["mcp"]["servers"]
     openclaw = json.loads(a_machine.config_path.read_text(encoding="utf-8"))["mcp"]["servers"]
-    assert "posted-by-hand" in openclaw and "lazy-mcp" not in openclaw
+    assert "posted-by-hand" in openclaw and "lazy-mcp" in openclaw
+    assert openclaw["lazy-mcp"]["env"]["LAZY_MCP_CLI"] == "openclaw"
     agy = json.loads(antigravity_config(a_machine.home).read_text(encoding="utf-8"))["mcpServers"]
     assert "posted-by-hand" in agy and "lazy-mcp" not in agy

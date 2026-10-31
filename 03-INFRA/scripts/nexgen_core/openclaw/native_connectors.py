@@ -1,8 +1,8 @@
 """Which agents read their connectors from a file their own CLI owns.
 
 One job: answer, from a configuration dict, the connectors this gateway mounts and a home,
-who must have those connectors denied on OpenClaw's loopback server because their own CLI
-already carries them -- Claude Code's `~/.claude.json` for an agent on `claude-cli`, and
+who must have those connectors denied on OpenClaw's loopback server because another road
+already carries them -- the engine's `lazy-mcp` gateway for an agent on `claude-cli`, and
 `agy`'s MCP configuration for an agent on `google-antigravity-cli` -- and which connectors
 the `agy` side may really give up.
 

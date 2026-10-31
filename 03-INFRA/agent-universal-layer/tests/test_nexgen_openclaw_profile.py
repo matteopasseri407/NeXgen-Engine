@@ -91,6 +91,7 @@ def test_claude_codex_go_and_ollama_together():
     assert defaults["models"] == {
         "anthropic/claude-opus-5-5": {"agentRuntime": {"id": "claude-cli"}},
         "openai/gpt-6-luna": {"agentRuntime": {"id": "codex"}},
+        "anthropic/*": {"agentRuntime": {"id": "claude-cli"}},
     }
     assert defaults["heartbeat"] == {"every": "0m"}
     assert config["agents"]["ownership"] == "explicit"
@@ -197,6 +198,21 @@ def test_an_ollama_block_carries_everything_openclaw_needs():
         "supportsUsageInStreaming": True,
         "supportsJsonSchemaResponseFormat": True,
     }
+
+
+def test_an_ollama_model_block_names_the_context_its_server_runs() -> None:
+    """`openclaw doctor --fix` writes `params.num_ctx` on a native Ollama model itself.
+
+    The engine says the same thing, so the block OpenClaw repairs is the block the
+    engine wrote: the reported window when there is one, and the completion budget
+    the block declares when the server reported none (the value OpenClaw derives).
+    """
+    config = build_config(machine(ollama=(info("qwen3-vl:8b", context_window=16384), "qwen3:8b")))
+
+    models = config["models"]["providers"]["ollama"]["models"]
+
+    assert models[0]["params"] == {"num_ctx": 16384}
+    assert models[1]["params"] == {"num_ctx": 8192}
 
 
 def test_a_text_only_model_gets_text_input_and_no_invented_window():
@@ -353,15 +369,13 @@ def test_the_agents_are_named_and_introduced_in_the_engine_language():
     assert english["automazioni"]["identity"] == {"name": "automations"}
 
 
-def test_the_agents_may_talk_only_to_the_pairs_that_exist():
-    """OpenClaw wants agent ids in `allow` (a list of pairs is refused at start) and the pairs per agent in `send`."""
+def test_the_agents_may_message_everyone_because_openclaw_defaults_to_open():
+    """No `allow` and no per-agent `send`: OpenClaw reads an omitted list as every pair."""
     config = build_config(machine(go=True, n8n=True))
-    assert config["tools"]["agentToAgent"] == {"enabled": True, "allow": ["automazioni", "capo", "main"]}
-    assert all(isinstance(item, str) for item in config["tools"]["agentToAgent"]["allow"])
+    assert "agentToAgent" not in config["tools"]
     entries = config["agents"]["entries"]
-    assert entries["main"]["tools"]["agentToAgent"]["send"] == ["capo", "automazioni"]
-    assert entries["capo"]["tools"]["agentToAgent"]["send"] == ["main"]
-    assert entries["automazioni"]["tools"]["agentToAgent"]["send"] == ["main"]
+    for agent_id, entry in entries.items():
+        assert "agentToAgent" not in entry.get("tools", {}), agent_id
     alone = build_config(machine(llamacpp=("only",)))
     assert "agentToAgent" not in alone["tools"]
 
@@ -426,7 +440,12 @@ def test_the_owner_approved_agy_backend_stays_allowed() -> None:
 
 
 def test_the_approved_agy_backend_gets_a_guarded_permission_mode() -> None:
-    """`agy` approves its own tool calls unless the plugin is told to keep a boundary."""
+    """`agy` approves its own tool calls unless the plugin is told to keep a boundary.
+
+    The entry is only written for a backend the person allowed and left switched on, and
+    OpenClaw repairs an allowed plugin's entry with `enabled: true` itself: the engine
+    says it too, so the file it writes is the file the doctor leaves alone.
+    """
     current = {"plugins": {
         "allow": ["google-antigravity-cli"],
         "entries": {"google-antigravity-cli": {"enabled": True}},
@@ -434,8 +453,7 @@ def test_the_approved_agy_backend_gets_a_guarded_permission_mode() -> None:
 
     entries = build_config(machine(), current=current)["plugins"]["entries"]
 
-    assert entries["google-antigravity-cli"] == {"config": {"permissionMode": "sandbox"}}
-    assert "enabled" not in entries["google-antigravity-cli"], "the engine never turns a plugin on or off"
+    assert entries["google-antigravity-cli"] == {"enabled": True, "config": {"permissionMode": "sandbox"}}
 
 
 @pytest.mark.parametrize("declared", ["sandbox", "settings"])
@@ -473,15 +491,23 @@ def test_every_reachable_provider_is_selectable_from_any_agent() -> None:
     defaults = build_config(machine(claude=True, codex=True, go=True, ollama=("qwen3:8b",)))["agents"]["defaults"]
 
     assert defaults["modelPolicy"]["allow"] == [
-        "anthropic/*", "claude-cli/*", "openai/*", "opencode-go/*", "ollama/*",
+        "anthropic/*", "openai/*", "opencode-go/*", "ollama/*",
     ]
+    assert defaults["models"]["anthropic/*"] == {"agentRuntime": {"id": "claude-cli"}}
 
 
-def test_a_claude_login_makes_the_claude_code_models_selectable_too() -> None:
-    """OpenClaw lists the Claude Code models as their own `claude-cli` catalogue."""
-    allow = build_config(machine(claude=True))["agents"]["defaults"]["modelPolicy"]["allow"]
+def test_a_claude_login_names_the_provider_its_models_run_on() -> None:
+    """The runtime is a pin on the model, not a provider in the allowlist.
 
-    assert allow == ["anthropic/*", "claude-cli/*"]
+    `claude-cli` is not a catalogue: OpenClaw's own migration rewrites a `claude-cli/*`
+    policy entry to `anthropic/*` and pins the runtime per model, so writing the runtime
+    as a provider left a duplicated `anthropic/*` behind on every `doctor --fix`.
+    """
+    defaults = build_config(machine(claude=True))["agents"]["defaults"]
+
+    assert defaults["modelPolicy"]["allow"] == ["anthropic/*"]
+    assert "claude-cli/*" not in defaults["modelPolicy"]["allow"]
+    assert defaults["models"]["anthropic/*"] == {"agentRuntime": {"id": "claude-cli"}}
 
 
 def test_the_agy_backend_plugin_makes_its_models_selectable() -> None:
@@ -521,6 +547,23 @@ def test_registering_the_reachable_models_changes_no_agent_default() -> None:
     assert build_config(machine(claude=True, codex=True, go=True))["agents"]["entries"] == build_config(
         machine(claude=True, codex=True, go=True),
     )["agents"]["entries"]
+
+
+def test_the_system_default_model_is_the_one_the_assistant_runs() -> None:
+    """Left undeclared, OpenClaw picks a system primary itself: it picked the local model."""
+    defaults = build_config(machine(claude=True, go=True, ollama=("qwen3:8b",)))["agents"]["defaults"]
+
+    assert defaults["model"] == {"primary": "opencode-go/deepseek-v4.1-flash"}
+
+
+@pytest.mark.parametrize("declared", [{"primary": "anthropic/claude-opus-5-5"}, "anthropic/claude-opus-5-5"])
+def test_a_system_default_model_the_person_chose_is_kept(declared: object) -> None:
+    """The default model is the person's decision once the file carries one, in either shape."""
+    current = {"agents": {"defaults": {"model": declared}}}
+
+    defaults = build_config(machine(go=True), current=current)["agents"]["defaults"]
+
+    assert "model" not in defaults
 
 
 def test_an_exec_policy_the_person_wrote_is_never_loosened() -> None:
@@ -578,3 +621,22 @@ def test_a_gateway_with_no_mode_is_written_as_local() -> None:
 def test_a_machine_with_no_agent_gets_no_agents_section() -> None:
     """OpenClaw refuses `agents.entries` with no entry, so the section is not proposed at all."""
     assert "agents" not in build_config(machine()), "an empty roster is not a roster"
+
+
+def test_a_legacy_claude_cli_wildcard_in_the_file_is_not_carried_forward():
+    """An earlier engine wrote `claude-cli/*`; OpenClaw migrates it on every repair, so
+    re-proposing it from the file in force would flip the allowlist on every cycle."""
+    from types import SimpleNamespace
+
+    from nexgen_core.openclaw import model_policy
+
+    detected = SimpleNamespace(claude=SimpleNamespace(available=True), codex=SimpleNamespace(available=False),
+                               opencode_go=False, local=SimpleNamespace(ollama=(), llamacpp=()))
+    current = {"agents": {"defaults": {"modelPolicy": {"allow": ["claude-cli/*", "anthropic/*"]}}}}
+
+    proposed = model_policy.with_reachable({"agents": {"defaults": {}}}, detected, current)
+
+    defaults = proposed["agents"]["defaults"]
+    assert "claude-cli/*" not in defaults["modelPolicy"]["allow"]
+    assert "anthropic/*" in defaults["modelPolicy"]["allow"]
+    assert defaults["models"]["anthropic/*"] == {"agentRuntime": {"id": "claude-cli"}}

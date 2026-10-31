@@ -49,6 +49,9 @@ That is a decision taken once, at setup; what happens when the chosen plan runs 
 Each agent gets an `AGENTS.md` in the engine's language: who it is, what it does and does not do, when to
 hand work to another agent with `sessions_send`, that the Council is called with `nexgen council`, and that
 the Vault is read and written with the `vault-library__*` tools.
+Whom it reports to and who reports to it is a second delimited block in that file, titled
+`Organigramma` (or `Org chart`) and written by both the setup and `nexgen sync` from `reportsTo`: the shipped
+manual is the same on every machine, so the roster cannot live in its body.
 Every manual also carries the one write path in so many words: a note is created or changed with
 `create_note`, `append_note`, `update_section` or `update_note`, never with `git commit` or `git push` in the
 Vault's copy and never by editing its files by hand, because on a server that copy is read-only and a write
@@ -63,9 +66,11 @@ by itself on `--server`, and without that record the engine cannot tell the mach
 Vault's copy beside it keeps committing in a clone nobody can push from. `nexgen role` prints what is
 recorded without changing anything.
 
-Agents may write to each other only along the pairs that exist: `main` with `capo`, `main` with
-`automazioni`, and `sviluppo` with both. Without a second agent the block is not written at all, because an
-empty allow list means something different from "nobody to talk to".
+Agents may write to each other freely: `tools.agentToAgent.allow` is not written at
+all, and OpenClaw reads an omitted list as every pair allowed. A squad that wants
+to narrow one agent declares `tools.agentToAgent.send` for that agent alone. Who
+delegates to whom, and who reports to whom, is the hierarchy each manual carries
+from `reportsTo` (see [squad.md](squad.md#reportsto)).
 
 ## The fallback chain
 

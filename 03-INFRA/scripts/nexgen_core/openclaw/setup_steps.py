@@ -24,7 +24,7 @@ from pathlib import Path
 
 from nexgen_core.i18n import t
 from nexgen_core.modules import current_host, write_state_file
-from nexgen_core.openclaw import host_preflight, setup_commands, setup_write
+from nexgen_core.openclaw import host_preflight, npm_prefix, setup_commands, setup_write
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.governor import governor_section
 from nexgen_core.openclaw.pin import node_satisfies, pinned_version, required_node_version
@@ -176,17 +176,13 @@ def _check_linux_host(setup: Setup, npm: str | None, needs_install: bool) -> boo
     """Linux only: the user bus, npm's global prefix, and lingering."""
     if (setup.platform or sys.platform) != "linux" or setup.dry_run:
         return True
+    host_preflight.adopt_session_bus(setup.env)
     if host_preflight.user_bus_missing(setup.env) or host_preflight.user_bus_unreachable(setup.run, setup.env):
         setup.out(t("The systemd user bus is not available in this session, so the gateway service cannot be managed."))
         setup.out(t("Log in to a normal user session with systemd, or start one, then run the setup again."))
         return False
-    if needs_install and npm:
-        prefix = host_preflight.npm_prefix(setup.run, npm, setup.env)
-        if prefix is not None and not host_preflight.is_writable(prefix):
-            setup.out(t("npm installs global packages under {prefix}, which this user cannot write.", prefix=prefix))
-            setup.out(t("Run 'npm config set prefix ~/.local' once, or use a version manager for Node, "
-                        "then run the setup again."))
-            return False
+    if needs_install and npm and not npm_prefix.ensure_user_prefix(setup.run, npm, setup.env, setup.out):
+        return False
     user = setup.env.get("USER") or setup.env.get("LOGNAME") or ""
     if user and not host_preflight.linger_enabled(user, host_preflight.LINGER_DIR):
         setup.out(t("Lingering is off for {user}: the gateway stops when your last session closes.", user=user))
@@ -343,6 +339,25 @@ def write_step(setup: Setup, plan) -> str:
         return "failed"
 
 
+def render_mcp_step(setup: Setup) -> bool:
+    """Step 4, after the write: mount the manifest's connectors, gateway included.
+
+    The doctor at step 9 judges the file as it stands, and the gateway it now demands
+    for a `claude-cli` agent is written by this render: leaving the render to the next
+    `nexgen sync` made the first setup report a fault and only the second one clean.
+    """
+    from nexgen_core.renderer import McpRenderer
+
+    renderer = McpRenderer(vault_data=setup.vault_data, engine_root=setup.engine_root, home=setup.home)
+    try:
+        ok, message = renderer.render_openclaw(write=True)
+    except (OSError, ValueError) as exc:  # nexgen: allow reason="an unreadable manifest or config is reported as a step that did not land, never a crash after the gateway was already written"
+        setup.out(t("The MCP connectors were not rendered: {error}", error=exc))
+        return False
+    setup.out(message)
+    return ok
+
+
 def workspaces_step(setup: Setup, plan, before: set[str]) -> None:
     """Step 5: the folders, the manuals, and the first-run file to remove."""
     from nexgen_core.openclaw.setup_skills import prepare_skills, skill_roots
@@ -362,7 +377,7 @@ def workspaces_step(setup: Setup, plan, before: set[str]) -> None:
     instructions, unreadable = get_squad_instructions(squad, squad_file)
     for path in unreadable:
         setup.out(t("The squad names an instructions file that cannot be read: {path}", path=path))
-    prepare(dirs, created, plan.choices.lang or None, setup.out, souls=souls, instructions=instructions)
+    prepare(dirs, created, plan.choices.lang or None, setup.out, souls=souls, instructions=instructions, squad=squad)
     # Only agents that declare `skills` are in this map: the others keep their folder as it is.
     skills = get_squad_skills(squad)
     if skills:
