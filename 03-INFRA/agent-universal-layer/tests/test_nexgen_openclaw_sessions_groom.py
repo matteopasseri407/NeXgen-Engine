@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 
-from nexgen_core.openclaw import sessions_groom
-from nexgen_core.openclaw.sessions_groom import HARD_TOKENS, IDLE_SECONDS, plan_groom
+from nexgen_core.openclaw import agy_compaction, groom_memory, sessions_groom
+from nexgen_core.openclaw.sessions_groom import HARD_TOKENS, IDLE_SECONDS, blocked_runtimes, plan_groom
 
 NOW = 1_800_000_000_000
 
@@ -81,6 +82,56 @@ def test_a_session_on_a_backend_that_cannot_confirm_compaction_is_never_picked()
     decisions = plan_groom([claude_backed, native], NOW)
 
     assert [d.key for d in decisions] == ["agent:posta:node-1"]
+
+
+def test_a_counter_the_gateway_calls_stale_is_not_pressure():
+    """After a compaction the reported number is the summariser's own usage, not the next turn."""
+    stale = session(totalTokens=2_376_120, totalTokensFresh=False, lastInteractionAt=NOW)
+    fresh = session(key="agent:posta:main", totalTokens=HARD_TOKENS + 1, totalTokensFresh=True)
+
+    decisions = plan_groom([stale, fresh], NOW)
+
+    assert [d.key for d in decisions] == ["agent:posta:main"]
+
+
+def test_a_google_antigravity_cli_session_is_never_picked():
+    """While the engine's manual compaction is not in the plugin, asking fails every hour."""
+    antigravity = session(
+        key="agent:main:main",
+        totalTokens=859_000,
+        lastInteractionAt=NOW - 2 * IDLE_SECONDS * 1000,
+        agentRuntime={"id": "google-antigravity-cli", "source": "config"},
+    )
+    native = session(key="agent:posta:node-1", totalTokens=HARD_TOKENS + 1)
+
+    decisions = plan_groom([antigravity, native], NOW)
+
+    assert [d.key for d in decisions] == ["agent:posta:node-1"]
+
+
+def _patched_plugin(home: Path) -> Path:
+    """An installed antigravity plugin whose backend carries the engine's marker."""
+    path = agy_compaction.backend_file(home)
+    path.parent.mkdir(parents=True)
+    path.write_text(f"{agy_compaction.ANCHOR}{agy_compaction.BLOCK}", encoding="utf-8")
+    return path
+
+
+def test_a_patched_antigravity_backend_is_picked_again(tmp_path: Path):
+    """The same session the plan skipped is compacted once the plugin can answer."""
+    antigravity = session(
+        key="agent:main:main",
+        totalTokens=HARD_TOKENS + 1,
+        lastInteractionAt=NOW,
+        agentRuntime={"id": "google-antigravity-cli", "source": "config"},
+    )
+
+    assert "google-antigravity-cli" in blocked_runtimes(tmp_path)
+    _patched_plugin(tmp_path)
+
+    assert "google-antigravity-cli" not in blocked_runtimes(tmp_path)
+    decisions = plan_groom([antigravity], NOW, blocked=blocked_runtimes(tmp_path))
+    assert [d.key for d in decisions] == ["agent:main:main"]
 
 
 class FakeGateway:
@@ -159,6 +210,31 @@ def test_an_unconfirmed_native_compaction_is_success_and_is_not_retried(monkeypa
 
     assert gateway.compactions == ["agent:main:main"]
     assert first.failed == 0 and len(first.lines) == 1
+
+
+def test_a_backend_without_manual_compaction_is_unsupported_not_failed():
+    """Any backend that owns compaction and refuses it answers the same way every hour."""
+    proc = subprocess.CompletedProcess(
+        ["openclaw", "sessions", "compact"], 1, "",
+        'Error: CLI backend "google-antigravity-cli" owns compaction '
+        "but does not support manual compaction.",
+    )
+
+    outcome = sessions_groom._classify(proc)
+
+    assert outcome.state == groom_memory.UNSUPPORTED
+
+
+def test_an_antigravity_refusal_is_settled_and_never_retried(monkeypatch, tmp_path):
+    refused = (1, "", 'CLI backend "google-antigravity-cli" owns compaction '
+                     "but does not support manual compaction.")
+    gateway = FakeGateway([idle_session()], reply=refused)
+
+    first = run_groom(gateway, monkeypatch, tmp_path)
+    run_groom(gateway, monkeypatch, tmp_path)
+
+    assert first.failed == 0 and len(first.lines) == 1
+    assert gateway.compactions == ["agent:main:main"]
 
 
 def test_a_claude_cli_session_is_never_compacted_and_dry_run_says_why(monkeypatch, tmp_path):

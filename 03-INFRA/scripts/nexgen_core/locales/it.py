@@ -1715,6 +1715,14 @@ MESSAGES: dict[str, str] = {
         "Il motore non riesce a leggere il pin del plugin Antigravity, quindi non installa un plugin senza versione bloccata. Controlla agent-universal-layer/openclaw/agy-plugin.json e rilancia il setup.",
     "The Antigravity plugin {plugin} is already {version}.":
         "Il plugin Antigravity {plugin} è già alla versione {version}.",
+    "The Antigravity plugin now carries OpenClaw's manual compaction ('/compact'); the previous file is saved as {backup}.":
+        "Il plugin Antigravity ora porta la compaction manuale di OpenClaw ('/compact'); il file precedente è salvato come {backup}.",
+    "The Antigravity plugin was not patched: its backend at {path} no longer has the shape this engine expects. Reinstall the pinned plugin or update the patch.":
+        "Il plugin Antigravity non è stato corretto: il suo backend in {path} non ha più la forma che questo motore si aspetta. Reinstalla il plugin bloccato o aggiorna la patch.",
+    "The Antigravity plugin could not be patched ({error}); '/compact' stays unavailable.":
+        "Il plugin Antigravity non è stato corretto ({error}); '/compact' resta non disponibile.",
+    "dry run: the Antigravity plugin would gain OpenClaw's manual compaction ('/compact') in {path}; nothing is written.":
+        "prova a vuoto: il plugin Antigravity riceverebbe la compaction manuale di OpenClaw ('/compact') in {path}; non viene scritto nulla.",
     "The Antigravity plugin {plugin} is {version}, not the pinned {pinned}: installing the pin.":
         "Il plugin Antigravity {plugin} è alla versione {version}, non alla {pinned} bloccata: installo quella bloccata.",
     "An agent runs on the local 'agy' CLI and the plugin is not installed: installing {pinned}.":

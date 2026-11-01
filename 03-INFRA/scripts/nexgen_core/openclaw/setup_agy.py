@@ -21,7 +21,7 @@ from typing import Any
 
 from nexgen_core.files import atomic_write_text, backup_file
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import agy_prereqs
+from nexgen_core.openclaw import agy_compaction, agy_prereqs
 from nexgen_core.openclaw.setup_steps import Setup, openclaw_bin, print_output
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND, local_agy_backend
 from nexgen_core.processes import command_line_text
@@ -48,6 +48,7 @@ def install_step(setup: Setup, config: dict[str, Any]) -> bool:
         setup.out(t("The Antigravity plugin {plugin} is already {version}.",
                     plugin=LOCAL_AGY_BACKEND, version=plugin["version"]))
         _prerequisites(setup, config)
+        _compaction(setup)
         return True
     return _install(setup, config, plugin, installed)
 
@@ -79,6 +80,7 @@ def _install(setup: Setup, config: dict[str, Any], plugin: dict[str, str], insta
     setup.out(t("The Antigravity plugin {plugin} {version} is installed.",
                 plugin=LOCAL_AGY_BACKEND, version=plugin["version"]))
     _prerequisites(setup, config)
+    _compaction(setup)
     return True
 
 
@@ -94,6 +96,35 @@ def _prerequisites(setup: Setup, config: dict[str, Any]) -> None:
     missing = _missing_folders(setup, config)
     if missing:
         _trust_folders(setup, missing)
+
+
+def _compaction(setup: Setup) -> None:
+    """Give the installed backend the manual compaction its plugin does not declare.
+
+    The patch is a bridge until the plugin ships `/compact` itself, so a file
+    whose shape changed is reported and left alone: guessing at another person's
+    compiled backend is how a gateway stops starting.
+    """
+    line = _compaction_line(agy_compaction.apply(setup.state_dir, dry_run=setup.dry_run))
+    if line:
+        setup.out(line)
+
+
+def _compaction_line(patch: agy_compaction.Patch) -> str | None:
+    """What to tell the person about the patch, or nothing when it is already there."""
+    if patch.state == agy_compaction.WOULD_PATCH:
+        return t("dry run: the Antigravity plugin would gain OpenClaw's manual compaction ('/compact') in "
+                 "{path}; nothing is written.", path=patch.path)
+    if patch.state == agy_compaction.PATCHED:
+        return t("The Antigravity plugin now carries OpenClaw's manual compaction ('/compact'); the previous "
+                 "file is saved as {backup}.", backup=patch.backup or patch.path)
+    if patch.state == agy_compaction.UNEXPECTED:
+        return t("The Antigravity plugin was not patched: its backend at {path} no longer has the shape this "
+                 "engine expects. Reinstall the pinned plugin or update the patch.", path=patch.path)
+    if patch.state == agy_compaction.FAILED:
+        return t("The Antigravity plugin could not be patched ({error}); '/compact' stays unavailable.",
+                 error=patch.detail)
+    return None
 
 
 def _missing_folders(setup: Setup, config: dict[str, Any]) -> list[str]:
@@ -190,4 +221,7 @@ def planned_lines(setup: Setup, config: dict[str, Any]) -> list[str]:
         missing = _missing_folders(setup, config)
         if missing:
             lines.append(_trust_plan(setup, missing))
+    compaction = _compaction_line(agy_compaction.apply(setup.state_dir, dry_run=True))
+    if compaction:
+        lines.append(compaction)
     return lines
