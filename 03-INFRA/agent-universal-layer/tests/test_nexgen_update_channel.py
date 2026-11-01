@@ -24,7 +24,7 @@ SCRIPTS = REAL_VAULT / "03-INFRA" / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from nexgen_core import update_channel as uc  # noqa: E402
+from nexgen_core import release_trust, update_channel as uc  # noqa: E402
 from nexgen_core import update_window, updater  # noqa: E402
 
 SSH_KEYGEN = shutil.which("ssh-keygen")
@@ -614,6 +614,25 @@ def test_a_developer_tip_signed_by_a_stranger_is_never_installed(tmp_path, monke
 
     assert _head(machine.engine) == owner_signed
     assert not (machine.engine / "foreign.txt").exists()
+
+
+@pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
+def test_a_commit_github_wrote_is_recognised_as_tooling(tmp_path):
+    """GitHub's web-flow merge is signed with GitHub's own key: tooling, not a release."""
+    machine = _machine(tmp_path, tip_signed=True)
+    head = _git(machine.origin, "rev-parse", "developer").stdout.strip()
+    assert not release_trust.is_github_written(machine.origin, head)
+
+    (machine.origin / "bot.txt").write_text("bot\n", encoding="utf-8")
+    _git(machine.origin, "add", "-A")
+    subprocess.run(
+        ["git", "-c", "user.name=GitHub", "-c", "user.email=noreply@github.com", "commit", "-q", "-m", "bot merge"],
+        cwd=machine.origin, check=True,
+        env={**os.environ, "GIT_COMMITTER_NAME": "GitHub", "GIT_COMMITTER_EMAIL": "noreply@github.com"},
+    )
+    bot = _git(machine.origin, "rev-parse", "HEAD").stdout.strip()
+
+    assert release_trust.is_github_written(machine.origin, bot)
 
 
 @pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")

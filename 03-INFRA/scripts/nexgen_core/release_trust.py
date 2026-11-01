@@ -351,6 +351,26 @@ def carries_signature(repo: Path, commit: str) -> bool:
     return _PGP_MARKER in body or _SSH_MARKER in body
 
 
+#: Committers GitHub writes merges as, through the web UI, the API or Actions.
+#: Their signatures are real but made with GitHub's own key, never a release key.
+GITHUB_COMMITTERS = ("noreply@github.com",)
+
+
+def is_github_written(repo: Path, commit: str) -> bool:
+    """Whether GitHub itself wrote this commit, so its signature is not a release one.
+
+    The merge that syncs `main` back into `developer` carries GitHub's web-flow
+    signature: a real signature by a key no install pins. It is tooling, not a
+    release, and reporting it every hour as a release this machine cannot trust
+    is the alarm that teaches people to ignore alarms.
+    """
+    resolved = _git(repo, "log", "-1", "--format=%ce", commit, env=_hermetic_env())
+    if resolved.returncode != 0:
+        return False
+    committer = resolved.stdout.strip().casefold()
+    return any(committer == known or committer.endswith("@" + known) for known in GITHUB_COMMITTERS)
+
+
 def verify_signed_commit(repo: Path, commit: str, *, trust_dir: Path | None = None) -> TagVerdict:
     """Verifies that ``commit`` carries a signature the pinned keys accept.
 
