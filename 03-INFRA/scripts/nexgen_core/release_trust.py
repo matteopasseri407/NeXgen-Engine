@@ -336,6 +336,21 @@ def verify_release_tag(repo: Path, tag: str, *, trust_dir: Path | None = None) -
         return TagVerdict(UNVERIFIABLE, f"signature check could not run ({type(exc).__name__})")
 
 
+def carries_signature(repo: Path, commit: str) -> bool:
+    """Whether the commit object carries a PGP or SSH signature at all.
+
+    A dev channel meets unsigned commits routinely: GitHub writes the merge that
+    syncs `main` back into `developer`, and it signs nothing. That is "nothing
+    signed to install yet", not "a release this install cannot trust", so the
+    caller needs to tell the two apart before it raises an alarm.
+    """
+    resolved = _git(repo, "rev-parse", "--verify", f"{commit}^{{commit}}", env=_hermetic_env())
+    if resolved.returncode != 0:
+        return False
+    body = _git(repo, "cat-file", "commit", resolved.stdout.strip()).stdout
+    return _PGP_MARKER in body or _SSH_MARKER in body
+
+
 def verify_signed_commit(repo: Path, commit: str, *, trust_dir: Path | None = None) -> TagVerdict:
     """Verifies that ``commit`` carries a signature the pinned keys accept.
 

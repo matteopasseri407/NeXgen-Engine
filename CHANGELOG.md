@@ -15,6 +15,7 @@ of any engine release.
 ### Changed
 
 - The Antigravity backend gets the manual compaction its plugin never declared; the hourly groomer stops failing on backends that cannot compact.
+- An update that is only waiting, because its commit has not passed the CI gates yet or because the newest commit on the branch carries no signature, is no longer reported as a release this install cannot trust: it waits quietly, and the alert is kept for a signature that really failed.
 
 ## [2.26.0] - 2026-10-31
 
