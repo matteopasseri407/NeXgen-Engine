@@ -140,6 +140,26 @@ def test_a_squad_manual_keeps_its_text_and_still_gets_the_machine_contract(tmp_p
     assert (directory / "AGENTS.md").read_text(encoding="utf-8") == text
 
 
+def test_a_workspace_that_carries_a_chart_is_still_the_engines_to_update():
+    """The chart is appended after the manual; it must not make the file look like the person's."""
+    from nexgen_core.openclaw.org_block import OPENCLAW_ORG_BEGIN, OPENCLAW_ORG_END
+    from nexgen_core.openclaw.setup_agents import next_manual_text
+
+    manual = render_workspace("main", "en")["AGENTS.md"]
+    existing = (
+        "<!-- nexgen:instructions:begin -->\npointer\n<!-- nexgen:instructions:end -->\n"
+        f"{manual}\n"
+        f"{OPENCLAW_ORG_BEGIN}\nchart\n{OPENCLAW_ORG_END}\n"
+    )
+
+    updated = next_manual_text(existing, "nuovo testo\n", (manual,))
+
+    assert updated is not None, "the engine's own file is updated, not treated as the person's"
+    assert updated.startswith("<!-- nexgen:instructions:begin -->")
+    assert "nuovo testo" in updated
+    assert OPENCLAW_ORG_BEGIN in updated, "the chart is carried over"
+
+
 def test_the_chart_names_the_machine_each_agent_controls():
     from nexgen_core.openclaw.hierarchy import render_org_block
 
