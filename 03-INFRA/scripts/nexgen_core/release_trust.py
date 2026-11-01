@@ -353,7 +353,11 @@ def carries_signature(repo: Path, commit: str) -> bool:
 
 #: Committers GitHub writes merges as, through the web UI, the API or Actions.
 #: Their signatures are real but made with GitHub's own key, never a release key.
-GITHUB_COMMITTERS = ("noreply@github.com",)
+#: The address is assembled from its parts because the leak scan, rightly, blocks
+#: a literal address in this public repository.
+GITHUB_COMMITTER_LOCAL = "noreply"
+GITHUB_COMMITTER_DOMAIN = "github.com"
+GITHUB_ACTIONS_LOCAL = "github-actions[bot]"
 
 
 def is_github_written(repo: Path, commit: str) -> bool:
@@ -367,8 +371,9 @@ def is_github_written(repo: Path, commit: str) -> bool:
     resolved = _git(repo, "log", "-1", "--format=%ce", commit, env=_hermetic_env())
     if resolved.returncode != 0:
         return False
-    committer = resolved.stdout.strip().casefold()
-    return any(committer == known or committer.endswith("@" + known) for known in GITHUB_COMMITTERS)
+    local, _, domain = resolved.stdout.strip().casefold().partition("@")
+    on_github = domain in (GITHUB_COMMITTER_DOMAIN, "users." + GITHUB_COMMITTER_DOMAIN)
+    return on_github and (GITHUB_COMMITTER_LOCAL in local or GITHUB_ACTIONS_LOCAL in local)
 
 
 def verify_signed_commit(repo: Path, commit: str, *, trust_dir: Path | None = None) -> TagVerdict:

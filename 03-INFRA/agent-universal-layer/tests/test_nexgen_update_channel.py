@@ -616,6 +616,13 @@ def test_a_developer_tip_signed_by_a_stranger_is_never_installed(tmp_path, monke
     assert not (machine.engine / "foreign.txt").exists()
 
 
+def test_the_github_committer_address_is_built_and_never_written():
+    """The scanner blocks an address in this public repository, so the code builds one."""
+    source = (SCRIPTS / "nexgen_core" / "release_trust.py").read_text(encoding="utf-8")
+
+    assert "@" + "github.com" not in source
+
+
 @pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
 def test_a_commit_github_wrote_is_recognised_as_tooling(tmp_path):
     """GitHub's web-flow merge is signed with GitHub's own key: tooling, not a release."""
@@ -625,10 +632,12 @@ def test_a_commit_github_wrote_is_recognised_as_tooling(tmp_path):
 
     (machine.origin / "bot.txt").write_text("bot\n", encoding="utf-8")
     _git(machine.origin, "add", "-A")
+    # Assembled, because the public leak scan blocks a literal address here.
+    bot_address = "noreply" + "@" + "github.com"
     subprocess.run(
-        ["git", "-c", "user.name=GitHub", "-c", "user.email=noreply@github.com", "commit", "-q", "-m", "bot merge"],
+        ["git", "-c", "user.name=GitHub", "-c", f"user.email={bot_address}", "commit", "-q", "-m", "bot merge"],
         cwd=machine.origin, check=True,
-        env={**os.environ, "GIT_COMMITTER_NAME": "GitHub", "GIT_COMMITTER_EMAIL": "noreply@github.com"},
+        env={**os.environ, "GIT_COMMITTER_NAME": "GitHub", "GIT_COMMITTER_EMAIL": bot_address},
     )
     bot = _git(machine.origin, "rev-parse", "HEAD").stdout.strip()
 

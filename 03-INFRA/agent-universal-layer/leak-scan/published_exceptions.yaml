@@ -50,3 +50,21 @@ exceptions:
     kind: pattern:h3
     match: "n@…ze (25 chars)"
     reason: a newline followed by the pytest parametrize decorator in a test string, read as an e-mail address
+  - rev: "5816f750c37536eb29ba738195d7cf2eef789c37"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_update_channel.py
+    line: 629
+    kind: pattern:h3
+    match: "no…om (18 chars)"
+    reason: GitHub's noreply committer address in a test and in its check, not a credential
+  - rev: "5816f750c37536eb29ba738195d7cf2eef789c37"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_update_channel.py
+    line: 631
+    kind: pattern:h3
+    match: "no…om (18 chars)"
+    reason: GitHub's noreply committer address in a test and in its check, not a credential
+  - rev: "5816f750c37536eb29ba738195d7cf2eef789c37"
+    path: 03-INFRA/scripts/nexgen_core/release_trust.py
+    line: 356
+    kind: pattern:h3
+    match: "no…om (18 chars)"
+    reason: GitHub's noreply committer address in a test and in its check, not a credential
