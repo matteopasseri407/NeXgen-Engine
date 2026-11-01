@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from nexgen_core.errors import NexgenError
-from nexgen_core.release_trust import BAD, UNTRUSTED, TagVerdict, carries_signature, verify_signed_commit
+from nexgen_core.release_trust import BAD, UNTRUSTED, TagVerdict, carries_signature, is_github_written, verify_signed_commit
 
 #: The version shape this engine releases in, and the one place it is parsed.
 SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
@@ -361,10 +361,10 @@ def _newest_signed_on_developer(engine_repo: Path, tip: str, trust_dir: Path | N
     first_refusal: ChannelRefused | None = None
     unsigned = 0
     for rev in candidates or [tip]:
-        if not carries_signature(engine_repo, rev):
+        if is_github_written(engine_repo, rev) or not carries_signature(engine_repo, rev):
             # GitHub writes the merge that syncs main back into developer, and it
-            # signs nothing. That is the normal quiet case, not a release this
-            # install cannot trust, so it is passed over without an alarm.
+            # signs it with its own key. That is the normal quiet case, not a
+            # release this install cannot trust, so it is passed over silently.
             unsigned += 1
             continue
         detail = "tip of developer" if rev == tip else f"newest commit of developer a pinned key signed, below {tip[:9]}"

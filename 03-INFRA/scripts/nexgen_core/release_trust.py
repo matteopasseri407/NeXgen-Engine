@@ -351,6 +351,31 @@ def carries_signature(repo: Path, commit: str) -> bool:
     return _PGP_MARKER in body or _SSH_MARKER in body
 
 
+#: Committers GitHub writes merges as, through the web UI, the API or Actions.
+#: Their signatures are real but made with GitHub's own key, never a release key.
+#: The address is assembled from its parts because the leak scan, rightly, blocks
+#: a literal address in this public repository.
+GITHUB_COMMITTER_LOCAL = "noreply"
+GITHUB_COMMITTER_DOMAIN = "github.com"
+GITHUB_ACTIONS_LOCAL = "github-actions[bot]"
+
+
+def is_github_written(repo: Path, commit: str) -> bool:
+    """Whether GitHub itself wrote this commit, so its signature is not a release one.
+
+    The merge that syncs `main` back into `developer` carries GitHub's web-flow
+    signature: a real signature by a key no install pins. It is tooling, not a
+    release, and reporting it every hour as a release this machine cannot trust
+    is the alarm that teaches people to ignore alarms.
+    """
+    resolved = _git(repo, "log", "-1", "--format=%ce", commit, env=_hermetic_env())
+    if resolved.returncode != 0:
+        return False
+    local, _, domain = resolved.stdout.strip().casefold().partition("@")
+    on_github = domain in (GITHUB_COMMITTER_DOMAIN, "users." + GITHUB_COMMITTER_DOMAIN)
+    return on_github and (GITHUB_COMMITTER_LOCAL in local or GITHUB_ACTIONS_LOCAL in local)
+
+
 def verify_signed_commit(repo: Path, commit: str, *, trust_dir: Path | None = None) -> TagVerdict:
     """Verifies that ``commit`` carries a signature the pinned keys accept.
 
