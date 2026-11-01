@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.26.2] - 2026-11-01
+
+### Changed
+
+- An update that is only waiting, for its CI gates or for a signature GitHub never adds, is no longer reported as a release this install cannot trust.
+
 ## [2.26.1] - 2026-11-01
 
 ### Changed
