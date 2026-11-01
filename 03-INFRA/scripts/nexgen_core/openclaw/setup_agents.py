@@ -27,7 +27,7 @@ from typing import Any
 from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
 from nexgen_core.openclaw.squad import INSTRUCTION_MARK
-from nexgen_core.openclaw.templates import render_workspace, shipped_manuals
+from nexgen_core.openclaw.templates import machine_contract, render_workspace, shipped_manuals
 
 #: The first-run file OpenClaw leaves in a new workspace. It starts a
 #: conversation that redefines the agent, which is exactly what must not happen
@@ -257,18 +257,23 @@ def _prepare_manuals(
 ) -> int:
     """The workspace's `AGENTS.md`: the squad's text, the machine's, or the role's.
 
-    A squad's own instructions win over both, because they are the person's. The
-    machine manual and the role manual are both the engine's text, and a role
-    manual turned into a machine manual is replaced rather than kept: both
-    wordings are in the fingerprint `write_instructions` recognises.
+    A squad's own instructions win over both, because they are the person's, and
+    the machine's contract is appended under them all the same: the role text
+    says who the agent is, and the contract says what it does with that machine's
+    harnesses. The machine manual and the role manual are both the engine's text,
+    and a role manual turned into a machine manual is replaced rather than kept:
+    both wordings are in the fingerprint `write_instructions` recognises.
     """
     written = _write_manuals(
         directory, agent_id, lang, replace=fresh, emit=emit,
         omit=INSTRUCTIONS_FILE if (declared or node) else None, node=node,
     )
     if declared:
+        text = declared
+        if node:
+            text = f"{text.rstrip(chr(10))}\n\n{machine_contract(node, lang)}\n"
         return written + write_instructions(
-            directory / INSTRUCTIONS_FILE, declared, fresh, emit, shipped_manuals(agent_id, node),
+            directory / INSTRUCTIONS_FILE, text, fresh, emit, shipped_manuals(agent_id, node),
         )
     if node:
         return written + write_instructions(

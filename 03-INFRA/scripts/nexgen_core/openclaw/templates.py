@@ -18,6 +18,7 @@ from nexgen_core.openclaw.manual_legacy import PREVIOUS_HANDOVER
 from nexgen_core.openclaw.manual_text import (
     CLAUDE_POINTER,
     HANDOVER,
+    MACHINE_CONTRACT,
     MANUALS,
     VAULT_WRITE_RULE,
 )
@@ -74,6 +75,16 @@ def _manual_name(agent: str, node: str | None) -> str | None:
     if (node or "").strip():
         return "node"
     return AGENTS.get(agent)
+
+
+def machine_contract(node: str, lang: str | None = None) -> str:
+    """The machine's rules alone, for a workspace whose manual the squad declares.
+
+    A squad that writes its own `agents_md` says who the agent is; the contract
+    says what it does with that machine's harnesses, and it is the engine's to
+    keep in one place rather than a paragraph every machine's file copies.
+    """
+    return MACHINE_CONTRACT[_language(lang)].replace("{node}", node.strip())
 
 
 def _previous_manual(agent: str, language: str, node: str | None = None) -> str:
