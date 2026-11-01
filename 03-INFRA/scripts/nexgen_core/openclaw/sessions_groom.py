@@ -22,7 +22,8 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import groom_memory
+from nexgen_core.openclaw import agy_compaction, groom_memory
+from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
 
 #: A context this large is compacted even while the chat is in use.
 HARD_TOKENS = 600_000
@@ -87,6 +88,12 @@ def _policy_decisions(entries: Iterable[Mapping[str, Any]], now_ms: float) -> li
             continue
         if (entry.get("status") or "") in BUSY_STATES:
             continue
+        # A counter the gateway itself marks stale is not evidence of pressure:
+        # after a compaction it reports the summarising call's usage, which says
+        # nothing about what the next turn will carry. Acting on it would compact
+        # the same chat every hour.
+        if entry.get("totalTokensFresh") is False:
+            continue
         tokens = int(entry.get("totalTokens") or 0)
         if tokens <= 0:
             continue
@@ -110,25 +117,49 @@ def _policy_decisions(entries: Iterable[Mapping[str, Any]], now_ms: float) -> li
 
 
 def plan_groom(
-    entries: Iterable[Mapping[str, Any]], now_ms: float, memory: Mapping[str, dict[str, Any]] | None = None
+    entries: Iterable[Mapping[str, Any]],
+    now_ms: float,
+    memory: Mapping[str, dict[str, Any]] | None = None,
+    blocked: frozenset[str] = UNCONFIRMABLE_RUNTIMES,
 ) -> list[Decision]:
     """The sessions worth compacting, in the order they were listed.
 
     `memory` is what earlier runs attempted: a session whose counters have not
-    moved since an attempt that ended well is not worth another try.
+    moved since an attempt that ended well is not worth another try. `blocked`
+    is the set of backends this machine cannot ask to compact; the gateway host
+    passes the one `blocked_runtimes` computed, a test that drives the policy
+    alone gets the conservative default.
     """
     remembered = memory or {}
     return [
         decision
         for decision in _policy_decisions(entries, now_ms)
-        if decision.runtime not in UNCONFIRMABLE_RUNTIMES
+        if decision.runtime not in blocked
         and not groom_memory.settled(remembered, decision.key, decision.fingerprint)
     ]
 
 
-def unconfirmable(entries: Iterable[Mapping[str, Any]], now_ms: float) -> list[Decision]:
+def unconfirmable(
+    entries: Iterable[Mapping[str, Any]],
+    now_ms: float,
+    blocked: frozenset[str] = UNCONFIRMABLE_RUNTIMES,
+) -> list[Decision]:
     """The sessions the policy picks but whose backend cannot prove a compaction ran."""
-    return [d for d in _policy_decisions(entries, now_ms) if d.runtime in UNCONFIRMABLE_RUNTIMES]
+    return [d for d in _policy_decisions(entries, now_ms) if d.runtime in blocked]
+
+
+def blocked_runtimes(state_dir: Path | None) -> frozenset[str]:
+    """The backends this machine cannot honestly ask to compact.
+
+    `claude-cli` stays blocked. `google-antigravity-cli` is blocked only while
+    the installed plugin carries no manual compaction: the engine adds one that
+    runs `agy`'s own `/compact`, so once the marker is there asking is right.
+    A plugin update that overwrites the file removes the marker, and the same
+    check puts the backend back here instead of failing the hourly run.
+    """
+    if state_dir is not None and agy_compaction.patched(state_dir):
+        return UNCONFIRMABLE_RUNTIMES - {LOCAL_AGY_BACKEND}
+    return UNCONFIRMABLE_RUNTIMES
 
 
 def _resolve_binary(name: str = "openclaw") -> str:
@@ -200,6 +231,16 @@ def compact(openclaw: str, decision: Decision, timeout: int = 300) -> Outcome:
     return _classify(proc)
 
 
+def _state_dir(home: Path | None) -> Path | None:
+    """OpenClaw's own folder, where the installed plugins live; None when it cannot be named."""
+    from nexgen_core.paths import openclaw_config
+
+    try:
+        return Path(openclaw_config(home)).parent
+    except OSError:  # nexgen: allow reason="a state folder that cannot be resolved leaves every backend blocked, which is the safe answer"
+        return None
+
+
 def _line(decision: Decision, outcome: str) -> str:
     minutes = int(decision.idle_seconds // 60)
     return f"{decision.key}: {decision.tokens} tokens, idle {minutes}m ({decision.reason}) -> {outcome}"
@@ -241,14 +282,15 @@ def groom(
     moment = now_ms if now_ms is not None else (clock or _time.time)() * 1000
     entries = list_sessions(binary)
     memory = groom_memory.load_memory(home)
+    blocked = blocked_runtimes(_state_dir(home))
     lines: list[str] = []
     if dry_run:
-        for decision in unconfirmable(entries, moment):
+        for decision in unconfirmable(entries, moment, blocked):
             lines.append(_line(decision, t("skipped: the {runtime} backend cannot confirm a native compaction",
                                            runtime=decision.runtime)))
             emit(lines[-1])
     attempts: list[tuple[Decision, Outcome]] = []
-    for decision in plan_groom(entries, moment, memory=memory):
+    for decision in plan_groom(entries, moment, memory=memory, blocked=blocked):
         outcome = Outcome(DRY_RUN, DRY_RUN) if dry_run else compact(binary, decision)
         attempts.append((decision, outcome))
         lines.append(_line(decision, outcome.line))
