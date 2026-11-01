@@ -41,7 +41,7 @@ def machine(*, claude: bool = True, go: bool = True, n8n: bool = True) -> Detect
 
 
 def _config() -> dict:
-    """The default roster the engine proposes: main, capo, automazioni, sviluppo."""
+    """The default roster the engine proposes: `main` alone, until a squad says otherwise."""
     return build_config(machine(), Choices())
 
 
@@ -52,7 +52,7 @@ def test_the_default_roster_writes_no_agent_to_agent_restriction():
     """OpenClaw's default is every pair allowed: the engine no longer narrows it."""
     config = _config()
 
-    assert list(config["agents"]["entries"]) == ["main", "capo", "automazioni", "sviluppo"]
+    assert list(config["agents"]["entries"]) == ["main"]
     assert "agentToAgent" not in config["tools"]
     for agent_id, entry in config["agents"]["entries"].items():
         assert "agentToAgent" not in entry.get("tools", {}), agent_id

@@ -20,6 +20,7 @@ import yaml
 from nexgen_core.i18n import t
 from nexgen_core.openclaw import agy_backend, agy_prereqs, channels, model_policy
 from nexgen_core.openclaw.claude_cli import CLAUDE_CLI
+from nexgen_core.openclaw.node_agents import NODE_KEY, exec_on_node
 from nexgen_core.openclaw.runtime import apply_runtime
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
 from nexgen_core.processes import no_window_kwargs
@@ -317,11 +318,14 @@ def _apply_agent_entry(entry: dict[str, Any], spec: Mapping[str, Any], agent_id:
         entry.setdefault("tools", {})["agentToAgent"] = declared_tools["agentToAgent"]
     # `exec` at the agent's own level is the documented place for its policy;
     # the older `tools.exec` shape still works and the newer field wins per key.
+    # `node:` is the one-line spelling of "this agent's shell is that machine":
+    # it fills the routing keys the agent did not set itself, and never overrides
+    # a routing decision the person wrote.
     policy = _exec_policy(spec)
     nested = declared_tools.get("exec")
-    if policy or isinstance(nested, dict):
-        merged = dict(nested) if isinstance(nested, dict) else {}
-        merged.update(policy)
+    pinned = exec_on_node(spec[NODE_KEY]) if _declared_node(spec) else {}
+    if policy or pinned or isinstance(nested, dict):
+        merged = {**pinned, **(nested if isinstance(nested, dict) else {}), **policy}
         entry.setdefault("tools", {})["exec"] = _normalized_exec(merged)
     elif "exec" in declared_tools:
         # A shape OpenClaw will refuse is copied as declared, not dropped in silence.
@@ -344,6 +348,12 @@ def _tools_deny(spec: Mapping[str, Any]) -> list[str] | None:
     if not isinstance(declared, list):
         return None
     return [item.strip() for item in declared if isinstance(item, str) and item.strip()]
+
+
+def _declared_node(spec: Mapping[str, Any]) -> bool:
+    """Whether this agent declares a machine with `node:`, in a shape worth writing."""
+    value = spec.get(NODE_KEY)
+    return isinstance(value, str) and bool(value.strip())
 
 
 def get_squad_skills(squad: dict[str, Any] | None) -> dict[str, list[str]]:

@@ -686,6 +686,7 @@ def test_a_manual_the_person_wrote_is_never_overwritten(tmp_path):
     (capo / "AGENTS.md").write_text("il mio manuale\n", encoding="utf-8")
     (capo / "BOOTSTRAP.md").write_text("mio file\n", encoding="utf-8")
     machine.runner.onboard = onboard_writer(machine.config, machine.state_dir / "workspace")
+    declare_squad(machine, SQUAD_WITH_CLAUDE_LEAD)
 
     assert machine.run() == 0
     text = (capo / "AGENTS.md").read_text(encoding="utf-8")
@@ -706,11 +707,33 @@ def test_the_first_run_file_is_removed_only_from_a_folder_onboarding_made(tmp_pa
     assert "main assistant of this installation" in manual
 
 
-def test_the_opencode_agent_name_is_translated_while_its_id_stays(tmp_path):
+SQUAD_WITH_DEVELOPER = """agents:
+  main:
+    model: opencode-go/deepseek-v4.1-flash
+  sviluppo:
+    model: opencode-go/deepseek-v4.1-flash
+"""
+
+SQUAD_WITH_CLAUDE_LEAD = """agents:
+  main:
+    model: opencode-go/deepseek-v4.1-flash
+  capo:
+    model: anthropic/claude-opus-5-5
+"""
+
+
+def declare_squad(machine: Machine, body: str) -> None:
+    """A team the person declared: the engine creates only `main` on its own."""
+    machine.vault.mkdir(parents=True, exist_ok=True)
+    (machine.vault / "squad.yaml").write_text(body, encoding="utf-8")
+
+
+def test_a_squad_declared_agent_keeps_the_id_and_the_name_it_declares(tmp_path):
     i18n.set_language("it")
     machine = Machine(tmp_path)
     machine.config.parent.mkdir(parents=True)
     machine.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
+    declare_squad(machine, SQUAD_WITH_DEVELOPER)
 
     assert machine.run(detected=detection(machine.config, opencode=True, go=True)) == 0
     sviluppo = machine.config_json()["agents"]["entries"]["sviluppo"]
@@ -723,12 +746,12 @@ def test_the_opencode_agent_appears_only_with_its_command_and_its_key(tmp_path):
     machine = Machine(tmp_path)
     machine.config.parent.mkdir(parents=True)
     machine.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
+    declare_squad(machine, SQUAD_WITH_DEVELOPER)
 
     assert machine.run(detected=detection(machine.config, opencode=True, go=True)) == 0
     written = machine.config_json()
     sviluppo = written["agents"]["entries"]["sviluppo"]
-    assert sviluppo["name"] == "developer"
-    assert sviluppo["identity"] == {"name": "developer"}
+    assert sviluppo["name"] == "sviluppo"
     # A direct chat with an ACP-runtime agent answers with the default model, so the agent is native
     # and opens real OpenCode sessions over ACP; the bridge launches the installed OpenCode, not npx's V1.
     assert sviluppo["model"] == "opencode-go/deepseek-v4.1-flash"
@@ -1278,16 +1301,20 @@ def test_a_claude_cli_agent_reads_its_connectors_from_claude_code(tmp_path):
     manifest = machine.vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
     manifest.parent.mkdir(parents=True, exist_ok=True)
     manifest.write_text(CLAUDE_CLI_MANIFEST, encoding="utf-8")
+    declare_squad(machine, SQUAD_WITH_CLAUDE_LEAD)
 
     code = machine.run(detected=detection(machine.config, installed=False, claude=True))
 
     assert code == 0
     from nexgen_core.openclaw.tools_profile import SUPERVISOR_TOOLS
 
-    capo = machine.config_json()["agents"]["entries"]["capo"]
+    entries = machine.config_json()["agents"]["entries"]
+    capo = entries["capo"]
     assert capo["tools"]["deny"] == ["n8n-mcp__*", "vault-library__*"]
-    assert capo["tools"]["alsoAllow"] == sorted(SUPERVISOR_TOOLS), \
-        "the deny is added beside the supervisor's own list, never instead of it"
+    # The supervisor is the agent the engine creates (`main`) unless the squad
+    # names another one: the deny is written on its own, never instead of a list.
+    assert "alsoAllow" not in capo["tools"]
+    assert entries["main"]["tools"]["alsoAllow"] == sorted(SUPERVISOR_TOOLS)
     native = json.loads((machine.home / ".claude.json").read_text(encoding="utf-8"))["mcpServers"]
     assert set(native) == {"vault-library", "n8n-mcp"}
     assert "The connectors of capo reach it through OpenClaw's gateway, not the loopback server." in machine.output()

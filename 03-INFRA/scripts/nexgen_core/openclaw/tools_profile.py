@@ -28,11 +28,11 @@ LOCAL_DENY = (
     "playwright__*",
 )
 
-#: The agent that supervises work, and the plugin tools that change the engine's state.
-#: The plugin registers those as `optional`, which in OpenClaw means "not exposed until an
-#: operator allowlists this exact name": this list, written on one agent, is that operator.
-#: The names are also in the plugin manifest and in `sup-tools.mjs`, and a test fails when
-#: the three drift apart.
+#: The id of the one agent the engine creates before a squad says otherwise.
+SINGLE_AGENT = "main"
+#: The id that supervised before the engine stopped inventing a team. An install
+#: that already carries it keeps the supervision tools there: moving them would
+#: change who can act on the engine on a machine that was working.
 SUPERVISOR_AGENT = "capo"
 SUPERVISOR_TOOLS = (
     "nexgen_sup_start",
@@ -42,6 +42,19 @@ SUPERVISOR_TOOLS = (
     "nexgen_sup_review",
     "nexgen_sup_publish",
 )
+
+
+def supervisor_agent(current: dict[str, Any] | None) -> str:
+    """Who supervises this installation: the agent the file already has, else the one agent.
+
+    A fresh install gets one agent, and it supervises because nothing else exists
+    to escalate against. A file that still carries `capo` keeps supervising from
+    there, so an update never moves the permission behind the person's back.
+    """
+    entries = (current or {}).get("agents", {}).get("entries") if isinstance(current, dict) else None
+    if isinstance(entries, dict) and SUPERVISOR_AGENT in entries:
+        return SUPERVISOR_AGENT
+    return SINGLE_AGENT
 
 #: MCP servers whose tools write, and the names of those tools, expressed once as
 #: data. OpenClaw names them `server__tool`, so a pattern here reads as "no
@@ -89,8 +102,9 @@ def person_allow_list(current: dict[str, Any] | None) -> bool:
     allowlist for that agent keeps it: the engine says what to add there instead of writing
     a file OpenClaw would refuse to load.
     """
+    agent = supervisor_agent(current)
     entries = current.get("agents", {}).get("entries") if isinstance(current, dict) else None
-    entry = entries.get(SUPERVISOR_AGENT) if isinstance(entries, dict) else None
+    entry = entries.get(agent) if isinstance(entries, dict) else None
     tools = entry.get("tools") if isinstance(entry, dict) else None
     return isinstance(tools, dict) and isinstance(tools.get("allow"), list)
 
@@ -103,7 +117,7 @@ def allow_supervisor_tools(entries: dict[str, Any], current: dict[str, Any] | No
     """
     if person_allow_list(current):
         return
-    entry = entries.get(SUPERVISOR_AGENT)
+    entry = entries.get(supervisor_agent(current))
     if not isinstance(entry, dict):
         return
     tools = entry.get("tools") if isinstance(entry.get("tools"), dict) else {}

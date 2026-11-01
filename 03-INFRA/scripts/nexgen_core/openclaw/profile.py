@@ -31,7 +31,7 @@ from typing import Any
 from nexgen_core.i18n import detect_language
 from nexgen_core.openclaw import agy_backend, background, model_policy, observation
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
-from nexgen_core.openclaw.acp import SVILUPPO_ID, SVILUPPO_NAMES, acp_block, acpx_entry, sviluppo_enabled
+from nexgen_core.openclaw.acp import acp_block, acpx_entry, sviluppo_enabled
 from nexgen_core.openclaw.detect import Detection
 from nexgen_core.openclaw.gateway_section import gateway_block
 from nexgen_core.openclaw.local_models import local_models, provider_blocks
@@ -75,20 +75,12 @@ BASE_PLUGINS = (
 CLAUDE_MODEL = "anthropic/claude-opus-5-5"
 CODEX_MODEL = "openai/gpt-6-luna"
 GO_MAIN_MODEL = "opencode-go/deepseek-v4.1-flash"
-GO_CAPO_MODEL = "opencode-go/deepseek-v4-pro"
 
 #: The gateway's own port. Loopback by default; "lan" only for the phone app.
 GATEWAY_PORT = 18789
 #: Written as the token only when the file has none: an existing token is the
 #: person's and is never replaced. A placeholder, never a secret.
 PENDING_TOKEN = "generated-by-nexgen-setup"
-
-#: How each agent introduces itself, in the language the engine speaks. The id
-#: stays `main`/`capo`/`automazioni`; only the person-facing name changes.
-IDENTITY_NAMES: dict[str, dict[str, str]] = {
-    "it": {"main": "assistente", "capo": "capo", "automazioni": "automazioni"},
-    "en": {"main": "assistant", "capo": "lead", "automazioni": "automations"},
-}
 
 
 @dataclass(frozen=True)
@@ -210,26 +202,20 @@ def _first_available(candidates: list[str | None]) -> str | None:
 
 
 def agent_models(detected: Detection, choices: Choices | None = None) -> dict[str, str]:
-    """The model each agent runs, in the order the engine prefers, for this machine."""
+    """The one agent a machine gets before its squad says otherwise.
+
+    A team belongs to the person, not to the engine: the engine creates the
+    single entry that keeps OpenClaw usable and lets `squad.yaml` add everyone
+    else. The models a machine can reach are still detected here, because the
+    one agent has to run something real.
+    """
     local_refs = [model.ref for model in local_models(detected)]
     claude = CLAUDE_MODEL if detected.claude.available else None
     codex = CODEX_MODEL if detected.codex.available else None
     go = detected.opencode_go
 
-    chosen: dict[str, str] = {}
     main = _first_available([GO_MAIN_MODEL if go else None, *local_refs, codex, claude])
-    if main:
-        chosen["main"] = main
-    capo = _first_available([claude, codex, GO_CAPO_MODEL if go else None])
-    if capo:
-        chosen["capo"] = capo
-    if detected.n8n:
-        automazioni = _first_available([GO_CAPO_MODEL if go else None, claude])
-        if automazioni:
-            chosen["automazioni"] = automazioni
-    if sviluppo_enabled(detected, (choices or Choices()).sviluppo):
-        chosen[SVILUPPO_ID] = GO_MAIN_MODEL
-    return chosen
+    return {"main": main} if main else {}
 
 
 def _state_dir(detected: Detection) -> Path | None:
@@ -253,6 +239,13 @@ def _workspace(agent_id: str, current: dict[str, Any] | None, state_dir: Path | 
 
 
 def _existing_agent_name(current: dict[str, Any] | None, agent_id: str) -> str | None:
+    """The name the person gave this agent, or None when the entry only repeats its id.
+
+    An entry's `name` is always written, and it defaults to the id: reading that
+    back as an identity would add `identity.name` on the second setup of every
+    machine, which is a file that changes for no reason and a gateway restarted
+    for nothing.
+    """
     if not isinstance(current, dict):
         return None
     entries = current.get("agents", {}).get("entries", {}) if isinstance(current.get("agents"), dict) else {}
@@ -260,26 +253,30 @@ def _existing_agent_name(current: dict[str, Any] | None, agent_id: str) -> str |
     if not isinstance(agent_entry, dict):
         return None
     identity = agent_entry.get("identity") if isinstance(agent_entry.get("identity"), dict) else {}
-    return identity.get("name") or agent_entry.get("name")
+    name = identity.get("name") or agent_entry.get("name")
+    if not isinstance(name, str) or not name.strip() or name.strip() == agent_id:
+        return None
+    return name.strip()
 
 
-def _sviluppo_entry(model: str, current: dict[str, Any] | None, state_dir: Path | None, language: str) -> dict[str, Any]:
-    """The OpenCode agent: a native agent on the Go key that drives real OpenCode.
+def with_agent_workspaces(
+    config: dict[str, Any], current: dict[str, Any] | None, state_dir: Path | None
+) -> dict[str, Any]:
+    """Give every agent a folder: the one it already has, or an absolute one of its own.
 
-    Not `runtime.type: "acp"`: OpenClaw routes an ACP agent to its harness only
-    inside a bound session, and in a direct chat it answered with the default
-    model (a local one) instead. The work on code still runs in OpenCode one to
-    one: the agent opens it with `sessions_spawn` (runtime `acp`, agent
-    `opencode`), as its manual says, and the session shows up in the panel.
+    A squad may declare any agent it likes, and OpenClaw needs a workspace for
+    each one. Without this pass an agent declared with only a model would land
+    wherever OpenClaw decides, not in the folder a person would look in.
     """
-    existing_name = _existing_agent_name(current, SVILUPPO_ID)
-    name = existing_name or SVILUPPO_NAMES[language]
-    entry: dict[str, Any] = {"name": name, "identity": {"name": name}}
-    workspace = _workspace(SVILUPPO_ID, current, state_dir)
-    if workspace:
-        entry["workspace"] = workspace
-    entry["model"] = model
-    return entry
+    agents = config.get("agents") if isinstance(config.get("agents"), dict) else {}
+    entries = agents.get("entries") if isinstance(agents.get("entries"), dict) else {}
+    for agent_id, entry in entries.items():
+        if not isinstance(entry, dict) or entry.get("workspace"):
+            continue
+        workspace = _workspace(str(agent_id), current, state_dir)
+        if workspace:
+            entry["workspace"] = workspace
+    return config
 
 
 def _tools_section(models: tuple[Any, ...], current: dict[str, Any] | None) -> dict[str, Any]:
@@ -324,27 +321,23 @@ def _default_model(agents: dict[str, str], current: dict[str, Any] | None) -> di
 
 
 def _agent_entries(models: dict[str, str], detected: Detection, current: dict[str, Any] | None, language: str) -> dict[str, Any]:
-    """The agents to create, with only the options that belong to the model chosen."""
+    """The agents the engine itself creates, with only the options that belong to the model.
+
+    No name is invented: an identity belongs to the person's squad, so an entry
+    keeps the name it already had and otherwise says nothing. Only `main` is
+    created here unless the current file already carries more, which keeps an
+    existing installation exactly as it was.
+    """
     state_dir = _state_dir(detected)
     entries: dict[str, Any] = {}
     for agent_id, model in models.items():
-        if agent_id == SVILUPPO_ID:
-            entries[agent_id] = _sviluppo_entry(model, current, state_dir, language)
-            continue
         existing_name = _existing_agent_name(current, agent_id)
-        default_name = IDENTITY_NAMES[language].get(agent_id, agent_id)
-        chosen_name = existing_name or default_name
-        entry: dict[str, Any] = {
-            "name": agent_id,
-            "identity": {"name": chosen_name},
-            "model": model,
-        }
+        entry: dict[str, Any] = {"name": agent_id, "model": model}
+        if existing_name:
+            entry["identity"] = {"name": existing_name}
         workspace = _workspace(agent_id, current, state_dir)
         if workspace:
             entry["workspace"] = workspace
-        if agent_id == "capo" and model == CLAUDE_MODEL:
-            entry["thinkingDefault"] = "high"
-            entry["runtime"] = {"type": "embedded"}
         entries[agent_id] = entry
     return entries
 

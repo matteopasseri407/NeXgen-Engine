@@ -184,6 +184,15 @@ def test_every_agent_the_written_file_puts_on_claude_cli_keeps_the_connectors_of
     """The regression: the deny was computed on the proposal, the doctor reads the file."""
     home = _home(tmp_path)
     renderer = _renderer(tmp_path, home)
+    # The engine creates one agent; `capo` exists because the person declared it.
+    (renderer.vault_data / "squad.yaml").write_text(
+        "agents:\n"
+        "  main:\n"
+        f"    model: {GO_REF}\n"
+        "  capo:\n"
+        f"    model: {CLAUDE_MODEL}\n",
+        encoding="utf-8",
+    )
     path = _put(home, _carried_file())
 
     document = _written(_plan(home, renderer), path)

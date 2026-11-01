@@ -76,10 +76,11 @@ def _write_manuals(
     replace: bool,
     emit: Callable[[str], None],
     omit: str | None = None,
+    node: str | None = None,
 ) -> int:
     """Write the manuals that are missing; a file already there stays byte for byte."""
     try:
-        files = render_workspace(agent_id, lang)
+        files = render_workspace(agent_id, lang, node)
     except ValueError as exc:
         emit(t("Skipping the manual for {agent}: {error}", agent=agent_id, error=exc))
         return 0
@@ -214,11 +215,12 @@ def _write_org_chart(
     roster: Sequence[str],
     reports_to: Mapping[str, str],
     emit: Callable[[str], None],
+    nodes: Mapping[str, str] | None = None,
 ) -> None:
     """The chart block for one workspace, once per folder however many agents share it."""
     from nexgen_core.openclaw.org_block import align_openclaw_org_block
 
-    action = align_openclaw_org_block(directory, agents, lang, roster, reports_to)
+    action = align_openclaw_org_block(directory, agents, lang, roster, reports_to, nodes)
     if action:
         emit(action)
 
@@ -244,6 +246,51 @@ def _close_workspace(
     ))
 
 
+def _prepare_manuals(
+    directory: Path,
+    agent_id: str,
+    lang: str | None,
+    fresh: bool,
+    emit: Callable[[str], None],
+    declared: str | None,
+    node: str | None,
+) -> int:
+    """The workspace's `AGENTS.md`: the squad's text, the machine's, or the role's.
+
+    A squad's own instructions win over both, because they are the person's. The
+    machine manual and the role manual are both the engine's text, and a role
+    manual turned into a machine manual is replaced rather than kept: both
+    wordings are in the fingerprint `write_instructions` recognises.
+    """
+    written = _write_manuals(
+        directory, agent_id, lang, replace=fresh, emit=emit,
+        omit=INSTRUCTIONS_FILE if (declared or node) else None, node=node,
+    )
+    if declared:
+        return written + write_instructions(
+            directory / INSTRUCTIONS_FILE, declared, fresh, emit, shipped_manuals(agent_id, node),
+        )
+    if node:
+        return written + write_instructions(
+            directory / INSTRUCTIONS_FILE,
+            render_workspace(agent_id, lang, node)["AGENTS.md"],
+            fresh, emit,
+            tuple(dict.fromkeys([*shipped_manuals(agent_id), *shipped_manuals(agent_id, node)])),
+        )
+    return written
+
+
+def _prepare_soul(directory: Path, agent_id: str, souls: Mapping[str, str] | None) -> int:
+    """The generated `SOUL.md`, always rewritten: it is not a second copy of anything."""
+    if not souls or agent_id not in souls:
+        return 0
+    # Always, because it is generated: a SOUL.md kept "only if missing" is a
+    # second copy of the identity, and whoever edits it inside OpenClaw gets an
+    # agent the other CLIs never see.
+    atomic_write_text(directory / "SOUL.md", souls[agent_id])
+    return 1
+
+
 def prepare(
     dirs: Mapping[str, Path],
     created: set[str] | Mapping[str, bool],
@@ -254,6 +301,7 @@ def prepare(
     instructions: Mapping[str, str] | None = None,
     roster: Sequence[str] | None = None,
     squad: Mapping[str, Any] | None = None,
+    nodes: Mapping[str, str] | None = None,
 ) -> list[Path]:
     """Create each workspace, write the missing manuals, drop the first-run file.
 
@@ -261,7 +309,9 @@ def prepare(
     would do: no folder is made and no file is written. `roster` is the agents
     this machine has and `squad` is the one that declares who reports to whom:
     the org chart block written into each workspace says that instead of a fixed
-    list of names, and the roster's own owner derives it from the squad.
+    list of names, and the roster's own owner derives it from the squad. `nodes`
+    maps an agent to the machine it controls, which selects the machine manual
+    and adds that machine to the chart.
     """
     from nexgen_core.openclaw.hierarchy import declared_leads
 
@@ -277,26 +327,15 @@ def prepare(
         directory.mkdir(parents=True, exist_ok=True)
         if missing:
             made.append(directory)
-        declared = (instructions or {}).get(agent_id)
-        written = _write_manuals(
-            directory, agent_id, lang, replace=fresh, emit=emit,
-            omit=INSTRUCTIONS_FILE if declared else None,
+        written = _prepare_manuals(
+            directory, agent_id, lang, fresh, emit,
+            (instructions or {}).get(agent_id), (nodes or {}).get(agent_id),
         )
-        if declared:
-            written += write_instructions(
-                directory / INSTRUCTIONS_FILE, declared, fresh, emit, shipped_manuals(agent_id),
-            )
         if grouped[directory][0] == agent_id:
             _write_org_chart(
                 directory, grouped[directory], lang,
-                tuple(dirs) if roster is None else roster, reports_to, emit,
+                tuple(dirs) if roster is None else roster, reports_to, emit, nodes,
             )
-        if souls and agent_id in souls:
-            soul_path = directory / "SOUL.md"
-            # Always, because it is generated: a SOUL.md kept "only if missing" is a
-            # second copy of the identity, and whoever edits it inside OpenClaw gets
-            # an agent the other CLIs never see.
-            atomic_write_text(soul_path, souls[agent_id])
-            written += 1
+        written += _prepare_soul(directory, agent_id, souls)
         _close_workspace(directory, agent_id, written, fresh, emit)
     return made

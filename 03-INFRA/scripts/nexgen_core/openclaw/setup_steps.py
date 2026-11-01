@@ -27,6 +27,7 @@ from nexgen_core.modules import current_host, write_state_file
 from nexgen_core.openclaw import host_preflight, npm_prefix, setup_commands, setup_write
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.governor import governor_section
+from nexgen_core.openclaw.node_agents import node_agents
 from nexgen_core.openclaw.pin import node_satisfies, pinned_version, required_node_version
 from nexgen_core.openclaw.setup_agents import agent_dirs, created_by_openclaw, prepare
 from nexgen_core.openclaw_pairing import qr as pairing_qr
@@ -377,7 +378,9 @@ def workspaces_step(setup: Setup, plan, before: set[str]) -> None:
     instructions, unreadable = get_squad_instructions(squad, squad_file)
     for path in unreadable:
         setup.out(t("The squad names an instructions file that cannot be read: {path}", path=path))
-    prepare(dirs, created, plan.choices.lang or None, setup.out, souls=souls, instructions=instructions, squad=squad)
+    nodes = node_agents(plan.config.get("agents", {}).get("entries") or {})
+    prepare(dirs, created, plan.choices.lang or None, setup.out, souls=souls, instructions=instructions,
+            squad=squad, nodes=nodes)
     # Only agents that declare `skills` are in this map: the others keep their folder as it is.
     skills = get_squad_skills(squad)
     if skills:

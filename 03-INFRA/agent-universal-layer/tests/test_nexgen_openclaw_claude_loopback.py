@@ -233,6 +233,15 @@ def test_the_plan_denies_every_connector_it_also_renders(tmp_path: Path) -> None
 
     home = _home(tmp_path)
     renderer = _renderer(tmp_path, home)
+    # The engine creates one agent; `capo` exists because the person declared it.
+    (renderer.vault_data / "squad.yaml").write_text(
+        "agents:\n"
+        "  main:\n"
+        f"    model: {GO_REF}\n"
+        "  capo:\n"
+        f"    model: {CLAUDE_REF}\n",
+        encoding="utf-8",
+    )
     path = _write_openclaw(home, {"mcp": {"servers": {"hand-added": {"command": "node", "args": ["x.mjs"]}}}})
 
     plan = build_plan(

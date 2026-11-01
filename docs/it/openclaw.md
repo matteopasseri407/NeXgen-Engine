@@ -27,16 +27,11 @@ Il motore non scarica mai un modello. Se non ne trova nessuno, il piano stampa c
 
 ## Gli agenti
 
-| Agente | Cosa fa | Modello, nell'ordine in cui viene provato |
-| --- | --- | --- |
-| `main` (assistente) | parla con la persona, cerca nel Vault, passa il lavoro ad altri | `opencode-go/deepseek-v4.1-flash`, poi un modello locale, poi Codex, poi Claude |
-| `capo` (code) | scrive e verifica codice | `anthropic/claude-opus-5-5` con `thinkingDefault: "high"` e il runtime integrato, poi Codex `openai/gpt-6-luna`, poi `opencode-go/deepseek-v4-pro` |
-| `automazioni` | costruisce e ripara workflow | solo con n8n attivo: `opencode-go/deepseek-v4-pro`, poi Claude |
-| `sviluppo` (developer) | lavora al progetto, uno a uno, dentro OpenCode | `opencode-go/deepseek-v4.1-flash`, e solo quando ci sono sia il comando `opencode` sia la chiave OpenCode Go |
+Il motore crea un agente solo: `main`, l'assistente che parla con la persona, cerca nel Vault e passa il lavoro ad altri. Gira sul primo modello che questa macchina raggiunge, in quest'ordine: `opencode-go/deepseek-v4.1-flash`, un modello locale, Codex, Claude. Una squadra è della persona, e `squad.yaml` è dove si dichiara (vedi [squad.md](squad.md)). Un'installazione che ha già `capo`, `automazioni` o `sviluppo` li tiene, e tiene gli strumenti di supervisione su `capo`, così un aggiornamento non sposta un permesso alle spalle della persona.
 
-Un agente senza modello disponibile non viene creato, e il piano dice quale e perché. Il motore prova i modelli in quell'ordine quando ne sceglie uno per un agente, così un abbonamento flat viene usato prima di una chiave a pagamento. Un modello locale precede uno cloud solo per l'assistente, dove la latenza conta più della profondità. La scelta si fa una volta, al setup; cosa succede quando il piano scelto si esaurisce è la politica descritta più sotto.
+Una squadra aggiunge un agente nominandolo. Ognuno riceve un `AGENTS.md` nella lingua del motore: chi è, cosa fa e cosa non fa, quando passare il lavoro a un altro agente con `sessions_send`, che il Council si chiama con `nexgen council`, e che il Vault si legge e si scrive con gli strumenti `vault-library__*`.
 
-Ogni agente riceve un `AGENTS.md` nella lingua del motore: chi è, cosa fa e cosa non fa, quando passare il lavoro a un altro agente con `sessions_send`, che il Council si chiama con `nexgen council`, e che il Vault si legge e si scrive con gli strumenti `vault-library__*`.
+Un agente che dichiara una macchina riceve un manuale diverso. `node: "MatteoPC"` lega la shell di quell'agente a quella macchina abbinata, e il manuale dice qual è il mestiere: riferire cosa gira lì, aprire lavoro supervisionato con `nexgen-local sup`, entrare in una CLI già aperta, dirlo subito se la macchina è spenta, e tenere lo stato sulla macchina. L'organigramma nomina la macchina che ogni agente controlla, ed è così che l'assistente sa a chi passare il lavoro di quel PC. Vedi [squad.md](squad.md#delega-di-esecuzione-al-nodo).
 
 A chi risponde e chi risponde a lui è un secondo blocco delimitato in quel file, intitolato `Organigramma` (o `Org chart`), scritto sia dal setup sia da `nexgen sync` a partire da `reportsTo`. Il manuale spedito è uguale su ogni macchina, quindi l'organico non può stare nel suo corpo.
 
