@@ -18,7 +18,6 @@ if str(SCRIPTS_DIR) not in sys.path:
 from nexgen_core.openclaw.detect import Detection, Installation, LocalModels, Login  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.plan import _supervisor_tool_note  # noqa: E402 - one line of the plan, tested where it is decided
 from nexgen_core.openclaw.profile import (  # noqa: E402
-    SUPERVISOR_AGENT,
     SUPERVISOR_TOOLS,
     Choices,
     build_config,
