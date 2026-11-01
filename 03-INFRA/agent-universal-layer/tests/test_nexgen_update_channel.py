@@ -292,7 +292,7 @@ def test_channel_stable_brings_a_nightly_machine_back_to_releases(tmp_path, monk
 def test_a_refused_switch_is_not_remembered(tmp_path):
     machine = _machine(tmp_path, tip_signed=False)
 
-    assert updater.main(["--yes", "--channel", "nightly"], environ=_env(machine)) == updater.EXIT_REFUSED
+    assert updater.main(["--yes", "--channel", "nightly"], environ=_env(machine)) == 1
 
     assert uc.read_channel(machine.state) == "stable"
     assert not (machine.state / uc.CHANNEL_FILE).exists()
@@ -566,18 +566,19 @@ def test_nightly_channel_installs_the_signed_developer_tip(tmp_path, monkeypatch
 
 
 def test_nightly_refuses_a_signed_tip_that_has_not_passed_the_ci_gates(tmp_path, monkeypatch):
-    """The gate lives between the signature and the merge: a red check is a refusal."""
+    """The gate lives between the signature and the merge: an unjudged commit waits, quietly."""
     from nexgen_core.release_trust import VERIFIED, TagVerdict
 
     machine = _machine(tmp_path, tip_signed=False)
     monkeypatch.setattr(uc, "developer_tip", lambda repo: "a" * 40)
+    monkeypatch.setattr(uc, "carries_signature", lambda *_a, **_k: True)
     monkeypatch.setattr(uc, "_signed_target", lambda *a, **k: uc.ChannelTarget(
         channel="nightly", rev="a" * 40, version="0.2.0", label="developer@aaaaaaaaa",
         detail="synthetic", verdict=TagVerdict(VERIFIED, "synthetic"),
     ))
     monkeypatch.setattr(uc, "checks_missing", lambda *_a, **_k: ["quick-windows=not finished"])
 
-    with pytest.raises(uc.ChannelRefused) as refused:
+    with pytest.raises(uc.ChannelNotProved) as refused:
         uc.nightly_target(machine.engine)
 
     assert "quick-windows=not finished" in str(refused.value)
@@ -586,13 +587,14 @@ def test_nightly_refuses_a_signed_tip_that_has_not_passed_the_ci_gates(tmp_path,
 
 @pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
 @pytest.mark.parametrize("flags", [["--yes"], ["--yes", "--allow-unverified"], ["--unattended"]])
-def test_an_unsigned_developer_tip_is_refused_in_every_mode(tmp_path, flags, capsys):
+def test_an_unsigned_developer_tip_is_never_installed_and_never_alerts(tmp_path, flags, capsys):
+    """GitHub's own merge signs nothing: that is "nothing new yet", not a refused release."""
     machine = _machine(tmp_path, tip_signed=False)
     before = _head(machine.engine)
 
     result = updater.main([*flags, "--channel", "nightly"], environ=_env(machine))
 
-    assert result == updater.EXIT_REFUSED
+    assert result == 1
     assert _head(machine.engine) == before
     assert "signed" in capsys.readouterr().err
 

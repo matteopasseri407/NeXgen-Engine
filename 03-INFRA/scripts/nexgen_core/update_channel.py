@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from nexgen_core.errors import NexgenError
-from nexgen_core.release_trust import BAD, UNTRUSTED, TagVerdict, verify_signed_commit
+from nexgen_core.release_trust import BAD, UNTRUSTED, TagVerdict, carries_signature, verify_signed_commit
 
 #: The version shape this engine releases in, and the one place it is parsed.
 SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
@@ -53,6 +53,17 @@ class ChannelError(NexgenError, RuntimeError):
 
 class ChannelRefused(ChannelError):
     """The channel answered, and the answer must not be installed (exit 70)."""
+
+
+class ChannelNotProved(ChannelRefused):
+    """Nothing newer is ready yet: no gate has judged it, or it carries no signature.
+
+    It is a refusal in the sense that nothing is installed, but it is not an
+    event: it clears itself at the next push the gates or the keys accept, and
+    it arrives every hour while a commit waits. The heartbeat turns exit 70 into
+    an alert, so this one carries a quiet exit instead: a warning that repeats
+    without anything to fix only teaches people to ignore the real ones.
+    """
 
 
 @dataclass(frozen=True)
@@ -325,7 +336,7 @@ def nightly_target(
     rev = target.rev
     missing = (checks_missing(REPO_SLUG, rev) if checks is None else checks(rev))
     if missing:
-        raise ChannelRefused(
+        raise ChannelNotProved(
             f"commit {rev[:9]} on nightly has not passed the CI gates developer requires: "
             f"{', '.join(missing)}. Nothing was installed; the next push that goes green opens the channel."
         )
@@ -348,13 +359,25 @@ def _newest_signed_on_developer(engine_repo: Path, tip: str, trust_dir: Path | N
     listed = _git(engine_repo, "rev-list", "--first-parent", f"--max-count={NIGHTLY_LOOKBACK}", tip, "--not", "HEAD")
     candidates = listed.stdout.split() if listed.returncode == 0 else [tip]
     first_refusal: ChannelRefused | None = None
+    unsigned = 0
     for rev in candidates or [tip]:
+        if not carries_signature(engine_repo, rev):
+            # GitHub writes the merge that syncs main back into developer, and it
+            # signs nothing. That is the normal quiet case, not a release this
+            # install cannot trust, so it is passed over without an alarm.
+            unsigned += 1
+            continue
         detail = "tip of developer" if rev == tip else f"newest commit of developer a pinned key signed, below {tip[:9]}"
         try:
             return _signed_target(engine_repo, rev, channel="nightly", detail=detail, trust_dir=trust_dir)
         except ChannelRefused as refused:  # nexgen: allow reason="a commit the pinned keys did not sign is passed over for the next one down, never installed"
             first_refusal = first_refusal or refused
-    raise first_refusal or ChannelRefused(f"no commit of {DEVELOPER_BRANCH} is signed by a pinned key")
+    if first_refusal is not None:
+        raise first_refusal
+    raise ChannelNotProved(
+        f"no commit of {DEVELOPER_BRANCH} above this install is signed yet ({unsigned} unsigned commit(s) at the tip). "
+        "Nothing was installed; the next signed push opens the channel."
+    )
 
 
 def beta_target(

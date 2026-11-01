@@ -960,10 +960,13 @@ def main(
         return 0
     except update_channel.ChannelError as exc:
         # A channel that cannot answer, or that answered "nothing installable",
-        # is a refusal this machine's owner can act on, not a crash. A refused
-        # signature keeps the exit code a refused release has (70).
+        # is a refusal this machine's owner can act on, not a crash. Only a
+        # release this install cannot trust keeps exit 70, which the heartbeat
+        # turns into an alert: a commit still waiting for its gates or its
+        # signature comes back every hour and must stay quiet.
         print(f"nexgen-update: ERROR: {exc}", file=sys.stderr)
-        return EXIT_REFUSED if isinstance(exc, update_channel.ChannelRefused) else 1
+        loud = isinstance(exc, update_channel.ChannelRefused) and not isinstance(exc, update_channel.ChannelNotProved)
+        return EXIT_REFUSED if loud else 1
     except (UpdateError, OSError, UnicodeError, subprocess.SubprocessError,
             KeyboardInterrupt) as exc:
         safe_error = exc if isinstance(exc, UpdateError) else UpdateError(f"update operation failed ({type(exc).__name__})")

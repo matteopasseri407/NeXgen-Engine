@@ -10,11 +10,18 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.26.2] - 2026-11-01
+
+### Changed
+
+- An update that is only waiting, for its CI gates or for a signature GitHub never adds, is no longer reported as a release this install cannot trust.
+
 ## [2.26.1] - 2026-11-01
 
 ### Changed
 
 - The Antigravity backend gets the manual compaction its plugin never declared; the hourly groomer stops failing on backends that cannot compact.
+- An update that is only waiting, because its commit has not passed the CI gates yet or because the newest commit on the branch carries no signature, is no longer reported as a release this install cannot trust: it waits quietly, and the alert is kept for a signature that really failed.
 
 ## [2.26.0] - 2026-10-31
 
