@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.27.0] - 2026-11-01
+
 ### Added
 
 - An agent that declares a machine (`node: "MatteoPC"`) is that machine's remote control: the engine pins its shell to the paired node, gives it a manual that says how to drive the machine's local harnesses with `nexgen-local sup` and how to say when the machine is off, and names the machine in the org chart every other agent reads.
