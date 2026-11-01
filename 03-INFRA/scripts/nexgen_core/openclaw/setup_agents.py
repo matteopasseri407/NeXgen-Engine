@@ -120,13 +120,42 @@ def _split_block(text: str) -> tuple[str, str]:
     return text[begin:end], text[end:].lstrip("\r\n")
 
 
+def _org_block(text: str) -> str:
+    """The org chart block inside `text`, markers included, or "" when there is none."""
+    from nexgen_core.openclaw.org_block import OPENCLAW_ORG_BEGIN, OPENCLAW_ORG_END
+
+    begin = text.find(OPENCLAW_ORG_BEGIN)
+    end = text.find(OPENCLAW_ORG_END)
+    if begin < 0 or end < begin:
+        return ""
+    return text[begin:end + len(OPENCLAW_ORG_END)]
+
+
+def _without_org_block(text: str) -> str:
+    """`text` without the org chart block, which the engine writes and rewrites itself.
+
+    The chart is appended after the manual, so a file the engine prepared holds
+    the manual plus a chart that changes with the roster. Comparing that file
+    whole against a shipped manual never matches, which is how a workspace the
+    engine wrote started looking like the person's and stopped receiving the
+    squad's text.
+    """
+    from nexgen_core.openclaw.org_block import OPENCLAW_ORG_BEGIN, OPENCLAW_ORG_END
+
+    begin = text.find(OPENCLAW_ORG_BEGIN)
+    end = text.find(OPENCLAW_ORG_END)
+    if begin < 0 or end < begin:
+        return text
+    return text[:begin] + text[end + len(OPENCLAW_ORG_END):]
+
+
 def _is_shipped(rest: str, shipped: Sequence[str]) -> bool:
     """Whether `rest` is exactly one of the manuals this engine ships for the agent.
 
     Line endings are the file's, not the engine's: the text on disk may be CRLF
     while the manual in memory is LF, and that difference is not the person's.
     """
-    body = rest.replace("\r\n", "\n").strip()
+    body = _without_org_block(rest).replace("\r\n", "\n").strip()
     return bool(body) and any(body == manual.replace("\r\n", "\n").strip() for manual in shipped)
 
 
@@ -162,10 +191,14 @@ def next_manual_text(existing: str, declared: str, shipped: Sequence[str] = ()) 
     head, rest = _split_block(existing)
     if not _is_shipped(rest, shipped):
         return None
+    separator = "\r\n" if "\r\n" in existing else "\n"
+    body = written.rstrip("\r\n")
+    chart = _org_block(rest).replace("\n", separator)
+    if chart:
+        body = f"{body}{separator}{separator}{chart}"
     if not head:
-        return written
-    separator = "\r\n" if "\r\n" in head else "\n"
-    return f"{head}{separator}{written}"
+        return body + separator
+    return f"{head}{separator}{body}{separator}"
 
 
 def write_instructions(

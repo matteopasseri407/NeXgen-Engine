@@ -10,6 +10,14 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.27.2] - 2026-11-02
+
+### Changed
+
+- ﻿### Fixed
+
+- A workspace that already carries the org chart is still recognised as the engine's own file: the chart is ignored when comparing the manual, so a squad's text reaches an existing install again and the machine contract lands on the agents of the two PCs.
+
 ## [2.27.1] - 2026-11-01
 
 ### Changed
