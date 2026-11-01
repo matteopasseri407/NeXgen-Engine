@@ -32,6 +32,7 @@ from nexgen_core.openclaw.profile import (
     Choices,
     agent_models,
     build_config,
+    with_agent_workspaces,
 )
 from nexgen_core.openclaw.setup_write import merged_document
 from nexgen_core.openclaw.skills_policy import with_skill_policy
@@ -167,31 +168,10 @@ def _agent_notes(
     notes: list[str] = []
     if "main" not in models and "main" not in planned:
         notes.append(t("The assistant is not created: no model is available for it."))
-    if "capo" not in models and "capo" not in planned:
-        notes.append(t("The code agent is not created: no model is available for it."))
-    if detected.n8n and "automazioni" not in models and "automazioni" not in planned:
-        notes.append(t("The automation agent is not created: no model is available for it."))
-    if not detected.n8n:
-        notes.append(t("The automation agent is not created: the n8n module is not active on this machine."))
-    note = _sviluppo_note(models, detected, choices or Choices(), planned)
-    if note:
-        notes.append(note)
+    if len(planned or models) <= 1:
+        notes.append(t("Only the assistant is created: a team is the person's, and declaring it in "
+                       "squad.yaml is what adds the other agents."))
     return notes
-
-
-def _sviluppo_note(
-    models: dict[str, str], detected: Detection, chosen: Choices, planned: Collection[str] = (),
-) -> str | None:
-    """Why the OpenCode agent is missing, said in the terms that can fix it."""
-    if "sviluppo" in models or "sviluppo" in planned:
-        return None
-    if not chosen.sviluppo:
-        return t("The OpenCode agent is not created: setup was asked to leave it out.")
-    if not detected.opencode:
-        return t("The OpenCode agent is not created: the 'opencode' command is not on PATH.")
-    if not detected.opencode_go:
-        return t("The OpenCode agent is not created: no OpenCode Go key was detected.")
-    return None
 
 
 def _context_notes(config: dict[str, Any]) -> list[str]:
@@ -433,6 +413,12 @@ def build_plan(
         build_config(snapshot, chosen, current, home=home_dir, platform=platform),
         # The setup command passes no vault: the squad still lives in the user's one.
         vault_data if vault_data is not None else resolve_vault_data(home), home_dir, current,
+    )
+    # Every agent works in a folder, whoever declared it: the engine's own agent
+    # gets one from `build_config`, a squad's agent gets one here.
+    proposed = with_agent_workspaces(
+        proposed, current,
+        Path(snapshot.openclaw.config_path).parent if snapshot.openclaw.config_path else None,
     )
     config = with_engine_plugin(
         with_chains(with_skill_policy(proposed, vault_data, current), failover), _plugin_deposited(path, plugin_deposited),

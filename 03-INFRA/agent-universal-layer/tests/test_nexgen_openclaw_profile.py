@@ -63,9 +63,8 @@ def machine(
 def test_only_the_go_key_is_a_machine_that_uses_its_flat_plan():
     config = build_config(machine(go=True))
     assert config["plugins"]["allow"] == BASE_PLUGINS + ["opencode-go"]
+    assert list(config["agents"]["entries"]) == ["main"]
     assert config["agents"]["entries"]["main"]["model"] == "opencode-go/deepseek-v4.1-flash"
-    assert config["agents"]["entries"]["capo"]["model"] == "opencode-go/deepseek-v4-pro"
-    assert "automazioni" not in config["agents"]["entries"]
     assert "anthropic" not in config["plugins"]["entries"]
     assert "ollama" not in config["plugins"]["entries"]
     assert "models" not in config
@@ -97,11 +96,8 @@ def test_claude_codex_go_and_ollama_together():
     assert config["agents"]["ownership"] == "explicit"
 
     agents = config["agents"]["entries"]
+    assert list(agents) == ["main"]
     assert agents["main"]["model"] == "opencode-go/deepseek-v4.1-flash"
-    assert agents["capo"]["model"] == "anthropic/claude-opus-5-5"
-    assert agents["capo"]["thinkingDefault"] == "high"
-    assert agents["capo"]["runtime"] == {"type": "embedded"}
-    assert agents["automazioni"]["model"] == "opencode-go/deepseek-v4-pro"
 
 
 def test_only_a_local_llamacpp_leaves_no_agent_but_the_assistant():
@@ -150,11 +146,11 @@ def test_a_machine_with_no_model_creates_no_agent_and_says_nothing_it_cannot_bac
     assert config["tools"]["byProvider"] == {}
 
 
-def test_the_go_key_wins_the_assistant_and_claude_wins_the_code_agent():
+def test_the_go_key_wins_the_assistant_and_no_other_agent_is_created():
     config = build_config(machine(claude=True, codex=True, go=True, ollama=("qwen3:8b",), n8n=True))
     agents = config["agents"]["entries"]
+    assert list(agents) == ["main"]
     assert agents["main"]["model"] == "opencode-go/deepseek-v4.1-flash"
-    assert agents["capo"]["model"] == "anthropic/claude-opus-5-5"
 
 
 def test_with_claude_out_of_the_way_the_assistant_prefers_local_then_codex():
@@ -162,14 +158,15 @@ def test_with_claude_out_of_the_way_the_assistant_prefers_local_then_codex():
     assert local["agents"]["entries"]["main"]["model"] == "ollama/qwen3:8b"
     cloud = build_config(machine(codex=True))
     assert cloud["agents"]["entries"]["main"]["model"] == "openai/gpt-6-luna"
-    assert cloud["agents"]["entries"]["capo"]["model"] == "openai/gpt-6-luna"
+    assert list(cloud["agents"]["entries"]) == ["main"]
 
 
-def test_the_automation_agent_needs_n8n_and_falls_back_to_claude():
+def test_no_automation_agent_is_created_even_with_n8n():
+    """A team is the person's: n8n being installed does not add an agent by itself."""
     with_n8n = build_config(machine(claude=True, n8n=True))
-    assert with_n8n["agents"]["entries"]["automazioni"]["model"] == "anthropic/claude-opus-5-5"
+    assert list(with_n8n["agents"]["entries"]) == ["main"]
     without = build_config(machine(claude=True))
-    assert "automazioni" not in without["agents"]["entries"]
+    assert list(without["agents"]["entries"]) == ["main"]
 
 
 def test_ollama_latest_is_stripped_everywhere_and_the_provider_keeps_the_exact_id():
@@ -347,26 +344,27 @@ def test_a_token_already_in_the_file_is_never_replaced():
     assert gateway["auth"]["token"] == "a-real-token"
 
 
-def test_a_new_agent_gets_an_absolute_workspace_and_an_existing_one_keeps_its_own():
+def test_the_assistant_keeps_its_workspace_and_a_new_one_is_absolute():
     current = {"agents": {"entries": {"main": {"workspace": "C:\\mine\\assistente"}}}}
     agents = build_config(machine(go=True, n8n=True), current=current)["agents"]["entries"]
+    assert list(agents) == ["main"]
     assert agents["main"]["workspace"] == "C:\\mine\\assistente"
-    assert Path(agents["capo"]["workspace"]) == STATE / "workspace-capo"
-    assert Path(agents["automazioni"]["workspace"]) == STATE / "workspace-automazioni"
+
+    fresh = build_config(machine(go=True))["agents"]["entries"]
+    assert Path(fresh["main"]["workspace"]) == STATE / "workspace"
 
 
-def test_the_agents_are_named_and_introduced_in_the_engine_language():
+def test_no_agent_gets_an_invented_name_or_identity():
+    """A name belongs to the person's squad; the engine leaves the entry neutral."""
     italian = build_config(machine(go=True, n8n=True), Choices(lang="it"))["agents"]["entries"]
+
+    assert list(italian) == ["main"]
     assert italian["main"]["name"] == "main"
-    assert italian["main"]["identity"] == {"name": "assistente"}
-    assert italian["capo"]["identity"] == {"name": "capo"}
-    assert italian["automazioni"]["identity"] == {"name": "automazioni"}
+    assert "identity" not in italian["main"]
     assert "agentDir" not in italian["main"]
 
     english = build_config(machine(go=True, n8n=True), Choices(lang="en"))["agents"]["entries"]
-    assert english["main"]["identity"] == {"name": "assistant"}
-    assert english["capo"]["identity"] == {"name": "lead"}
-    assert english["automazioni"]["identity"] == {"name": "automations"}
+    assert "identity" not in english["main"]
 
 
 def test_the_agents_may_message_everyone_because_openclaw_defaults_to_open():

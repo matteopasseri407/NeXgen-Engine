@@ -38,16 +38,15 @@ def machine(*, claude: bool = True, go: bool = True) -> Detection:
     )
 
 
-def test_the_supervisor_is_the_only_agent_that_can_change_the_engine_state():
+def test_the_single_agent_is_the_supervisor_and_can_change_the_engine_state():
     config = build_config(machine(), Choices())
     entries = config["agents"]["entries"]
 
-    assert SUPERVISOR_AGENT in entries
-    assert entries[SUPERVISOR_AGENT]["tools"]["alsoAllow"] == sorted(SUPERVISOR_TOOLS)
+    assert list(entries) == ["main"]
+    assert entries["main"]["tools"]["alsoAllow"] == sorted(SUPERVISOR_TOOLS)
     for agent_id, entry in entries.items():
-        if agent_id == SUPERVISOR_AGENT:
+        if agent_id == "main":
             continue
-        assert "alsoAllow" not in entry.get("tools", {}), agent_id
         assert not set(SUPERVISOR_TOOLS) & set(entry.get("tools", {}).get("alsoAllow", []))
 
 
@@ -55,19 +54,15 @@ def test_the_allowlist_does_not_erase_the_supervisor_tools():
     """One key must not replace the other, and the engine writes no messaging list at all."""
     config = build_config(machine(), Choices())
 
-    tools = config["agents"]["entries"][SUPERVISOR_AGENT]["tools"]
+    tools = config["agents"]["entries"]["main"]["tools"]
     assert "agentToAgent" not in tools
     assert tools["alsoAllow"] == sorted(SUPERVISOR_TOOLS)
 
 
-def test_with_no_supervisor_agent_there_is_no_allowlist():
-    """Only the OpenCode agent: nothing supervises, so nothing is allowed to."""
+def test_a_machine_with_no_model_creates_no_agent_at_all():
     config = build_config(machine(claude=False, go=False), Choices())
 
-    entries = config.get("agents", {}).get("entries", {})
-    assert SUPERVISOR_AGENT not in entries
-    for entry in entries.values():
-        assert "alsoAllow" not in entry.get("tools", {})
+    assert config.get("agents", {}).get("entries", {}) == {}
 
 
 def test_a_person_allow_list_is_never_contradicted():
@@ -78,8 +73,8 @@ def test_a_person_allow_list_is_never_contradicted():
 
     config = build_config(machine(), Choices(), current)
 
-    entry = config["agents"]["entries"][SUPERVISOR_AGENT]
-    assert "tools" not in entry, "nothing is written beside the person's own `allow`"
+    # The person's supervisor is kept as it is; the new file writes no tools beside it.
+    assert "tools" not in config["agents"]["entries"]["main"]
 
 
 def test_the_plan_names_the_tools_to_add_by_hand():

@@ -169,8 +169,7 @@ def test_the_plan_is_json_and_names_its_agents(tmp_path):
     plan = build_plan(detected=detected(path), home=home, env={}, choices=Choices(lan=True))
     payload = json.loads(json.dumps(plan.to_dict()))
     assert payload["agents"]["main"] == "opencode-go/deepseek-v4.1-flash"
-    assert payload["agents"]["capo"] == "anthropic/claude-opus-5-5"
-    assert payload["agents"]["automazioni"] == "opencode-go/deepseek-v4-pro"
+    assert list(payload["agents"]) == ["main"]
     assert payload["config"]["gateway"]["bind"] == "lan"
     assert payload["current"]["valid"] is True
     assert payload["changes"]["kept"] == []

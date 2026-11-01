@@ -25,9 +25,10 @@ from nexgen_core.openclaw.tools_profile import SUPERVISOR_AGENT
 #: The agent that faces the person, so it reports to nobody inside the roster.
 PERSON_FACING_AGENT = "main"
 
-#: The roster the engine creates when no squad declares one, in the order the
-#: agents are introduced. A manual rendered with no roster says this one.
-DEFAULT_ROSTER: tuple[str, ...] = ("main", SUPERVISOR_AGENT, "automazioni", "sviluppo")
+#: The roster the engine creates when no squad declares one: the one agent that
+#: keeps the installation usable. A team is the person's, and `squad.yaml` is
+#: where it is declared; the engine never invents colleagues.
+DEFAULT_ROSTER: tuple[str, ...] = (PERSON_FACING_AGENT,)
 
 #: The heading of the managed block that carries this section in each workspace
 #: `AGENTS.md`. The guard writes the block, so the shipped manual body stays
@@ -66,6 +67,7 @@ _PLACES = {
         "lead_nobody": "Il tuo responsabile: nessuno, rispondi alla persona.",
         "reports": "Riportano a te: {values}.",
         "peers": "I tuoi pari: {values}.",
+        "machine": "La macchina che controlla: {values}.",
         "nobody": "nessuno",
     },
     "en": {
@@ -73,6 +75,7 @@ _PLACES = {
         "lead_nobody": "Your lead: nobody, you answer to the person.",
         "reports": "Reporting to you: {values}.",
         "peers": "Your peers: {values}.",
+        "machine": "The machine it controls: {values}.",
         "nobody": "nobody",
     },
 }
@@ -254,8 +257,13 @@ def render_org_section(
     lang: str | None,
     roster: Iterable[str] | Mapping[str, Any] | None = None,
     declared: Mapping[str, str] | None = None,
+    nodes: Mapping[str, str] | None = None,
 ) -> str:
-    """One agent's place in the block: its lead, its reports and its peers."""
+    """One agent's place in the block: its lead, its reports, its peers, its machine.
+
+    `nodes` maps an agent id to the machine it controls, so the chart is where
+    every agent learns whom to hand that PC's work to.
+    """
     language = _language(lang)
     places, _errors = derive(roster, declared)
     place = places.get(agent_id, Place(lead=None, reports=(), peers=()))
@@ -264,13 +272,17 @@ def render_org_section(
         lead = words["lead_nobody"]
     else:
         lead = _place_line(words["lead"], (place.lead,), words["nobody"])
-    return "\n".join([
+    lines = [
         f"### `{agent_id}`",
         "",
         lead,
         _place_line(words["reports"], place.reports, words["nobody"]),
         _place_line(words["peers"], place.peers, words["nobody"]),
-    ])
+    ]
+    machine = (nodes or {}).get(agent_id)
+    if machine:
+        lines.append(_place_line(words["machine"], (machine,), words["nobody"]))
+    return "\n".join(lines)
 
 
 def _roster_order(agents: Iterable[str], roster: Iterable[str] | None) -> tuple[str, ...]:
@@ -288,6 +300,7 @@ def render_org_block(
     lang: str | None,
     roster: Iterable[str] | Mapping[str, Any] | None = None,
     declared: Mapping[str, str] | None = None,
+    nodes: Mapping[str, str] | None = None,
 ) -> str:
     """The whole org chart for one workspace: the rule and one section per agent.
 
@@ -304,5 +317,5 @@ def render_org_block(
         _RULES[language],
     ]
     for agent_id in _roster_order(agents, present):
-        parts.extend(["", render_org_section(agent_id, language, present, declared)])
+        parts.extend(["", render_org_section(agent_id, language, present, declared, nodes)])
     return "\n".join(parts)

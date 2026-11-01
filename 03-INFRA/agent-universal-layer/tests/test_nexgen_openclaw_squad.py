@@ -190,6 +190,11 @@ def test_a_model_entry_the_owner_wrote_keeps_every_key_the_squad_does_not_set() 
 
 
 def test_custom_agent_names_preserved_without_squad() -> None:
+    """A name the person gave an agent survives a setup that declares no squad.
+
+    Only the assistant is the engine's to write; the other agents already in the
+    file are kept by the writer's additive merge, not re-created here.
+    """
     detected = _make_dummy_detection()
     current = {
         "agents": {
@@ -202,8 +207,8 @@ def test_custom_agent_names_preserved_without_squad() -> None:
 
     config = build_config(detected, current=current)
     entries = config["agents"]["entries"]
+    assert list(entries) == ["main"]
     assert entries["main"]["identity"]["name"] == "PersonalAssistant"
-    assert entries["capo"]["identity"]["name"] == "StrategyLead"
 
 
 def test_register_model_keys(tmp_path: Path) -> None:
