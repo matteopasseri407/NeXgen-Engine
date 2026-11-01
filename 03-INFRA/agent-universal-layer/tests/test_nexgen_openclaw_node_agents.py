@@ -122,6 +122,24 @@ def test_the_machine_manual_is_written_once_and_then_left_alone(tmp_path):
 # ---------------------------------------------------------------- the chart
 
 
+def test_a_squad_manual_keeps_its_text_and_still_gets_the_machine_contract(tmp_path):
+    """The role text is the person's; the contract is the engine's, and it rides under it."""
+    directory = tmp_path / "workspace-windows"
+    declared = "<!-- nexgen:squad:begin -->\nSei il responsabile del PC fisso.\n"
+    lines: list[str] = []
+
+    prepare({"windows": directory}, set(), "en", lines.append,
+            instructions={"windows": declared}, nodes={"windows": NODE})
+    text = (directory / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert "Sei il responsabile del PC fisso." in text, "their role text is kept"
+    assert "nexgen-local sup status --json" in text, "the machine contract reaches it too"
+    assert f"`{NODE}` is off or not" in text, "the contract names the machine"
+    prepare({"windows": directory}, set(), "en", lines.append,
+            instructions={"windows": declared}, nodes={"windows": NODE})
+    assert (directory / "AGENTS.md").read_text(encoding="utf-8") == text
+
+
 def test_the_chart_names_the_machine_each_agent_controls():
     from nexgen_core.openclaw.hierarchy import render_org_block
 

@@ -10,6 +10,14 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.27.1] - 2026-11-01
+
+### Changed
+
+- ﻿### Added
+
+- The machine contract reaches an agent whose manual the squad declares: the role text stays the person's, and the engine appends the `nexgen-local sup` rules under it, so a PC's agent knows the verbs without a copy in every Vault file.
+
 ## [2.27.0] - 2026-11-01
 
 ### Added
