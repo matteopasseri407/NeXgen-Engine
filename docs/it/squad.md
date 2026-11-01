@@ -149,6 +149,10 @@ agents:
         node: "desktop-linux"
 ```
 
+`node: "desktop-linux"` è la stessa cosa scritta in una riga: il motore scrive `tools.exec` con `host: "node"` e il nome, e ogni comando di quell'agente gira su quella macchina. Un blocco `tools.exec` che l'agente dichiara per conto suo vince sulla scorciatoia.
+
+Quell'agente riceve anche un manuale diverso dagli altri: è il telecomando e il quadro di controllo della macchina, guida le harness locali con `nexgen-local sup` (Claude, Codex, agy, OpenCode e le altre, un adattatore per harness), entra in una sessione già aperta, e dice subito se la macchina è spenta invece di fingere di aver agito. L'organigramma scritto in ogni workspace nomina la macchina che quell'agente controlla, così l'assistente sa a chi passare il lavoro di quel PC.
+
 ### `models`
 
 Dizionario facoltativo di voci di modello e specifiche di provider personalizzati. Ogni chiave è un riferimento `provider/model` e il suo valore è la voce di quel modello in `agents.defaults.models` (vedi [Scelta del modello per agente](#scelta-del-modello-per-agente)). Non finisce mai nell'oggetto `models` alla radice di `openclaw.json`: quello è rigido e accetta solo `mode`, `providers` e `catalogRefresh`.

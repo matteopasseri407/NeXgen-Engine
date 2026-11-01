@@ -69,6 +69,19 @@ agents:
       agentToAgent:
         send: ["capo"]
 
+  # An agent that is the remote control of one machine. Its shell runs on that
+  # PC, so the local CLIs and their subscriptions are what does the work, and it
+  # receives a manual of its own: report what runs there, open supervised work
+  # with `nexgen-local sup`, enter a CLI that is already open, and say so when
+  # the machine is off. The name is the one `openclaw nodes list` shows, and the
+  # key is shorthand for the `tools.exec` block above. The model is yours to
+  # choose: this is the agent whose judgement you rely on from the phone.
+  # windows:
+  #   name: "windows"
+  #   model: "anthropic/claude-opus-5-5"
+  #   reportsTo: "main"
+  #   node: "MatteoPC"
+
 models:
   # Optional model overrides or provider configurations
   anthropic/claude-opus-5-5:

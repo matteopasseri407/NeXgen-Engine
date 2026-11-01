@@ -10,6 +10,18 @@ of any engine release.
 
 ## [Unreleased]
 
+### Added
+
+- An agent that declares a machine (`node: "MatteoPC"`) is that machine's remote control: the engine pins its shell to the paired node, gives it a manual that says how to drive the machine's local harnesses with `nexgen-local sup` and how to say when the machine is off, and names the machine in the org chart every other agent reads.
+
+### Changed
+
+- The engine creates one agent, `main`, and invents no colleagues: a team is declared in `squad.yaml`. An install that already carries `capo`, `automazioni` or `sviluppo` keeps them, and keeps the supervision tools on `capo`.
+
+### Fixed
+
+- A second setup on an unchanged configuration writes nothing and restarts nothing: the entry's own name was read back as a person's identity and written again as `identity.name`.
+
 ## [2.26.3] - 2026-11-01
 
 ### Changed

@@ -149,6 +149,10 @@ agents:
         node: "desktop-linux"
 ```
 
+`node: "desktop-linux"` is the same thing on one line: the engine writes `tools.exec` with `host: "node"` and the name, and every command that agent runs runs on that machine. A `tools.exec` block the agent declares itself wins over the shorthand.
+
+That agent also gets a different manual: it is the remote control and the dashboard of the machine, it drives the local harnesses with `nexgen-local sup` (Claude, Codex, agy, OpenCode and the rest, one adapter per harness), it enters a session that is already open, and it says so when the machine is off instead of pretending to have acted. The org chart written into every workspace names the machine that agent controls, which is how the assistant knows whom to hand that PC's work to.
+
 ### `models`
 
 Optional dictionary of model entries and custom provider specifications. Each key is a `provider/model` reference and its value is that model's entry in `agents.defaults.models` (see [Model choice per agent](#model-choice-per-agent)). It never lands in the root `models` object of `openclaw.json`: that one is strict and accepts only `mode`, `providers` and `catalogRefresh`.

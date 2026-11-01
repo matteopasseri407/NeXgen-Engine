@@ -27,16 +27,11 @@ The engine never downloads a model. When it finds none, the plan prints what to 
 
 ## The agents
 
-| Agent | What it does | Model, in the order tried |
-| --- | --- | --- |
-| `main` (assistente) | talks to the person, finds things in the Vault, hands work on | `opencode-go/deepseek-v4.1-flash`, then a local model, then Codex, then Claude |
-| `capo` (code) | writes and verifies code | `anthropic/claude-opus-5-5` with `thinkingDefault: "high"` and the embedded runtime, then Codex `openai/gpt-6-luna`, then `opencode-go/deepseek-v4-pro` |
-| `automazioni` | builds and repairs workflows | only when n8n is active: `opencode-go/deepseek-v4-pro`, then Claude |
-| `sviluppo` (developer) | works on the project, one to one, inside OpenCode | `opencode-go/deepseek-v4.1-flash`, and only when the `opencode` command and the OpenCode Go key are both there |
+The engine creates one agent and only one: `main`, the assistant that talks to the person, finds things in the Vault and hands work on. It runs the first model this machine can reach, in this order: `opencode-go/deepseek-v4.1-flash`, a local model, Codex, Claude. A team is the person's, and `squad.yaml` is where it is declared (see [squad.md](squad.md)). An install that already carries `capo`, `automazioni` or `sviluppo` keeps them, and keeps the supervision tools on `capo`, so an update never moves a permission behind the person's back.
 
-An agent with no model available is not created, and the plan says which one and why. The engine tries the models in that order when it picks one for an agent, so a flat subscription is used before a paid key. A local model comes before a cloud one only for the assistant, where latency matters more than depth. That choice is made once, at setup; what happens when the chosen plan runs out is the policy described below.
+A squad adds an agent by naming it. Each one gets an `AGENTS.md` in the engine's language: who it is, what it does and does not do, when to hand work to another agent with `sessions_send`, that the Council is called with `nexgen council`, and that the Vault is read and written with the `vault-library__*` tools.
 
-Each agent gets an `AGENTS.md` in the engine's language: who it is, what it does and does not do, when to hand work to another agent with `sessions_send`, that the Council is called with `nexgen council`, and that the Vault is read and written with the `vault-library__*` tools.
+An agent that declares a machine gets a different manual. `node: "MatteoPC"` pins the agent's shell to that paired machine, and the manual says what that job is: report what runs there, open supervised work with `nexgen-local sup`, enter a CLI that is already open, say so when the machine is off, and keep the state on the machine. The org chart names the machine each agent controls, which is how the assistant knows whom to hand that PC's work to. See [squad.md](squad.md#node-execution-delegation).
 
 Whom it reports to and who reports to it is a second delimited block in that file, titled `Organigramma` (or `Org chart`), written by both the setup and `nexgen sync` from `reportsTo`. The shipped manual is the same on every machine, so the roster cannot live in its body.
 

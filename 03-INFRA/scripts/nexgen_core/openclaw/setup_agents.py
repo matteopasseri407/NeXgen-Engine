@@ -76,10 +76,11 @@ def _write_manuals(
     replace: bool,
     emit: Callable[[str], None],
     omit: str | None = None,
+    node: str | None = None,
 ) -> int:
     """Write the manuals that are missing; a file already there stays byte for byte."""
     try:
-        files = render_workspace(agent_id, lang)
+        files = render_workspace(agent_id, lang, node)
     except ValueError as exc:
         emit(t("Skipping the manual for {agent}: {error}", agent=agent_id, error=exc))
         return 0
@@ -214,11 +215,12 @@ def _write_org_chart(
     roster: Sequence[str],
     reports_to: Mapping[str, str],
     emit: Callable[[str], None],
+    nodes: Mapping[str, str] | None = None,
 ) -> None:
     """The chart block for one workspace, once per folder however many agents share it."""
     from nexgen_core.openclaw.org_block import align_openclaw_org_block
 
-    action = align_openclaw_org_block(directory, agents, lang, roster, reports_to)
+    action = align_openclaw_org_block(directory, agents, lang, roster, reports_to, nodes)
     if action:
         emit(action)
 
@@ -254,6 +256,7 @@ def prepare(
     instructions: Mapping[str, str] | None = None,
     roster: Sequence[str] | None = None,
     squad: Mapping[str, Any] | None = None,
+    nodes: Mapping[str, str] | None = None,
 ) -> list[Path]:
     """Create each workspace, write the missing manuals, drop the first-run file.
 
@@ -261,7 +264,9 @@ def prepare(
     would do: no folder is made and no file is written. `roster` is the agents
     this machine has and `squad` is the one that declares who reports to whom:
     the org chart block written into each workspace says that instead of a fixed
-    list of names, and the roster's own owner derives it from the squad.
+    list of names, and the roster's own owner derives it from the squad. `nodes`
+    maps an agent to the machine it controls, which selects the machine manual
+    and adds that machine to the chart.
     """
     from nexgen_core.openclaw.hierarchy import declared_leads
 
@@ -278,18 +283,29 @@ def prepare(
         if missing:
             made.append(directory)
         declared = (instructions or {}).get(agent_id)
+        node = (nodes or {}).get(agent_id)
         written = _write_manuals(
             directory, agent_id, lang, replace=fresh, emit=emit,
-            omit=INSTRUCTIONS_FILE if declared else None,
+            omit=INSTRUCTIONS_FILE if (declared or node) else None, node=node,
         )
         if declared:
             written += write_instructions(
-                directory / INSTRUCTIONS_FILE, declared, fresh, emit, shipped_manuals(agent_id),
+                directory / INSTRUCTIONS_FILE, declared, fresh, emit, shipped_manuals(agent_id, node),
+            )
+        elif node:
+            # A machine manual replaces the engine's own text, never the person's:
+            # both wordings are in the fingerprint, so a role manual turned into a
+            # machine manual is still the engine's file and a repeat run is a no-op.
+            written += write_instructions(
+                directory / INSTRUCTIONS_FILE,
+                render_workspace(agent_id, lang, node)["AGENTS.md"],
+                fresh, emit,
+                tuple(dict.fromkeys([*shipped_manuals(agent_id), *shipped_manuals(agent_id, node)])),
             )
         if grouped[directory][0] == agent_id:
             _write_org_chart(
                 directory, grouped[directory], lang,
-                tuple(dirs) if roster is None else roster, reports_to, emit,
+                tuple(dirs) if roster is None else roster, reports_to, emit, nodes,
             )
         if souls and agent_id in souls:
             soul_path = directory / "SOUL.md"

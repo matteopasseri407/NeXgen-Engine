@@ -61,6 +61,7 @@ def openclaw_org_block(
     lang: str | None = None,
     roster: Sequence[str] = (),
     declared: Mapping[str, str] | None = None,
+    nodes: Mapping[str, str] | None = None,
 ) -> str:
     """The org chart block for a workspace, delimited like the instructions one.
 
@@ -69,7 +70,7 @@ def openclaw_org_block(
     """
     from nexgen_core.openclaw.hierarchy import render_org_block
 
-    body = render_org_block(agents, lang, roster or agents, declared)
+    body = render_org_block(agents, lang, roster or agents, declared, nodes)
     return "\n".join((OPENCLAW_ORG_BEGIN, body, OPENCLAW_ORG_END))
 
 
@@ -79,6 +80,25 @@ def openclaw_squad_leads(vault_data: Path, home: Path) -> dict[str, str]:
     from nexgen_core.openclaw.squad import find_squad_file, load_squad
 
     return declared_leads(load_squad(find_squad_file(vault_data, home=home)))
+
+
+def openclaw_node_agents(config_path: Path) -> dict[str, str]:
+    """The agents the file pins to a machine, read the way the setup reads them.
+
+    The chart names each one's machine so the other agents know whom to hand that
+    PC's work to; the answer is in the file, since a squad's `node:` lands there as
+    `tools.exec`, and a person may also write that block by hand.
+    """
+    from nexgen_core.mcp_render import load_json_object
+    from nexgen_core.openclaw.node_agents import node_agents
+
+    try:
+        data = load_json_object(config_path)
+    except ValueError:  # nexgen: allow reason="a corrupt config has no roster to chart; the MCP checks report it"
+        return {}
+    agents = data.get("agents") if isinstance(data.get("agents"), dict) else {}
+    entries = agents.get("entries") if isinstance(agents.get("entries"), dict) else {}
+    return node_agents(entries)
 
 
 def openclaw_block_state(
@@ -269,6 +289,7 @@ def _with_squad_manual(
     existing: str,
     agents: Sequence[str],
     declared: Mapping[str, str],
+    nodes: Mapping[str, str] | None = None,
 ) -> tuple[str | None, str | None]:
     """The file with the squad's manual in it, or why the text was left as it is.
 
@@ -288,7 +309,10 @@ def _with_squad_manual(
             "different AGENTS.md files, so the manual was left as it is",
             path=target,
         )
-    shipped = tuple(manual for agent in agents for manual in shipped_manuals(agent))
+    shipped = tuple(
+        manual for agent in agents
+        for manual in shipped_manuals(agent, (nodes or {}).get(agent))
+    )
     return next_manual_text(existing, texts.pop(), shipped), None
 
 
@@ -320,9 +344,12 @@ def align_openclaw_instructions(runner) -> list[str]:
     owners = openclaw_workspace_owners(config_path, runner.home)
     roster = tuple(dict.fromkeys(agent for agents, _workspace in owners for agent in agents))
     leads = openclaw_squad_leads(runner.vault_data, runner.home)
+    nodes = openclaw_node_agents(config_path)
     actions: list[str] = []
     for agents, workspace in owners:
-        action = _align_openclaw_workspace(workspace, block, canon, agents, declared, roster, leads)
+        action = _align_openclaw_workspace(
+            workspace, block, canon, agents, declared, roster, leads, nodes,
+        )
         if action:
             actions.append(action)
     return actions
@@ -351,6 +378,7 @@ def _align_openclaw_workspace(
     declared: Mapping[str, str] | None = None,
     roster: Sequence[str] = (),
     leads: Mapping[str, str] | None = None,
+    nodes: Mapping[str, str] | None = None,
 ) -> str | None:
     """One OpenClaw workspace: both blocks and the squad's manual, or why not.
 
@@ -372,14 +400,14 @@ def _align_openclaw_workspace(
             "OpenClaw instructions at {path}: the managed block's markers are incomplete, left untouched",
             path=target,
         )
-    org = _workspace_org_block(agents, existing, roster, leads or {})
+    org = _workspace_org_block(agents, existing, roster, leads or {}, nodes or {})
     org_file = org.replace("\n", openclaw_line_ending(existing))
     if org and openclaw_block_state(existing, org_file, OPENCLAW_ORG_MARKERS, at_top=False) == "broken":
         return WARN + t(
             "OpenClaw instructions at {path}: the org chart block's markers are incomplete, left untouched",
             path=target,
         )
-    updated, warning = _with_squad_manual(target, existing, agents, declared or {})
+    updated, warning = _with_squad_manual(target, existing, agents, declared or {}, nodes or {})
     source = existing if updated is None else updated
     ending = openclaw_line_ending(source)
     wanted = with_openclaw_block(source, block.replace("\n", ending))
@@ -409,13 +437,14 @@ def _workspace_org_block(
     existing: str,
     roster: Sequence[str],
     leads: Mapping[str, str],
+    nodes: Mapping[str, str],
 ) -> str:
     """The org chart for the agents of one workspace, in the manual's own language."""
     from nexgen_core.openclaw.hierarchy import manual_language
 
     if not agents:
         return ""
-    return openclaw_org_block(agents, manual_language(existing), roster, leads)
+    return openclaw_org_block(agents, manual_language(existing), roster, leads, nodes)
 
 
 def align_openclaw_org_block(
@@ -424,6 +453,7 @@ def align_openclaw_org_block(
     lang: str | None = None,
     roster: Sequence[str] = (),
     declared: Mapping[str, str] | None = None,
+    nodes: Mapping[str, str] | None = None,
 ) -> str | None:
     """The org chart block alone, for a workspace the setup has just prepared.
 
@@ -441,7 +471,7 @@ def align_openclaw_org_block(
         return WARN + t(
             "OpenClaw instructions at {path} left untouched ({error})", path=target, error=read_error,
         )
-    block = openclaw_org_block(agents, manual_language(existing) or lang, roster, declared)
+    block = openclaw_org_block(agents, manual_language(existing) or lang, roster, declared, nodes)
     file_block = block.replace("\n", openclaw_line_ending(existing))
     state = openclaw_block_state(existing, file_block, OPENCLAW_ORG_MARKERS, at_top=False)
     if state == "broken":

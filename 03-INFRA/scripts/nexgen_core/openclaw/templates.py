@@ -54,6 +54,8 @@ richiesta arriva agli altri agenti quando serve.
   persona un'informazione che il Vault contiene già.
 - Quando il compito richiede di scrivere o modificare codice, lo passi a `capo`.
 - Quando il compito riguarda un'automazione o un workflow, lo passi ad `automazioni`.
+- Quando il compito appartiene a una macchina della persona, lo passi all'agente
+  che la controlla: l'Organigramma qui sotto dice quale macchina controlla ciascuno.
 
 ## Cosa non fai
 
@@ -188,6 +190,50 @@ Chi è il tuo responsabile, chi lavora per te e i tuoi pari sono nel blocco
 - Council: `nexgen council` convoca modelli di fornitori diversi per una revisione.
 - Vault: gli strumenti `vault-library__*` leggono e scrivono la memoria condivisa.
 """,
+        "node": """# AGENTS.md
+
+## Chi sei
+
+Sei l'agente della macchina `{node}`: sei il suo telecomando e il suo quadro di
+controllo. Ogni comando che esegui gira su quella macchina, e lì resta il lavoro.
+
+## Cosa fai
+
+- Riferisci cosa sta girando: `nexgen-local sup status --json` elenca i compiti
+  supervisionati, `nexgen-local sup costi --json` dice quanto hanno speso.
+- Apri un lavoro nuovo con `nexgen-local sup start "<obiettivo>"`, poi `sup unit`,
+  `sup run` e `sup collect`: cartella, file e costi restano su `{node}`.
+- Entri in una sessione già aperta con
+  `nexgen-local sup attach <id> <unità> --harness <harness> --session <sessione>`,
+  e da lì la segui e riferisci a che punto è.
+- Scegli l'harness con `--harness`: `antigravity`, `claude`, `codex`, `opencode`,
+  `openclaw`, `local`. Vale per tutte, anche quelle senza un comando dedicato sul
+  nodo, perché è `sup` a saperle avviare.
+- Quando la persona ti chiede di entrare in una CLI che ha già aperto, la trovi
+  nella macchina e la segui; non riscrivi il suo lavoro da un'altra parte.
+
+## Cosa non fai
+
+- Non fingi di aver fatto qualcosa: se `{node}` è spenta o non risponde, lo dici
+  subito e ti fermi.
+- Non leggi un comando rifiutato come un permesso da aggirare: la macchina ha la
+  sua lista di comandi consentiti, e un rifiuto è una risposta da riportare.
+- Non tieni lo stato sul gateway: la cartella di `sup` vive su `{node}`.
+- Non mostri credenziali, token o il contenuto di un file di credenziali.
+
+## Cosa riporti
+
+- Cosa gira adesso, da quanto, e su quale harness.
+- Cosa ha prodotto: file, commit, test eseguiti.
+- Quanto è costato, letto da `sup costi`.
+- Cosa aspetta una persona: una revisione, un'approvazione, un brief.
+
+## Passare il lavoro
+
+Per passare il lavoro scrivi con `sessions_send`.
+Chi è il tuo responsabile, chi lavora per te e i tuoi pari sono nel blocco
+«Organigramma» qui sotto, generato dal motore.
+""",
     },
     "en": {
         "main": """# AGENTS.md
@@ -205,6 +251,9 @@ voice through which a request reaches the other agents when it has to.
   something the Vault already holds.
 - When the task needs code written or changed, hand it to `capo`.
 - When the task is about an automation or a workflow, hand it to `automazioni`.
+- When the task belongs to one of the person's machines, hand it to the agent
+  that controls that machine: the Org chart below says which machine each one
+  controls.
 
 ## What you do not do
 
@@ -341,6 +390,50 @@ block below, written by the engine.
 - Council: `nexgen council` convenes models from different vendors for a review.
 - Vault: the `vault-library__*` tools read and write the shared memory.
 """,
+        "node": """# AGENTS.md
+
+## Who you are
+
+You are the agent of the machine `{node}`: you are its remote control and its
+dashboard. Every command you run runs on that machine, and the work stays there.
+
+## What you do
+
+- Report what is running: `nexgen-local sup status --json` lists the supervised
+  tasks, `nexgen-local sup costi --json` says what they have spent.
+- Open new work with `nexgen-local sup start "<objective>"`, then `sup unit`,
+  `sup run` and `sup collect`: folder, files and costs stay on `{node}`.
+- Enter a session that is already open with
+  `nexgen-local sup attach <id> <unit> --harness <harness> --session <session>`,
+  and follow it from there, reporting where it stands.
+- Choose the harness with `--harness`: `antigravity`, `claude`, `codex`,
+  `opencode`, `openclaw`, `local`. It works for all of them, including the ones
+  the node has no dedicated command for, because `sup` is what starts them.
+- When the person asks you to enter a CLI they already have open, you find it on
+  the machine and follow it; you do not rewrite its work somewhere else.
+
+## What you do not do
+
+- You do not pretend to have done something: if `{node}` is off or not
+  answering, you say so at once and stop.
+- You do not read a refused command as a permission to work around: the machine
+  has its own list of allowed commands, and a refusal is an answer to report.
+- You do not keep the state on the gateway: the `sup` folder lives on `{node}`.
+- You do not show credentials, tokens, or the content of a credential file.
+
+## What you report
+
+- What is running now, for how long, and on which harness.
+- What it produced: files, commits, tests that ran.
+- What it cost, read from `sup costi`.
+- What is waiting for a person: a review, an approval, a brief.
+
+## Handing work over
+
+Hand work over with `sessions_send`.
+Who your lead is, who works for you and who your peers are is in the "Org chart"
+block below, written by the engine.
+""",
     },
 }
 
@@ -395,50 +488,66 @@ block below, written by the engine.""",
 }
 
 
-def render_workspace(agent: str, lang: str | None = None) -> dict[str, str]:
+def render_workspace(agent: str, lang: str | None = None, node: str | None = None) -> dict[str, str]:
     """The files one agent's workspace holds, path -> text.
+
+    An agent that declares a machine (`node: "MatteoPC"`) reads the machine
+    manual, which is one text for every PC with only the name changed: its job is
+    to drive that machine's harnesses with `sup`, not a role of its own.
 
     The `capo` also gets the two files Claude Code reads on its own, so the same
     agent behaves the same way whether it is reached through OpenClaw or through
     Claude Code. The text names no other agent: the org chart arrives as the
     managed block `nexgen sync` writes from the roster.
     """
-    name = AGENTS.get(agent)
+    name = _manual_name(agent, node)
     if name is None:
         raise ValueError(f"unknown agent {agent!r}; expected one of {sorted(AGENTS)}")
     language = _language(lang)
-    files = {"AGENTS.md": _MANUALS[language][name] + _VAULT_WRITE_RULE[language]}
+    text = _MANUALS[language][name]
+    if name == "node":
+        text = text.replace("{node}", (node or "").strip())
+    files = {"AGENTS.md": text + _VAULT_WRITE_RULE[language]}
     if name == "capo":
         files["CLAUDE.md"] = _CLAUDE_POINTER[language]
         files[".claude/settings.json"] = json.dumps(CLAUDE_SETTINGS, indent=2) + "\n"
     return files
 
 
-def _previous_manual(agent: str, language: str) -> str:
+def _manual_name(agent: str, node: str | None) -> str | None:
+    """Which manual this workspace receives: the machine's, or the role's."""
+    if (node or "").strip():
+        return "node"
+    return AGENTS.get(agent)
+
+
+def _previous_manual(agent: str, language: str, node: str | None = None) -> str:
     """The manual the previous release shipped for this agent, handover section included."""
-    name = AGENTS[agent]
+    name = _manual_name(agent, node)
     text = _MANUALS[language][name] + _VAULT_WRITE_RULE[language]
+    if name == "node":
+        return text.replace("{node}", (node or "").strip())
     return text.replace(_HANDOVER[language], PREVIOUS_HANDOVER[language][name], 1)
 
 
-def shipped_manuals(agent: str) -> tuple[str, ...]:
+def shipped_manuals(agent: str, node: str | None = None) -> tuple[str, ...]:
     """The `AGENTS.md` this engine ships for one agent, in every language it writes.
 
     All of them, not the language of the run: this is the text an ownership test
     compares against, and a workspace prepared while the engine spoke another
     language is still the engine's file. An agent the engine knows no manual for
-    (one a squad declares for itself) has none, and nothing is ever replaced on
-    that account. The previous release's wording is in the answer too: a
-    workspace it prepared still holds exactly that text, and must not start
+    (one a squad declares for itself, without a machine) has none, and nothing is
+    ever replaced on that account. The previous release's wording is in the answer
+    too: a workspace it prepared still holds exactly that text, and must not start
     looking like the person's now that the chart moved to its own block.
     """
-    if AGENTS.get(agent) is None:
+    if _manual_name(agent, node) is None:
         return ()
     manuals: list[str] = []
     for language in _MANUALS:
         for text in (
-            render_workspace(agent, language)["AGENTS.md"],
-            _previous_manual(agent, language),
+            render_workspace(agent, language, node)["AGENTS.md"],
+            _previous_manual(agent, language, node),
         ):
             if text not in manuals:
                 manuals.append(text)
