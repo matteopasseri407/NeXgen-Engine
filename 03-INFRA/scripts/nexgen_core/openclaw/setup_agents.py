@@ -246,6 +246,51 @@ def _close_workspace(
     ))
 
 
+def _prepare_manuals(
+    directory: Path,
+    agent_id: str,
+    lang: str | None,
+    fresh: bool,
+    emit: Callable[[str], None],
+    declared: str | None,
+    node: str | None,
+) -> int:
+    """The workspace's `AGENTS.md`: the squad's text, the machine's, or the role's.
+
+    A squad's own instructions win over both, because they are the person's. The
+    machine manual and the role manual are both the engine's text, and a role
+    manual turned into a machine manual is replaced rather than kept: both
+    wordings are in the fingerprint `write_instructions` recognises.
+    """
+    written = _write_manuals(
+        directory, agent_id, lang, replace=fresh, emit=emit,
+        omit=INSTRUCTIONS_FILE if (declared or node) else None, node=node,
+    )
+    if declared:
+        return written + write_instructions(
+            directory / INSTRUCTIONS_FILE, declared, fresh, emit, shipped_manuals(agent_id, node),
+        )
+    if node:
+        return written + write_instructions(
+            directory / INSTRUCTIONS_FILE,
+            render_workspace(agent_id, lang, node)["AGENTS.md"],
+            fresh, emit,
+            tuple(dict.fromkeys([*shipped_manuals(agent_id), *shipped_manuals(agent_id, node)])),
+        )
+    return written
+
+
+def _prepare_soul(directory: Path, agent_id: str, souls: Mapping[str, str] | None) -> int:
+    """The generated `SOUL.md`, always rewritten: it is not a second copy of anything."""
+    if not souls or agent_id not in souls:
+        return 0
+    # Always, because it is generated: a SOUL.md kept "only if missing" is a
+    # second copy of the identity, and whoever edits it inside OpenClaw gets an
+    # agent the other CLIs never see.
+    atomic_write_text(directory / "SOUL.md", souls[agent_id])
+    return 1
+
+
 def prepare(
     dirs: Mapping[str, Path],
     created: set[str] | Mapping[str, bool],
@@ -282,37 +327,15 @@ def prepare(
         directory.mkdir(parents=True, exist_ok=True)
         if missing:
             made.append(directory)
-        declared = (instructions or {}).get(agent_id)
-        node = (nodes or {}).get(agent_id)
-        written = _write_manuals(
-            directory, agent_id, lang, replace=fresh, emit=emit,
-            omit=INSTRUCTIONS_FILE if (declared or node) else None, node=node,
+        written = _prepare_manuals(
+            directory, agent_id, lang, fresh, emit,
+            (instructions or {}).get(agent_id), (nodes or {}).get(agent_id),
         )
-        if declared:
-            written += write_instructions(
-                directory / INSTRUCTIONS_FILE, declared, fresh, emit, shipped_manuals(agent_id, node),
-            )
-        elif node:
-            # A machine manual replaces the engine's own text, never the person's:
-            # both wordings are in the fingerprint, so a role manual turned into a
-            # machine manual is still the engine's file and a repeat run is a no-op.
-            written += write_instructions(
-                directory / INSTRUCTIONS_FILE,
-                render_workspace(agent_id, lang, node)["AGENTS.md"],
-                fresh, emit,
-                tuple(dict.fromkeys([*shipped_manuals(agent_id), *shipped_manuals(agent_id, node)])),
-            )
         if grouped[directory][0] == agent_id:
             _write_org_chart(
                 directory, grouped[directory], lang,
                 tuple(dirs) if roster is None else roster, reports_to, emit, nodes,
             )
-        if souls and agent_id in souls:
-            soul_path = directory / "SOUL.md"
-            # Always, because it is generated: a SOUL.md kept "only if missing" is a
-            # second copy of the identity, and whoever edits it inside OpenClaw gets
-            # an agent the other CLIs never see.
-            atomic_write_text(soul_path, souls[agent_id])
-            written += 1
+        written += _prepare_soul(directory, agent_id, souls)
         _close_workspace(directory, agent_id, written, fresh, emit)
     return made
