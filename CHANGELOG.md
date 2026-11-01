@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.26.3] - 2026-11-01
+
+### Changed
+
+- The update alert no longer fires for the merge GitHub writes back into developer: its signature is GitHub's own key, not a release key, and it is tooling rather than a release.
+
 ## [2.26.2] - 2026-11-01
 
 ### Changed
