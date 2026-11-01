@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.26.1] - 2026-11-01
+
+### Changed
+
+- The Antigravity backend gets the manual compaction its plugin never declared; the hourly groomer stops failing on backends that cannot compact.
+
 ## [2.26.0] - 2026-10-31
 
 ### Changed
