@@ -25,3 +25,16 @@ review_paths = [
 ]
 # Translation tables grow with every new message; they are data, not logic.
 exclude = ["*/locales/*"]
+
+# Test files the owner allowed to shrink, because the behaviour they asserted no
+# longer exists. 2026-11-01: the engine stopped creating a preset team, so the
+# assertions about `capo`, `automazioni` and `sviluppo` in these three files were
+# replaced by one exact-set assertion per test (`list(entries) == ["main"]`),
+# which is stronger than the lines it replaced: it fails on an agent nobody
+# declared, including an old one reappearing. They leave this list when the
+# files next grow.
+test_removal_ok = [
+  "03-INFRA/agent-universal-layer/tests/test_nexgen_openclaw_profile.py",
+  "03-INFRA/agent-universal-layer/tests/test_nexgen_openclaw_plan.py",
+  "03-INFRA/agent-universal-layer/tests/test_nexgen_openclaw_supervisor_tools.py",
+]
