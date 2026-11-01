@@ -32,7 +32,7 @@ IDLE_SECONDS = 60 * 60
 SKIP_PARTS = (":subagent:", ":cron:", ":acp:", ":harness:")
 BUSY_STATES = {"running", "active", "starting"}
 #: Backends that cannot prove a native compaction ran: their sessions are left alone.
-UNCONFIRMABLE_RUNTIMES = frozenset({"claude-cli"})
+UNCONFIRMABLE_RUNTIMES = frozenset({"claude-cli", "google-antigravity-cli"})
 #: A session only looked at, because a dry run changes nothing.
 DRY_RUN = "dry-run"
 
@@ -173,14 +173,16 @@ def _classify(proc: subprocess.CompletedProcess[str]) -> Outcome:
 
     Both streams are searched: a warning on stdout must not hide the reason on
     stderr. A zero exit is the gateway's own word that it compacted, whatever
-    the wording it printed, so only a non-zero one can end in failure.
+    the wording it printed, so only a non-zero one can end in failure. A backend
+    that owns compaction but offers no manual one refuses every hour the same
+    way, so its answer is unprovable rather than failed.
     """
     shown = (proc.stdout or proc.stderr or "").strip()
     line = shown.splitlines()[-1] if shown else "no output"
     answered = f"{proc.stdout or ''}\n{proc.stderr or ''}".casefold()
     if "already compacted" in answered:
         return Outcome(groom_memory.ALREADY_COMPACTED, line)
-    if "did not confirm" in answered:
+    if "did not confirm" in answered or "does not support manual compaction" in answered:
         return Outcome(groom_memory.UNSUPPORTED, line)
     if proc.returncode == 0:
         return Outcome(groom_memory.COMPACTED, line)
