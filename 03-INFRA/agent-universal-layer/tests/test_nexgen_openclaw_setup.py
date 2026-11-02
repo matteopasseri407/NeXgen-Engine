@@ -62,6 +62,7 @@ class FakeRunner:
         self.calls: list[tuple[list[str], dict]] = []
         self.onboard = onboard
         self.fail_validate = False
+        self.validate_outputs: list[tuple[int, str]] = []
         self.service: FakeService | None = None
         self.validate_while_stopped: bool | None = None
         self.node_version = "v24.22.1"
@@ -84,6 +85,9 @@ class FakeRunner:
             return RunResult(0, "", "")
         if verbs == ["config", "validate"]:
             self.validate_while_stopped = bool(self.service and self.service.stopping)
+            if self.validate_outputs:
+                code, text = self.validate_outputs.pop(0)
+                return RunResult(code, "", text)
             if self.fail_validate:
                 return RunResult(1, "", "invalid config: agents.entries.sviluppo.runtime.acp is unknown")
             return RunResult(0, "", "")
@@ -623,6 +627,23 @@ def test_a_rejected_configuration_puts_the_previous_file_back(tmp_path):
     assert backup.read_text(encoding="utf-8") == original
     assert "rejected the configuration" in machine.output()
     assert "invalid config" in machine.output()
+
+
+def test_a_state_reader_that_fails_once_does_not_roll_the_file_back(tmp_path):
+    """OpenClaw's own unreadable state is not a verdict on the bytes this run wrote."""
+    machine = Machine(tmp_path)
+    machine.config.parent.mkdir(parents=True)
+    machine.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
+    machine.runner.validate_outputs = [(
+        1,
+        "- <root>: read failed at ~/.openclaw/openclaw.json: Error: SQLite read-only worker "
+        "exited unsuccessfully: spawn /usr/bin/node EACCES",
+    )]
+
+    assert machine.run() == 0
+    assert "agents" in machine.config_json(), "the new file stays: it was never judged"
+    assert "asking once more" in machine.output()
+    assert machine.service.events.count("start") >= 1, "and the gateway comes back up"
 
 
 def test_the_write_happens_between_stop_and_start_even_on_failure(tmp_path):

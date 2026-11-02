@@ -296,6 +296,19 @@ def planned_commands(setup: Setup, snapshot: Detection, plan) -> list[str]:
     return lines
 
 
+def transient_read_failure(result: RunResult) -> bool:
+    """Whether OpenClaw failed to *read* the file, not to accept it.
+
+    Its own wording is `read failed at <path>: ... SQLite read-only worker ...`:
+    the validator opens the state database through a worker process, and when
+    that worker cannot start the whole file is reported unreadable. Nothing has
+    been decided about the configuration in that case, so a retry is honest and
+    restoring the previous file would be wrong.
+    """
+    text = f"{result.stdout or ''}\n{result.stderr or ''}"
+    return "read failed at" in text and "SQLite read-only worker" in text
+
+
 def write_step(setup: Setup, plan) -> str:
     """Step 4: the merge, the backup, the atomic write, and OpenClaw's verdict.
 
@@ -329,6 +342,20 @@ def write_step(setup: Setup, plan) -> str:
             setup_commands.validate_argv(openclaw_bin(setup)),
             setup_commands.config_env(setup.env, setup.config_path),
         )
+        if result.returncode != 0 and transient_read_failure(result):
+            # OpenClaw judges a file and, on the way, reads its own state
+            # database through a worker process. On a busy or just-stopped
+            # gateway that read fails on its own and reports the whole file as
+            # unreadable, which says nothing about the bytes this run wrote: one
+            # retry, and only for that, because restoring a good file over a
+            # broken reader would leave the machine on the old configuration.
+            setup.out(t("OpenClaw could not read the file it was given (its own state reader failed); "
+                        "asking once more."))
+            setup.service.sleeper(2.0)
+            result = setup.run(
+                setup_commands.validate_argv(openclaw_bin(setup)),
+                setup_commands.config_env(setup.env, setup.config_path),
+            )
         if result.returncode == 0:
             setup.out(t("OpenClaw accepts the configuration."))
             setup.out(t("The gateway starts again now, so it reads the new configuration."))

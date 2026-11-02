@@ -68,3 +68,9 @@ exceptions:
     kind: pattern:h3
     match: "no…om (18 chars)"
     reason: GitHub's noreply committer address in a test and in its check, not a credential
+  - rev: "af7deaac813f00a3fcd21f066683d6bf64ab86ab"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_openclaw_setup.py
+    line: 639
+    kind: pattern:h1
+    match: "/h…/x (7 chars)"
+    reason: a made-up home path inside a fake OpenClaw error string; the next commit uses the tilde form the checker really prints
