@@ -300,6 +300,7 @@ def _prepare_manuals(
     emit: Callable[[str], None],
     declared: str | None,
     node: str | None,
+    common: str = "",
 ) -> int:
     """The workspace's `AGENTS.md`: the squad's text, the machine's, or the role's.
 
@@ -318,9 +319,14 @@ def _prepare_manuals(
         text = declared
         if node:
             text = f"{text.rstrip(chr(10))}\n\n{machine_contract(node, lang)}\n"
-        # The two shapes an earlier engine could have left behind, mark and all
-        # missing: the squad's text alone, and that text with the contract under it.
-        known = (_unmarked(text), _unmarked(declared))
+        # The shapes an earlier engine could have left behind, mark missing: the
+        # squad's text alone, that text without the shared section (a workspace
+        # prepared before `common_md` existed), and either of them with the
+        # contract under it.
+        body = _unmarked(declared)
+        shared = (common or "").strip()
+        role_only = body[: -len(shared)].rstrip() if shared and body.endswith(shared) else ""
+        known = tuple(part for part in (_unmarked(text), body, role_only) if part)
         return written + write_instructions(
             directory / INSTRUCTIONS_FILE, text, fresh, emit,
             tuple(dict.fromkeys([*shipped_manuals(agent_id, node), *known])),
@@ -357,6 +363,7 @@ def prepare(
     roster: Sequence[str] | None = None,
     squad: Mapping[str, Any] | None = None,
     nodes: Mapping[str, str] | None = None,
+    common: str = "",
 ) -> list[Path]:
     """Create each workspace, write the missing manuals, drop the first-run file.
 
@@ -366,7 +373,8 @@ def prepare(
     the org chart block written into each workspace says that instead of a fixed
     list of names, and the roster's own owner derives it from the squad. `nodes`
     maps an agent to the machine it controls, which selects the machine manual
-    and adds that machine to the chart.
+    and adds that machine to the chart; `common` is the squad's shared section,
+    which is what tells a workspace prepared before it existed from the person's.
     """
     from nexgen_core.openclaw.hierarchy import declared_leads
 
@@ -384,7 +392,7 @@ def prepare(
             made.append(directory)
         written = _prepare_manuals(
             directory, agent_id, lang, fresh, emit,
-            (instructions or {}).get(agent_id), (nodes or {}).get(agent_id),
+            (instructions or {}).get(agent_id), (nodes or {}).get(agent_id), common,
         )
         if grouped[directory][0] == agent_id:
             _write_org_chart(

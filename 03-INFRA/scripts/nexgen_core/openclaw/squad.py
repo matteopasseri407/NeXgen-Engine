@@ -261,6 +261,18 @@ def _with_mark(text: str) -> str:
     return f"{_INSTRUCTION_MARK_LINE}\n{text.strip()}\n"
 
 
+def get_squad_common(squad: dict[str, Any] | None, squad_file: Path | None) -> str:
+    """The text `common_md` declares, shared by every agent, or "".
+
+    The setup needs it apart from the composed manual: a workspace prepared
+    before the shared section existed holds the role text alone, and that exact
+    text is what proves the file is the engine's rather than the person's.
+    """
+    if not squad or squad_file is None:
+        return ""
+    return _read_instruction(_declared_path(squad.get("common_md"), squad_file.parent)) or ""
+
+
 def get_squad_instructions(
     squad: dict[str, Any] | None,
     squad_file: Path | None,

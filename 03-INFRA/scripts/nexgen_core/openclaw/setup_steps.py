@@ -364,6 +364,7 @@ def workspaces_step(setup: Setup, plan, before: set[str]) -> None:
     from nexgen_core.openclaw.setup_skills import prepare_skills, skill_roots
     from nexgen_core.openclaw.squad import (
         find_squad_file,
+        get_squad_common,
         get_squad_instructions,
         get_squad_skills,
         get_squad_souls,
@@ -380,7 +381,7 @@ def workspaces_step(setup: Setup, plan, before: set[str]) -> None:
         setup.out(t("The squad names an instructions file that cannot be read: {path}", path=path))
     nodes = node_agents(plan.config.get("agents", {}).get("entries") or {})
     prepare(dirs, created, plan.choices.lang or None, setup.out, souls=souls, instructions=instructions,
-            squad=squad, nodes=nodes)
+            squad=squad, nodes=nodes, common=get_squad_common(squad, squad_file))
     # Only agents that declare `skills` are in this map: the others keep their folder as it is.
     skills = get_squad_skills(squad)
     if skills:
