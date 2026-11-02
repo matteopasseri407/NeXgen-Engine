@@ -140,6 +140,26 @@ def test_a_squad_manual_keeps_its_text_and_still_gets_the_machine_contract(tmp_p
     assert (directory / "AGENTS.md").read_text(encoding="utf-8") == text
 
 
+def test_a_workspace_holding_the_squads_text_without_the_mark_is_still_ours(tmp_path):
+    """An earlier engine left the role text unmarked; a byte copy of it is not the person's."""
+    directory = tmp_path / "workspace-windows"
+    directory.mkdir()
+    role = "Sei il responsabile del PC fisso.\n"
+    marked = "<!-- nexgen:squad:begin -->\n" + role
+    (directory / "AGENTS.md").write_text(
+        "<!-- nexgen:instructions:begin -->\npointer\n<!-- nexgen:instructions:end -->\n" + role,
+        encoding="utf-8",
+    )
+    lines: list[str] = []
+
+    prepare({"windows": directory}, set(), "en", lines.append,
+            instructions={"windows": marked}, nodes={"windows": NODE})
+    text = (directory / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert "nexgen-local sup" in text, "the contract lands on a file the old engine left unmarked"
+    assert "<!-- nexgen:squad:begin" in text, "and the file carries the mark from now on"
+
+
 def test_a_workspace_that_carries_a_chart_is_still_the_engines_to_update():
     """The chart is appended after the manual; it must not make the file look like the person's."""
     from nexgen_core.openclaw.org_block import OPENCLAW_ORG_BEGIN, OPENCLAW_ORG_END

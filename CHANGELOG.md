@@ -10,6 +10,14 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.27.3] - 2026-11-02
+
+### Changed
+
+- ﻿### Fixed
+
+- A workspace whose manual an earlier engine left without the ownership mark is recognised when its text is exactly what the squad declares, so the machine contract lands on the agents of the two PCs and the mark is restored in the same write.
+
 ## [2.27.2] - 2026-11-02
 
 ### Changed

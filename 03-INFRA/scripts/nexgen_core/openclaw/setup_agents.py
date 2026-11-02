@@ -279,6 +279,19 @@ def _close_workspace(
     ))
 
 
+def _unmarked(text: str) -> str:
+    """The declared text without the engine's ownership mark, trimmed.
+
+    An engine before this one wrote the squad's manual without the mark in some
+    workspaces, and a file that holds exactly that text is still the engine's:
+    nothing of the person's can be in a byte-for-byte copy of what the squad
+    declares. Every write after the first one carries the mark, so this is a
+    fingerprint for the files already out there, not a second ownership rule.
+    """
+    first, _, rest = text.partition("\n")
+    return (rest if first.startswith(INSTRUCTION_MARK) else text).strip()
+
+
 def _prepare_manuals(
     directory: Path,
     agent_id: str,
@@ -305,8 +318,12 @@ def _prepare_manuals(
         text = declared
         if node:
             text = f"{text.rstrip(chr(10))}\n\n{machine_contract(node, lang)}\n"
+        # The two shapes an earlier engine could have left behind, mark and all
+        # missing: the squad's text alone, and that text with the contract under it.
+        known = (_unmarked(text), _unmarked(declared))
         return written + write_instructions(
-            directory / INSTRUCTIONS_FILE, text, fresh, emit, shipped_manuals(agent_id, node),
+            directory / INSTRUCTIONS_FILE, text, fresh, emit,
+            tuple(dict.fromkeys([*shipped_manuals(agent_id, node), *known])),
         )
     if node:
         return written + write_instructions(
