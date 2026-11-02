@@ -27,7 +27,7 @@ The engine never downloads a model. When it finds none, the plan prints what to 
 
 ## The agents
 
-The engine creates one agent and only one: `main`, the assistant that talks to the person, finds things in the Vault and hands work on. It runs the first model this machine can reach, in this order: `opencode-go/deepseek-v4.1-flash`, a local model, Codex, Claude. A team is the person's, and `squad.yaml` is where it is declared (see [squad.md](squad.md)). An install that already carries `capo`, `automazioni` or `sviluppo` keeps them, and keeps the supervision tools on `capo`, so an update never moves a permission behind the person's back.
+The engine creates one agent and only one: `main`, the assistant that talks to the person, finds things in the Vault and hands work on. `main` is both the id and the name the engine gives it, and the engine invents no other: a squad that renames it with `name:` changes what the interface shows, never the id. It runs the first model this machine can reach, in this order: `opencode-go/deepseek-v4.1-flash`, a local model, Codex, Claude. A team is the person's, and `squad.yaml` is where it is declared (see [squad.md](squad.md)). An install that already carries `capo`, `automazioni` or `sviluppo` keeps them, and keeps the supervision tools on `capo`, so an update never moves a permission behind the person's back.
 
 A squad adds an agent by naming it. Each one gets an `AGENTS.md` in the engine's language: who it is, what it does and does not do, when to hand work to another agent with `sessions_send`, that the Council is called with `nexgen council`, and that the Vault is read and written with the `vault-library__*` tools.
 

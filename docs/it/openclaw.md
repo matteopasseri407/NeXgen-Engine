@@ -27,7 +27,7 @@ Il motore non scarica mai un modello. Se non ne trova nessuno, il piano stampa c
 
 ## Gli agenti
 
-Il motore crea un agente solo: `main`, l'assistente che parla con la persona, cerca nel Vault e passa il lavoro ad altri. Gira sul primo modello che questa macchina raggiunge, in quest'ordine: `opencode-go/deepseek-v4.1-flash`, un modello locale, Codex, Claude. Una squadra è della persona, e `squad.yaml` è dove si dichiara (vedi [squad.md](squad.md)). Un'installazione che ha già `capo`, `automazioni` o `sviluppo` li tiene, e tiene gli strumenti di supervisione su `capo`, così un aggiornamento non sposta un permesso alle spalle della persona.
+Il motore crea un agente solo: `main`, l'assistente che parla con la persona, cerca nel Vault e passa il lavoro ad altri. `main` è sia l'id sia il nome che il motore gli dà, e il motore non ne inventa altri: una squadra che lo rinomina con `name:` cambia quello che si vede nell'interfaccia, mai l'id. Gira sul primo modello che questa macchina raggiunge, in quest'ordine: `opencode-go/deepseek-v4.1-flash`, un modello locale, Codex, Claude. Una squadra è della persona, e `squad.yaml` è dove si dichiara (vedi [squad.md](squad.md)). Un'installazione che ha già `capo`, `automazioni` o `sviluppo` li tiene, e tiene gli strumenti di supervisione su `capo`, così un aggiornamento non sposta un permesso alle spalle della persona.
 
 Una squadra aggiunge un agente nominandolo. Ognuno riceve un `AGENTS.md` nella lingua del motore: chi è, cosa fa e cosa non fa, quando passare il lavoro a un altro agente con `sessions_send`, che il Council si chiama con `nexgen council`, e che il Vault si legge e si scrive con gli strumenti `vault-library__*`.
 
