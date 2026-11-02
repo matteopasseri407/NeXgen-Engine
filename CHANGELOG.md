@@ -10,6 +10,15 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.27.5] - 2026-11-02
+
+### Changed
+
+- ﻿### Fixed
+
+- A rewrite of a marked manual keeps the org chart below it, with the same spacing on the first run and on the second.
+- The chart names every machine and the agent that controls it, so the assistant reads the mapping in its own workspace instead of needing a section for an agent that lives in another folder.
+
 ## [2.27.4] - 2026-11-02
 
 ### Changed
