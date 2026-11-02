@@ -160,6 +160,24 @@ def test_a_workspace_holding_the_squads_text_without_the_mark_is_still_ours(tmp_
     assert "<!-- nexgen:squad:begin" in text, "and the file carries the mark from now on"
 
 
+def test_a_workspace_prepared_before_the_shared_section_is_still_ours(tmp_path):
+    """The role text alone is the earlier shape of the same manual; the shared part came later."""
+    directory = tmp_path / "workspace-windows"
+    directory.mkdir()
+    role = "Sei il responsabile del PC fisso.\n"
+    shared = "## La squadra\n\nLavori in squadra.\n"
+    marked = "<!-- nexgen:squad:begin -->\n" + role + "\n" + shared
+    (directory / "AGENTS.md").write_text(role, encoding="utf-8")
+    lines: list[str] = []
+
+    prepare({"windows": directory}, set(), "en", lines.append, instructions={"windows": marked},
+            nodes={"windows": NODE}, common=shared)
+    text = (directory / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert "Lavori in squadra." in text, "the shared section reaches a workspace that predates it"
+    assert "nexgen-local sup" in text, "and the machine contract lands with it"
+
+
 def test_a_workspace_that_carries_a_chart_is_still_the_engines_to_update():
     """The chart is appended after the manual; it must not make the file look like the person's."""
     from nexgen_core.openclaw.org_block import OPENCLAW_ORG_BEGIN, OPENCLAW_ORG_END
