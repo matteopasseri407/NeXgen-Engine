@@ -10,6 +10,14 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.27.6] - 2026-11-02
+
+### Changed
+
+- ﻿### Fixed
+
+- A configuration the setup wrote is no longer rolled back when OpenClaw's own state reader fails to start and reports the file as unreadable: that failure is retried once, and only a real verdict restores the previous file.
+
 ## [2.27.5] - 2026-11-02
 
 ### Changed
