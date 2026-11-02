@@ -80,6 +80,15 @@ _PLACES = {
     },
 }
 
+#: The roster line that names every machine and the agent that controls it, in
+#: every workspace: the agent of a PC is not in the same folder as the assistant,
+#: so a section per workspace would never tell the assistant whom to hand that
+#: PC's work to.
+_MACHINES = {
+    "it": "Macchine controllate: {values}.",
+    "en": "Machines the agents control: {values}.",
+}
+
 
 @dataclass(frozen=True)
 class Place:
@@ -316,6 +325,9 @@ def render_org_block(
         "",
         _RULES[language],
     ]
+    if nodes:
+        pairs = ", ".join(f"`{agent}` → `{node}`" for agent, node in sorted(nodes.items()))
+        parts.extend(["", _MACHINES[language].format(values=pairs)])
     for agent_id in _roster_order(agents, present):
         parts.extend(["", render_org_section(agent_id, language, present, declared, nodes)])
     return "\n".join(parts)

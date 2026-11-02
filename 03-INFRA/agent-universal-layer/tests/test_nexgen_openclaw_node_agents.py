@@ -160,6 +160,23 @@ def test_a_workspace_holding_the_squads_text_without_the_mark_is_still_ours(tmp_
     assert "<!-- nexgen:squad:begin" in text, "and the file carries the mark from now on"
 
 
+def test_a_marked_manual_keeps_the_chart_below_it(tmp_path):
+    """Replacing the text from the mark down must not take the chart with it."""
+    from nexgen_core.openclaw.org_block import OPENCLAW_ORG_BEGIN, OPENCLAW_ORG_END
+    from nexgen_core.openclaw.setup_agents import next_manual_text
+
+    existing = (
+        "<!-- nexgen:squad:begin -->\nvecchio testo\n\n"
+        f"{OPENCLAW_ORG_BEGIN}\nchart\n{OPENCLAW_ORG_END}\n"
+    )
+
+    updated = next_manual_text(existing, "nuovo testo\n")
+
+    assert "nuovo testo" in updated
+    assert "vecchio testo" not in updated
+    assert OPENCLAW_ORG_BEGIN in updated, "the chart survives the rewrite"
+
+
 def test_a_workspace_prepared_before_the_shared_section_is_still_ours(tmp_path):
     """The role text alone is the earlier shape of the same manual; the shared part came later."""
     directory = tmp_path / "workspace-windows"
@@ -206,6 +223,17 @@ def test_the_chart_names_the_machine_each_agent_controls():
     assert "The machine it controls: `MatteoPC`." in chart
     section = chart.split("### `windows`")[1]
     assert "The machine it controls: `MatteoPC`." in section
+
+
+def test_every_workspace_chart_says_which_agent_controls_which_machine():
+    """The assistant's own workspace holds no section for the PC's agent: the roster line is what it reads."""
+    from nexgen_core.openclaw.hierarchy import render_org_block
+
+    chart = render_org_block(("main",), "en", ("main", "windows", "laptop"), None,
+                             {"windows": NODE, "laptop": "matteo-HP-EliteBook"})
+
+    assert "Machines the agents control: `laptop` → `matteo-HP-EliteBook`, `windows` → `MatteoPC`." in chart
+    assert "### `windows`" not in chart, "the chart still shows the agents of this workspace only"
 
 
 def test_the_chart_says_nothing_about_machines_when_no_agent_controls_one():

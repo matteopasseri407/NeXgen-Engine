@@ -187,6 +187,14 @@ def next_manual_text(existing: str, declared: str, shipped: Sequence[str] = ()) 
         return written  # nothing on disk yet: the block this cycle writes is the engine's
     at = _existing_mark(existing)
     if at is not None:
+        # The chart sits below the marked text, so replacing the text from the
+        # mark down would take it with it. It is carried over as it is, and the
+        # next line of `prepare` realigns it against the roster.
+        chart = _org_block(existing[at:])
+        body = written.rstrip("\r\n")
+        if chart:
+            separator = "\r\n" if "\r\n" in existing else "\n"
+            return f"{existing[:at]}{body}{separator}{separator}{chart}{separator}"
         return existing[:at] + written
     head, rest = _split_block(existing)
     if not _is_shipped(rest, shipped):
@@ -318,7 +326,9 @@ def _prepare_manuals(
     if declared:
         text = declared
         if node:
-            text = f"{text.rstrip(chr(10))}\n\n{machine_contract(node, lang)}\n"
+            # No trailing newline: the chart is appended below with its own
+            # separator, and a second one would grow the file on every run.
+            text = f"{text.rstrip(chr(10))}\n\n{machine_contract(node, lang).strip()}"
         # The shapes an earlier engine could have left behind, mark missing: the
         # squad's text alone, that text without the shared section (a workspace
         # prepared before `common_md` existed), and either of them with the
