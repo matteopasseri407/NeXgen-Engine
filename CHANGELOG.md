@@ -10,6 +10,14 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.27.4] - 2026-11-02
+
+### Changed
+
+- ﻿### Fixed
+
+- A workspace prepared before the squad's shared `common_md` existed is recognised as the engine's own file, so the shared section and the machine contract reach it instead of being skipped forever.
+
 ## [2.27.3] - 2026-11-02
 
 ### Changed
