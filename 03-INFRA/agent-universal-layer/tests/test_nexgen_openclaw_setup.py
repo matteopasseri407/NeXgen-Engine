@@ -636,7 +636,7 @@ def test_a_state_reader_that_fails_once_does_not_roll_the_file_back(tmp_path):
     machine.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
     machine.runner.validate_outputs = [(
         1,
-        "- <root>: read failed at /home/x/.openclaw/openclaw.json: Error: SQLite read-only worker "
+        "- <root>: read failed at ~/.openclaw/openclaw.json: Error: SQLite read-only worker "
         "exited unsuccessfully: spawn /usr/bin/node EACCES",
     )]
 
