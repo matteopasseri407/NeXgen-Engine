@@ -95,8 +95,8 @@ def test_the_doctor_names_a_key_left_in_the_systemd_copy(tmp_path: Path) -> None
     assert outcome is not None
     assert outcome.severity == Severity.WARN
     assert "gateway.systemd.env" in outcome.message
-    # The copy is named with its path: the engine never writes it, so the line is
-    # the person's to remove, and a forced reinstall is not the answer.
+    # The copy is named with its path: the setup aligns it, and a forced reinstall
+    # is not the answer.
     assert "gateway.systemd.env" in outcome.action
     assert "nexgen openclaw setup" in outcome.action
     assert "nexgen openclaw restart" in outcome.action

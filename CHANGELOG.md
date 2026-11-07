@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.27.7] - 2026-11-07
+
+### Changed
+
+- OpenClaw setup now aligns the systemd unit's environment copy (gateway.systemd.env) with .env, so new and rotated MCP tokens reach the gateway
+
 ## [2.27.6] - 2026-11-02
 
 ### Changed
