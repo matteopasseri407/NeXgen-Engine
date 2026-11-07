@@ -10,6 +10,10 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- The nightly update channel no longer stays closed after a release: a skipped CI check on the pull request to main no longer hides the same check passing on developer
+
 ## [2.27.7] - 2026-11-07
 
 ### Changed

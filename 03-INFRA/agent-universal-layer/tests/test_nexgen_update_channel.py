@@ -749,6 +749,35 @@ def test_a_rerun_that_succeeded_is_the_one_that_counts(monkeypatch):
     assert uc.checks_missing("o/r", "c" * 40) == []
 
 
+def test_a_skipped_run_does_not_hide_a_green_one(monkeypatch):
+    """A release commit carries quick-windows twice: green from the push to developer and
+    skipped from the pull request to main, where the job never runs. A run that did not
+    run proves nothing, so the newer skipped entry must not close the channel (2026-11-07)."""
+    monkeypatch.setattr(uc, "_api_get", lambda path: _check_runs(
+        ("quick-windows", "skipped"), ("quick-windows", "success"),
+        ("self-check", "success"), ("engine-tests", "success"),
+    ))
+
+    assert uc.checks_missing("o/r", "d" * 40) == []
+
+
+def test_a_gate_that_only_ever_skipped_is_not_a_pass(monkeypatch):
+    monkeypatch.setattr(uc, "_api_get", lambda path: _check_runs(
+        ("quick-windows", "skipped"), ("self-check", "success"), ("engine-tests", "success"),
+    ))
+
+    assert uc.checks_missing("o/r", "e" * 40) == ["quick-windows=skipped"]
+
+
+def test_a_newer_failure_still_beats_an_older_success_behind_a_skip(monkeypatch):
+    monkeypatch.setattr(uc, "_api_get", lambda path: _check_runs(
+        ("quick-windows", "skipped"), ("quick-windows", "failure"), ("quick-windows", "success"),
+        ("self-check", "success"), ("engine-tests", "success"),
+    ))
+
+    assert uc.checks_missing("o/r", "f" * 40) == ["quick-windows=failure"]
+
+
 def test_only_commits_with_a_green_full_suite_status_are_candidates(monkeypatch):
     green, red, other = "a" * 40, "b" * 40, "c" * 40
     payloads = {
