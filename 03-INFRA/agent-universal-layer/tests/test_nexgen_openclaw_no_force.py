@@ -3,10 +3,10 @@
 `openclaw gateway install --force` rebuilds the unit from the invoking shell and
 erases the variables the gateway service carried: seven of them, measured on the
 owner's Linux gateway. The doctor's answer to a key left in the gateway's
-environment is the setup, which rewrites `.env`, plus a restart. The unit's own
-copy, `gateway.systemd.env`, is named with its full path because the engine never
-writes it: that one line is the person's to remove, and removing it is the way to
-clear the copy without rebuilding the service around it.
+environment is the setup, which rewrites `.env` and aligns the unit's own copy,
+`gateway.systemd.env`, by the same rule, plus a restart. The copy is named with
+its full path so a person who checks it finds the exact file. Removing the key
+from that copy is the way to clear it without rebuilding the service around it.
 
 The second half of this file guards the rule itself: no message and no check may
 propose the forced command again, whichever file it is talking about.
@@ -80,8 +80,8 @@ def _key_in(home: Path, name: str) -> Path:
     return path
 
 
-def test_the_stale_service_copy_is_named_and_cleared_by_hand(tmp_path: Path) -> None:
-    """The engine cannot rewrite the unit's copy, so the action names the exact file."""
+def test_the_stale_service_copy_is_named_and_aligned_by_the_setup(tmp_path: Path) -> None:
+    """The action names the exact file the setup aligns, so a person can check it."""
     home = _home(tmp_path)
     _write_config(home)
     copy = _key_in(home, SERVICE_COPY)

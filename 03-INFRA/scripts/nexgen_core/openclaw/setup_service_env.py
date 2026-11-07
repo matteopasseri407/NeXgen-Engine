@@ -2,7 +2,10 @@
 
 One job: calculate variables referenced in OpenClaw config and the MCP servers
 mounted in the file in force, and update $OPENCLAW_STATE_DIR/.env (mode 0600),
-preserving user-defined keys and never logging secret values.
+preserving user-defined keys and never logging secret values. The systemd unit
+OpenClaw generates reads a second copy, `gateway.systemd.env`, through
+`EnvironmentFile=`: when that copy exists it is aligned by the same rule, so the
+gateway process sees the rotated value and the newly referenced key too.
 """
 from __future__ import annotations
 
@@ -26,6 +29,11 @@ _SIMPLE_VAR_PATTERN = re.compile(r"(?<!\\)\$([A-Za-z_][A-Za-z0-9_]*)")
 #: The one provider key whose mere presence in the gateway's environment is a fault:
 #: OpenClaw's live catalogue sends it to `GET /v1/models` (`_retired_keys` argues it).
 ANTHROPIC_API_KEY = "ANTHROPIC_API_KEY"
+
+#: The copy the generated systemd unit loads through `EnvironmentFile=`. It is not
+#: a rendered dialect, so its name lives with the writer that aligns it and the
+#: doctor imports it from here: one definition, no second spelling to drift.
+SERVICE_ENV_COPY = "gateway.systemd.env"
 
 _KNOWN_MODEL_ENV_VARS = {
     "anthropic": [ANTHROPIC_API_KEY],
@@ -174,6 +182,37 @@ def _align_values(
     return (body + "\n" if body else ""), rewritten, added, removed
 
 
+def _align_gateway_service_copy(
+    setup: Setup,
+    values: Mapping[str, str],
+    retired: set[str],
+) -> None:
+    """The systemd unit's copy of the environment, aligned by the rule `.env` uses.
+
+    The generated unit reads `EnvironmentFile=-<state_dir>/gateway.systemd.env`, a
+    second copy no configuration renderer writes. Left alone it keeps a rotated
+    token at its old value and never learns a key a newly mounted server references,
+    so the gateway process runs with stale or missing credentials while `.env` looks
+    correct. Only an existing copy is aligned: a machine whose gateway is not that
+    unit's must not grow a secrets file. The message names the path and the counts,
+    never a value.
+    """
+    copy_file = setup.state_dir / SERVICE_ENV_COPY
+    if not copy_file.is_file():
+        return
+    existing = copy_file.read_text(encoding="utf-8")
+    content, rewritten, added, removed = _align_values(existing, values, retired)
+    if content != existing:
+        atomic_write_text(copy_file, content, preserve_mode=False)
+    if rewritten or added or removed:
+        setup.out(t("OpenClaw gateway environment copy at {path} aligned ({rewritten} updated, {added} added, "
+                    "{removed} removed).", path=copy_file, rewritten=len(rewritten), added=len(added),
+                    removed=len(removed)))
+    else:
+        setup.out(t("OpenClaw gateway environment copy at {path} already carries the current values.",
+                    path=copy_file))
+
+
 def write_gateway_service_env(
     setup: Setup,
     config: dict[str, Any],
@@ -186,11 +225,14 @@ def write_gateway_service_env(
     copy of a secret is exactly what the store exists to prevent. Keys the engine does
     not reference are the person's and stay untouched, except one: a key a
     `claude-cli` agent does not read is taken out, because it breaks the model
-    catalogue (`_retired_keys` argues it).
+    catalogue (`_retired_keys` argues it). The systemd unit reads its own copy of the
+    file, which used to keep the stale bytes: `_align_gateway_service_copy` applies
+    this same rule there when the copy exists.
     """
     referenced = extract_referenced_env_vars(config) | extract_mounted_mcp_env_vars(setup.config_path)
     env_source: Mapping[str, str] = setup.env or os.environ
     active_vars = {k: env_source[k] for k in sorted(referenced) if k in env_source and env_source[k]}
+    retired = _retired_keys(config, referenced)
 
     env_file = setup.state_dir / ".env"
     env_file.parent.mkdir(parents=True, exist_ok=True)
@@ -201,7 +243,7 @@ def write_gateway_service_env(
     else:
         existing_content = "# OpenClaw environment file\n# Variables referenced in configuration and mounted MCP servers\n"
 
-    content, rewritten, added, removed = _align_values(existing_content, active_vars, _retired_keys(config, referenced))
+    content, rewritten, added, removed = _align_values(existing_content, active_vars, retired)
     if content != existing_content or not env_file.is_file():
         atomic_write_text(env_file, content, preserve_mode=False)
 
@@ -213,4 +255,5 @@ def write_gateway_service_env(
     for key in removed:
         setup.out(t("Took {key} out of {path}: no agent reads it, and the apps cannot update the models while it "
                     "is there. The value stays in the engine's secret store.", key=key, path=env_file))
+    _align_gateway_service_copy(setup, active_vars, retired)
     return env_file
