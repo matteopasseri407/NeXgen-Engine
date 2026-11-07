@@ -272,5 +272,7 @@ def test_the_adopted_server_goes_behind_the_gateway_and_agy_gets_openclaws_file(
     openclaw = json.loads(a_machine.config_path.read_text(encoding="utf-8"))["mcp"]["servers"]
     assert "posted-by-hand" in openclaw and "lazy-mcp" in openclaw
     assert openclaw["lazy-mcp"]["env"]["LAZY_MCP_CLI"] == "openclaw"
+    # OpenClaw mounts the gateway, which the plugin bridges into agy as `openclaw__lazy-mcp`:
+    # the adopted lazy server reaches agy there, never as a second direct entry in its file.
     agy = json.loads(antigravity_config(a_machine.home).read_text(encoding="utf-8"))["mcpServers"]
-    assert "posted-by-hand" in agy and "lazy-mcp" not in agy
+    assert "posted-by-hand" not in agy and "lazy-mcp" not in agy

@@ -491,17 +491,17 @@ def full_suite_state(slug: str, sha: str) -> str:
 
 
 def check_run_conclusions(slug: str, sha: str) -> dict[str, str]:
-    """Latest conclusion per check-run name on this commit ('' while it is still running)."""
+    """Latest conclusion per check-run name ('' while running); a skipped run proves nothing."""
     payload = _api_get(f"repos/{slug}/commits/{sha}/check-runs?per_page=100")
     runs = payload.get("check_runs")
     if not isinstance(runs, list):
         raise ChannelError("the GitHub API answered without a check-run list")
     conclusions: dict[str, str] = {}
-    for run in runs:  # newest first: the first entry per name is the run that counts
+    for run in runs:  # newest first: the first entry per name that ran is the one that counts
         if not isinstance(run, dict):
             continue
         name = str(run.get("name") or "")
-        if name and name not in conclusions:
+        if name and conclusions.get(name, "skipped") == "skipped":
             conclusions[name] = str(run.get("conclusion") or "")
     return conclusions
 

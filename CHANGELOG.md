@@ -10,6 +10,13 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.27.8] - 2026-11-07
+
+### Fixed
+
+- The nightly update channel no longer stays closed after a release: a skipped CI check on the pull request to main no longer hides the same check passing on developer
+- When OpenClaw drives the local Antigravity CLI and mounts the lazy-mcp gateway, lazy servers are no longer also written into agy's own file as direct entries: a remote one that did not connect kept the agent's turn open until the watchdog killed it, outside OpenClaw's tools.deny. The doctor now expects of that file what the sync writes, so it no longer reports `antigravity: missing lazy-mcp` there
+
 ## [2.27.7] - 2026-11-07
 
 ### Changed

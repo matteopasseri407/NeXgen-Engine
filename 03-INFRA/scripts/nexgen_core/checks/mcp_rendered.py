@@ -93,7 +93,9 @@ def expected_and_rendered(renderer: McpRenderer, cli: str, path: Path) -> tuple[
     ignorance), plain for an unreadable or never-launched config.
     """
     try:
-        expected = set(renderer.load_resolved_servers(cli).keys())
+        from nexgen_core.mcp_render import servers_written_for
+
+        expected = set(servers_written_for(renderer, cli).keys())
     except Exception as exc:  # noqa: BLE001 - check failure is reported, never raises
         return f"template: the manifest cannot be rendered for {cli} ({exc})", set(), set()
     if not path.is_file():

@@ -44,6 +44,20 @@ def load_json_object(path: Path) -> dict[str, Any]:
     return data
 
 
+def servers_written_for(renderer, cli: str) -> dict[str, Any]:
+    """The servers `cli`'s own file must carry on this machine, as its dialect writes them.
+
+    Asked by the doctor, so its verdict and the render cannot disagree. Antigravity's
+    list depends on whether OpenClaw drives the same `agy`; every other CLI writes the
+    resolved manifest as it is.
+    """
+    if cli == "antigravity":
+        from nexgen_core.mcp_render.antigravity import _expected_servers
+
+        return _expected_servers(renderer)
+    return renderer.load_resolved_servers(cli)
+
+
 def write_json_config(renderer, path: Path, before: dict[str, Any], after: dict[str, Any]) -> bool:
     """Write `after` to `path` only when it says something different from `before`.
 
