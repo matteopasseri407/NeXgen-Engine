@@ -15,10 +15,11 @@ service reinstall.
 
 The systemd unit OpenClaw generates loads a copy of its own, `gateway.systemd.env`,
 through `EnvironmentFile=`, so both files are judged: a clean `.env` with a stale copy
-beside it keeps the fault alive. The engine never writes that copy, and a forced
-service install is not the way to clear it: it rebuilds the unit from the invoking
-shell and erases the variables the service carried (seven of them, measured on the
-owner's gateway). The action names the file and leaves the one line to the person.
+beside it keeps the fault alive. The setup writes both, so the action is a setup and a
+restart. A forced service install is not the way to clear it: it rebuilds the unit
+from the invoking shell and erases the variables the service carried (seven of them,
+measured on the owner's gateway). The action names the files and leaves no line to a
+person.
 """
 from __future__ import annotations
 
@@ -28,7 +29,11 @@ from nexgen_core.i18n import t
 from nexgen_core.openclaw.claude_cli import claude_cli_agents
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.node_only import detect_node_only, node_only_outcome
-from nexgen_core.openclaw.setup_service_env import ANTHROPIC_API_KEY, retired_environment_keys
+from nexgen_core.openclaw.setup_service_env import (
+    ANTHROPIC_API_KEY,
+    SERVICE_ENV_COPY,
+    retired_environment_keys,
+)
 from nexgen_core.paths import openclaw_config
 from nexgen_core.report import CheckOutcome, Severity
 
@@ -36,8 +41,8 @@ from nexgen_core.report import CheckOutcome, Severity
 CHECK_ID = "openclaw.anthropic_catalog"
 
 #: The gateway's environment as OpenClaw reads it, in the state directory beside its
-#: configuration: the file the setup writes, and the copy the systemd unit carries.
-SERVICE_ENV_COPY = "gateway.systemd.env"
+#: configuration: the file the setup writes, and the copy the systemd unit carries
+#: (whose name the writer owns and this check imports).
 ENVIRONMENT_FILES = (".env", SERVICE_ENV_COPY)
 
 
@@ -94,21 +99,20 @@ def check_anthropic_catalog(home: Path, platform: str | None = None) -> CheckOut
 
 
 def _action(state_dir: Path, offenders: list[str]) -> str:
-    """The commands that clear the key, and the one file a person has to clear by hand.
+    """The command that clears the key, and the restart that makes the gateway reread it.
 
-    The setup rewrites `.env` without the key, and the restart is what makes the gateway
-    read the file again: the setup restarts the process only when the document changed.
-    The unit's own copy is named with its path because the engine never writes it:
-    removing that one line is the person's job, and it is the only non-destructive way
-    to clear it. A forced service install is never the answer.
+    The setup rewrites `.env` and, when the systemd unit's copy exists, aligns that
+    copy by the same rule: both files are named with their paths, because a person
+    who checks them by hand should find the exact file. The restart is what makes the
+    gateway read the files again. A forced service install is never the answer.
     """
     env_file = state_dir / ".env"
     if SERVICE_ENV_COPY in offenders:
         return t("Run 'nexgen openclaw setup', then 'nexgen openclaw restart', as the gateway's user: the setup "
-                 "rewrites {env} without the key. The unit loads its own copy at {copy}, and the engine never writes "
-                 "that file: delete the line that names {key} there before the restart. Never reinstall the service "
-                 "to refresh it: a reinstall erases the service's other environment variables.",
-                 env=env_file, copy=state_dir / SERVICE_ENV_COPY, key=ANTHROPIC_API_KEY)
+                 "rewrites {env} without the key and aligns the unit's copy at {copy} by the same rule. The "
+                 "restart is what makes the gateway read them. Never reinstall the service to refresh it: a "
+                 "reinstall erases the service's other environment variables.",
+                 env=env_file, copy=state_dir / SERVICE_ENV_COPY)
     return t("Run 'nexgen openclaw setup', then 'nexgen openclaw restart', as the gateway's user: the setup "
              "rewrites {env} without the key, and the gateway reads that file when it starts. Never reinstall the "
              "service to refresh it: a reinstall erases the service's other environment variables.",
