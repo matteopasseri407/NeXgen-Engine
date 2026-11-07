@@ -120,16 +120,12 @@ def consumer(tmp_path, directory) -> Path:
     return tmp_path / "home/.gemini" / directory / "mcp_config.json"
 
 
-def test_agy_inside_openclaw_reads_what_openclaw_mounts_directly_never_the_gateway(tmp_path, monkeypatch):
-    """The plugin starts the same `agy` from the same home: the file carries no gateway there.
-
-    Without the plugin the file is the CLI's own list, where a lazy server is served by
-    `lazy-mcp`; with the plugin that gateway would be dead, because OpenClaw never mounts it.
-    """
+def _render_agy_with_and_without_openclaw(tmp_path, monkeypatch, gateway_targets):
     servers = {
         "browser": {"transport": "stdio", "command": "npx", "args": ["-y", "pw"], "tier": "core"},
         "notes": {"transport": "stdio", "command": "npx", "args": ["-y", "notes"], "exposure": "lazy"},
-        "lazy-mcp": {"transport": "stdio", "command": "python3", "args": ["lazy-mcp.py"], "tier": "core"},
+        "lazy-mcp": {"transport": "stdio", "command": "python3", "args": ["lazy-mcp.py"], "tier": "core",
+                     "targets": gateway_targets},
     }
     renderer = make_renderer(tmp_path, servers)
     config = tmp_path / "openclaw.json"
@@ -138,18 +134,53 @@ def test_agy_inside_openclaw_reads_what_openclaw_mounts_directly_never_the_gatew
 
     renderer.render_antigravity(write=True)
     before = json.loads(canonical.read_text(encoding="utf-8"))["mcpServers"]
-    assert "lazy-mcp" in before and "notes" not in before
 
     config.write_text(json.dumps({"plugins": {
         "allow": ["google-antigravity-cli"],
         "entries": {"google-antigravity-cli": {"enabled": True}},
     }}), encoding="utf-8")
     renderer.render_antigravity(write=True)
-    after = json.loads(canonical.read_text(encoding="utf-8"))["mcpServers"]
+    return before, json.loads(canonical.read_text(encoding="utf-8"))["mcpServers"]
+
+
+def test_agy_inside_openclaw_reaches_lazy_servers_through_the_gateway_openclaw_bridges(tmp_path, monkeypatch):
+    """The plugin starts the same `agy` from the same home and bridges OpenClaw's own servers into it
+    as `openclaw__<name>`, the gateway included when OpenClaw mounts it.
+
+    A lazy server copied in as a direct entry as well was started by agy at every turn: a remote
+    one that did not connect left the turn waiting until the watchdog killed it, and it sat
+    outside the `tools.deny` OpenClaw applies to its own servers (finance, 2026-11-07).
+    """
+    before, after = _render_agy_with_and_without_openclaw(
+        tmp_path, monkeypatch, ["claude", "codex", "antigravity", "opencode", "openclaw"])
+
+    assert "lazy-mcp" in before and "notes" not in before
+    assert "notes" not in after, "behind the gateway OpenClaw bridges in, never a second direct copy"
+    assert "lazy-mcp" not in after, "the gateway reaches agy as OpenClaw's bridged copy, not this file"
+    assert "browser" in after
+
+
+def test_agy_inside_openclaw_without_a_gateway_still_gets_lazy_servers_directly(tmp_path, monkeypatch):
+    """Where OpenClaw mounts no gateway, a direct entry is the only road to a lazy server."""
+    _before, after = _render_agy_with_and_without_openclaw(
+        tmp_path, monkeypatch, ["claude", "codex", "antigravity", "opencode"])
 
     assert "notes" in after, "OpenClaw mounts it directly, and agy inside OpenClaw must reach it"
-    assert "lazy-mcp" not in after, "inside OpenClaw the engine's gateway is never mounted"
+    assert "lazy-mcp" not in after
     assert "browser" in after
+
+
+def test_the_doctor_expects_of_agy_inside_openclaw_what_the_render_writes(tmp_path, monkeypatch):
+    """The render leaves the gateway out of agy's file when OpenClaw drives agy; the doctor
+    asked the plain antigravity list and reported `antigravity: missing lazy-mcp` forever."""
+    from nexgen_core.checks import mcp_checks
+
+    _render_agy_with_and_without_openclaw(
+        tmp_path, monkeypatch, ["claude", "codex", "antigravity", "opencode", "openclaw"])
+    outcome = mcp_checks.check_mcp_configs_rendered(_vault(tmp_path), tmp_path / "home")
+
+    # OpenClaw's own file is a stub in this fixture; only agy's verdict is under test.
+    assert "antigravity: missing" not in outcome.message, outcome.message
 
 
 @pytest.mark.skipif(os.name == "nt", reason="symlinks require privileges")
