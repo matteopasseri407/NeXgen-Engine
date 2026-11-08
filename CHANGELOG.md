@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.28.2] - 2026-11-08
+
+### Changed
+
+- OpenClaw: fix 5 s model catalog stalls; groom now reports real compaction and compacts harness sessions over the limit.
+
 ## [2.28.1] - 2026-11-08
 
 ### Fixed

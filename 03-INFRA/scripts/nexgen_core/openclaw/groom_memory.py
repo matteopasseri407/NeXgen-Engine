@@ -27,10 +27,12 @@ FILENAME = "openclaw-groom.json"
 COMPACTED = "compacted"
 ALREADY_COMPACTED = "already compacted"
 UNSUPPORTED = "unsupported"
+#: The gateway answered and compacted nothing (for example, nothing to do yet).
+NOT_COMPACTED = "not compacted"
 FAILED = "failed"
 
 #: The outcomes after which an unchanged session is not attempted again.
-SETTLED = frozenset({COMPACTED, ALREADY_COMPACTED, UNSUPPORTED})
+SETTLED = frozenset({COMPACTED, ALREADY_COMPACTED, UNSUPPORTED, NOT_COMPACTED})
 
 
 def memory_path(home: Path | None = None) -> Path:
