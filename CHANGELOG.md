@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.28.1] - 2026-11-08
+
 ### Fixed
 
 - `nexgen release ship` run again after a push that failed: the version was already bumped, so the rerun skipped the push, and the pull request then named a commit GitHub had never seen ("No commit found for SHA"). The rerun now pushes the release commit first. The git and gh plumbing moved to `release_git.py` to keep `release_ship.py` under its line cap.
