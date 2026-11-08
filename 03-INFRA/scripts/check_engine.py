@@ -14,13 +14,12 @@ from pathlib import Path
 
 
 def _resolve_python(root: Path) -> str:
-    """Uses sys.executable if it can import dependencies, or falls back to repo .venv."""
-    try:
-        import httpx  # noqa: F401
-        import pytest  # noqa: F401
-        return sys.executable
-    except ImportError:
-        pass
+    """The repo's own .venv when it exists, else the interpreter running this script.
+
+    The running interpreter may be one without the dependencies (the Microsoft Store
+    Python): the tests then run without PyYAML and report false failures. The venv the
+    repo was set up with is the one that has them, so it is preferred.
+    """
     for venv_python in (
         root / ".venv" / "bin" / "python",
         root / ".venv" / "Scripts" / "python.exe",

@@ -434,7 +434,7 @@ def _native_memory_report(home: Path) -> list[tuple[str, str]]:
         ("antigravity", home / ".gemini" / "tmp"),
     ):
         if path.is_dir():
-            count = sum(1 for _ in path.rglob("*") if _.is_file())
+            count = sum(len(files) for _, _, files in os.walk(path))
             out.append((label, t(
                 "{count} transcript files in {path} (to be distilled, not structured memory)",
                 count=count, path=path,
@@ -450,7 +450,7 @@ def _native_memory_report(home: Path) -> list[tuple[str, str]]:
         home / ".opencode" / "storage",
     ):
         if candidate.is_dir():
-            count = sum(1 for _ in candidate.rglob("*") if _.is_file())
+            count = sum(len(files) for _, _, files in os.walk(candidate))
             out.append(("opencode", t(
                 "{count} transcript files in {path} (to be distilled, not structured memory)",
                 count=count, path=candidate,

@@ -55,6 +55,8 @@ export function registerSup(api, {
   api.registerCommand({
     name: "sup",
     description: "The supervised tasks, their units and their spend; an id for one task.",
+    acceptsArgs: true,
+    requireAuth: true,
     handler: async (ctx) => ({ text: await supText(ctx?.args ?? "", { configPath, timeoutMs, spawnFn }) }),
   });
 }

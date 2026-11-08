@@ -197,7 +197,10 @@ def test_a_squad_with_an_agy_agent_installs_the_pinned_plugin_once_and_enables_i
     ], "a fresh ClawHub install needs no --force"
     plugins = machine.config_json()["plugins"]
     assert BACKEND in plugins["allow"]
-    assert plugin_entry(machine) == {"enabled": True, "config": {"permissionMode": "sandbox"}}
+    # The conversation grant is written too: the plugin is installed and enabled here, and its turn hook needs it.
+    assert plugin_entry(machine) == {
+        "enabled": True, "config": {"permissionMode": "sandbox"}, "hooks": {"allowConversationAccess": True},
+    }
     assert plugin["version"] in machine.output(), "the release installed is named"
 
 

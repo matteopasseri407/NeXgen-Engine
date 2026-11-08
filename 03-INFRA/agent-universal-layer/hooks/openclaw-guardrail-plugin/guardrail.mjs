@@ -153,6 +153,13 @@ export function needsApprovalWithoutCommand(toolName, params) {
   return true;
 }
 
+// A Code Mode cell (docs/plugins/hooks/tool-policy.md): the outer `exec` of Code Mode carries
+// `toolKind: "code_mode_exec"` and `toolInputKind: "javascript"`. It is JavaScript, not a
+// command line, so there is no command for the body to judge.
+export function isCodeModeCell(event, ctx) {
+  return event?.toolKind === "code_mode_exec" || ctx?.toolKind === "code_mode_exec";
+}
+
 // The posture the engine last wrote, read per call: a changed manifest takes effect on the
 // next command, no gateway restart. An unreadable or absent file is the old behaviour
 // (`bypass`, the guardrail decides), never a silent looser posture.
@@ -241,6 +248,10 @@ export function decideFor(posture, verdict) {
 export function registerGuardrail(api, { sidecarPath = SIDECAR_PATH, configPath = CONFIG_PATH } = {}) {
   api.on("before_tool_call", async (event, ctx) => {
     const posture = readPosture(resolveEngineFile("nexgen.config.json", dirname(configPath)));
+    if (isCodeModeCell(event, ctx)) {
+      // Unreadable, like a shell call with no command: it asks, whatever the posture.
+      return approvalFor("This is a Code Mode cell: the guardrail cannot read its commands, so it needs your approval.", "Run code");
+    }
     const toolName = toolNameOf(event?.toolName);
     const command = commandOfTool(toolName, event?.params);
     if (command === null) {

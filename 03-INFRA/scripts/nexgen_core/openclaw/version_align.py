@@ -36,7 +36,7 @@ from pathlib import Path
 
 from nexgen_core import files
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import align_node, align_window, setup_commands
+from nexgen_core.openclaw import align_node, align_window, gateway_doctor, setup_commands
 from nexgen_core.openclaw.detect import Installation, _detect_openclaw
 from nexgen_core.openclaw.host_preflight import npm_prefix, read_node_version
 from nexgen_core.openclaw.node_only import detect_node_only
@@ -222,16 +222,23 @@ def _upgrade(release: _Release, run: Run, env: dict[str, str]) -> Outcome:
         _remember_failure(release.memory, release.pinned, release.moment)
         return Outcome(FAILED, t("Installing OpenClaw {pinned} failed (exit {code}): {detail}",
                                  pinned=release.pinned, code=installed.returncode, detail=_tail(installed)))
-    problem = (_restart(release.role, release.service, release.binary, run, env)
+    migration = _migrate(release, run, env)
+    problem = (migration.problem or _restart(release.role, release.service, release.binary, run, env)
                or _verify(release.role, release.smoke, release.binary, run, env))
     if problem is None:
         _forget_failure(release.memory)
         return Outcome(ALIGNED, _success_line(release.role, release.pinned))
     rollback = _rollback(release.role, release.service, release.binary, release.npm, release.previous, run, env)
     _remember_failure(release.memory, release.pinned, release.moment)
-    return Outcome(FAILED, t("OpenClaw {pinned} did not work here ({problem}): {previous} was put back.{rollback}",
-                             pinned=release.pinned, problem=problem, previous=release.previous,
-                             rollback=rollback))
+    return Outcome(FAILED, gateway_doctor.failure_line(
+        release.pinned, release.previous, problem, rollback, migration.migrated))
+
+
+def _migrate(release: _Release, run: Run, env: dict[str, str]) -> gateway_doctor.Migration:
+    """The gateway's database migration, between install and restart; a node has none to run."""
+    if release.role != GATEWAY:
+        return gateway_doctor.Migration()
+    return gateway_doctor.migrate(release.service, release.binary, run, env)
 
 
 def _default_run(argv: list[str], env: Mapping[str, str] | None = None) -> RunResult:
