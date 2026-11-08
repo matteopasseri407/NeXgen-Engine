@@ -56,60 +56,75 @@ class SessionLost(HarnessError):
 
 def run_unit(
     task_id: str, unit: str, *, harness: str = "", opener=None, runner=None, lister=None,
-    measure=None, wait_s: float = SESSION_WAIT_S, model: str = "",
+    measure=None, wait_s: float = SESSION_WAIT_S, model: str = "", limited: bool = False, force_new: bool = False,
 ) -> dict:
-    """Put the unit's work into its harness session, queue it, or open the first tab.
+    """Put the unit's work into its harness session, queue it, or open the first tab."""
+    from . import routing_tiers
 
-    The harness is the one named for the executor role, unless the owner named one
-    for this run. A unit whose recorded session was born in another folder gets a
-    new tab in the unit's own copy: the harness binds a session to its directory,
-    and reusing it makes the executor work in a folder that may no longer exist.
-    `model` is a model the owner named for this run: it travels on the tab the run
-    opens, and a harness that has no tab left to open reports it as not applied.
-    """
     record, folder = _unit_copy(task_id, unit)
     name = record["unit"]
-    chosen = _resolve(task_id, "esecutore", harness)
-    adapter = _adapter(chosen)
     brief = state.open_task(task_id) / f"20-brief-{name}.md"
     if not brief.is_file():
         raise HarnessError(f"brief dell'unità sparito: {brief}")
+    if routing_tiers.routing_tiers_exists():
+        model, harness = routing_tiers.resolve_worker_candidate(model, harness, limited=limited)
+    chosen = _resolve(task_id, "esecutore", harness)
     local_notes = _prepare_local(task_id, name, chosen)
-    if adapter.capabilities.has("write_permissions"):
-        adapter.write_profile(task_id, folder, mcp=record.get("mcp"))
     allowed = policy.allowed_models()
-    prompt = prompt_text(task_id, name, brief, harness=chosen)
-    previous = state.harness_session_record(task_id, chosen)
-    if not previous:
-        opened = _open_first_tab(
-            task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
-            adapter=adapter, measure=measure, allowed=allowed, runner=runner, model=model,
+    try:
+        res = _dispatch_unit_attempt(
+            task_id, name, folder, record, brief, chosen, model, allowed, local_notes,
+            opener=opener, runner=runner, lister=lister, measure=measure, wait_s=wait_s, force_new=force_new,
         )
-        opened["harness"] = chosen
-        opened["notes"] = local_notes
-        return opened
-    if _foreign_copy(previous.get("folder") or "", folder):
+        err = res.get("reason") if res.get("mode") == "refused" else None
+    except Exception as exc:
+        res, err = None, exc
+    if err and routing_tiers.routing_tiers_exists():
+        next_c = routing_tiers.handle_quota_failover(model, err, limited=limited)
+        if next_c:
+            return _dispatch_unit_attempt(
+                task_id, name, folder, record, brief, _resolve(task_id, "esecutore", next_c["harness"]),
+                next_c["model"], allowed, local_notes, opener=opener, runner=runner, lister=lister,
+                measure=measure, wait_s=wait_s, force_new=True,
+            )
+    if res is None:
+        raise err
+    return res
+
+
+def _dispatch_unit_attempt(
+    task_id: str, name: str, folder: Path, record: dict, brief: Path,
+    chosen: str, model: str, allowed: tuple[str, ...], local_notes: list[str],
+    *, opener, runner, lister, measure, wait_s: float, force_new: bool = False,
+) -> dict:
+    """Perform one delivery or tab open attempt for a unit."""
+    adapter = _adapter(chosen)
+    if adapter.capabilities.has("write_permissions"):
+        adapter.write_profile(task_id, folder, model=model, mcp=record.get("mcp"))
+    prompt = prompt_text(task_id, name, brief, harness=chosen)
+    previous = None if force_new else state.harness_session_record(task_id, chosen)
+    foreign = bool(previous and _foreign_copy(previous.get("folder") or "", folder))
+    if foreign:
         state.append_event(
             task_id, "harness_session_foreign", unit=name, harness=chosen,
             session=previous["session"], session_folder=previous.get("folder") or "",
             copy=str(folder), reason="la sessione è nata in un'altra copia",
         )
+    if not previous or foreign:
+        reason = "sessione nata in un'altra copia: scheda nuova nella copia dell'unità" if foreign else ""
         opened = _open_first_tab(
             task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
-            adapter=adapter, measure=measure, allowed=allowed, runner=runner, model=model,
-            reason="sessione nata in un'altra copia: scheda nuova nella copia dell'unità",
+            adapter=adapter, measure=measure, allowed=allowed, runner=runner, model=model, reason=reason,
         )
-        opened["harness"] = chosen
-        opened["notes"] = local_notes
-        return opened
-    result = _deliver(
-        task_id, name, folder, prompt, previous["session"], event="unit_started", extra={},
-        opener=opener, runner=runner, lister=lister, measure=measure, wait_s=wait_s,
-        allowed=allowed, adapter=adapter, model=model,
-    )
-    result["harness"] = chosen
-    result["notes"] = local_notes
-    return result
+    else:
+        opened = _deliver(
+            task_id, name, folder, prompt, previous["session"], event="unit_started", extra={},
+            opener=opener, runner=runner, lister=lister, measure=measure, wait_s=wait_s,
+            allowed=allowed, adapter=adapter, model=model,
+        )
+    opened["harness"] = chosen
+    opened["notes"] = local_notes
+    return opened
 
 
 def _resolve_unit_session(task_id: str, unit: str, chosen: str, record: dict, folder: Path) -> dict | None:
@@ -314,6 +329,16 @@ def find_session(
     return found.as_dict() if found else None
 
 
+def _record_refusal(task_id: str, unit: str, adapter, session_id: str, model: str,
+                    allowed: tuple[str, ...], folder: Path, **kwargs) -> str:
+    """Record a model refusal event and return its formatted reason."""
+    reason = policy.refusal(model, allowed)
+    state.append_event(task_id, "unit_model_refused", unit=unit, harness=adapter.name,
+                       session=session_id, model=model, allowed=list(allowed),
+                       reason=reason, folder=str(folder), **kwargs)
+    return reason
+
+
 def _enter_the_session(
     task_id: str, unit: str, session: str, folder: Path, prompt: str, runner, measure,
     *, event: str, extra: dict, allowed: tuple[str, ...] = (), model: str = "", opener=None,
@@ -337,15 +362,9 @@ def _enter_the_session(
     running = str(getattr(facts, "model", "") or "")
     chosen = model or running
     if allowed and not policy.model_allowed(chosen, allowed):
-        reason = policy.refusal(chosen, allowed)
-        state.append_event(
-            task_id, "unit_model_refused", unit=unit, harness=adapter.name, session=session,
-            model=chosen, allowed=list(allowed), reason=reason, folder=str(folder),
-        )
-        return {
-            "unit": unit, "mode": "refused", "sent": False, "session": session,
-            "model": chosen, "reason": reason,
-        }
+        reason = _record_refusal(task_id, unit, adapter, session, chosen, allowed, folder)
+        return {"unit": unit, "mode": "refused", "sent": False, "session": session,
+                "model": chosen, "reason": reason}
     if not facts.stopped:
         reason = "sessione occupata"
         state.append_event(
@@ -467,12 +486,7 @@ def _open_first_tab(
     session = found
     model = _model_of(session, measure or _measure_for(adapter), allowed)
     if allowed and not policy.model_allowed(model, allowed):
-        refusal = policy.refusal(model, allowed)
-        state.append_event(
-            task_id, "unit_model_refused", unit=unit, harness=adapter.name,
-            session=str(session.get("id") or ""), model=model, allowed=list(allowed),
-            reason=refusal, folder=str(folder),
-        )
+        refusal = _record_refusal(task_id, unit, adapter, str(session.get("id") or ""), model, allowed, folder)
         return _with_tab({
             "unit": unit, "mode": "refused", "sent": True, "window": handle,
             "session": session, "model": model, "reason": refusal, **applied,
@@ -536,16 +550,8 @@ def _open_turn(
         return result
     model = _model_of(found, measure or _measure_for(adapter), allowed)
     if allowed and not policy.model_allowed(model, allowed):
-        refusal = policy.refusal(model, allowed)
-        state.append_event(
-            task_id, "unit_model_refused", unit=unit, harness=adapter.name,
-            session=str(found.get("id") or session), model=model, allowed=list(allowed),
-            reason=refusal, folder=str(folder), sent=True,
-        )
-        return {
-            "unit": unit, "mode": "refused", "sent": True, "session": found,
-            "model": model, "reason": refusal,
-        }
+        refusal = _record_refusal(task_id, unit, adapter, str(found.get("id") or session), model, allowed, folder, sent=True)
+        return {"unit": unit, "mode": "refused", "sent": True, "session": found, "model": model, "reason": refusal}
     row = _attach(task_id, unit, found, {"title": ""}, adapter.name, folder)
     result = {
         "unit": unit, "mode": "run", "session": str(found.get("id") or session),
@@ -719,9 +725,7 @@ def _measure_for(adapter):
 
 def _detach_kwargs() -> dict:
     """Let the harness outlive the command that started it."""
-    if sys.platform.startswith(("win", "cygwin", "msys")):
-        return no_window_kwargs()
-    return {"start_new_session": True}
+    return no_window_kwargs() if sys.platform.startswith(("win", "cygwin", "msys")) else {"start_new_session": True}
 
 
 def _unit_copy(task_id: str, unit: str) -> tuple[dict, Path]:
@@ -816,8 +820,3 @@ def _foreign_copy(recorded: str, folder: Path) -> bool:
     if not recorded:
         return False
     return adapters.base.normal_path(recorded) != adapters.base.normal_path(folder)
-
-
-def _normal(path: str | Path) -> str:
-    """A folder as one comparable string, case and separators aside."""
-    return adapters.base.normal_path(path)

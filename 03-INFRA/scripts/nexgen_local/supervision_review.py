@@ -15,6 +15,7 @@ from pathlib import Path
 
 from nexgen_core.files import write_private_text
 
+from . import routing_failover as failover
 from . import supervision_gates as gates
 from . import supervision_harness as harness
 from . import supervision_retire as retire_module
@@ -137,10 +138,17 @@ def note_delivery_failure(task_id: str, unit: str, *, reader=None) -> dict:
 
 
 def status_note(task_id: str, unit: str, *, reader=None) -> str:
-    """The line `sup status` prints for a delivery the provider cut off, or an empty string."""
+    """The lines `sup status` prints for a unit: a delivery the provider cut off, then any move to another worker."""
     found = note_delivery_failure(task_id, unit, reader=reader)
-    if not found:
-        return ""
+    lines = [_failure_line(found)] if found else []
+    moved = failover.unit_note(task_id, unit)
+    if moved:
+        lines.append(moved)
+    return "\n".join(lines)
+
+
+def _failure_line(found: dict) -> str:
+    """The line for a delivery the provider cut off."""
     round_no = int(found.get("round") or 0)
     where = f"giro {round_no}" if round_no else "prima consegna"
     return (

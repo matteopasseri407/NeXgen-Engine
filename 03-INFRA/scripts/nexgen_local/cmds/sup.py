@@ -118,6 +118,10 @@ def _register_run(run) -> None:
         "-m", "--model", default="",
         help="modello di questa scheda, quando l'harness lo accetta sulla riga di comando (agy)",
     )
+    run.add_argument(
+        "--limited", action="store_true",
+        help="usa i modelli del tier limited (attenzione: mai per finanze, posta, identità, segreti)",
+    )
     run.set_defaults(func=cmd_sup_run)
 
 
@@ -313,8 +317,8 @@ def cmd_sup_unit(args: argparse.Namespace) -> int:
     print("mcp: " + (", ".join(mcp_assigned) if mcp_assigned else "nessuno"))
     broken = [name for name, refs in record["remotes"].items() if isinstance(refs, dict) and refs.get("error")]
     remotes = ", ".join(record["remotes"]) or "nessuno"
-    print(f"remoti: {remotes} · push bloccata in questa copia"
-          + (f" · non leggibili: {', '.join(broken)}" if broken else ""))
+    extra_remotes = f" · non leggibili: {', '.join(broken)}" if broken else ""
+    print(f"remoti: {remotes} · push bloccata in questa copia{extra_remotes}")
     _board_card(args.id, record["unit"], record)
     return 0
 
@@ -341,22 +345,20 @@ def cmd_sup_run(args: argparse.Namespace) -> int:
         if result.get("reason"):
             print(f"nota: {result['reason']}")
         row = result.get("row") or {}
-        print(f"costo all'invio: {row['cost_usd']:.4f} $" if isinstance(row.get("cost_usd"), (int, float))
-              else "costo all'invio: non disponibile")
+        cost_info = f"{row['cost_usd']:.4f} $" if isinstance(row.get("cost_usd"), (int, float)) else "non disponibile"
+        print(f"costo all'invio: {cost_info}")
         _print_model(result)
         _board("running", args.id, result["unit"])
         return 0
     handle = result["window"]
-    print(f"finestra {handle.get('launcher')} (pid {handle.get('pid')}) · scheda «{handle.get('title')}» "
-          f"dell'unità {result['unit']}")
+    print(f"finestra {handle.get('launcher')} (pid {handle.get('pid')}) · scheda «{handle.get('title')}» dell'unità {result['unit']}")
     if result.get("reason"):
         print(f"perché una scheda nuova: {result['reason']}")
     _print_model(result)
     _board("running", args.id, result["unit"])
     session = result["session"]
     if session is None:
-        print("sessione non determinata: agganciala a mano con "
-              f"`sup attach {args.id} {result['unit']} --session <id>`")
+        print(f"sessione non determinata: agganciala a mano con `sup attach {args.id} {result['unit']} --session <id>`")
         return 0
     print(f"sessione agganciata: {session.get('id')} · {session.get('title', '')}")
     return 0
@@ -374,16 +376,14 @@ def _print_model(result: dict) -> None:
 
 
 def _run_unit(args: argparse.Namespace) -> dict:
-    """Call the engine with only the keywords the owner actually gave.
-
-    The callers and the tests replace `run_unit` with a two-argument function; a
-    keyword nobody asked for would make that replacement unreachable.
-    """
-    options: dict[str, str] = {}
+    """Call the engine with only the keywords the owner actually gave."""
+    options: dict = {}
     if getattr(args, "harness", ""):
         options["harness"] = args.harness
     if getattr(args, "model", ""):
         options["model"] = args.model
+    if getattr(args, "limited", False):
+        options["limited"] = True
     return harness.run_unit(args.id, args.unit, **options)
 
 
@@ -575,8 +575,7 @@ def _delivery_line(delivery: dict) -> str:
         line += f" · modello {delivery['model']}"
     elif delivery.get("model_requested"):
         line += (
-            f" · modello {delivery['model_requested']} non applicato: una scheda nuova "
-            "prende il modello della configurazione del proprietario"
+            f" · modello {delivery['model_requested']} non applicato: scheda nuova con config proprietario"
         )
     return line
 

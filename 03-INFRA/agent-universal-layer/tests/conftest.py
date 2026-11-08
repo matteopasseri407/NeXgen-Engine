@@ -148,6 +148,7 @@ def isolated_runtime_overrides(monkeypatch, tmp_path_factory):
     # instance) reached the real `systemctl --user` of whoever ran the suite. A test
     # that really wants host mutations has to ask for them.
     monkeypatch.setenv("NEXGEN_DISABLE_HOST_MUTATIONS", "1")
+    monkeypatch.setenv("ROUTING_TIERS_PATH", str(tmp_path_factory.getbasetemp() / "no-routing-tiers.yaml"))
 
 
 @pytest.fixture(autouse=True)
@@ -390,6 +391,7 @@ def sandbox(tmp_path, monkeypatch) -> Sandbox:
     monkeypatch.setenv("NEXGEN_DISABLE_HOST_MUTATIONS", "1")
     monkeypatch.delenv("AGENT_ENGINE_ROOT", raising=False)
     monkeypatch.delenv("AGENT_VAULT_DATA", raising=False)
+    monkeypatch.delenv("ROUTING_TIERS_PATH", raising=False)
     return sb
 
 

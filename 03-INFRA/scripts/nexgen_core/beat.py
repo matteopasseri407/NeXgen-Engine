@@ -373,8 +373,23 @@ class Heartbeat:
             "dependency_watch": self.run_dependency_watch(),
             "self_upgrade": self_upgrade,
             "quota": self.run_quota_watch(),
+            "models_discover": self.run_models_discover(),
             "timestamp": time.time(),
         }
+
+    def run_models_discover(self) -> dict[str, Any] | None:
+        """Run model discovery on server role at most once every 24 hours."""
+        try:
+            from nexgen_core import roles
+            if roles.declared_role(home=self.home, vault_root=self.vault_data) != roles.SERVER_ROLE:
+                return None
+            from nexgen_local import routing_discovery
+            return routing_discovery.check_and_run_daily_discover(
+                vault=self.vault_data, home=self.home, megaphone=self.megaphone,
+            )
+        except Exception as exc:  # nexgen: allow reason="discover failure must not fail the beat"
+            logger.debug("models discover skipped (%s)", type(exc).__name__)
+            return {"ok": False, "error": str(exc)}
 
     def run_quota_watch(self) -> dict[str, Any]:
         """The 80% and 95% alerts, from the readings that cost nothing to take.
