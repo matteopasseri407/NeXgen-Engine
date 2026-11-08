@@ -15,6 +15,7 @@ compaction is never asked: both are what issue #148 was.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -35,12 +36,24 @@ BUSY_STATES = {"running", "active", "starting"}
 #: Backends that cannot be asked for a native compaction on this machine: their sessions are left alone.
 #: claude-cli is not here: OpenClaw's own backend declares a manual `/compact` and checks its output.
 UNCONFIRMABLE_RUNTIMES = frozenset({"google-antigravity-cli"})
-#: Harness CLIs that compact natively. Their sessions are compacted only when over the limit, never for being idle.
-HARNESS_RUNTIMES = frozenset({"claude-cli", "google-antigravity-cli"})
+#: Harnesses whose stale token counter still counts as being over the limit, because their native compact is the
+#: only way down. The idle rule does not look at this set: every chat, harness or direct model, follows it alike.
+#: codex: OpenClaw refuses the manual compact while the agent has a tools deny list ("host-isolated"), and answers
+#: ok with compacted=false; the memory then stops the retries until the chat is written to again.
+HARNESS_RUNTIMES = frozenset({"claude-cli", "codex", "google-antigravity-cli"})
 #: A session only looked at, because a dry run changes nothing.
 DRY_RUN = "dry-run"
 #: The reason a session is picked for size rather than for being idle.
 OVER_LIMIT = "over the limit"
+#: The renewal the provider states when a quota is spent; asking before it only earns another rejection.
+_RETRY_AFTER = re.compile(r"retry-after:\s*(\d+)", re.IGNORECASE)
+_SPENT_QUOTA = re.compile(
+    r"\b429\b|usage.?limit|quota|rate.?limit|hit your limit|resource.?exhausted"
+    r"|credit balance|insufficient.{0,12}credit|out of credits",
+    re.IGNORECASE,
+)
+#: How long to leave a spent quota alone when the provider does not say when it renews.
+UNDATED_QUOTA_WAIT_MS = 6 * 60 * 60 * 1000
 
 
 @dataclass(frozen=True)
@@ -54,6 +67,7 @@ class Decision:
     reason: str
     runtime: str
     fingerprint: dict[str, float]
+    provider: str = ""
 
 
 @dataclass(frozen=True)
@@ -94,18 +108,16 @@ def _policy_decisions(entries: Iterable[Mapping[str, Any]], now_ms: float) -> li
         if (entry.get("status") or "") in BUSY_STATES:
             continue
         tokens = int(entry.get("totalTokens") or 0)
-        # A counter the gateway marks stale is not evidence of pressure for a
-        # plain chat: after a compaction it reports the summariser's own usage.
-        # A harness CLI over the limit is the exception: its native compact is
-        # the only way down, and the memory stops retries while the counters
-        # stay put. Under the limit, a stale harness counter is still ignored.
-        stale = entry.get("totalTokensFresh") is False
-        if stale and not (_runtime_id(entry) in HARNESS_RUNTIMES and tokens >= HARD_TOKENS):
-            continue
         if tokens <= 0:
             continue
+        # A counter the gateway marks stale is not evidence of pressure for a
+        # plain chat in use: after a compaction it reports the summariser's own
+        # usage. A harness is the exception: its native compact is the only way
+        # down. Being idle needs no counter at all, so it applies to every chat.
+        stale = entry.get("totalTokensFresh") is False
+        over_limit = tokens >= HARD_TOKENS and (not stale or _runtime_id(entry) in HARNESS_RUNTIMES)
         idle = _idle_seconds(entry, now_ms)
-        if tokens >= HARD_TOKENS:
+        if over_limit:
             reason = OVER_LIMIT
         elif idle >= IDLE_SECONDS:
             reason = "idle"
@@ -119,6 +131,7 @@ def _policy_decisions(entries: Iterable[Mapping[str, Any]], now_ms: float) -> li
             reason=reason,
             runtime=_runtime_id(entry),
             fingerprint=groom_memory.fingerprint(entry),
+            provider=str(entry.get("modelProvider") or ""),
         ))
     return decisions
 
@@ -132,18 +145,19 @@ def plan_groom(
     """The sessions worth compacting, in the order they were listed.
 
     `memory` is what earlier runs attempted: a session whose counters have not
-    moved since an attempt that ended well is not worth another try. `blocked`
-    is the set of backends this machine cannot ask to compact; the gateway host
-    passes the one `blocked_runtimes` computed, a test that drives the policy
-    alone gets the conservative default.
+    moved since an attempt that ended well is not worth another try, and a
+    quota that has not renewed is not asked again. `blocked` is the set of
+    backends this machine cannot ask to compact; the gateway host passes the one
+    `blocked_runtimes` computed, a test that drives the policy alone gets the
+    conservative default.
     """
     remembered = memory or {}
     return [
         decision
         for decision in _policy_decisions(entries, now_ms)
         if decision.runtime not in blocked
-        and not (decision.runtime in HARNESS_RUNTIMES and decision.reason != OVER_LIMIT)
         and not groom_memory.settled(remembered, decision.key, decision.fingerprint)
+        and not groom_memory.quota_spent(remembered, decision.key, decision.provider, now_ms)
     ]
 
 
@@ -273,19 +287,50 @@ def _line(decision: Decision, outcome: str) -> str:
     return f"{decision.key}: {decision.tokens} tokens, idle {minutes}m ({decision.reason}) -> {outcome}"
 
 
+def _sessions_after(binary: str, attempts: list[tuple[Decision, Outcome]]) -> dict[str, Mapping[str, Any]]:
+    """The attempted sessions as they look now; empty when there were none or the gateway cannot say."""
+    if not attempts:
+        return {}
+    try:
+        return {str(entry["key"]): entry for entry in list_sessions(binary) if entry.get("key")}
+    except (subprocess.TimeoutExpired, OSError, ValueError):  # nexgen: allow reason="without a fresh listing the counters seen before the attempt are remembered"
+        return {}
+
+
+def _quota_renews_at(outcome: Outcome, now_ms: float) -> float | None:
+    """When a failure caused by a spent quota can be tried again; None when it was not about quota."""
+    if outcome.state != groom_memory.FAILED:
+        return None
+    stated = _RETRY_AFTER.search(outcome.line)
+    if stated:
+        return now_ms + int(stated.group(1)) * 1000
+    return now_ms + UNDATED_QUOTA_WAIT_MS if _SPENT_QUOTA.search(outcome.line) else None
+
+
 def _remember_run(
     memory: dict[str, dict[str, Any]],
     entries: list[Mapping[str, Any]],
     attempts: Iterable[tuple[Decision, Outcome]],
+    after: Mapping[str, Mapping[str, Any]],
+    now_ms: float,
 ) -> None:
     """Record this run's attempts, and forget the sessions the gateway stopped listing.
+
+    An attempt is remembered with the counters the session has after it: a
+    compaction itself moves a chat's date and token count, and the counters seen
+    before it would look like new activity an hour later, on a chat nobody touched.
 
     An empty listing is not evidence: a gateway that cannot be reached answers
     with none, and erasing what is known would put every session back in the
     hourly retry loop. The first listing that actually answers does the pruning.
     """
     for decision, outcome in attempts:
-        groom_memory.remember(memory, decision.key, decision.fingerprint, outcome.state)
+        current = after.get(decision.key)
+        mark = groom_memory.fingerprint(current) if current else decision.fingerprint
+        groom_memory.remember(
+            memory, decision.key, mark, outcome.state,
+            retry_at=_quota_renews_at(outcome, now_ms), provider=decision.provider,
+        )
     if entries:
         groom_memory.prune(memory, (entry.get("key") for entry in entries if entry.get("key")))
 
@@ -317,15 +362,20 @@ def groom(
                                            runtime=decision.runtime)))
             emit(lines[-1])
     attempts: list[tuple[Decision, Outcome]] = []
+    spent: set[str] = set()
     for decision in plan_groom(entries, moment, memory=memory, blocked=blocked):
+        if decision.provider in spent:
+            continue
         outcome = Outcome(DRY_RUN, DRY_RUN) if dry_run else compact(binary, decision)
+        if decision.provider and _quota_renews_at(outcome, moment) is not None:
+            spent.add(decision.provider)
         attempts.append((decision, outcome))
         lines.append(_line(decision, outcome.line))
         # One line as each attempt ends: a compaction can take minutes.
         emit(lines[-1])
     if not dry_run:
         before = dict(memory)
-        _remember_run(memory, entries, attempts)
+        _remember_run(memory, entries, attempts, _sessions_after(binary, attempts), moment)
         if memory != before:
             groom_memory.save_memory(memory, home)
     return GroomReport(lines=lines, failed=sum(1 for _, o in attempts if o.state == groom_memory.FAILED))

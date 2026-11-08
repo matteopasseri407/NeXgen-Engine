@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.28.3] - 2026-11-08
+
+### Changed
+
+- OpenClaw chat grooming: every chat idle for an hour now gets its compaction, native for Claude Code, agy and Codex, OpenClaw's own for direct models. A compacted chat is left alone until it is written to again. A spent quota is not retried until it renews, for that chat and for the other chats on the same provider. Codex is attempted, but OpenClaw refuses the manual compact while the agent has a tools deny list.
+
 ## [2.28.2] - 2026-11-08
 
 ### Changed

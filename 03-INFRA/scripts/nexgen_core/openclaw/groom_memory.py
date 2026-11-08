@@ -70,9 +70,29 @@ def settled(memory: Mapping[str, dict[str, Any]], key: str, mark: Mapping[str, f
     return record.get("outcome") in SETTLED and record.get("fingerprint") == dict(mark)
 
 
-def remember(memory: dict[str, dict[str, Any]], key: str, mark: Mapping[str, float], outcome: str) -> None:
+def quota_spent(memory: Mapping[str, dict[str, Any]], key: str, provider: str, now_ms: float) -> bool:
+    """Whether this session, or any chat on its provider, hit a quota that has not renewed yet."""
+    for known, record in memory.items():
+        retry_at = record.get("retry_at")
+        if isinstance(retry_at, (int, float)) and retry_at > now_ms and (
+            known == key or (provider and record.get("provider") == provider)
+        ):
+            return True
+    return False
+
+
+def remember(
+    memory: dict[str, dict[str, Any]],
+    key: str,
+    mark: Mapping[str, float],
+    outcome: str,
+    retry_at: float | None = None,
+    provider: str = "",
+) -> None:
     """Replace what is known about a session with the attempt just made."""
     memory[key] = {"fingerprint": dict(mark), "outcome": outcome}
+    if retry_at is not None:
+        memory[key].update(retry_at=retry_at, provider=provider)
 
 
 def prune(memory: dict[str, dict[str, Any]], listed_keys: Iterable[Any]) -> None:
