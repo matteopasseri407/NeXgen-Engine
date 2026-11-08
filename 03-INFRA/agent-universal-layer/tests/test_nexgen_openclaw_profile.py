@@ -84,6 +84,7 @@ def test_claude_codex_go_and_ollama_together():
         "homeScope": "user", "approvalPolicy": "on-request",
         "sandbox": "workspace-write", "approvalsReviewer": "user",
     }
+    assert entries["codex"]["config"]["discovery"] == {"enabled": False}
     assert entries["ollama"] == {"enabled": True}
 
     defaults = config["agents"]["defaults"]
@@ -638,3 +639,19 @@ def test_a_legacy_claude_cli_wildcard_in_the_file_is_not_carried_forward():
     assert "claude-cli/*" not in defaults["modelPolicy"]["allow"]
     assert "anthropic/*" in defaults["modelPolicy"]["allow"]
     assert defaults["models"]["anthropic/*"] == {"agentRuntime": {"id": "claude-cli"}}
+
+
+def test_an_existing_codex_block_without_discovery_receives_the_key():
+    """The profile is merged over the file in force: a config written before the key still gets it."""
+    from nexgen_core.openclaw.setup_write import merged_document
+
+    current = {"plugins": {"entries": {"codex": {"enabled": True, "config": {"appServer": {"homeScope": "user"}}}}}}
+    proposed = {"plugins": {"entries": {"codex": {"enabled": True, "config": {
+        "discovery": {"enabled": False}, "appServer": {"homeScope": "user"},
+    }}}}}
+
+    merged = merged_document(current, proposed)
+
+    assert merged["plugins"]["entries"]["codex"]["config"] == {
+        "discovery": {"enabled": False}, "appServer": {"homeScope": "user"},
+    }

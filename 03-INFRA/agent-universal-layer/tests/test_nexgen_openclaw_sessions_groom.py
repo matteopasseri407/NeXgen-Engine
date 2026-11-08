@@ -69,11 +69,12 @@ def test_the_main_chat_is_never_skipped_by_key():
     assert decisions and decisions[0].key == "agent:main:dashboard:abc"
 
 
-def test_a_session_on_a_backend_that_cannot_confirm_compaction_is_never_picked():
-    """A `claude-cli` agent stays in the plan's blind spot, not in an hourly retry loop."""
+def test_a_harness_session_is_not_compacted_just_for_being_idle():
+    """A `claude-cli` chat that is only idle keeps its native context: no /compact spent on it."""
     claude_backed = session(
         key="agent:capo:main",
         agentId="capo",
+        totalTokens=74_969,
         lastInteractionAt=NOW - 2 * IDLE_SECONDS * 1000,
         agentRuntime={"id": "claude-cli", "source": "config"},
     )
@@ -82,6 +83,62 @@ def test_a_session_on_a_backend_that_cannot_confirm_compaction_is_never_picked()
     decisions = plan_groom([claude_backed, native], NOW)
 
     assert [d.key for d in decisions] == ["agent:posta:node-1"]
+
+
+def test_a_harness_session_over_the_limit_is_picked_for_its_native_compaction():
+    """Over the limit, a claude-cli chat is picked, so the backend's own manual /compact runs."""
+    claude_backed = session(
+        key="agent:capo:main",
+        agentId="capo",
+        totalTokens=HARD_TOKENS + 1,
+        lastInteractionAt=NOW,
+        agentRuntime={"id": "claude-cli", "source": "config"},
+    )
+
+    decisions = plan_groom([claude_backed], NOW)
+
+    assert [(d.key, d.runtime) for d in decisions] == [("agent:capo:main", "claude-cli")]
+
+
+def test_a_stale_harness_over_the_limit_is_picked():
+    """A harness counter the gateway calls stale still means the chat is over the limit."""
+    stale_harness = session(
+        key="agent:posta:node-1", totalTokens=1_652_806, totalTokensFresh=False,
+        agentRuntime={"id": "google-antigravity-cli", "source": "config"},
+    )
+
+    decisions = plan_groom([stale_harness], NOW, blocked=frozenset())
+
+    assert [(d.key, d.reason) for d in decisions] == [("agent:posta:node-1", "over the limit")]
+
+
+def test_a_stale_harness_under_the_limit_is_not_picked_even_when_idle():
+    stale_harness = session(
+        key="agent:capo:main", totalTokens=74_969, totalTokensFresh=False,
+        lastInteractionAt=NOW - 2 * IDLE_SECONDS * 1000,
+        agentRuntime={"id": "claude-cli", "source": "config"},
+    )
+
+    assert plan_groom([stale_harness], NOW) == []
+
+
+def test_a_stale_plain_chat_over_the_limit_is_not_picked():
+    stale_plain = session(key="agent:main:main", totalTokens=HARD_TOKENS + 1, totalTokensFresh=False)
+
+    assert plan_groom([stale_plain], NOW) == []
+
+
+def test_a_stale_harness_with_an_unchanged_fingerprint_is_not_retried():
+    """After a settled attempt, a stale harness over the limit waits until its counters move."""
+    stale_harness = session(
+        key="agent:capo:main", totalTokens=HARD_TOKENS + 1, totalTokensFresh=False, lastInteractionAt=NOW,
+        agentRuntime={"id": "claude-cli", "source": "config"},
+    )
+    first = plan_groom([stale_harness], NOW)
+    memory: dict = {}
+    groom_memory.remember(memory, first[0].key, first[0].fingerprint, groom_memory.NOT_COMPACTED)
+
+    assert plan_groom([stale_harness], NOW, memory=memory) == []
 
 
 def test_a_counter_the_gateway_calls_stale_is_not_pressure():
@@ -137,17 +194,19 @@ def test_a_patched_antigravity_backend_is_picked_again(tmp_path: Path):
 class FakeGateway:
     """The CLI's two verbs, answered from a table, with every compaction recorded."""
 
-    def __init__(self, sessions, reply=(0, "Compacted session.", ""), listing=None):
+    def __init__(self, sessions, reply=(0, '{"ok": true, "compacted": true}', ""), listing=None):
         self.sessions = sessions
         self.reply = reply
         self.listing = listing
         self.compactions: list[str] = []
+        self.argvs: list[list[str]] = []
 
     def __call__(self, argv, **_kwargs):
         if argv[2] == "list":
             if self.listing is not None:
                 return subprocess.CompletedProcess(argv, *self.listing)
             return subprocess.CompletedProcess(argv, 0, json.dumps({"sessions": self.sessions}), "")
+        self.argvs.append(list(argv))
         self.compactions.append(argv[3])
         code, out, err = self.reply(argv[3]) if callable(self.reply) else self.reply
         return subprocess.CompletedProcess(argv, code, out, err)
@@ -237,17 +296,73 @@ def test_an_antigravity_refusal_is_settled_and_never_retried(monkeypatch, tmp_pa
     assert gateway.compactions == ["agent:main:main"]
 
 
-def test_a_claude_cli_session_is_never_compacted_and_dry_run_says_why(monkeypatch, tmp_path):
-    claude_backed = idle_session(key="agent:capo:main", agentId="capo",
-                                 agentRuntime={"id": "claude-cli", "source": "config"})
+def test_a_claude_cli_session_over_the_limit_is_compacted_with_json_and_read_from_the_answer(monkeypatch, tmp_path):
+    claude_backed = session(key="agent:capo:main", agentId="capo", totalTokens=HARD_TOKENS + 1,
+                            agentRuntime={"id": "claude-cli", "source": "config"})
     gateway = FakeGateway([claude_backed])
 
-    quiet = run_groom(gateway, monkeypatch, tmp_path)
-    shown = run_groom(gateway, monkeypatch, tmp_path, dry_run=True)
+    report = run_groom(gateway, monkeypatch, tmp_path)
 
-    assert gateway.compactions == []
-    assert quiet.lines == []
-    assert [line for line in shown.lines if "agent:capo:main" in line and "claude-cli" in line]
+    assert gateway.compactions == ["agent:capo:main"]
+    assert gateway.argvs[0][-1] == "--json"
+    assert report.failed == 0 and len(report.lines) == 1
+
+
+def test_a_gateway_that_does_not_compact_is_not_a_success_and_is_not_retried(monkeypatch, tmp_path):
+    """`compacted: false` is the gateway saying nothing changed: it is reported, not claimed."""
+    gateway = FakeGateway([idle_session()], reply=(0, '{"ok": true, "compacted": false, "reason": "no transcript"}', ""))
+
+    first = run_groom(gateway, monkeypatch, tmp_path)
+    again = run_groom(gateway, monkeypatch, tmp_path)
+
+    assert first.failed == 0 and "no transcript" in first.lines[0]
+    assert again.lines == []
+    assert gateway.compactions == ["agent:main:main"]
+
+
+def test_an_exit_zero_without_the_json_answer_is_never_a_success(monkeypatch, tmp_path):
+    """A plain-text answer, however friendly, does not prove a compaction: it is retried and counted."""
+    gateway = FakeGateway([idle_session()], reply=(0, "Compacted session agent:main:main.\n", ""))
+
+    first = run_groom(gateway, monkeypatch, tmp_path)
+    second = run_groom(gateway, monkeypatch, tmp_path)
+
+    assert first.failed == 1 and second.failed == 1
+    assert gateway.compactions == ["agent:main:main", "agent:main:main"]
+
+
+def test_an_answer_without_the_compacted_field_is_not_a_success():
+    proc = subprocess.CompletedProcess(["openclaw"], 0, '{"ok": true, "key": "agent:main:main"}', "")
+
+    assert sessions_groom._classify(proc).state == groom_memory.FAILED
+
+
+def test_a_json_answer_that_compacted_is_a_success():
+    proc = subprocess.CompletedProcess(["openclaw"], 0, '{"ok": true, "compacted": true}', "")
+
+    assert sessions_groom._classify(proc).state == groom_memory.COMPACTED
+
+
+def test_a_json_failure_is_a_failure_even_with_exit_zero():
+    proc = subprocess.CompletedProcess(["openclaw"], 0, '{"ok": false, "compacted": true, "reason": "x"}', "")
+
+    assert sessions_groom._classify(proc).state == groom_memory.FAILED
+
+
+def test_the_compaction_command_asks_for_the_json_answer(monkeypatch):
+    seen: list[list[str]] = []
+
+    def run(argv, **_kwargs):
+        seen.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, '{"ok": true, "compacted": true}', "")
+
+    monkeypatch.setattr(sessions_groom.subprocess, "run", run)
+    decision = plan_groom([session(totalTokens=HARD_TOKENS + 1)], NOW)[0]
+
+    outcome = sessions_groom.compact("openclaw", decision)
+
+    assert seen == [["openclaw", "sessions", "compact", "agent:main:main", "--agent", "main", "--json"]]
+    assert outcome.state == groom_memory.COMPACTED
 
 
 def test_a_dry_run_reads_the_memory_but_never_writes_it(monkeypatch, tmp_path):
@@ -310,17 +425,6 @@ def test_an_unreadable_listing_does_not_erase_what_is_remembered(monkeypatch, tm
     run_groom(gateway, monkeypatch, tmp_path)
 
     assert "agent:main:main" in load_memory(home=tmp_path)
-
-
-def test_a_zero_exit_is_the_gateway_saying_it_compacted(monkeypatch, tmp_path):
-    """A wording change must not turn every success into an hourly failure."""
-    gateway = FakeGateway([idle_session()], reply=(0, "Session trimmed.\n", ""))
-
-    first = run_groom(gateway, monkeypatch, tmp_path)
-    run_groom(gateway, monkeypatch, tmp_path)
-
-    assert first.failed == 0
-    assert gateway.compactions == ["agent:main:main"]
 
 
 def test_a_reason_on_stderr_is_read_even_when_stdout_has_chatter(monkeypatch, tmp_path):

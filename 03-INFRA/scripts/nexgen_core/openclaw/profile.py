@@ -158,6 +158,10 @@ def _plugin_entries(
         entries["codex"] = {
             "enabled": True,
             "config": {
+                # OpenClaw 2026.11.2 keeps the Codex catalog ready only while the shared
+                # app-server client lives (30 s grace). Without this, every models.list
+                # reruns the native discovery and waits 5 s; off, the openai models stay listed.
+                "discovery": {"enabled": False},
                 "appServer": {
                     "homeScope": "user",
                     "approvalPolicy": "on-request",

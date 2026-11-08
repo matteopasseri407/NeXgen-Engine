@@ -32,10 +32,15 @@ IDLE_SECONDS = 60 * 60
 #: Session keys that belong to a run rather than to the person.
 SKIP_PARTS = (":subagent:", ":cron:", ":acp:", ":harness:")
 BUSY_STATES = {"running", "active", "starting"}
-#: Backends that cannot prove a native compaction ran: their sessions are left alone.
-UNCONFIRMABLE_RUNTIMES = frozenset({"claude-cli", "google-antigravity-cli"})
+#: Backends that cannot be asked for a native compaction on this machine: their sessions are left alone.
+#: claude-cli is not here: OpenClaw's own backend declares a manual `/compact` and checks its output.
+UNCONFIRMABLE_RUNTIMES = frozenset({"google-antigravity-cli"})
+#: Harness CLIs that compact natively. Their sessions are compacted only when over the limit, never for being idle.
+HARNESS_RUNTIMES = frozenset({"claude-cli", "google-antigravity-cli"})
 #: A session only looked at, because a dry run changes nothing.
 DRY_RUN = "dry-run"
+#: The reason a session is picked for size rather than for being idle.
+OVER_LIMIT = "over the limit"
 
 
 @dataclass(frozen=True)
@@ -88,18 +93,20 @@ def _policy_decisions(entries: Iterable[Mapping[str, Any]], now_ms: float) -> li
             continue
         if (entry.get("status") or "") in BUSY_STATES:
             continue
-        # A counter the gateway itself marks stale is not evidence of pressure:
-        # after a compaction it reports the summarising call's usage, which says
-        # nothing about what the next turn will carry. Acting on it would compact
-        # the same chat every hour.
-        if entry.get("totalTokensFresh") is False:
-            continue
         tokens = int(entry.get("totalTokens") or 0)
+        # A counter the gateway marks stale is not evidence of pressure for a
+        # plain chat: after a compaction it reports the summariser's own usage.
+        # A harness CLI over the limit is the exception: its native compact is
+        # the only way down, and the memory stops retries while the counters
+        # stay put. Under the limit, a stale harness counter is still ignored.
+        stale = entry.get("totalTokensFresh") is False
+        if stale and not (_runtime_id(entry) in HARNESS_RUNTIMES and tokens >= HARD_TOKENS):
+            continue
         if tokens <= 0:
             continue
         idle = _idle_seconds(entry, now_ms)
         if tokens >= HARD_TOKENS:
-            reason = "over the limit"
+            reason = OVER_LIMIT
         elif idle >= IDLE_SECONDS:
             reason = "idle"
         else:
@@ -135,6 +142,7 @@ def plan_groom(
         decision
         for decision in _policy_decisions(entries, now_ms)
         if decision.runtime not in blocked
+        and not (decision.runtime in HARNESS_RUNTIMES and decision.reason != OVER_LIMIT)
         and not groom_memory.settled(remembered, decision.key, decision.fingerprint)
     ]
 
@@ -203,10 +211,11 @@ def _classify(proc: subprocess.CompletedProcess[str]) -> Outcome:
     """Name what the gateway's answer means: done, pointless, unprovable, or a real failure.
 
     Both streams are searched: a warning on stdout must not hide the reason on
-    stderr. A zero exit is the gateway's own word that it compacted, whatever
-    the wording it printed, so only a non-zero one can end in failure. A backend
-    that owns compaction but offers no manual one refuses every hour the same
-    way, so its answer is unprovable rather than failed.
+    stderr. The gateway's JSON answer (`--json`) says whether it compacted in its
+    `compacted` field; that field alone is success. An exit code, or text that
+    is not that answer, never proves a compaction. A backend that owns
+    compaction but offers no manual one refuses every hour the same way, so its
+    answer is unprovable rather than failed.
     """
     shown = (proc.stdout or proc.stderr or "").strip()
     line = shown.splitlines()[-1] if shown else "no output"
@@ -215,15 +224,33 @@ def _classify(proc: subprocess.CompletedProcess[str]) -> Outcome:
         return Outcome(groom_memory.ALREADY_COMPACTED, line)
     if "did not confirm" in answered or "does not support manual compaction" in answered:
         return Outcome(groom_memory.UNSUPPORTED, line)
-    if proc.returncode == 0:
-        return Outcome(groom_memory.COMPACTED, line)
-    return Outcome(groom_memory.FAILED, line)
+    payload = _json_answer(proc.stdout)
+    if payload is None or not isinstance(payload.get("compacted"), bool):
+        # Not the gateway's JSON answer: whatever the exit code, nothing is claimed as compacted.
+        return Outcome(groom_memory.FAILED, line if payload is None else "no compacted field in the answer")
+    detail = str(payload.get("reason") or f"compacted={payload['compacted']}")
+    if payload.get("ok") is not True:
+        return Outcome(groom_memory.FAILED, detail)
+    if payload["compacted"]:
+        return Outcome(groom_memory.COMPACTED, detail)
+    return Outcome(groom_memory.NOT_COMPACTED, detail)
+
+
+def _json_answer(stdout: str | None) -> dict[str, Any] | None:
+    """The gateway's JSON answer, or None when the text is not a JSON object."""
+    try:
+        payload = json.loads(stdout or "")
+    except ValueError:  # nexgen: allow reason="a non-JSON answer is reported as unconfirmed, never as success"
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def compact(openclaw: str, decision: Decision, timeout: int = 300) -> Outcome:
     """Compact one session, and say what really happened."""
     try:
-        proc = _run([openclaw, "sessions", "compact", decision.key, "--agent", decision.agent_id], timeout)
+        proc = _run(
+            [openclaw, "sessions", "compact", decision.key, "--agent", decision.agent_id, "--json"], timeout
+        )
     except subprocess.TimeoutExpired:
         return Outcome(groom_memory.FAILED, t("timed out after {seconds}s", seconds=timeout))
     except OSError as exc:
