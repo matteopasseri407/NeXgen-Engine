@@ -69,12 +69,12 @@ def test_the_main_chat_is_never_skipped_by_key():
     assert decisions and decisions[0].key == "agent:main:dashboard:abc"
 
 
-def test_a_harness_session_is_not_compacted_just_for_being_idle():
-    """A `claude-cli` chat that is only idle keeps its native context: no /compact spent on it."""
+def test_an_idle_harness_session_is_picked_for_its_native_compaction():
+    """An idle chat must not come back to a huge cold context, whichever harness runs it."""
     claude_backed = session(
         key="agent:capo:main",
         agentId="capo",
-        totalTokens=74_969,
+        totalTokens=400_000,
         lastInteractionAt=NOW - 2 * IDLE_SECONDS * 1000,
         agentRuntime={"id": "claude-cli", "source": "config"},
     )
@@ -82,7 +82,14 @@ def test_a_harness_session_is_not_compacted_just_for_being_idle():
 
     decisions = plan_groom([claude_backed, native], NOW)
 
-    assert [d.key for d in decisions] == ["agent:posta:node-1"]
+    assert [(d.key, d.reason) for d in decisions] == [("agent:capo:main", "idle"), ("agent:posta:node-1", "idle")]
+
+
+def test_a_harness_chat_still_in_use_under_the_limit_is_not_picked():
+    in_use = session(key="agent:capo:main", totalTokens=400_000, lastInteractionAt=NOW,
+                     agentRuntime={"id": "claude-cli", "source": "config"})
+
+    assert plan_groom([in_use], NOW) == []
 
 
 def test_a_harness_session_over_the_limit_is_picked_for_its_native_compaction():
@@ -112,14 +119,45 @@ def test_a_stale_harness_over_the_limit_is_picked():
     assert [(d.key, d.reason) for d in decisions] == [("agent:posta:node-1", "over the limit")]
 
 
-def test_a_stale_harness_under_the_limit_is_not_picked_even_when_idle():
+def test_a_stale_idle_harness_under_the_limit_is_picked():
+    """A stale counter cannot prove the chat is small: the harness compacts it and says what happened."""
     stale_harness = session(
         key="agent:capo:main", totalTokens=74_969, totalTokensFresh=False,
         lastInteractionAt=NOW - 2 * IDLE_SECONDS * 1000,
         agentRuntime={"id": "claude-cli", "source": "config"},
     )
 
-    assert plan_groom([stale_harness], NOW) == []
+    assert [d.reason for d in plan_groom([stale_harness], NOW)] == ["idle"]
+
+
+def test_a_stale_idle_direct_model_chat_is_picked_like_any_other():
+    """A direct API chat (DeepSeek on OpenCode Go, for one) follows the same one-hour rule."""
+    direct = session(
+        key="agent:main:main", totalTokens=400_000, totalTokensFresh=False,
+        lastInteractionAt=NOW - 2 * IDLE_SECONDS * 1000,
+        model="deepseek-v4.1-flash", modelProvider="opencode-go",
+        agentRuntime={"id": "openclaw", "source": "implicit"},
+    )
+
+    assert [d.reason for d in plan_groom([direct], NOW)] == ["idle"]
+
+
+def test_an_idle_codex_session_is_picked_for_its_native_compaction():
+    codex_backed = session(
+        key="agent:main:main", totalTokens=74_969, lastInteractionAt=NOW - 2 * IDLE_SECONDS * 1000,
+        agentRuntime={"id": "codex", "source": "session-key"},
+    )
+
+    assert [(d.runtime, d.reason) for d in plan_groom([codex_backed], NOW)] == [("codex", "idle")]
+
+
+def test_a_stale_codex_session_over_the_limit_is_picked():
+    codex_backed = session(
+        key="agent:main:main", totalTokens=HARD_TOKENS + 1, totalTokensFresh=False, lastInteractionAt=NOW,
+        agentRuntime={"id": "codex", "source": "session-key"},
+    )
+
+    assert [(d.runtime, d.reason) for d in plan_groom([codex_backed], NOW)] == [("codex", "over the limit")]
 
 
 def test_a_stale_plain_chat_over_the_limit_is_not_picked():
@@ -219,10 +257,10 @@ def idle_session(**overrides):
     return session(**fields)
 
 
-def run_groom(gateway, monkeypatch, home, dry_run=False):
+def run_groom(gateway, monkeypatch, home, dry_run=False, now=NOW):
     monkeypatch.setattr(sessions_groom.subprocess, "run", gateway)
     return sessions_groom.groom(
-        openclaw="openclaw", now_ms=NOW, dry_run=dry_run, emit=lambda _line: None, home=home
+        openclaw="openclaw", now_ms=now, dry_run=dry_run, emit=lambda _line: None, home=home
     )
 
 
@@ -249,7 +287,131 @@ def test_a_session_whose_counters_moved_is_offered_again(monkeypatch, tmp_path):
     assert gateway.compactions == ["agent:main:main", "agent:main:main", "agent:main:main"]
 
 
-def test_a_failed_attempt_is_retried_on_the_next_run(monkeypatch, tmp_path):
+def _chat_that_the_compaction_itself_changes(gateway, chat):
+    """The compaction moves the chat's date and shrinks its counter: nobody wrote to it."""
+    def compacted(_key):
+        gateway.sessions = [{**chat, "totalTokens": 30_000, "updatedAt": chat["updatedAt"] + 5_000}]
+        return 0, '{"ok": true, "compacted": true}', ""
+    gateway.reply = compacted
+
+
+def test_a_compacted_harness_chat_waits_until_it_is_written_to(monkeypatch, tmp_path):
+    chat = idle_session(lastInteractionAt=None, updatedAt=NOW - 2 * IDLE_SECONDS * 1000, totalTokens=400_000,
+                        agentRuntime={"id": "claude-cli", "source": "config"})
+    gateway = FakeGateway([chat])
+    _chat_that_the_compaction_itself_changes(gateway, chat)
+
+    run_groom(gateway, monkeypatch, tmp_path)
+    run_groom(gateway, monkeypatch, tmp_path)
+    assert gateway.compactions == ["agent:main:main"]
+
+    gateway.sessions = [{**chat, "totalTokens": 31_000, "updatedAt": NOW - IDLE_SECONDS * 1000 - 1}]
+    run_groom(gateway, monkeypatch, tmp_path)
+    assert gateway.compactions == ["agent:main:main", "agent:main:main"]
+
+
+def test_a_compacted_direct_model_chat_waits_until_it_is_written_to(monkeypatch, tmp_path):
+    chat = idle_session(lastInteractionAt=None, updatedAt=NOW - 2 * IDLE_SECONDS * 1000, totalTokens=400_000,
+                        agentRuntime={"id": "openclaw", "source": "implicit"})
+    gateway = FakeGateway([chat])
+    _chat_that_the_compaction_itself_changes(gateway, chat)
+
+    run_groom(gateway, monkeypatch, tmp_path)
+    run_groom(gateway, monkeypatch, tmp_path)
+
+    assert gateway.compactions == ["agent:main:main"]
+
+
+def test_a_listing_that_times_out_after_the_attempts_still_keeps_the_memory(monkeypatch, tmp_path):
+    gateway = FakeGateway([idle_session()])
+    calls = {"list": 0}
+
+    def flaky(argv, **kwargs):
+        if argv[2] == "list":
+            calls["list"] += 1
+            if calls["list"] == 2:
+                raise subprocess.TimeoutExpired(argv, 120)
+        return gateway(argv, **kwargs)
+
+    run_groom(flaky, monkeypatch, tmp_path)
+    run_groom(flaky, monkeypatch, tmp_path)
+
+    assert gateway.compactions == ["agent:main:main"]
+
+
+SPENT_QUOTA = json.dumps({
+    "ok": False,
+    "compacted": False,
+    "reason": "All models failed (2): opencode-go/deepseek-v4.1-flash: Summarization failed: 429 Go usage limit "
+              "exceeded; Retry-After: 519069 seconds (rate_limit) | google-antigravity-cli/gemini-3.8-flash: fetch failed",
+})
+
+
+def test_a_spent_quota_is_not_tried_again_until_it_renews(monkeypatch, tmp_path):
+    gateway = FakeGateway([idle_session()], reply=(0, SPENT_QUOTA, ""))
+    renewal = 519_069 * 1000
+
+    first = run_groom(gateway, monkeypatch, tmp_path)
+    before = run_groom(gateway, monkeypatch, tmp_path, now=NOW + renewal - 1)
+    assert gateway.compactions == ["agent:main:main"]
+    assert first.failed == 1 and before.failed == 0
+
+    run_groom(gateway, monkeypatch, tmp_path, now=NOW + renewal)
+    assert gateway.compactions == ["agent:main:main", "agent:main:main"]
+
+
+def test_a_spent_quota_keeps_the_other_chats_of_that_provider_waiting_too(monkeypatch, tmp_path):
+    spent = idle_session(key="agent:one:main", agentId="one", modelProvider="opencode-go")
+    gateway = FakeGateway([spent], reply=(0, SPENT_QUOTA, ""))
+    run_groom(gateway, monkeypatch, tmp_path)
+
+    gateway.reply = (0, '{"ok": true, "compacted": true}', "")
+    gateway.sessions = [
+        spent,
+        idle_session(key="agent:two:main", agentId="two", modelProvider="opencode-go"),
+        idle_session(key="agent:three:main", agentId="three", modelProvider="openai"),
+    ]
+    run_groom(gateway, monkeypatch, tmp_path, now=NOW + 1)
+
+    assert gateway.compactions == ["agent:one:main", "agent:three:main"]
+
+
+def test_a_quota_failure_with_no_renewal_date_waits_six_hours(monkeypatch, tmp_path):
+    gateway = FakeGateway([idle_session()], reply=(1, "", "Summarization failed: 429 usage limit exceeded"))
+    hour = 60 * 60 * 1000
+
+    run_groom(gateway, monkeypatch, tmp_path)
+    run_groom(gateway, monkeypatch, tmp_path, now=NOW + 5 * hour)
+    assert gateway.compactions == ["agent:main:main"]
+
+    run_groom(gateway, monkeypatch, tmp_path, now=NOW + 6 * hour)
+    assert gateway.compactions == ["agent:main:main", "agent:main:main"]
+
+
+def test_a_spent_quota_is_recognised_whichever_provider_reports_it():
+    for text in (
+        "429 Go usage limit exceeded",
+        "Claude AI usage limit reached",
+        "You've hit your limit",
+        "usage_limit_reached",
+        "RESOURCE_EXHAUSTED: try again later",
+        "Your credit balance is too low",
+        "insufficient API credits",
+        "You are out of credits",
+        "exceeded your current quota",
+        "rate_limit_error",
+    ):
+        renews = sessions_groom._quota_renews_at(sessions_groom.Outcome(groom_memory.FAILED, text), NOW)
+        assert renews == NOW + sessions_groom.UNDATED_QUOTA_WAIT_MS, text
+
+
+def test_a_stated_renewal_is_used_whichever_provider_reports_it():
+    outcome = sessions_groom.Outcome(groom_memory.FAILED, "anthropic: 429; Retry-After: 3600 seconds")
+
+    assert sessions_groom._quota_renews_at(outcome, NOW) == NOW + 3_600_000
+
+
+def test_a_failure_that_is_not_about_quota_is_retried_on_the_next_run(monkeypatch, tmp_path):
     gateway = FakeGateway([idle_session()], reply=(1, "", "Error: the gateway refused the command."))
 
     first = run_groom(gateway, monkeypatch, tmp_path)
