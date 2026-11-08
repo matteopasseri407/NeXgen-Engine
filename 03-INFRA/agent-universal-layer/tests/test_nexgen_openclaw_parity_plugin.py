@@ -666,3 +666,32 @@ def test_spend_leaves_openclaws_own_usage_command_alone(tmp_path):
 
     assert "spend" in fired
     assert "usage" not in fired
+
+
+# ------------------------------------------------------------------ code mode
+
+
+def fire_code_mode(tmp_path: Path, posture: str | None, body: str = "deny.mjs") -> dict | None:
+    """A Code Mode cell: the outer `exec` the host marks, whose input is JavaScript and not a command."""
+    config = {"posture": posture} if posture else None
+    target = deployed(tmp_path, body=body, config=config)
+    event = json.dumps({
+        "toolName": "exec", "toolKind": "code_mode_exec", "toolInputKind": "javascript",
+        "params": {"code": "await tools.exec({command: 'rm -rf /'})"},
+    })
+    return drive(target, f"console.log(JSON.stringify(await call('before_tool_call', {event}, {{sessionId: 's'}})));\n")
+
+
+@pytest.mark.parametrize("posture", [None, "bypass", "accept-edits", "ask"])
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_code_mode_cell_asks_under_every_posture(tmp_path, posture):
+    """Nothing can read a JavaScript cell as a command, so a person decides, whatever the posture."""
+    decision = fire_code_mode(tmp_path, posture)
+
+    assert "requireApproval" in decision
+    assert "Code Mode" in decision["requireApproval"]["description"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_body_that_would_allow_a_code_mode_cell_does_not_let_it_pass(tmp_path):
+    assert "requireApproval" in fire_code_mode(tmp_path, "bypass", body="allow.mjs")

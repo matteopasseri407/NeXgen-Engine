@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import claude_native, setup_agy, setup_write
+from nexgen_core.openclaw import agy_prereqs, claude_native, setup_agy, setup_write
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.doctor import collect as doctor_collect
 from nexgen_core.openclaw.doctor import render as doctor_render
@@ -207,6 +207,17 @@ def _plan_phase(
     return _Decision(plan, 0)
 
 
+def _granted_plan(setup: Setup, plan: Plan) -> Plan:
+    """The plan with the engine plugin's conversation grant, read after the Antigravity plugin is installed.
+
+    The plan was read before this step deposited the plugin: on a first install it left
+    `nexgen` out of `plugins.allow`, and the guardrail never loaded. The Antigravity grant
+    is read from disk here, so the setup installs that plugin first.
+    """
+    installed = agy_prereqs.installed_version(setup.state_dir) is not None
+    return replace(plan, config=with_engine_plugin(plan.config, is_plugin_verified(setup), agy_installed=installed))
+
+
 def _apply(
     setup: Setup, installed: Detection, plan, before: set[str], ask: Callable[[str], bool], *, server: bool,
 ) -> int:
@@ -214,11 +225,9 @@ def _apply(
     _step(setup.out, 4, t("Safe write"))
     if not plugin_step(setup):
         return 1
-    # The plan was read before this step deposited the plugin: on a first install it
-    # left `nexgen` out of `plugins.allow`, and the guardrail never loaded.
-    plan = replace(plan, config=with_engine_plugin(plan.config, is_plugin_verified(setup)))
     if not setup_agy.install_step(setup, plan.config):
         return 1
+    plan = _granted_plan(setup, plan)
     outcome = write_step(setup, plan)
     if outcome == "failed":
         return 1

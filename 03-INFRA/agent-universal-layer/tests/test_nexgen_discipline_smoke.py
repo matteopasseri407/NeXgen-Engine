@@ -77,3 +77,49 @@ def test_a_failing_launcher_shows_its_own_error(monkeypatch, capsys):
     assert "ModuleNotFoundError: No module named 'yaml'" in printed
     assert "DIAG-LINE-1" not in printed
     assert any("ModuleNotFoundError: No module named 'yaml'" in problem for problem in problems)
+
+
+def test_a_command_that_times_out_once_is_asked_again_and_answers(monkeypatch):
+    """A cold start can pass the limit once: the second answer is the one that counts."""
+    import importlib.util
+    import subprocess
+
+    spec = importlib.util.spec_from_file_location("smoke_script_retry", SMOKE)
+    smoke = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(smoke)
+    answers = [subprocess.TimeoutExpired("nexgen", smoke.COMMAND_TIMEOUT),
+               subprocess.CompletedProcess(["nexgen"], 0, "ok\n", "")]
+    calls = []
+
+    def once(argv):
+        calls.append(argv)
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(smoke, "_once", once)
+    assert smoke.run(["nexgen", "inventory"]).returncode == 0
+    assert len(calls) == 2
+    assert smoke.COMMAND_TIMEOUT == 20, "the limit itself does not move"
+
+
+def test_a_command_that_times_out_twice_is_a_failure(monkeypatch):
+    import importlib.util
+    import subprocess
+
+    import pytest
+
+    spec = importlib.util.spec_from_file_location("smoke_script_timeout", SMOKE)
+    smoke = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(smoke)
+    calls = []
+
+    def always_slow(argv):
+        calls.append(argv)
+        raise subprocess.TimeoutExpired(argv, smoke.COMMAND_TIMEOUT)
+
+    monkeypatch.setattr(smoke, "_once", always_slow)
+    with pytest.raises(subprocess.TimeoutExpired):
+        smoke.run(["nexgen", "preflight"])
+    assert len(calls) == 2

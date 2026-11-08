@@ -76,6 +76,13 @@ def check_cli(cli: str, run_probe=_run_probe) -> ContractResult:
     passed = flags_passed(cli)
     missing = tuple(flag for flag in passed if not flag_listed(flag, output))
     if missing:
+        if cli == "opencode" and "--standalone" in missing:
+            # OpenCode 1.x never had this flag: it is an OpenCode 2 option. Naming it as a
+            # drift would suggest a renamed flag, and a seat must not pass as working here.
+            return ContractResult(
+                cli, "drift", "questo 'opencode' non ha --standalone: quella opzione esiste solo in OpenCode 2, "
+                              "quindi il seat opencode non puo' girare con questa versione", missing,
+            )
         return ContractResult(
             cli, "drift", f"the installed '{cli}' no longer lists: {', '.join(missing)}", missing,
         )

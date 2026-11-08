@@ -72,6 +72,8 @@ class FakeWorld:
         self.tested_tree = "a" * 40
         self.merge_tree = "a" * 40
         self.pull_request_sha = "d" * 40
+        #: Where origin's developer branch is: the release commit, unless a test says a stopped run never pushed it.
+        self.remote_head = RELEASE_HEAD
         #: Every commit status ship published, as the argv it published it with.
         self.statuses: list[tuple[str, ...]] = []
 
@@ -169,6 +171,8 @@ class FakeWorld:
                 return self.merge_tree, 0
             case ("git", "rev-parse", "origin/main"):
                 return MERGED, 0
+            case ("git", "rev-parse", "origin/developer"):
+                return self.remote_head, 0
             case ("git", "merge-base", "--is-ancestor"):
                 if argv[-1] == "origin/main":
                     return "", 0 if self.already_merged else 1
@@ -717,6 +721,42 @@ def test_a_branch_main_already_carries_skips_the_pull_request(repo):
     assert not any(c[:3] in {("gh", "pr", "create"), ("gh", "pr", "list")} for c in world.calls)
     assert any(c[:3] == ("git", "tag", "-s") for c in world.calls)
     assert (repo / "VERSION").read_text(encoding="utf-8") == "2.14.0\n"
+
+
+def test_a_rerun_pushes_the_release_commit_a_stopped_run_never_pushed(repo):
+    """The version is already bumped, so the rerun skips the bump. The commit it left
+    exists only here: the rerun must push it before the pull request names it."""
+    (repo / "VERSION").write_text("2.14.0\n", encoding="utf-8")
+    world = FakeWorld(repo)
+    world.remote_head = "e" * 40
+    assert _shipper(repo, world).ship("minor") == "v2.14.0"
+    pushes = [i for i, c in enumerate(world.calls) if c[:2] == ("git", "push") and c[-1] == "developer"]
+    pull_requests = [i for i, c in enumerate(world.calls) if c[:3] == ("gh", "pr", "create")]
+    assert pushes and pull_requests and pushes[0] < pull_requests[0]
+    assert not any(c[:2] == ("git", "commit") for c in world.calls)
+
+
+def test_a_rerun_does_not_push_when_origin_already_has_the_commit(repo):
+    (repo / "VERSION").write_text("2.14.0\n", encoding="utf-8")
+    world = FakeWorld(repo)
+    assert _shipper(repo, world).ship("minor") == "v2.14.0"
+    assert not any(c[:2] == ("git", "push") and c[-1] == "developer" for c in world.calls)
+
+
+def test_a_rerun_whose_push_fails_stops_at_prepare_and_says_why(repo):
+    (repo / "VERSION").write_text("2.14.0\n", encoding="utf-8")
+    world = FakeWorld(repo)
+    world.remote_head = "e" * 40
+
+    def refusing(argv, cwd):
+        if tuple(argv[:2]) == ("git", "push") and argv[-1] == "developer":
+            return subprocess.CompletedProcess(argv, 1, "", "rejected: non-fast-forward")
+        return world(argv, cwd)
+
+    with pytest.raises(ShipStop) as stop:
+        _shipper(repo, refusing).ship("minor")
+    assert stop.value.step == "prepare"
+    assert "non-fast-forward" in stop.value.reason
 
 
 def test_a_rerun_after_the_tag_does_not_bump_a_second_time(repo):

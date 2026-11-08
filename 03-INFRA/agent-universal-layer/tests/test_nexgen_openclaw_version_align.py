@@ -224,6 +224,9 @@ class FakeService:
         self.restarted += 1
         return {"ok": self.ok, "error": None if self.ok else "the gateway refused to start"}
 
+    def stop(self, **_kwargs):
+        return {"ok": True}
+
 
 def installs(calls: list[list[str]]) -> list[list[str]]:
     """Only the `npm install` calls, in order."""
@@ -507,6 +510,9 @@ def test_an_unexpected_error_is_an_outcome_and_never_a_raise(tmp_path: Path):
     fake = FakeRun(machine)
 
     class ExplodingService:
+        def stop(self, **_kwargs):
+            return {"ok": True}
+
         def restart(self, **_kwargs):
             raise RuntimeError("the service controller broke")
 

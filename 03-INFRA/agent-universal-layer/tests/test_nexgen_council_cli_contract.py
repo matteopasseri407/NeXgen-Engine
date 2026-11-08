@@ -97,6 +97,16 @@ def test_a_flag_that_disappears_is_named(cli, monkeypatch):
     assert gone in result.detail
 
 
+def test_an_opencode_without_standalone_is_not_a_pass_and_says_why(monkeypatch):
+    """OpenCode 1.x (the VPS runs 1.19.4) has no --standalone: the seat must not show as working."""
+    _installed(monkeypatch)
+    help_1x = _help_listing("opencode", without="--standalone")
+    result = cli_contract.check_cli("opencode", lambda argv: (True, help_1x))
+    assert result.status == "drift"
+    assert result.missing == ("--standalone",)
+    assert "OpenCode 2" in result.detail
+
+
 def test_a_help_that_cannot_be_read_is_not_taken_for_a_pass(monkeypatch):
     _installed(monkeypatch)
     result = cli_contract.check_cli("codex", lambda argv: (False, "exit 2"))

@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import subprocess
 import sys
 import time
@@ -42,6 +41,7 @@ from nexgen_core.paths import resolve_engine_root  # noqa: E402
 from nexgen_core.release import bump_version_files, compute_next_version, is_semver, newer_version  # noqa: E402
 from nexgen_core.release_checks import by_name as checks_by_name, commit_checks, required_annotation, required_checks, verdict  # noqa: E402
 from nexgen_core.release_gpg import MsysGpgError, check_windows_msys_gpg as _gpg_check  # noqa: E402
+from nexgen_core.release_git import answer as _answer, default_run as _default_run, push_if_ahead  # noqa: E402
 from nexgen_core.release_install import Installer, InstallProblem  # noqa: E402
 
 #: Checks that fail on purpose on this pull request and say nothing about the
@@ -62,27 +62,6 @@ class ShipStop(Exception):
         super().__init__(f"{step}: {reason}")
         self.step = step
         self.reason = reason
-
-
-def _default_run(argv: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    # Resolved through PATH(EXT) so `gh.exe` and `nexgen.cmd` work on Windows too.
-    exe = shutil.which(argv[0]) or argv[0]
-    return subprocess.run(
-        [exe, *argv[1:]], cwd=cwd, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", check=False, timeout=1800,
-    )
-
-
-def _answer(text: str) -> dict:
-    """GitHub's answer as a mapping, `{}` when it cannot be read.
-
-    An unreadable answer leads to the same place as an empty one: the caller's
-    own "GitHub will not say" path, which falls back to the strict reading.
-    """
-    try:
-        return json.loads(text or "{}")
-    except json.JSONDecodeError:  # nexgen: allow reason="an unreadable answer is treated as no answer by the caller"
-        return {}
 
 
 @dataclass
@@ -144,6 +123,9 @@ class Shipper:
         newest = tags[0][1:] if tags else "0.0.0"
         if newer_version(version, newest):
             self.log(f"   VERSION {version} is already ahead of v{newest}: not bumping again")
+            stuck = push_if_ahead(self.run, self.repo, self.branch)
+            if stuck:
+                raise ShipStop(self._step, stuck)
             return version
 
         # VERSION equal to the newest tag is both the normal start of a release and

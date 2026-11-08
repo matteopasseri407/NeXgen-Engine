@@ -333,3 +333,15 @@ def test_the_three_places_that_name_the_tools_agree(tmp_path):
     # The council's two tools are declared too, and neither is an operator opt-in.
     assert {"nexgen_council", "nexgen_council_result"} <= declared
     assert not {"nexgen_council", "nexgen_council_result"} & optional_in_manifest
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_sup_command_takes_an_id_and_needs_an_authorised_sender(tmp_path):
+    """`/sup <id>` reaches the handler only when the command is declared `acceptsArgs`."""
+    fired = drive_plugin(
+        tmp_path,
+        "console.log(JSON.stringify({acceptsArgs: commands.get('sup').acceptsArgs, "
+        "requireAuth: commands.get('sup').requireAuth}));\n",
+    )
+
+    assert fired == {"acceptsArgs": True, "requireAuth": True}

@@ -42,10 +42,22 @@ CASES: tuple[tuple[tuple[str, ...], frozenset[int]], ...] = (
 )
 
 
-def run(argv: list[str]) -> subprocess.CompletedProcess:
-    """One command, with its own timeout and no inherited stdin (a child that reads one hangs)."""
+def _once(argv: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
                           timeout=COMMAND_TIMEOUT, stdin=subprocess.DEVNULL)
+
+
+def run(argv: list[str]) -> subprocess.CompletedProcess:
+    """One command, with its own timeout and no inherited stdin (a child that reads one hangs).
+
+    A cold start on Windows (the first import of the whole CLI after a while) can pass
+    COMMAND_TIMEOUT once and answer at once after that. So a timeout is asked again
+    once; a second timeout is the verdict. The limit itself does not move.
+    """
+    try:
+        return _once(argv)
+    except subprocess.TimeoutExpired:
+        return _once(argv)
 
 
 def _report(name: str, good: bool, detail: str) -> bool:

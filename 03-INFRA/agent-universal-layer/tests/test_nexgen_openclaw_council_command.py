@@ -269,3 +269,15 @@ console.log(JSON.stringify({{text: council.resultOf("council-nope", {{logDir: {j
 """)
 
     assert fired["text"] == "council: no run with that identifier on this machine."
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_council_command_takes_arguments_and_needs_an_authorised_sender(tmp_path):
+    """OpenClaw hands arguments only to a command declared `acceptsArgs`; one that starts work asks `requireAuth`."""
+    fired = drive_plugin(
+        tmp_path,
+        "console.log(JSON.stringify({acceptsArgs: commands.get('council').acceptsArgs, "
+        "requireAuth: commands.get('council').requireAuth}));\n",
+    )
+
+    assert fired == {"acceptsArgs": True, "requireAuth": True}

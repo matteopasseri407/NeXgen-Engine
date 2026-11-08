@@ -180,6 +180,8 @@ export function registerCouncil(api, { configPath = CONFIG_PATH, logDir = COUNCI
     api.registerCommand({
       name: "council",
       description: "Ask the AI Council a question; it answers here when the run is over.",
+      acceptsArgs: true,
+      requireAuth: true,
       handler: async (ctx) => {
         const started = startCouncil(ctx?.args ?? "", { configPath, logDir, spawnFn });
         return { text: started.ok ? acknowledgement(started.id, started.log) : started.text };

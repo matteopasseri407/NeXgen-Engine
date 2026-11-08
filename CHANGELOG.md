@@ -10,6 +10,20 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- `nexgen release ship` run again after a push that failed: the version was already bumped, so the rerun skipped the push, and the pull request then named a commit GitHub had never seen ("No commit found for SHA"). The rerun now pushes the release commit first. The git and gh plumbing moved to `release_git.py` to keep `release_ship.py` under its line cap.
+- `nexgen preflight` and `nexgen inventory` failed the pre-push smoke on a timeout at 20 s. `inventory` counted the files of the OpenCode, Codex and Antigravity folders with a slow per-file walk (about 20 s on a Windows machine with a large OpenCode history); it now uses one directory walk, same count, about 2 s. The smoke also asks a command again once when it times out, and the 20 s limit is unchanged.
+- The check engine picks the repo's `.venv` when it exists, instead of the interpreter running it. A Python without PyYAML (for example the Microsoft Store one) reported false failures.
+- The Council contract check says plainly that OpenCode 1.x has no `--standalone` flag (that option exists only in OpenCode 2), so a seat on 1.x is reported as not working instead of as a renamed flag.
+- `/sup <id>` and `/council <question>` ignored their arguments in OpenClaw: a command takes arguments only when it declares `acceptsArgs`. Both commands now declare it, and `requireAuth` too, since a council run starts work with effects.
+- The OpenClaw alignment on a gateway runs `openclaw doctor --fix --non-interactive` between the install and the restart, with the gateway stopped. OpenClaw 2026.11.2 migrates the agents' databases there; without it the gateway exits with code 78 and the alignment rolled the upgrade back as a failure. Doctor gets one retry; if it still fails, the previous release goes back as before. When a migration ran and the later check fails, the message says the database stays migrated, instead of reporting a clean rollback. The logic is in `openclaw/gateway_doctor.py`.
+- The guardrail plugin no longer lets an OpenClaw Code Mode cell (`toolKind: "code_mode_exec"`) pass unjudged under the `bypass` posture. A cell is JavaScript, not a command line, so it asks for approval under every posture.
+
+### Changed
+
+- The Antigravity plugin (`google-antigravity-cli`) gets the same `hooks.allowConversationAccess` grant as the engine's own plugin, when the setup has it installed and enabled, so its `before_prompt_build` hook is no longer blocked by the gateway. The grant logic moved to `openclaw/conversation_grant.py`.
+
 ## [2.28.0] - 2026-11-08
 
 ### Added
