@@ -10,6 +10,16 @@ of any engine release.
 
 ## [Unreleased]
 
+### Added
+
+- Supervisor model tier selection and availability routing via `routing-tiers.yaml`: exact candidate lists per tier (`worker`, `orchestrator`, `limited`) without loose provider globs, a quota check before a worker starts, a 6-hour cooldown on a spent model, and failover to the next flat candidate when delivery reports end of quota. When `sup status` finds an open unit whose session ran out of quota or stalled, it relaunches the same brief in a new session on the next candidate, once per blocked session: a flat model never falls back to a limited one.
+- New CLI command group `nexgen models` (`list`, `pick`, `trial`, `promote`, `rollback`, `discover`). Once a day the server role tries models it has never seen on flat channels with enough volume and sends the result; promotion stays manual.
+
+### Changed
+
+- OpenClaw pin moved to 2026.11.2, which restores Tailscale Serve by itself after a Tailscale restart. A gateway upgrading from 2026.10.7 must run `openclaw doctor --fix` with the gateway stopped, because the agent databases need a schema migration.
+
+
 ## [2.27.8] - 2026-11-07
 
 ### Fixed

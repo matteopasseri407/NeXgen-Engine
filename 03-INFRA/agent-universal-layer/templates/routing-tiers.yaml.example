@@ -1,0 +1,38 @@
+# Regole di instradamento per tier dei modelli del supervisore (NeXgen Engine).
+#
+# Senza questo file sup si comporta come prima (usa la configurazione della lane).
+# Con questo file i modelli sono scelti deterministicamente per tier, volume e disponibilità.
+# Copia questo file in 03-INFRA/agent-universal-layer/routing-tiers.yaml nel vault.
+
+volume_min_5h: 20000
+
+tiers:
+  orchestrator:
+    - claude-opus-5-5
+    - gpt-6.1-sol
+    - gpt-6-astra
+
+  worker:
+    - model: opencode-go/deepseek-v4.1-flash
+      harness: opencode
+      requests_5h: 43330
+    - model: gemini-3.8-flash
+      harness: antigravity
+      requests_5h: 50000
+
+  limited:
+    - model: opencode/deepseek-v4.1-flash-free
+      harness: opencode
+    - model: opencode/glm-5.3-flash-free
+      harness: opencode
+    - model: opencode/mimo-v2.6-flash-free
+      harness: opencode
+
+# Solo canali flat: discover considera solo questi prefissi (predefinito: opencode-go/).
+# Esclude sempre i nomi che contengono "free" o "contributor".
+flat_prefixes:
+  - opencode-go/
+
+channels_volume:
+  opencode-go/deepseek-v4.1-flash: 43330
+  gemini-3.8-flash: 50000

@@ -47,12 +47,11 @@ def config_path() -> Path:
 
 
 def allowed_models(path: str | Path | None = None) -> tuple[str, ...]:
-    """The configured globs, or an empty tuple when the owner wrote no list.
-
-    A file that exists but does not parse, or whose section is not an object of
-    strings, is an error: reading it as "no restriction" would silently allow
-    exactly what the list was written to stop.
-    """
+    """The configured globs, or exact list from routing tiers when routing-tiers.yaml exists."""
+    if path is None:
+        from . import routing_tiers
+        if routing_tiers.routing_tiers_exists():
+            return routing_tiers.allowed_for()
     target, section = _section(path)
     listed = section.get(KEY, [])
     if not isinstance(listed, list) or not all(isinstance(item, str) for item in listed):
