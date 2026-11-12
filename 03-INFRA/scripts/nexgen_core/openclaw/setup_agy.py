@@ -21,7 +21,7 @@ from typing import Any
 
 from nexgen_core.files import atomic_write_text, backup_file
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import agy_compaction, agy_prereqs
+from nexgen_core.openclaw import agy_compaction, agy_prereqs, agy_prompt_strip
 from nexgen_core.openclaw.setup_steps import Setup, openclaw_bin, print_output
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND, local_agy_backend
 from nexgen_core.processes import command_line_text
@@ -49,6 +49,7 @@ def install_step(setup: Setup, config: dict[str, Any]) -> bool:
                     plugin=LOCAL_AGY_BACKEND, version=plugin["version"]))
         _prerequisites(setup, config)
         _compaction(setup)
+        _prompt_strip(setup)
         return True
     return _install(setup, config, plugin, installed)
 
@@ -81,6 +82,7 @@ def _install(setup: Setup, config: dict[str, Any], plugin: dict[str, str], insta
                 plugin=LOCAL_AGY_BACKEND, version=plugin["version"]))
     _prerequisites(setup, config)
     _compaction(setup)
+    _prompt_strip(setup)
     return True
 
 
@@ -124,6 +126,36 @@ def _compaction_line(patch: agy_compaction.Patch) -> str | None:
     if patch.state == agy_compaction.FAILED:
         return t("The Antigravity plugin could not be patched ({error}); '/compact' stays unavailable.",
                  error=patch.detail)
+    return None
+
+
+def _prompt_strip(setup: Setup) -> None:
+    """Keep the user's message in the prompt the plugin's filter hands to `agy`.
+
+    Same bridge as the compaction: a filter whose shape changed is reported and
+    left alone, because a guessed edit to another person's compiled code can stop
+    every turn instead of one message.
+    """
+    line = _prompt_strip_line(agy_prompt_strip.apply(setup.state_dir, dry_run=setup.dry_run))
+    if line:
+        setup.out(line)
+
+
+def _prompt_strip_line(patch: agy_compaction.Patch) -> str | None:
+    """What to tell the person about the filter fix, or nothing when it is already there."""
+    if patch.state == agy_compaction.WOULD_PATCH:
+        return t("dry run: the Antigravity plugin's prompt filter would keep the user's message after "
+                 "OpenClaw's context blocks in {path}; nothing is written.", path=patch.path)
+    if patch.state == agy_compaction.PATCHED:
+        return t("The Antigravity plugin's prompt filter now keeps the user's message after OpenClaw's context "
+                 "blocks; restart the gateway to load it. The previous file is saved as {backup}.",
+                 backup=patch.backup or patch.path)
+    if patch.state == agy_compaction.UNEXPECTED:
+        return t("The Antigravity plugin's prompt filter was not fixed: {path} no longer has the shape this "
+                 "engine expects. Reinstall the pinned plugin or update the fix.", path=patch.path)
+    if patch.state == agy_compaction.FAILED:
+        return t("The Antigravity plugin's prompt filter could not be fixed ({error}); a Telegram message "
+                 "can still be dropped before 'agy' sees it.", error=patch.detail)
     return None
 
 
@@ -224,4 +256,7 @@ def planned_lines(setup: Setup, config: dict[str, Any]) -> list[str]:
     compaction = _compaction_line(agy_compaction.apply(setup.state_dir, dry_run=True))
     if compaction:
         lines.append(compaction)
+    prompt_strip = _prompt_strip_line(agy_prompt_strip.apply(setup.state_dir, dry_run=True))
+    if prompt_strip:
+        lines.append(prompt_strip)
     return lines
