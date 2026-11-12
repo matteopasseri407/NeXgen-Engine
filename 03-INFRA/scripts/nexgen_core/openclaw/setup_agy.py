@@ -21,7 +21,7 @@ from typing import Any
 
 from nexgen_core.files import atomic_write_text, backup_file
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import agy_compaction, agy_prereqs, agy_prompt_strip
+from nexgen_core.openclaw import agy_compaction, agy_prereqs, agy_prompt_strip, plugin_patch
 from nexgen_core.openclaw.setup_steps import Setup, openclaw_bin, print_output
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND, local_agy_backend
 from nexgen_core.processes import command_line_text
@@ -48,8 +48,8 @@ def install_step(setup: Setup, config: dict[str, Any]) -> bool:
         setup.out(t("The Antigravity plugin {plugin} is already {version}.",
                     plugin=LOCAL_AGY_BACKEND, version=plugin["version"]))
         _prerequisites(setup, config)
-        _compaction(setup)
-        _prompt_strip(setup)
+        for line in _patch_plugin(setup):
+            setup.out(line)
         return True
     return _install(setup, config, plugin, installed)
 
@@ -81,8 +81,8 @@ def _install(setup: Setup, config: dict[str, Any], plugin: dict[str, str], insta
     setup.out(t("The Antigravity plugin {plugin} {version} is installed.",
                 plugin=LOCAL_AGY_BACKEND, version=plugin["version"]))
     _prerequisites(setup, config)
-    _compaction(setup)
-    _prompt_strip(setup)
+    for line in _patch_plugin(setup):
+        setup.out(line)
     return True
 
 
@@ -100,60 +100,51 @@ def _prerequisites(setup: Setup, config: dict[str, Any]) -> None:
         _trust_folders(setup, missing)
 
 
-def _compaction(setup: Setup) -> None:
-    """Give the installed backend the manual compaction its plugin does not declare.
+def _patch_plugin(setup: Setup, *, dry_run: bool | None = None) -> list[str]:
+    """The fixes the installed plugin still needs, applied and described one line each.
 
-    The patch is a bridge until the plugin ships `/compact` itself, so a file
-    whose shape changed is reported and left alone: guessing at another person's
-    compiled backend is how a gateway stops starting.
+    They are bridges until the plugin ships them itself, so a file whose shape
+    changed is reported and left alone: guessing at another person's compiled
+    code is how a gateway stops starting, or every turn loses its message.
     """
-    line = _compaction_line(agy_compaction.apply(setup.state_dir, dry_run=setup.dry_run))
-    if line:
-        setup.out(line)
+    dry = setup.dry_run if dry_run is None else dry_run
+    lines = [
+        _compaction_line(agy_compaction.apply(setup.state_dir, dry_run=dry)),
+        _prompt_strip_line(agy_prompt_strip.apply(setup.state_dir, dry_run=dry)),
+    ]
+    return [line for line in lines if line]
 
 
-def _compaction_line(patch: agy_compaction.Patch) -> str | None:
-    """What to tell the person about the patch, or nothing when it is already there."""
-    if patch.state == agy_compaction.WOULD_PATCH:
+def _compaction_line(patch: plugin_patch.Patch) -> str | None:
+    """What to tell the person about the manual compaction, or nothing when it is already there."""
+    if patch.state == plugin_patch.WOULD_PATCH:
         return t("dry run: the Antigravity plugin would gain OpenClaw's manual compaction ('/compact') in "
                  "{path}; nothing is written.", path=patch.path)
-    if patch.state == agy_compaction.PATCHED:
+    if patch.state == plugin_patch.PATCHED:
         return t("The Antigravity plugin now carries OpenClaw's manual compaction ('/compact'); the previous "
                  "file is saved as {backup}.", backup=patch.backup or patch.path)
-    if patch.state == agy_compaction.UNEXPECTED:
+    if patch.state == plugin_patch.UNEXPECTED:
         return t("The Antigravity plugin was not patched: its backend at {path} no longer has the shape this "
                  "engine expects. Reinstall the pinned plugin or update the patch.", path=patch.path)
-    if patch.state == agy_compaction.FAILED:
+    if patch.state == plugin_patch.FAILED:
         return t("The Antigravity plugin could not be patched ({error}); '/compact' stays unavailable.",
                  error=patch.detail)
     return None
 
 
-def _prompt_strip(setup: Setup) -> None:
-    """Keep the user's message in the prompt the plugin's filter hands to `agy`.
-
-    Same bridge as the compaction: a filter whose shape changed is reported and
-    left alone, because a guessed edit to another person's compiled code can stop
-    every turn instead of one message.
-    """
-    line = _prompt_strip_line(agy_prompt_strip.apply(setup.state_dir, dry_run=setup.dry_run))
-    if line:
-        setup.out(line)
-
-
-def _prompt_strip_line(patch: agy_compaction.Patch) -> str | None:
-    """What to tell the person about the filter fix, or nothing when it is already there."""
-    if patch.state == agy_compaction.WOULD_PATCH:
+def _prompt_strip_line(patch: plugin_patch.Patch) -> str | None:
+    """What to tell the person about the prompt filter fix, or nothing when it is already there."""
+    if patch.state == plugin_patch.WOULD_PATCH:
         return t("dry run: the Antigravity plugin's prompt filter would keep the user's message after "
                  "OpenClaw's context blocks in {path}; nothing is written.", path=patch.path)
-    if patch.state == agy_compaction.PATCHED:
+    if patch.state == plugin_patch.PATCHED:
         return t("The Antigravity plugin's prompt filter now keeps the user's message after OpenClaw's context "
                  "blocks; restart the gateway to load it. The previous file is saved as {backup}.",
                  backup=patch.backup or patch.path)
-    if patch.state == agy_compaction.UNEXPECTED:
+    if patch.state == plugin_patch.UNEXPECTED:
         return t("The Antigravity plugin's prompt filter was not fixed: {path} no longer has the shape this "
                  "engine expects. Reinstall the pinned plugin or update the fix.", path=patch.path)
-    if patch.state == agy_compaction.FAILED:
+    if patch.state == plugin_patch.FAILED:
         return t("The Antigravity plugin's prompt filter could not be fixed ({error}); a Telegram message "
                  "can still be dropped before 'agy' sees it.", error=patch.detail)
     return None
@@ -253,10 +244,5 @@ def planned_lines(setup: Setup, config: dict[str, Any]) -> list[str]:
         missing = _missing_folders(setup, config)
         if missing:
             lines.append(_trust_plan(setup, missing))
-    compaction = _compaction_line(agy_compaction.apply(setup.state_dir, dry_run=True))
-    if compaction:
-        lines.append(compaction)
-    prompt_strip = _prompt_strip_line(agy_prompt_strip.apply(setup.state_dir, dry_run=True))
-    if prompt_strip:
-        lines.append(prompt_strip)
+    lines.extend(_patch_plugin(setup, dry_run=True))
     return lines

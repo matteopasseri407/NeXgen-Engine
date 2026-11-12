@@ -14,10 +14,9 @@ attempted when the file no longer has the shape this engine knows.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
-from nexgen_core.files import atomic_write_text, backup_file
+from nexgen_core.openclaw import plugin_patch
 from nexgen_core.openclaw.agy_prereqs import extension_dir
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
 
@@ -55,25 +54,6 @@ BLOCK = """\
         },
 """
 
-#: Every way the patch can end, named once so the setup and its tests agree.
-MISSING = "missing"
-UNEXPECTED = "unexpected"
-ALREADY = "already"
-PATCHED = "patched"
-WOULD_PATCH = "would-patch"
-FAILED = "failed"
-
-
-@dataclass(frozen=True)
-class Patch:
-    """What one run found and did, with the paths a person may need afterwards."""
-
-    state: str
-    path: Path
-    backup: Path | None = None
-    detail: str = ""
-
-
 def backend_file(state_dir: Path, backend: str = LOCAL_AGY_BACKEND) -> Path:
     """The compiled backend the plugin exports, inside the installed extension."""
     return extension_dir(state_dir, backend) / BACKEND_RELATIVE
@@ -87,27 +67,12 @@ def patched(state_dir: Path, backend: str = LOCAL_AGY_BACKEND) -> bool:
         return False
 
 
-def apply(state_dir: Path, backend: str = LOCAL_AGY_BACKEND, *, dry_run: bool = False) -> Patch:
+def apply(state_dir: Path, backend: str = LOCAL_AGY_BACKEND, *, dry_run: bool = False) -> plugin_patch.Patch:
     """Add the manual compaction when it is absent, and say what happened.
 
     Nothing is guessed about a file this engine cannot read or no longer
     recognises: an unknown shape ends in `unexpected`, which the setup prints,
     because a silent skip is how a backend quietly stops being compactable.
     """
-    path = backend_file(state_dir, backend)
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:  # nexgen: allow reason="an absent or unreadable plugin file is reported as missing, not raised"
-        return Patch(MISSING, path, detail=str(exc))
-    if MARKER in text:
-        return Patch(ALREADY, path)
-    if text.count(ANCHOR) != 1:
-        return Patch(UNEXPECTED, path)
-    if dry_run:
-        return Patch(WOULD_PATCH, path)
-    try:
-        backup = backup_file(path, tag=BACKUP_TAG)
-        atomic_write_text(path, text.replace(ANCHOR, ANCHOR + BLOCK, 1))
-    except OSError as exc:  # nexgen: allow reason="a plugin file that cannot be written is reported, never a crash after a successful install"
-        return Patch(FAILED, path, detail=str(exc))
-    return Patch(PATCHED, path, backup=backup)
+    return plugin_patch.apply(backend_file(state_dir, backend), [plugin_patch.Edit(ANCHOR, ANCHOR + BLOCK)],
+                              marker=MARKER, backup_tag=BACKUP_TAG, dry_run=dry_run)
