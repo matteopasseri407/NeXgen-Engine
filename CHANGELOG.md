@@ -10,6 +10,16 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.28.4] - 2026-11-12
+
+### Fixed
+
+- OpenClaw agents on the local `agy` CLI no longer lose the Telegram message they were sent. The `google-antigravity-cli` plugin 0.3.4 removes OpenClaw's context blocks before `agy` runs, and it deleted the user's message with them: cutting a block also cut the blank line before it, and the end of a block was found by counting code fences, so one stray fence deleted everything after it. `agy` then saw only the runtime instructions and answered something else. `nexgen openclaw setup` now fixes the installed filter: it keeps the separator, ends a block at its first blank line as OpenClaw does, and ends a JSON block at its closing fence. The fix is applied beside a backup, reported in one line, and takes effect at the next gateway restart.
+
+### Changed
+
+- The two fixes the engine applies to the installed Antigravity plugin (manual compaction and the prompt filter) share one helper, `plugin_patch.apply`. The compaction patch behaves exactly as before.
+
 ## [2.28.3] - 2026-11-08
 
 ### Changed

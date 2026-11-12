@@ -1725,6 +1725,14 @@ MESSAGES: dict[str, str] = {
         "Il plugin Antigravity non è stato corretto ({error}); '/compact' resta non disponibile.",
     "dry run: the Antigravity plugin would gain OpenClaw's manual compaction ('/compact') in {path}; nothing is written.":
         "prova a vuoto: il plugin Antigravity riceverebbe la compaction manuale di OpenClaw ('/compact') in {path}; non viene scritto nulla.",
+    "dry run: the Antigravity plugin's prompt filter would keep the user's message after OpenClaw's context blocks in {path}; nothing is written.":
+        "prova a vuoto: il filtro del prompt del plugin Antigravity terrebbe il messaggio dell'utente dopo i blocchi di contesto di OpenClaw in {path}; non viene scritto nulla.",
+    "The Antigravity plugin's prompt filter now keeps the user's message after OpenClaw's context blocks; restart the gateway to load it. The previous file is saved as {backup}.":
+        "Il filtro del prompt del plugin Antigravity ora tiene il messaggio dell'utente dopo i blocchi di contesto di OpenClaw; riavvia il gateway per caricarlo. Il file precedente è salvato come {backup}.",
+    "The Antigravity plugin's prompt filter was not fixed: {path} no longer has the shape this engine expects. Reinstall the pinned plugin or update the fix.":
+        "Il filtro del prompt del plugin Antigravity non è stato corretto: {path} non ha più la forma che questo motore si aspetta. Reinstalla il plugin bloccato o aggiorna la correzione.",
+    "The Antigravity plugin's prompt filter could not be fixed ({error}); a Telegram message can still be dropped before 'agy' sees it.":
+        "Il filtro del prompt del plugin Antigravity non è stato corretto ({error}); un messaggio Telegram può ancora sparire prima che 'agy' lo veda.",
     "The Antigravity plugin {plugin} is {version}, not the pinned {pinned}: installing the pin.":
         "Il plugin Antigravity {plugin} è alla versione {version}, non alla {pinned} bloccata: installo quella bloccata.",
     "An agent runs on the local 'agy' CLI and the plugin is not installed: installing {pinned}.":

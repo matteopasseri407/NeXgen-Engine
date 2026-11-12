@@ -26,7 +26,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.openclaw import agy_compaction  # noqa: E402
+from nexgen_core.openclaw import agy_compaction, plugin_patch  # noqa: E402
 from nexgen_core.openclaw.setup_agy import _compaction_line  # noqa: E402
 
 #: The two lines of a compiled backend this suite needs: the anchor, and a sibling.
@@ -59,7 +59,7 @@ def _installed(tmp_path: Path, source: str = BACKEND_SOURCE) -> Path:
 def test_a_plugin_that_is_not_installed_is_missing_and_writes_nothing(tmp_path: Path) -> None:
     result = agy_compaction.apply(tmp_path)
 
-    assert result.state == agy_compaction.MISSING
+    assert result.state == plugin_patch.MISSING
     assert not agy_compaction.backend_file(tmp_path).exists()
 
 
@@ -68,7 +68,7 @@ def test_the_declaration_lands_once_and_the_old_file_is_saved(tmp_path: Path) ->
 
     result = agy_compaction.apply(tmp_path)
 
-    assert result.state == agy_compaction.PATCHED
+    assert result.state == plugin_patch.PATCHED
     assert result.backup is not None and result.backup.exists()
     assert result.backup.read_text(encoding="utf-8") == BACKEND_SOURCE
     updated = path.read_text(encoding="utf-8")
@@ -88,7 +88,7 @@ def test_a_second_run_finds_its_marker_and_writes_nothing(tmp_path: Path) -> Non
 
     result = agy_compaction.apply(tmp_path)
 
-    assert result.state == agy_compaction.ALREADY
+    assert result.state == plugin_patch.ALREADY
     assert result.backup is None
     assert path.read_text(encoding="utf-8") == after_first
 
@@ -99,7 +99,7 @@ def test_a_file_without_the_expected_shape_is_left_alone(tmp_path: Path) -> None
 
     result = agy_compaction.apply(tmp_path)
 
-    assert result.state == agy_compaction.UNEXPECTED
+    assert result.state == plugin_patch.UNEXPECTED
     assert path.read_text(encoding="utf-8") == before
 
 
@@ -109,7 +109,7 @@ def test_a_dry_run_plans_and_writes_nothing(tmp_path: Path) -> None:
 
     result = agy_compaction.apply(tmp_path, dry_run=True)
 
-    assert result.state == agy_compaction.WOULD_PATCH
+    assert result.state == plugin_patch.WOULD_PATCH
     assert path.read_text(encoding="utf-8") == before
     assert result.backup is None
 
@@ -120,9 +120,9 @@ def test_the_setup_says_one_line_per_outcome(tmp_path: Path) -> None:
     assert "now carries OpenClaw's manual compaction" in (_compaction_line(agy_compaction.apply(tmp_path)) or "")
     # Already patched: nothing to say, so the setup stays quiet on every later run.
     assert _compaction_line(agy_compaction.apply(tmp_path)) is None
-    unexpected = agy_compaction.Patch(agy_compaction.UNEXPECTED, path)
+    unexpected = plugin_patch.Patch(plugin_patch.UNEXPECTED, path)
     assert "no longer has the shape" in (_compaction_line(unexpected) or "")
-    failed = agy_compaction.Patch(agy_compaction.FAILED, path, detail="permission denied")
+    failed = plugin_patch.Patch(plugin_patch.FAILED, path, detail="permission denied")
     assert "permission denied" in (_compaction_line(failed) or "")
-    planned = agy_compaction.Patch(agy_compaction.WOULD_PATCH, path)
+    planned = plugin_patch.Patch(plugin_patch.WOULD_PATCH, path)
     assert "nothing is written" in (_compaction_line(planned) or "")
