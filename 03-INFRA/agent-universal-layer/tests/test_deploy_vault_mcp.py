@@ -266,3 +266,33 @@ def test_a_real_uncommitted_change_still_blocks_a_write(tmp_path):
     (settings.vault_root / "untracked note.md").write_text("mine\n", encoding="utf-8")
     with pytest.raises(RuntimeError, match="uncommitted"):
         vault.create_note("fresh.md", "# fresh\n")
+
+
+def test_read_note_accepts_each_alias():
+    from vault_mcp_server.note_ref import ALIASES, resolve_note_ref
+
+    resolved = [resolve_note_ref(**{name: "sample.md"}) for name in ALIASES]
+
+    assert ALIASES[0] == "note_ref"
+    assert resolved == ["sample.md"] * 4
+
+
+def test_read_note_fails_when_none_given():
+    from vault_mcp_server.note_ref import resolve_note_ref
+
+    with pytest.raises(ValueError, match="note_ref"):
+        resolve_note_ref(note_ref=None, path="  ")
+
+
+def test_read_note_fails_when_two_different_given():
+    from vault_mcp_server.note_ref import resolve_note_ref
+
+    with pytest.raises(ValueError, match="note_ref"):
+        resolve_note_ref(note_ref="sample.md", path="other.md")
+
+
+def test_read_note_takes_the_same_value_under_two_names():
+    from vault_mcp_server.note_ref import resolve_note_ref
+
+    assert resolve_note_ref(note_ref="sample.md", path=" sample.md ") == "sample.md"
+    assert resolve_note_ref(relative_path="dir/sample.md", note_path="") == "dir/sample.md"

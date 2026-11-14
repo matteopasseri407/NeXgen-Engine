@@ -456,4 +456,4 @@ The pass runs from three places, all of them in the plugin OpenClaw already load
 
 `nexgen openclaw rpc health [--json] [--url URL]` inspects the gateway's operational state through the WebSocket `health` call, reporting uptime and the plugins it loaded without changing anything.
 
-`nexgen openclaw groom [--dry-run]` compacts the agent chats that sat idle or grew too large.
+`nexgen openclaw groom [--dry-run]` compacts the agent chats that sat idle or grew too large, capped at at most one session per run (the largest eligible one, prioritizing sessions over the hard threshold; overridable via `NEXGEN_OPENCLAW_MAX_COMPACTIONS`) to keep the single-threaded gateway responsive.

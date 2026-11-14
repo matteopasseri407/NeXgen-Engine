@@ -21,6 +21,7 @@ from starlette.routing import Mount, Route
 
 from . import __version__
 from .config import Settings
+from .note_ref import resolve_note_ref
 from .vault import VaultService
 
 
@@ -189,10 +190,19 @@ def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
         return vault.get_start_here()
 
     @mcp.tool(annotations=READ_ONLY)
-    def read_note(note_ref: str) -> dict[str, Any]:
-        """Read a note by relative path, filename, or unique stem."""
+    def read_note(
+        note_ref: str | None = None,
+        path: str | None = None,
+        note_path: str | None = None,
+        relative_path: str | None = None,
+    ) -> dict[str, Any]:
+        """Read a note by relative path, filename, or unique stem.
 
-        return vault.read_note(note_ref)
+        Provide `note_ref` or exactly one of its aliases (`path`, `note_path`, `relative_path`).
+        """
+        return vault.read_note(
+            resolve_note_ref(note_ref=note_ref, path=path, note_path=note_path, relative_path=relative_path)
+        )
 
     @mcp.tool(annotations=READ_ONLY)
     def search_notes(query: str, limit: int = 10) -> dict[str, Any]:

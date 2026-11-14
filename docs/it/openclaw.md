@@ -456,4 +456,4 @@ Il passaggio parte da tre punti, tutti nel plugin che OpenClaw carica già: `/ad
 
 `nexgen openclaw rpc health [--json] [--url URL]` ispeziona lo stato operativo del gateway attraverso la chiamata WebSocket `health`, riportando uptime e plugin caricati senza cambiare nulla.
 
-`nexgen openclaw groom [--dry-run]` compatta le chat degli agenti rimaste inattive o cresciute troppo.
+`nexgen openclaw groom [--dry-run]` compatta le chat degli agenti rimaste inattive o cresciute troppo, con un tetto di al massimo una sessione per esecuzione (la più grande tra le idonee, dando priorità a quelle oltre la soglia rigida; sovrascrivibile tramite `NEXGEN_OPENCLAW_MAX_COMPACTIONS`) per mantenere reattivo il gateway a thread singolo.
