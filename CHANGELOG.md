@@ -10,6 +10,9 @@ of any engine release.
 
 ## [Unreleased]
 
+- The bundled `vault-library` MCP tool `read_note` now accepts `path`, `note_path`, and `relative_path` as aliases of `note_ref`.
+- The hourly Context guard (`nexgen openclaw groom`) now compacts at most one session per run (the largest eligible one, prioritizing hard-limit sessions) and reports leftover sessions, overridable via `NEXGEN_OPENCLAW_MAX_COMPACTIONS`.
+
 ## [2.29.0] - 2026-11-14
 
 ### Fixed

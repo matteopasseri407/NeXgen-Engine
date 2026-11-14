@@ -189,10 +189,36 @@ def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
         return vault.get_start_here()
 
     @mcp.tool(annotations=READ_ONLY)
-    def read_note(note_ref: str) -> dict[str, Any]:
-        """Read a note by relative path, filename, or unique stem."""
+    def read_note(
+        note_ref: str | None = None,
+        path: str | None = None,
+        note_path: str | None = None,
+        relative_path: str | None = None,
+    ) -> dict[str, Any]:
+        """Read a note by relative path, filename, or unique stem.
 
-        return vault.read_note(note_ref)
+        Provide `note_ref` or exactly one of its aliases (`path`, `note_path`, `relative_path`).
+        """
+        candidates = {
+            name: val
+            for name, val in [
+                ("note_ref", note_ref),
+                ("path", path),
+                ("note_path", note_path),
+                ("relative_path", relative_path),
+            ]
+            if val is not None and val.strip() != ""
+        }
+        if not candidates:
+            raise ValueError(
+                "read_note requires 'note_ref' (or an alias: 'path', 'note_path', 'relative_path')"
+            )
+        distinct = {val.strip() for val in candidates.values()}
+        if len(distinct) > 1:
+            raise ValueError(
+                f"read_note received conflicting values for 'note_ref': {sorted(distinct)}"
+            )
+        return vault.read_note(next(iter(distinct)))
 
     @mcp.tool(annotations=READ_ONLY)
     def search_notes(query: str, limit: int = 10) -> dict[str, Any]:

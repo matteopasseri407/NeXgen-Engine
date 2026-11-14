@@ -2791,6 +2791,10 @@ MESSAGES: dict[str, str] = {
         'saltata: il backend {runtime} non può confermare una compattazione nativa',
     'timed out after {seconds}s':
         'tempo scaduto dopo {seconds}s',
+    '1 eligible session left for later':
+        '1 sessione idonea lasciata per dopo',
+    '{count} eligible sessions left for later':
+        '{count} sessioni idonee lasciate per dopo',
     # --- I ruoli della macchina: il piano di --check ------------------------
     'Plan only: --check writes nothing.':
         'Solo piano: --check non scrive niente.',

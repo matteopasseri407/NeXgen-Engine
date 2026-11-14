@@ -15,6 +15,7 @@ compaction is never asked: both are what issue #148 was.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from collections.abc import Callable, Iterable, Mapping
@@ -25,6 +26,11 @@ from typing import Any
 from nexgen_core.i18n import t
 from nexgen_core.openclaw import agy_compaction, groom_memory
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
+
+#: Compacting more than one session per run holds the single-threaded gateway and stalls chat requests.
+MAX_COMPACTIONS_PER_RUN = 1
+#: Environment variable to override the maximum number of compactions per run.
+MAX_COMPACTIONS_ENV_VAR = "NEXGEN_OPENCLAW_MAX_COMPACTIONS"
 
 #: A context this large is compacted even while the chat is in use.
 HARD_TOKENS = 600_000
@@ -338,6 +344,21 @@ def _remember_run(
         groom_memory.prune(memory, (entry.get("key") for entry in entries if entry.get("key")))
 
 
+def get_max_compactions(env: Mapping[str, str] | None = None) -> int:
+    """The compaction cap in force: environment variable when set and valid, default otherwise."""
+    source = env if env is not None else os.environ
+    raw = source.get(MAX_COMPACTIONS_ENV_VAR, "").strip()
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    return MAX_COMPACTIONS_PER_RUN
+
+
+def _groom_priority(decision: Decision) -> tuple[int, int]:
+    """Sort key: sessions over the HARD threshold first, then largest token count."""
+    is_hard = 1 if decision.tokens >= HARD_TOKENS or decision.reason == OVER_LIMIT else 0
+    return (is_hard, decision.tokens)
+
+
 def groom(
     openclaw: str | None = None,
     now_ms: float | None = None,
@@ -345,6 +366,7 @@ def groom(
     emit: Callable[[str], None] = print,
     clock: Callable[[], float] | None = None,
     home: Path | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> GroomReport:
     """Compact what the policy says, and report one line per session touched.
 
@@ -366,7 +388,12 @@ def groom(
             emit(lines[-1])
     attempts: list[tuple[Decision, Outcome]] = []
     spent: set[str] = set()
-    for decision in plan_groom(entries, moment, memory=memory, blocked=blocked):
+    planned = plan_groom(entries, moment, memory=memory, blocked=blocked)
+    sorted_decisions = sorted(planned, key=_groom_priority, reverse=True)
+    limit = get_max_compactions(env)
+    to_compact = sorted_decisions[:limit]
+    leftover = sorted_decisions[limit:]
+    for decision in to_compact:
         if decision.provider in spent:
             continue
         outcome = Outcome(DRY_RUN, DRY_RUN) if dry_run else compact(binary, decision)
@@ -376,6 +403,15 @@ def groom(
         lines.append(_line(decision, outcome.line))
         # One line as each attempt ends: a compaction can take minutes.
         emit(lines[-1])
+    if leftover:
+        count = len(leftover)
+        msg = (
+            t("1 eligible session left for later")
+            if count == 1
+            else t("{count} eligible sessions left for later", count=count)
+        )
+        lines.append(msg)
+        emit(msg)
     if not dry_run:
         before = dict(memory)
         _remember_run(memory, entries, attempts, _sessions_after(binary, attempts), moment)

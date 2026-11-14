@@ -266,3 +266,63 @@ def test_a_real_uncommitted_change_still_blocks_a_write(tmp_path):
     (settings.vault_root / "untracked note.md").write_text("mine\n", encoding="utf-8")
     with pytest.raises(RuntimeError, match="uncommitted"):
         vault.create_note("fresh.md", "# fresh\n")
+
+
+def test_read_note_accepts_each_alias(tmp_path):
+    settings = _write_settings(tmp_path, VAULT_TOKEN="s3cret")
+    from vault_mcp_server.server import create_server
+
+    (settings.vault_root / "sample.md").write_text("# sample\n\nbody text\n", encoding="utf-8")
+    mcp, _ = create_server(settings)
+    fn = mcp._tool_manager.get_tool("read_note").fn
+
+    res_ref = fn(note_ref="sample.md")
+    res_path = fn(path="sample.md")
+    res_note_path = fn(note_path="sample.md")
+    res_rel_path = fn(relative_path="sample.md")
+
+    assert "body text" in res_ref["content"]
+    assert res_ref == res_path == res_note_path == res_rel_path
+
+
+def test_read_note_fails_when_none_given(tmp_path):
+    settings = _write_settings(tmp_path, VAULT_TOKEN="s3cret")
+    from vault_mcp_server.server import create_server
+
+    mcp, _ = create_server(settings)
+    fn = mcp._tool_manager.get_tool("read_note").fn
+
+    with pytest.raises(ValueError, match="note_ref"):
+        fn()
+
+
+def test_read_note_fails_when_two_different_given(tmp_path):
+    settings = _write_settings(tmp_path, VAULT_TOKEN="s3cret")
+    from vault_mcp_server.server import create_server
+
+    mcp, _ = create_server(settings)
+    fn = mcp._tool_manager.get_tool("read_note").fn
+
+    with pytest.raises(ValueError, match="note_ref"):
+        fn(note_ref="sample.md", path="other.md")
+
+
+def test_read_note_mcp_call_tool_aliases(tmp_path):
+    import asyncio
+
+    settings = _write_settings(tmp_path, VAULT_TOKEN="s3cret")
+    from vault_mcp_server.server import create_server
+
+    (settings.vault_root / "sample.md").write_text("# sample\n\nbody text\n", encoding="utf-8")
+    mcp, _ = create_server(settings)
+
+    for arg in (
+        {"note_ref": "sample.md"},
+        {"path": "sample.md"},
+        {"note_path": "sample.md"},
+        {"relative_path": "sample.md"},
+    ):
+        res = asyncio.run(mcp.call_tool("read_note", arg))
+        assert not res.is_error
+        assert "sample.md" in res.content[0].text
+
