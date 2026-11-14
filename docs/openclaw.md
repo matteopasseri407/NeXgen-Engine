@@ -39,7 +39,9 @@ Every manual also states the one write path in so many words: a note is created 
 
 The code agent also gets `CLAUDE.md` and `.claude/settings.json`, so Claude Code behaves the same way when it is reached directly.
 
-`nexgen openclaw smoke` is the check a version change owes. It asks OpenClaw for its version, validates the configuration, probes the gateway, runs `openclaw mcp doctor`, and sends one short turn to an agent: five lines, one verdict, the same in a terminal and in a release check.
+`nexgen openclaw smoke` is the check a version change owes. It asks OpenClaw for its version, validates the configuration, probes the gateway, runs `openclaw mcp doctor`, sends one short turn to an agent, and verifies the first-prompt context budget: six lines, one verdict, the same in a terminal and in a release check.
+
+The first-prompt ceiling measures the actual token cost paid on the first prompt of a session, read directly from local transcripts (Claude Code under `~/.claude/projects/` and Codex under `~/.codex/sessions/`). If a session starts over budget, `smoke` and `nexgen doctor` (`openclaw.context_budget`) fail immediately. The default ceiling is 150,000 tokens (calibrated against real measurements: ~13.5k–78k tokens with loopback denies in place, versus ~945k without them), overridable via the environment variable `NEXGEN_OPENCLAW_FIRST_PROMPT_BUDGET`. The `agy` CLI is not measured in tokens because it writes no local session transcript or usage file that can be trusted.
 
 A gateway machine prepared by hand records its role with `nexgen role set server`. The setup does this by itself on `--server`. Without that record the engine cannot tell the machine is the server, and the Vault's copy beside it keeps committing in a clone nobody can push from. `nexgen role` prints what is recorded and changes nothing.
 

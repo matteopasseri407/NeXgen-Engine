@@ -28,6 +28,7 @@ from typing import Any
 
 from nexgen_core.i18n import t
 from nexgen_core.mcp_render import IS_WINDOWS, MCP_REMOTE_PACKAGE, load_json_object, write_json_config
+from nexgen_core.openclaw.loopback_guard import apply_loopback_guard, document_connector_names
 from nexgen_core.paths import openclaw_config
 
 logger = logging.getLogger("nexgen.mcp.openclaw")
@@ -445,6 +446,8 @@ def render(
     _apply_servers(renderer, servers_table, servers, _env_references(renderer), effective_http)
     mcp_config["servers"] = servers_table
     existing["mcp"] = mcp_config
+    connectors = document_connector_names(existing)
+    existing = apply_loopback_guard(existing, connectors, home=renderer.home)
     if write:
         write_json_config(renderer, cfg_file, before, existing)
     return True, t("OpenClaw configuration updated")

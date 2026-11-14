@@ -16,13 +16,13 @@ from typing import Any
 from nexgen_core import quota_policy
 from nexgen_core.i18n import detect_language, t
 from nexgen_core.openclaw import companion as app_gateway
-from nexgen_core.openclaw import agy_prereqs, claude_loopback, hierarchy, loopback_provider_policy, observation
+from nexgen_core.openclaw import agy_prereqs, hierarchy, observation
 from nexgen_core.openclaw.browser_profile import server_section
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.conversation_grant import with_engine_plugin
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.governor import with_chains
-from nexgen_core.openclaw.native_connectors import loopback_deny
+from nexgen_core.openclaw.loopback_guard import apply_loopback_guard, document_connector_names
 from nexgen_core.openclaw.profile import (
     CLAUDE_MODEL,
     CODEX_MODEL,
@@ -35,7 +35,6 @@ from nexgen_core.openclaw.profile import (
     build_config,
     with_agent_workspaces,
 )
-from nexgen_core.openclaw.setup_write import merged_document
 from nexgen_core.openclaw.skills_policy import with_skill_policy
 from nexgen_core.openclaw.squad import apply_squad, find_squad_file, load_squad
 from nexgen_core.paths import openclaw_config, resolve_home, resolve_vault_data
@@ -270,28 +269,14 @@ def _with_squad(
     return apply_squad(config, squad_data, current), squad_data
 
 
-def _servers_in_force(current: dict[str, Any] | None) -> set[str]:
-    """The connector names the file already mounts under `mcp.servers`."""
-    mcp = current.get("mcp") if isinstance(current, dict) else None
-    servers = mcp.get("servers") if isinstance(mcp, dict) else None
-    return {str(name) for name in servers} if isinstance(servers, dict) else set()
-
-
 def _connector_names(
     home: Path,
     vault_data: Path | None,
     engine_root: Path | None,
     current: dict[str, Any] | None,
 ) -> list[str]:
-    """Every connector this gateway carries or will carry: the ones in force, plus the ones sync mounts.
-
-    The second half is not a convenience. A setup that denied only the connectors
-    already in the file would leave the loopback open for exactly the connectors the
-    next `nexgen sync` mounts, which is the state the incident happened in. The
-    question is asked of the same renderer sync uses, so the two cannot disagree
-    about which server is mounted for OpenClaw.
-    """
-    names = _servers_in_force(current)
+    """Every connector this gateway carries or will carry: the ones in force, plus the ones sync mounts."""
+    names = set(document_connector_names(current))
     try:
         from nexgen_core.renderer import McpRenderer
 
@@ -310,31 +295,9 @@ def _with_loopback(
     vault_data: Path | None,
     engine_root: Path | None,
 ) -> dict[str, Any]:
-    """An agent whose own CLI carries the connectors reads them there, not from the loopback.
-
-    The question is asked of the document the write will leave, not of the proposal:
-    the merge keeps every key the proposal does not carry, so `agents.defaults.models`
-    in the file -- and the agents the engine no longer declares -- can put an agent on
-    `claude-cli` or on `agy` while the proposal says nothing about it. The doctor reads
-    that merged file, so a plan that judged the proposal alone wrote its deny for the
-    agents it happened to create and left the loopback open for the others, on every run.
-
-    Who those agents are, and which connectors `agy` may really give up, is
-    `native_connectors`' answer: an `agy` agent keeps only the connectors its own file
-    carries, and a connector it does not carry stays on the loopback, which is its only
-    road to that agent.
-
-    No deny is written for a machine with no such agent: a proposal whose agents run
-    elsewhere keeps the tool surface it had.
-    """
+    """The document with loopback denies applied for both agents and model providers."""
     connectors = _connector_names(home, vault_data, engine_root, current)
-    deny = loopback_deny(merged_document(current, config), connectors, home)
-    updated = config
-    if deny.claude:
-        updated = claude_loopback.apply(updated, connectors, deny.claude)
-    if deny.agy:
-        updated = claude_loopback.apply(updated, deny.agy_connectors, deny.agy)
-    return loopback_provider_policy.apply(updated, connectors, deny.agy_connectors, current=current)
+    return apply_loopback_guard(config, connectors, home=home, current=current)
 
 
 def _with_server_browser(

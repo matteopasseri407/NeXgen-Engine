@@ -39,7 +39,9 @@ Ogni manuale dichiara anche l'unica via di scrittura, a chiare lettere: una nota
 
 L'agente di codice riceve anche `CLAUDE.md` e `.claude/settings.json`, così Claude Code si comporta allo stesso modo quando lo si raggiunge direttamente.
 
-`nexgen openclaw smoke` è il controllo che un cambio di versione deve: chiede a OpenClaw la versione, valida la configurazione, sonda il gateway, esegue `openclaw mcp doctor` e manda un turno breve a un agente. Cinque righe, un verdetto, lo stesso comando in un terminale e in un controllo di rilascio.
+`nexgen openclaw smoke` è il controllo che un cambio di versione deve: chiede a OpenClaw la versione, valida la configurazione, sonda il gateway, esegue `openclaw mcp doctor`, manda un turno breve a un agente e verifica il budget di contesto del primo prompt. Sei righe, un verdetto, lo stesso comando in un terminale e in un controllo di rilascio.
+
+Il tetto sul primo prompt misura il costo effettivo in token pagato sul primo prompt di una sessione, letto direttamente dalle trascrizioni locali (Claude Code sotto `~/.claude/projects/` e Codex sotto `~/.codex/sessions/`). Se una sessione parte oltre il budget, `smoke` e `nexgen doctor` (`openclaw.context_budget`) falliscono immediatamente. Il tetto predefinito è di 150.000 token (calibrato su misurazioni reali: ~13,5k–78k token con i deny di loopback attivi, contro ~945k senza di essi), sovrascrivibile tramite la variabile d'ambiente `NEXGEN_OPENCLAW_FIRST_PROMPT_BUDGET`. La CLI `agy` non è misurata in token perché non scrive trascrizioni o file d'uso locali di cui fidarsi.
 
 Una macchina gateway preparata a mano registra il suo ruolo con `nexgen role set server`; il setup lo fa da solo con `--server`. Senza quel record il motore non può capire che la macchina è il server, e la copia del Vault che le sta accanto continua a fare commit in un clone da cui nessuno può pushare. `nexgen role` stampa cosa è registrato senza cambiare nulla.
 

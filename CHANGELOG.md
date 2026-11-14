@@ -13,6 +13,9 @@ of any engine release.
 ### Fixed
 
 - An OpenClaw chat that reaches Claude Code or `agy` through a model picked in the app or through a fallback no longer loads every connector schema in its first prompt (measured: 945k tokens). The engine now also writes the connector deny in `tools.byProvider`, keyed on the model provider that runs the chat, and the doctor fails when it is missing.
+- `nexgen sync` now applies loopback denies at the exact moment it mounts connectors into OpenClaw, so a newly mounted server is never exposed on the loopback before running setup.
+- Loopback denies are guarded across arbitrary connector names by invariant property testing, ensuring no mounted connector escapes the deny on CLI runtimes.
+- `nexgen openclaw smoke` and `nexgen doctor` now measure actual first-prompt token costs against a 150,000 token ceiling (`NEXGEN_OPENCLAW_FIRST_PROMPT_BUDGET`), failing when an OpenClaw session starts over budget.
 
 ## [2.28.4] - 2026-11-12
 
