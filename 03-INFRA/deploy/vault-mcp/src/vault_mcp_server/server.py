@@ -21,6 +21,7 @@ from starlette.routing import Mount, Route
 
 from . import __version__
 from .config import Settings
+from .note_ref import resolve_note_ref
 from .vault import VaultService
 
 
@@ -199,26 +200,9 @@ def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
 
         Provide `note_ref` or exactly one of its aliases (`path`, `note_path`, `relative_path`).
         """
-        candidates = {
-            name: val
-            for name, val in [
-                ("note_ref", note_ref),
-                ("path", path),
-                ("note_path", note_path),
-                ("relative_path", relative_path),
-            ]
-            if val is not None and val.strip() != ""
-        }
-        if not candidates:
-            raise ValueError(
-                "read_note requires 'note_ref' (or an alias: 'path', 'note_path', 'relative_path')"
-            )
-        distinct = {val.strip() for val in candidates.values()}
-        if len(distinct) > 1:
-            raise ValueError(
-                f"read_note received conflicting values for 'note_ref': {sorted(distinct)}"
-            )
-        return vault.read_note(next(iter(distinct)))
+        return vault.read_note(
+            resolve_note_ref(note_ref=note_ref, path=path, note_path=note_path, relative_path=relative_path)
+        )
 
     @mcp.tool(annotations=READ_ONLY)
     def search_notes(query: str, limit: int = 10) -> dict[str, Any]:
