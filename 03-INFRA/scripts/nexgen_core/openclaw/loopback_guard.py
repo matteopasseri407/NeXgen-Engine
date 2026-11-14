@@ -37,10 +37,6 @@ def document_connector_names(document: dict[str, Any] | None) -> list[str]:
 connector_names = document_connector_names
 
 
-#: Alias for document_connector_names
-connector_names = document_connector_names
-
-
 def apply_loopback_guard(
     document: dict[str, Any],
     connectors: Iterable[str] | None = None,

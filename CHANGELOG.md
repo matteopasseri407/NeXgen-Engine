@@ -16,6 +16,11 @@ of any engine release.
 - `nexgen sync` now applies loopback denies at the exact moment it mounts connectors into OpenClaw, so a newly mounted server is never exposed on the loopback before running setup.
 - Loopback denies are guarded across arbitrary connector names by invariant property testing, ensuring no mounted connector escapes the deny on CLI runtimes.
 - `nexgen openclaw smoke` and `nexgen doctor` now measure actual first-prompt token costs against a 150,000 token ceiling (`NEXGEN_OPENCLAW_FIRST_PROMPT_BUDGET`), failing when an OpenClaw session starts over budget.
+- The OpenClaw context-guard cron job declares `--no-deliver`, converging existing jobs away from implicit delivery channels that OpenClaw refuses for isolated commands.
+- OpenClaw session grooming now notes when `totalTokens` is stale after compaction instead of presenting a stale number as the current session size.
+- The OpenClaw doctor reports unconfigured agent folders present on disk that have no entry in `agents.entries` without touching their files.
+- OpenClaw unattended background jobs bypass unsupported CLI harnesses (such as `google-antigravity-cli`) and select the next direct cloud model in the agent's chain.
+- `sup run` matches model families to their effort variants for `agy`, forwards accepted model IDs, refuses unreadable or disallowed models before opening tabs, and trusts the command-line model when the harness cannot inspect sessions.
 
 ## [2.28.4] - 2026-11-12
 

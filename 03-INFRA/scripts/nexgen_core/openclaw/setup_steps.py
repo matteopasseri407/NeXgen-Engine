@@ -28,6 +28,7 @@ from nexgen_core.openclaw import host_preflight, npm_prefix, setup_commands, set
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.governor import governor_section
 from nexgen_core.openclaw.node_agents import node_agents
+from nexgen_core.openclaw.setup_cron import groom_job_step as groom_job_step
 from nexgen_core.openclaw.pin import node_satisfies, pinned_version, required_node_version
 from nexgen_core.openclaw.setup_agents import agent_dirs, created_by_openclaw, prepare
 from nexgen_core.openclaw_pairing import qr as pairing_qr
@@ -577,33 +578,6 @@ def module_step(setup: Setup) -> None:
         return
     setup.out(t("This machine declares 'openclaw: local' for host {host}.", host=current_host()))
     enable_openclaw_mcp(setup, vault)
-
-
-def groom_job_step(setup: Setup) -> None:
-    """Registers the hourly groom as an OpenClaw command job, once.
-
-    The job keeps every agent chat small: idle chats are compacted, and a chat
-    that grows past the limit is compacted even while in use. Without the job
-    the policy in the config is only a promise.
-    """
-    if setup.dry_run:
-        setup.out(t("  Context guard: skipped in dry-run."))
-        return
-    engine = setup.which("nexgen")
-    if not engine:
-        setup.out(t("  Context guard: 'nexgen' is not on PATH, job not registered."))
-        return
-    result = setup.run([
-        openclaw_bin(setup), "cron", "add", "nexgen-context-guard",
-        "--cron", "0 * * * *",
-        "--command", f"{engine} openclaw groom",
-        "--declaration-key", "nexgen:context-guard",
-        "--display-name", "Context guard",
-    ])
-    if result.returncode == 0:
-        setup.out(t("  Context guard: hourly job registered."))
-        return
-    setup.out(t("  Context guard: the job was not registered, the gateway refused it."))
 
 
 def phone_step(setup: Setup) -> None:

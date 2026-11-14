@@ -192,6 +192,15 @@ def allowed_for(tier: str | None = None, *, allow_limited: bool = True,
     return tuple(all_models)
 
 
+def model_family(model: str) -> str:
+    """Extract model family by stripping effort suffix (-low, -medium, -high)."""
+    tag = (model or "").strip()
+    for suffix in ("-low", "-medium", "-high"):
+        if tag.endswith(suffix):
+            return tag[:-len(suffix)]
+    return tag
+
+
 def check_model_allowed(model: str, tier: str = "worker", *, allow_limited: bool = False,
                         path: Path | None = None) -> None:
     """Refuse a model outside the allowed tier models with a human-readable list."""
@@ -199,7 +208,8 @@ def check_model_allowed(model: str, tier: str = "worker", *, allow_limited: bool
     if not allowed:
         return
     tag = (model or "").strip()
-    if tag not in allowed:
+    family = model_family(tag)
+    if tag not in allowed and family not in allowed:
         allowed_str = ", ".join(allowed)
         raise RoutingTiersError(
             f"modello «{model}» non consentito per il tier {tier}. Modelli ammessi: {allowed_str}"
@@ -217,7 +227,8 @@ def resolve_worker_candidate(model: str = "", harness: str = "", *, limited: boo
             data = load_tiers(path)
             all_c = data.get("tiers", {}).get("worker", []) + data.get("tiers", {}).get("limited", [])
             for c in all_c:
-                if _candidate_model(c) == model:
+                cand = _candidate_model(c)
+                if cand == model or cand == model_family(model):
                     harness = _candidate_harness(c)
                     break
         return model, harness

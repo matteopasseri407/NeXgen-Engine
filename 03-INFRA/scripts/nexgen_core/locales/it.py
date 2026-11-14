@@ -2794,4 +2794,12 @@ MESSAGES: dict[str, str] = {
         'Configurerei il gateway OpenClaw locale',
     'Would align CLIs, skills and MCP connectors':
         'Allineerei CLI, skill e connettori MCP',
+    'Agent folders have no entry in configuration: {names}.':
+        'Cartelle degli agenti non dichiarate nella configurazione: {names}.',
+    'Remove the unused folders from {path} or declare them under agents.entries in openclaw.json.':
+        'Rimuovi le cartelle inutilizzate da {path} o dichiarale sotto agents.entries in openclaw.json.',
+    'These background jobs would run on a CLI harness that does not support isolated completion ({models}): {jobs}.':
+        'Questi job in background girerebbero su un harness CLI che non supporta il completamento isolato ({models}): {jobs}.',
+    'Configure a direct cloud model or fallback under agents.entries.main.model that is not a CLI harness.':
+        'Configura un modello cloud diretto o un fallback sotto agents.entries.main.model che non sia un harness CLI.',
 }

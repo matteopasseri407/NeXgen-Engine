@@ -24,6 +24,7 @@ from . import supervision_costs as costs
 from . import supervision_policy as policy
 from . import supervision_state as state
 from . import supervision_windows as windows
+from .supervision_prompts import corrections_text, model_note as _model_note, prompt_text
 from .supervision_state import SupervisionError
 
 #: How long a new tab gets to open its session before the attach is left manual.
@@ -270,38 +271,6 @@ def _deliver(
         return opened
 
 
-def corrections_text(task_id: str, unit: str, review: Path, round_no: int) -> str:
-    """A pointer to the review round, never its text: the file is the one place it is read from."""
-    brief = review.parent / f"20-brief-{unit}.md"
-    return (
-        f"Sei l'esecutore dell'unità {unit} del compito {task_id}, giro di correzione {round_no}. "
-        f"Leggi le correzioni in {review} e il brief in {brief}, applica solo quelle. "
-        "Lavora in questa copia, committa sul ramo locale, aggiorna il resoconto. Niente push."
-    )
-
-
-def prompt_text(task_id: str, unit: str, brief: Path, *, harness: str = "opencode") -> str:
-    """A pointer to the brief, never the brief: the file stays the one place it is read from.
-
-    A local unit gets two extra sentences: its brief is a step-by-step plan because
-    the local model executes instead of designing, and the acceptance tests are
-    already written red by somebody else, so touching them is not its work.
-    """
-    report = brief.parent / f"30-resoconto-{unit}.md"
-    text = (
-        f"Sei l'esecutore dell'unità {unit} del compito {task_id}. "
-        f"Leggi il brief in {brief} e segui solo quello. "
-        f"Lavora in questa copia, committa sul ramo locale, scrivi il resoconto in {report}. "
-        "Niente push."
-    )
-    if harness == "local":
-        text += (
-            " Il brief è un piano passo per passo: esegui i passi nell'ordine, non riprogettare. "
-            "I test di accettazione sono già scritti e rossi: non modificarli, fai passare quelli."
-        )
-    return text
-
-
 def find_session(
     folder: Path, since_ms: int, *, wait_s: float = SESSION_WAIT_S, lister=None,
     poll_s: float = POLL_S, clock=None, sleep=None,
@@ -419,13 +388,6 @@ def _opening(adapter, task_id: str, unit: str) -> tuple:
     return chosen, executable, identifier
 
 
-def _model_note(requested: str, argv: list[str]) -> dict:
-    """What the owner asked for and whether it reached the command line, read from the argv itself."""
-    if not requested:
-        return {}
-    return {"model_requested": requested, "model_applied": requested in argv}
-
-
 def _open_tab(
     task_id: str, unit: str, folder: Path, prompt: str, opener, adapter, executable: str,
     chosen: str, *, model: str, event: str, extra: dict,
@@ -441,6 +403,37 @@ def _open_tab(
         mode="tab", folder=str(folder), pid=handle.get("pid"), **dict(extra),
     )
     return handle, _model_note(model, argv)
+
+
+def _check_tab_model_preflight(
+    adapter, chosen: str, model: str, allowed: tuple[str, ...], folder: Path, task_id: str, unit: str,
+) -> dict | None:
+    """Refuse an unallowed or unreadable model before opening a tab or turn."""
+    ok, reason = policy.check_tab_model(adapter, model, allowed)
+    if not ok:
+        state.append_event(
+            task_id, "unit_model_refused", unit=unit, harness=adapter.name,
+            session=chosen or "", model=model, allowed=list(allowed),
+            reason=reason, folder=str(folder),
+        )
+        return {"unit": unit, "mode": "refused", "sent": False, "session": None, "model": model, "reason": reason}
+    return None
+
+
+def _resolve_session_model(
+    adapter, session: dict, model: str, allowed: tuple[str, ...], measure, applied: dict, task_id: str, unit: str,
+) -> str:
+    """The model the session runs on, or the model passed on argv when the harness cannot read sessions."""
+    read_model = _model_of(session, measure or _measure_for(adapter), allowed)
+    if not read_model and model and not getattr(adapter.capabilities, "session_model", False):
+        applied["model_trusted_from_argv"] = True
+        state.append_event(
+            task_id, "model_trusted_from_argv", unit=unit, harness=adapter.name,
+            session=str(session.get("id") or ""), model=model,
+            reason="adapter cannot read session model; trusted model from argv",
+        )
+        return model
+    return read_model
 
 
 def _open_first_tab(
@@ -463,6 +456,9 @@ def _open_first_tab(
     and the result says whether it did.
     """
     adapter, executable, chosen = _opening(adapter, task_id, unit)
+    preflight = _check_tab_model_preflight(adapter, chosen, model, allowed, folder, task_id, unit)
+    if preflight is not None:
+        return preflight
     if not adapter.capabilities.window:
         return _open_turn(
             task_id, unit, folder, prompt, session=chosen, event=event, extra=extra or {},
@@ -484,15 +480,15 @@ def _open_first_tab(
         result["reason"] = reason or note
         return _with_tab(result, replaced)
     session = found
-    model = _model_of(session, measure or _measure_for(adapter), allowed)
-    if allowed and not policy.model_allowed(model, allowed):
-        refusal = _record_refusal(task_id, unit, adapter, str(session.get("id") or ""), model, allowed, folder)
+    read_model = _resolve_session_model(adapter, session, model, allowed, measure, applied, task_id, unit)
+    if allowed and not policy.model_allowed(read_model, allowed):
+        refusal = _record_refusal(task_id, unit, adapter, str(session.get("id") or ""), read_model, allowed, folder)
         return _with_tab({
             "unit": unit, "mode": "refused", "sent": True, "window": handle,
-            "session": session, "model": model, "reason": refusal, **applied,
+            "session": session, "model": read_model, "reason": refusal, **applied,
         }, replaced)
-    _attach(task_id, unit, session, handle, adapter.name, folder)
-    result = {"unit": unit, "mode": "tab", "window": handle, "session": session, **applied}
+    _attach(task_id, unit, session, handle, adapter.name, folder, model=read_model)
+    result = {"unit": unit, "mode": "tab", "window": handle, "session": session, "model": read_model, **applied}
     if reason:
         result["reason"] = reason
     return _with_tab(result, replaced)
@@ -737,18 +733,17 @@ def _unit_copy(task_id: str, unit: str) -> tuple[dict, Path]:
     return record, folder
 
 
-def _attach(task_id: str, unit: str, session: dict, handle: dict, harness: str, folder: Path) -> dict:
+def _attach(task_id: str, unit: str, session: dict, handle: dict, harness: str, folder: Path, model: str = "") -> dict:
     """Write the cost row and the journal event for the session the tab opened."""
     session_id = str(session.get("id") or "")
     row = costs.record(
         task_id, unit, "esecutore", session_id, harness=harness,
         window=str(handle.get("title", "")),
     )
-    state.append_event(
-        task_id, "attached",
-        unit=unit, role="esecutore", harness=harness, session=row["session"],
-        folder=str(folder),
-    )
+    fields = {"unit": unit, "role": "esecutore", "harness": harness, "session": row["session"], "folder": str(folder)}
+    if model:
+        fields["model"] = model
+    state.append_event(task_id, "attached", **fields)
     return row
 
 

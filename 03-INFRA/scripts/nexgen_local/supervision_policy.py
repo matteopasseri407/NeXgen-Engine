@@ -195,7 +195,11 @@ def model_allowed(model: str, allowed: tuple[str, ...] | list[str] | None = None
     if not tag:
         return False
     bare = tag.split("#", 1)[0]
-    return any(fnmatchcase(candidate, pattern) for pattern in patterns for candidate in (tag, bare))
+    candidates = [tag, bare]
+    for suffix in ("-low", "-medium", "-high"):
+        if bare.endswith(suffix):
+            candidates.append(bare[:-len(suffix)])
+    return any(fnmatchcase(candidate, pattern) for pattern in patterns for candidate in candidates)
 
 
 def refusal(model: str, allowed: tuple[str, ...] | list[str] | None = None) -> str:
@@ -221,9 +225,24 @@ def check_session(record: dict, allowed: tuple[str, ...], measure=None) -> tuple
     harness = str(record.get("harness") or "opencode")
     try:
         facts = (measure or (lambda value: costs.measure_for(harness, value)))(session)
+        model = str(getattr(facts, "model", "") or "")
     except costs.CostError as exc:
-        return False, f"modello non leggibile ({exc})"
-    model = str(getattr(facts, "model", "") or "")
+        model = str(record.get("model") or "")
+        if not model:
+            return False, f"modello non leggibile ({exc})"
+    if not model:
+        model = str(record.get("model") or "")
     if not model_allowed(model, allowed):
         return False, refusal(model, allowed)
     return True, f"modello {model} nell'elenco consentito"
+
+
+def check_tab_model(adapter, model: str, allowed: tuple[str, ...]) -> tuple[bool, str]:
+    """Check if model is allowed before opening a tab, refusing unreadable models for harnesses without session model inspection."""
+    if not allowed:
+        return True, ""
+    if model and not model_allowed(model, allowed):
+        return False, refusal(model, allowed)
+    if not model and not getattr(adapter.capabilities, "session_model", False):
+        return False, refusal("", allowed)
+    return True, ""
