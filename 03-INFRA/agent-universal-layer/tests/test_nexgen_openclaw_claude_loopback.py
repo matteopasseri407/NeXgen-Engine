@@ -22,6 +22,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.claude_loopback_checks import check_claude_loopback  # noqa: E402
+from nexgen_core.openclaw import loopback_provider_policy  # noqa: E402
 from nexgen_core.openclaw.claude_cli import claude_cli_agents, is_claude_cli, runtime_id  # noqa: E402
 from nexgen_core.openclaw.claude_loopback import apply as apply_loopback  # noqa: E402
 from nexgen_core.openclaw.claude_native import ensure as ensure_native  # noqa: E402
@@ -255,6 +256,24 @@ def test_the_plan_denies_every_connector_it_also_renders(tmp_path: Path) -> None
     assert "deny" not in plan.config["agents"]["entries"]["main"].get("tools", {})
 
 
+def test_the_plan_carries_provider_deny(tmp_path: Path) -> None:
+    """The plan carries tools.byProvider with loopback deny for routed CLI providers."""
+    from nexgen_core.openclaw.plan import build_plan
+
+    home = _home(tmp_path)
+    renderer = _renderer(tmp_path, home)
+    path = _write_openclaw(home, {"mcp": {"servers": {"hand-added": {"command": "node", "args": ["x.mjs"]}}}})
+
+    plan = build_plan(
+        detected=_detected(path), home=home, env={},
+        vault_data=renderer.vault_data, engine_root=renderer.engine_root,
+    )
+
+    assert plan.config["tools"]["byProvider"]["anthropic"]["deny"] == [
+        "hand-added__*", "n8n-mcp__*", "vault-library__*",
+    ]
+
+
 def test_the_plan_writes_no_deny_when_no_agent_runs_on_claude_cli(tmp_path: Path) -> None:
     from nexgen_core.openclaw.plan import build_plan
 
@@ -343,7 +362,8 @@ def _healthy(tmp_path: Path) -> tuple[Path, McpRenderer]:
     """A gateway whose `claude-cli` agent is where this change puts it: denied and native."""
     home = _home(tmp_path)
     renderer = _renderer(tmp_path, home)
-    config = apply_loopback(_config(), ["vault-library", "n8n-mcp"])
+    servers = ["vault-library", "n8n-mcp"]
+    config = loopback_provider_policy.apply(apply_loopback(_config(), servers), servers)
     _write_openclaw(home, config)
     ensure_native(config, home=home, vault_data=renderer.vault_data, engine_root=renderer.engine_root,
                   out=lambda _line: None)
@@ -382,6 +402,15 @@ def test_the_doctor_passes_a_configuration_this_change_writes(tmp_path: Path) ->
     assert outcome is not None
     assert outcome.severity == Severity.OK
     assert outcome.id == "openclaw.claude_loopback"
+    assert "The 1 agent(s)" in outcome.message
+    assert "Model providers covered: anthropic/claude-opus-5-5." in outcome.message
+
+    i18n.set_language("it")
+    outcome_it = check_claude_loopback(home, renderer.vault_data, renderer.engine_root)
+    assert outcome_it is not None
+    assert "I 1 agenti" in outcome_it.message
+    assert "Provider di modelli coperti: anthropic/claude-opus-5-5." in outcome_it.message
+    i18n.set_language("en")
 
 
 def test_the_doctor_reports_a_connector_still_on_the_loopback(tmp_path: Path) -> None:
@@ -444,7 +473,11 @@ servers:
 """
     home = _home(tmp_path)
     renderer = _renderer(tmp_path, home, manifest)
-    config = apply_loopback(_config(servers=("vault-library", "openclaw-only")), ["vault-library", "openclaw-only"])
+    servers = ["vault-library", "openclaw-only"]
+    config = loopback_provider_policy.apply(
+        apply_loopback(_config(servers=tuple(servers)), servers),
+        servers,
+    )
     _write_openclaw(home, config)
     ensure_native(config, home=home, vault_data=renderer.vault_data, engine_root=renderer.engine_root,
                   out=lambda _line: None)
@@ -454,3 +487,19 @@ servers:
     outcome = check_claude_loopback(home, renderer.vault_data, renderer.engine_root)
     assert outcome is not None
     assert outcome.severity == Severity.OK
+
+
+def test_the_doctor_fails_when_provider_deny_is_missing(tmp_path: Path) -> None:
+    """A provider key routed to a CLI backend is reported when its tools.byProvider deny is missing."""
+    home, renderer = _healthy(tmp_path)
+    config = json.loads(openclaw_config(home).read_text(encoding="utf-8"))
+    config["tools"]["byProvider"].pop(CLAUDE_REF, None)
+    config["tools"]["byProvider"].pop("anthropic", None)
+    _write_openclaw(home, config)
+
+    outcome = check_claude_loopback(home, renderer.vault_data, renderer.engine_root)
+    assert outcome is not None
+    assert outcome.severity == Severity.BROKEN
+    assert outcome.id == "openclaw.claude_loopback"
+    assert "still on the loopback server" in outcome.message
+    assert any(ref in outcome.message for ref in (CLAUDE_REF, "anthropic"))

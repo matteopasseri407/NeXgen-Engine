@@ -74,3 +74,21 @@ exceptions:
     kind: pattern:h1
     match: "/h…/x (7 chars)"
     reason: a made-up home path inside a fake OpenClaw error string; the next commit uses the tilde form the checker really prints
+  - rev: "0559b598ee62def2263cd4dbdf211b57c5740f61"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_openclaw_sessions_groom_stale.py
+    line: 39
+    kind: pattern:h5
+    match: "71…50 (7 chars)"
+    reason: a token count used as a test value for the stale counter line, not an identifier; the next commit uses a shorter number
+  - rev: "0559b598ee62def2263cd4dbdf211b57c5740f61"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_openclaw_sessions_groom_stale.py
+    line: 47
+    kind: pattern:h5
+    match: "71…50 (7 chars)"
+    reason: a token count used as a test value for the stale counter line, not an identifier; the next commit uses a shorter number
+  - rev: "0559b598ee62def2263cd4dbdf211b57c5740f61"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_openclaw_sessions_groom_stale.py
+    line: 73
+    kind: pattern:h5
+    match: "71…50 (7 chars)"
+    reason: a token count used as a test value for the stale counter line, not an identifier; the next commit uses a shorter number

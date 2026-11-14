@@ -41,6 +41,9 @@ from nexgen_core.report import CheckOutcome, Severity
 #: on this machine, whatever the detection answered this time.
 LOCAL_PROVIDERS = ("ollama", "llama-cpp")
 
+#: CLI harness backends that cannot do isolated completion.
+CLI_HARNESS_PROVIDERS = frozenset({"google-antigravity-cli", "claude-cli", "codex"})
+
 #: The order the agents are read in when looking for a cloud model: `main` first,
 #: because it is the agent a person already uses most and its model is the one
 #: the engine put on a cloud subscription when there was one.
@@ -58,6 +61,11 @@ JOBS = {
 def is_local(ref: str | None) -> bool:
     """Whether a `provider/model` ref names a model served from this machine."""
     return bool(ref) and str(ref).split("/", 1)[0] in LOCAL_PROVIDERS
+
+
+def is_cli_harness(ref: str | None) -> bool:
+    """Whether a model ref names a CLI harness backend that cannot do isolated completion."""
+    return bool(ref) and str(ref).split("/", 1)[0] in CLI_HARNESS_PROVIDERS
 
 
 def _at(document: Any, path: tuple[str, ...]) -> Any:
@@ -116,15 +124,44 @@ def default_model(config: dict[str, Any] | None, planned: dict[str, str] | None 
     return resolved.get("main")
 
 
+def agent_model_chains(config: dict[str, Any] | None) -> dict[str, list[str]]:
+    """Every agent's ordered model chain (primary and fallbacks)."""
+    entries = _at(config, ("agents", "entries"))
+    if not isinstance(entries, dict):
+        return {}
+    chains: dict[str, list[str]] = {}
+    for name, entry in entries.items():
+        model = entry.get("model") if isinstance(entry, dict) else entry
+        if isinstance(model, dict):
+            primary = _named(model.get("primary"))
+            fallbacks = [_named(f) for f in model.get("fallbacks", []) if _named(f)]
+            chain = [primary] if primary else []
+            chain.extend([f for f in fallbacks if f and f not in chain])
+            if chain:
+                chains[str(name)] = chain
+        else:
+            ref = _named(model)
+            if ref:
+                chains[str(name)] = [ref]
+    return chains
+
+
 def cloud_model(config: dict[str, Any] | None, planned: dict[str, str] | None = None) -> str | None:
-    """The first model an agent already runs that is not local, in a stable order."""
-    resolved = resolved_models(config, planned)
-    ordered = [agent for agent in AGENT_ORDER if agent in resolved]
-    ordered.extend(sorted(agent for agent in resolved if agent not in AGENT_ORDER))
+    """The first model an agent already runs that is not local and not a CLI harness."""
+    chains = agent_model_chains(config)
+    if planned:
+        for agent, ref in planned.items():
+            named_ref = _named(ref)
+            if named_ref:
+                existing = chains.get(agent, [])
+                chains[agent] = [named_ref] + [m for m in existing if m != named_ref]
+
+    ordered = [agent for agent in AGENT_ORDER if agent in chains]
+    ordered.extend(sorted(agent for agent in chains if agent not in AGENT_ORDER))
     for agent in ordered:
-        ref = resolved[agent]
-        if not is_local(ref):
-            return ref
+        for ref in chains[agent]:
+            if not is_local(ref) and not is_cli_harness(ref):
+                return ref
     return None
 
 
@@ -191,12 +228,13 @@ def _compaction(current: dict[str, Any] | None, cloud: str) -> dict[str, Any] | 
 
 
 def blocks(planned: dict[str, str], current: dict[str, Any] | None) -> dict[str, Any]:
-    """The sections that move the background jobs off a local default, or nothing.
+    """The sections that move the background jobs off a local or CLI harness default, or nothing.
 
-    Nothing is proposed when the default is already cloud, when no agent has a
+    Nothing is proposed when the default is already direct cloud, when no agent has a
     cloud model to offer, or when every key involved is the person's own.
     """
-    if not is_local(default_model(current, planned)):
+    default = default_model(current, planned)
+    if not is_local(default) and not is_cli_harness(default):
         return {}
     cloud = cloud_model(current, planned)
     if cloud is None:
@@ -232,8 +270,26 @@ def local_jobs(config: dict[str, Any] | None) -> dict[str, str]:
     return {job: ref for job, ref in jobs(config).items() if is_local(ref)}
 
 
+def harness_jobs(config: dict[str, Any] | None) -> dict[str, str]:
+    """The jobs that would run on a CLI harness backend that cannot do isolated completion."""
+    return {job: ref for job, ref in jobs(config).items() if is_cli_harness(ref)}
+
+
 def report(config: dict[str, Any] | None) -> CheckOutcome:
-    """The doctor's one line: whether an unattended job would wake a local model."""
+    """The doctor's one line: whether an unattended job would wake a local model or a CLI harness."""
+    harness = harness_jobs(config)
+    if harness:
+        names = sorted({t(JOBS[job]) for job in harness})
+        refs = sorted(set(harness.values()))
+        return CheckOutcome(
+            id="openclaw.background_model",
+            severity=Severity.WARN,
+            message=t(
+                "These background jobs would run on a CLI harness that does not support isolated completion ({models}): {jobs}.",
+                models=", ".join(refs), jobs=", ".join(names),
+            ),
+            action=t("Configure a direct cloud model or fallback under agents.entries.main.model that is not a CLI harness."),
+        )
     local = local_jobs(config)
     if not local:
         return CheckOutcome(

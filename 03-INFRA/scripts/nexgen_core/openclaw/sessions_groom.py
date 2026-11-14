@@ -68,6 +68,7 @@ class Decision:
     runtime: str
     fingerprint: dict[str, float]
     provider: str = ""
+    tokens_fresh: bool = True
 
 
 @dataclass(frozen=True)
@@ -132,6 +133,7 @@ def _policy_decisions(entries: Iterable[Mapping[str, Any]], now_ms: float) -> li
             runtime=_runtime_id(entry),
             fingerprint=groom_memory.fingerprint(entry),
             provider=str(entry.get("modelProvider") or ""),
+            tokens_fresh=not stale,
         ))
     return decisions
 
@@ -284,7 +286,8 @@ def _state_dir(home: Path | None) -> Path | None:
 
 def _line(decision: Decision, outcome: str) -> str:
     minutes = int(decision.idle_seconds // 60)
-    return f"{decision.key}: {decision.tokens} tokens, idle {minutes}m ({decision.reason}) -> {outcome}"
+    size = f"{decision.tokens} tokens" if decision.tokens_fresh else f"last known {decision.tokens} tokens, counter stale"
+    return f"{decision.key}: {size}, idle {minutes}m ({decision.reason}) -> {outcome}"
 
 
 def _sessions_after(binary: str, attempts: list[tuple[Decision, Outcome]]) -> dict[str, Mapping[str, Any]]:

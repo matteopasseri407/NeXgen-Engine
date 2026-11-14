@@ -95,12 +95,12 @@ def test_run_puts_the_model_the_owner_asked_for_on_the_tab(task, lane, monkeypat
     opened: list = []
 
     result = harness.run_unit(
-        task, "prova", harness="agy", model="gemini-3.8-flash", wait_s=0,
+        task, "prova", harness="agy", model="gemini-3.8-flash-high", wait_s=0,
         opener=lambda title, argv, *, cwd, marker="": opened.append(list(argv)) or {"title": title, "pid": 9},
         lister=lambda: [],
     )
 
-    assert opened[0][opened[0].index("--model") + 1] == "gemini-3.8-flash"
+    assert opened[0][opened[0].index("--model") + 1] == "gemini-3.8-flash-high"
     assert result["model_applied"] is True
 
 
@@ -766,11 +766,11 @@ def test_a_tab_states_the_model_it_was_asked_for_and_says_so(task, unit, harness
     result = harness._open_first_tab(
         task, "prova", unit, "prompt",
         opener=lambda title, argv, cwd, marker="": opened.append(list(argv)) or {"title": title, "pid": 11},
-        lister=lambda: [], wait_s=0, adapter=harness.adapters.get("agy"), model="gemini-3.8-flash",
+        lister=lambda: [], wait_s=0, adapter=harness.adapters.get("agy"), model="gemini-3.8-flash-high",
     )
 
-    assert opened[0][opened[0].index("--model") + 1] == "gemini-3.8-flash"
-    assert result["model_requested"] == "gemini-3.8-flash"
+    assert opened[0][opened[0].index("--model") + 1] == "gemini-3.8-flash-high"
+    assert result["model_requested"] == "gemini-3.8-flash-high"
     assert result["model_applied"] is True
 
 

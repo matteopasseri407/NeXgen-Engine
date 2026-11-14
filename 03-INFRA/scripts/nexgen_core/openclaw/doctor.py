@@ -29,6 +29,7 @@ from nexgen_core.i18n import t
 from nexgen_core.openclaw import (
     background,
     companion,
+    doctor_agents,
     doctor_agy,
     doctor_config,
     doctor_mcp,
@@ -300,6 +301,7 @@ def _config_outcomes(
         node_checks.check_browser_attach(config),
         *node_approvals.check_agents(config, approvals),
         *doctor_runtime.check_workshop_skills(config, path.parent, home_dir),
+        doctor_agents.check_unconfigured_agents(config, path.parent),
         doctor_runtime.check_unadopted(config, path, home_dir, resolve_vault_data(home_dir, vault_data)),
         doctor_runtime.check_bindings(config),
     ]))

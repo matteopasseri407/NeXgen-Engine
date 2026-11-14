@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import agy_prereqs
+from nexgen_core.openclaw import agy_bridge, agy_prereqs
 from nexgen_core.openclaw.agy_backend import AUTO_APPROVING_MODE, GUARDED_MODES
 from nexgen_core.openclaw.terms import local_agy_backend
 from nexgen_core.processes import command_line_text
@@ -38,6 +38,7 @@ CHECK_ID = "openclaw.google.cli_backend"
 #: The plugin on disk, and the `agy` command it drives: two facts of their own,
 #: kept apart from the mode so a missing plugin is never reported as a mode.
 PLUGIN_CHECK_ID = "openclaw.google.cli_backend.plugin"
+BRIDGE_CHECK_ID = "openclaw.google.cli_backend.bridge"
 AGY_CHECK_ID = "openclaw.google.cli_backend.agy"
 
 Which = Callable[[str], "str | None"]
@@ -111,6 +112,28 @@ def _plugin_line(backend: str, state_dir: Path | None) -> CheckOutcome | None:
     return None
 
 
+def _bridge_line(backend: str, state_dir: Path | None) -> CheckOutcome | None:
+    """Whether the installed plugin has the MCP bridge patch in place."""
+    if state_dir is None:
+        return None
+    if not agy_prereqs.installed_version(state_dir, backend):
+        return None
+    if agy_bridge.patched(state_dir, backend):
+        return CheckOutcome(
+            id=BRIDGE_CHECK_ID,
+            severity=Severity.OK,
+            message=t("The '{backend}' plugin's MCP bridge is patched: it injects only the loopback server "
+                      "and lazy-mcp gateway into 'agy'.", backend=backend),
+        )
+    return CheckOutcome(
+        id=BRIDGE_CHECK_ID,
+        severity=Severity.WARN,
+        message=t("The '{backend}' plugin's MCP bridge is not patched: 'agy' may start every connector "
+                  "directly instead of on demand through 'lazy-mcp'.", backend=backend),
+        action=t("Run 'nexgen openclaw setup' to patch the plugin."),
+    )
+
+
 def _agy_line(
     backend: str, config: dict[str, Any], home: Path | None, which: Which | None,
 ) -> CheckOutcome | None:
@@ -159,6 +182,7 @@ def check_local_agy(
     outcomes = [
         outcome for outcome in (
             _plugin_line(backend, state_dir),
+            _bridge_line(backend, state_dir),
             _agy_line(backend, config, home, which),
         )
         if outcome is not None

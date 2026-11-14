@@ -30,6 +30,7 @@ from nexgen_core.openclaw.plan import Plan, build_plan, render_plan, with_engine
 from nexgen_core.openclaw.profile import GATEWAY_PORT, Choices
 from nexgen_core.openclaw.setup_agents import snapshot_dirs
 from nexgen_core.openclaw.setup_app import app_gateway_stop, app_step, device_line
+from nexgen_core.openclaw.setup_cron import groom_job_step
 from nexgen_core.openclaw.setup_service_env import write_gateway_service_env
 from nexgen_core.openclaw.server_gateway import server_stop
 from nexgen_core.openclaw.setup_steps import (
@@ -43,7 +44,6 @@ from nexgen_core.openclaw.setup_steps import (
     ensure_onboarded,
     governor_step,
     module_step,
-    groom_job_step,
     phone_step,
     planned_commands,
     is_plugin_verified,

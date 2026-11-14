@@ -570,7 +570,7 @@ def test_agy_states_on_the_tab_the_model_the_owner_asked_for(tmp_path):
     """`--model` is the only way to choose agy's model, so the tab that opens declares it."""
     adapter = antigravity.AntigravityAdapter()
     assert adapter.tab_argv("agy", tmp_path, "leggi", session="c1", model="gemini-3.8-flash") == [
-        "agy", "--mode", "accept-edits", "--model", "gemini-3.8-flash",
+        "agy", "--mode", "accept-edits", "--model", "gemini-3.8-flash-high",
         "--conversation", "c1", "--prompt-interactive", "leggi",
     ]
     assert adapter.tab_argv("agy", tmp_path, "leggi") == [

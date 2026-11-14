@@ -10,6 +10,23 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.29.0] - 2026-11-14
+
+### Fixed
+
+- An OpenClaw chat that reaches Claude Code or `agy` through a model picked in the app or through a fallback no longer loads every connector schema in its first prompt (measured: 945k tokens). The engine now also writes the connector deny in `tools.byProvider`, keyed on the model provider that runs the chat, and the doctor fails when it is missing.
+- `nexgen sync` now applies loopback denies at the exact moment it mounts connectors into OpenClaw, so a newly mounted server is never exposed on the loopback before running setup.
+- Loopback denies are guarded across arbitrary connector names by invariant property testing, ensuring no mounted connector escapes the deny on CLI runtimes.
+- `nexgen openclaw smoke` and `nexgen doctor` now measure actual first-prompt token costs against a 150,000 token ceiling (`NEXGEN_OPENCLAW_FIRST_PROMPT_BUDGET`), failing when an OpenClaw session starts over budget.
+- The OpenClaw context-guard cron job declares `--no-deliver`, converging existing jobs away from implicit delivery channels that OpenClaw refuses for isolated commands.
+- OpenClaw session grooming now notes when `totalTokens` is stale after compaction instead of presenting a stale number as the current session size.
+- The OpenClaw doctor reports unconfigured agent folders present on disk that have no entry in `agents.entries` without touching their files.
+- OpenClaw unattended background jobs bypass unsupported CLI harnesses (such as `google-antigravity-cli`) and select the next direct cloud model in the agent's chain.
+- `sup run` matches model families to their effort variants for `agy`, forwards accepted model IDs, refuses unreadable or disallowed models before opening tabs, and trusts the command-line model when the harness cannot inspect sessions.
+- `nexgen openclaw setup` patches the installed `google-antigravity-cli` plugin's MCP bridge to inject only the loopback server and `lazy-mcp` gateway into `agy`, wiping leftover bridge entries from terminated runs at start.
+- `native_connectors.loopback_deny` denies every mounted connector on the loopback for `agy` agents when the bridge patch is present, routing them through `lazy-mcp`.
+- The OpenClaw doctor reports whether the `google-antigravity-cli` MCP bridge patch is in place.
+
 ## [2.28.4] - 2026-11-12
 
 ### Fixed

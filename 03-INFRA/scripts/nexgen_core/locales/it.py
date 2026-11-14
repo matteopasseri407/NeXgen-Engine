@@ -365,6 +365,15 @@ MESSAGES: dict[str, str] = {
     "missing from the configuration 'agy' reads ({path}): {connectors}": "mancanti dalla configurazione che legge 'agy' ({path}): {connectors}",
     "Run 'nexgen openclaw setup': it denies every connector on the loopback server, and 'agy' reads them from its own configuration, which 'nexgen sync' writes.": "Lancia 'nexgen openclaw setup': nega ogni connettore sul server di loopback, e 'agy' li legge dalla propria configurazione, che scrive 'nexgen sync'.",
     "The {count} agent(s) that read their connectors from their own CLI keep every connector off the loopback server, and that CLI's configuration carries them.": "I {count} agenti che leggono i connettori dalla propria CLI li tengono tutti fuori dal server di loopback, e la configurazione di quella CLI li porta.",
+    "Model providers covered: {providers}.": "Provider di modelli coperti: {providers}.",
+    "first prompt is within context budget": "il primo prompt rispetta il budget di contesto",
+    "first prompt context budget: not measured (agent does not run on Claude Code)": "budget di contesto del primo prompt: non misurato (l'agente non gira su Claude Code)",
+    "first prompt context budget: not measured (no tokens recorded)": "budget di contesto del primo prompt: non misurato (nessun token registrato)",
+    "No OpenClaw session transcript measured in the look-back window.": "Nessuna trascrizione di sessione OpenClaw misurata nella finestra di osservazione.",
+    "agy is not measured in tokens; no Claude Code or Codex transcript from OpenClaw found.": "agy non è misurato in token; nessuna trascrizione Claude Code o Codex da OpenClaw trovata.",
+    "OpenClaw session in '{slug}' started over context budget: {tokens:,} tokens (budget: {budget:,}).": "La sessione OpenClaw in '{slug}' è partita oltre il budget di contesto: {tokens:,} token (budget: {budget:,}).",
+    "Run 'nexgen openclaw setup', then 'nexgen openclaw doctor'.": "Lancia 'nexgen openclaw setup', poi 'nexgen openclaw doctor'.",
+    "First prompt context budget OK (largest seen: {tokens:,} tokens, budget: {budget:,}).": "Budget di contesto del primo prompt OK (massimo osservato: {tokens:,} token, budget: {budget:,}).",
     "Took {key} out of {path}: no agent reads it, and the apps cannot update the models while it is there. The value stays in the engine's secret store.": "Ho tolto {key} da {path}: nessun agente la legge, e finché resta le app non riescono ad aggiornare i modelli. Il valore resta nell'archivio segreti del motore.",
     "The apps that read the gateway (Android included) say they cannot update the models, because Anthropic's catalogue discovery fails: ANTHROPIC_API_KEY is in {paths}, and no agent reads it.": "Le app che leggono il gateway (Android compresa) dicono che non riescono ad aggiornare i modelli, perché la scoperta del catalogo Anthropic fallisce: ANTHROPIC_API_KEY è in {paths} e nessun agente la legge.",
     "Run 'nexgen openclaw setup', then 'nexgen openclaw restart', as the gateway's user: the setup rewrites {env} without the key, and the gateway reads that file when it starts. Never reinstall the service to refresh it: a reinstall erases the service's other environment variables.": "Lancia 'nexgen openclaw setup', poi 'nexgen openclaw restart', come utente del gateway: il setup riscrive {env} senza la chiave, e il gateway rilegge quel file quando parte. Non reinstallare il servizio per aggiornarlo: una reinstallazione cancella le altre variabili d'ambiente del servizio.",
@@ -1733,6 +1742,20 @@ MESSAGES: dict[str, str] = {
         "Il filtro del prompt del plugin Antigravity non è stato corretto: {path} non ha più la forma che questo motore si aspetta. Reinstalla il plugin bloccato o aggiorna la correzione.",
     "The Antigravity plugin's prompt filter could not be fixed ({error}); a Telegram message can still be dropped before 'agy' sees it.":
         "Il filtro del prompt del plugin Antigravity non è stato corretto ({error}); un messaggio Telegram può ancora sparire prima che 'agy' lo veda.",
+    "dry run: the Antigravity plugin's MCP bridge would inject only the loopback server and lazy-mcp gateway into {path}; nothing is written.":
+        "prova a vuoto: il bridge MCP del plugin Antigravity inietterebbe solo il server di loopback e il gateway lazy-mcp in {path}; non viene scritto nulla.",
+    "The Antigravity plugin's MCP bridge now injects only the loopback server and lazy-mcp gateway; restart the gateway to load it. The previous file is saved as {backup}.":
+        "Il bridge MCP del plugin Antigravity ora inietta solo il server di loopback e il gateway lazy-mcp; riavvia il gateway per caricarlo. Il file precedente è salvato come {backup}.",
+    "The Antigravity plugin's MCP bridge was not patched: {path} no longer has the shape this engine expects. Reinstall the pinned plugin or update the patch.":
+        "Il bridge MCP del plugin Antigravity non è stato corretto: {path} non ha più la forma che questo motore si aspetta. Reinstalla il plugin bloccato o aggiorna la patch.",
+    "The Antigravity plugin's MCP bridge could not be patched ({error}); 'agy' may still start every connector directly.":
+        "Il bridge MCP del plugin Antigravity non è stato corretto ({error}); 'agy' potrebbe ancora avviare ogni connettore direttamente.",
+    "The '{backend}' plugin's MCP bridge is patched: it injects only the loopback server and lazy-mcp gateway into 'agy'.":
+        "Il bridge MCP del plugin '{backend}' è corretto: inietta in 'agy' solo il server di loopback e il gateway lazy-mcp.",
+    "The '{backend}' plugin's MCP bridge is not patched: 'agy' may start every connector directly instead of on demand through 'lazy-mcp'.":
+        "Il bridge MCP del plugin '{backend}' non è corretto: 'agy' potrebbe avviare ogni connettore direttamente anziché su richiesta tramite 'lazy-mcp'.",
+    "Run 'nexgen openclaw setup' to patch the plugin.":
+        "Lancia 'nexgen openclaw setup' per applicare la patch al plugin.",
     "The Antigravity plugin {plugin} is {version}, not the pinned {pinned}: installing the pin.":
         "Il plugin Antigravity {plugin} è alla versione {version}, non alla {pinned} bloccata: installo quella bloccata.",
     "An agent runs on the local 'agy' CLI and the plugin is not installed: installing {pinned}.":
@@ -2785,4 +2808,12 @@ MESSAGES: dict[str, str] = {
         'Configurerei il gateway OpenClaw locale',
     'Would align CLIs, skills and MCP connectors':
         'Allineerei CLI, skill e connettori MCP',
+    'Agent folders have no entry in configuration: {names}.':
+        'Cartelle degli agenti non dichiarate nella configurazione: {names}.',
+    'Remove the unused folders from {path} or declare them under agents.entries in openclaw.json.':
+        'Rimuovi le cartelle inutilizzate da {path} o dichiarale sotto agents.entries in openclaw.json.',
+    'These background jobs would run on a CLI harness that does not support isolated completion ({models}): {jobs}.':
+        'Questi job in background girerebbero su un harness CLI che non supporta il completamento isolato ({models}): {jobs}.',
+    'Configure a direct cloud model or fallback under agents.entries.main.model that is not a CLI harness.':
+        'Configura un modello cloud diretto o un fallback sotto agents.entries.main.model che non sia un harness CLI.',
 }

@@ -89,8 +89,9 @@ class AntigravityAdapter(base.Adapter):
         owner named for this run travels on the tab itself.
         """
         argv = [executable, "--mode", "accept-edits"]
-        if model:
-            argv.extend(["--model", model])
+        target = "gemini-3.8-flash-high" if model == "gemini-3.8-flash" else model
+        if target:
+            argv.extend(["--model", target])
         if session:
             argv.extend(["--conversation", session])
         argv.extend(["--prompt-interactive", prompt])

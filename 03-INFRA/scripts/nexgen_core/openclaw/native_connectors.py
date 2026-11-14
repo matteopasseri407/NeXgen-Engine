@@ -127,6 +127,24 @@ def agy_servers(home: Path | None = None) -> set[str]:
     return {str(name) for name in servers if not str(name).startswith(PLUGIN_PREFIX)}
 
 
+def _state_dir(home: Path | None) -> Path | None:
+    """OpenClaw's own folder, where the installed plugins live; None when it cannot be named."""
+    from nexgen_core.paths import openclaw_config
+
+    try:
+        return Path(openclaw_config(home)).parent
+    except Exception:  # nexgen: allow reason="an unresolvable config path means no state folder to check plugins in"
+        return None
+
+
+def _bridge_patched(home: Path | None) -> bool:
+    """Whether the installed Antigravity plugin has the MCP bridge patch in place."""
+    from nexgen_core.openclaw import agy_bridge
+
+    state_dir = _state_dir(home)
+    return state_dir is not None and agy_bridge.patched(state_dir)
+
+
 def loopback_deny(
     config: dict[str, Any],
     connectors: Iterable[str],
@@ -134,13 +152,18 @@ def loopback_deny(
 ) -> LoopbackDeny:
     """Who is denied the loopback connectors here, and which connectors `agy` may give up.
 
-    An `agy` agent is named only when `agy`'s own file carries at least one of these
-    connectors; only those it carries are denied for that agent, and the ones it does not
-    carry stay reachable through the loopback, which is their only road to it.
+    When the MCP bridge is patched, every mounted connector has a road through lazy-mcp,
+    so an agy agent denies every mounted connector on the loopback. Without the patch,
+    an agy agent is named only when agy's own file carries at least one of these connectors;
+    only those it carries are denied for that agent, and the ones it does not carry stay
+    reachable through the loopback, which is their only road to it.
     """
     mounted = [str(name) for name in connectors]
-    carried = agy_servers(home)
-    direct = [name for name in mounted if name in carried]
+    if _bridge_patched(home):
+        direct = list(mounted)
+    else:
+        carried = agy_servers(home)
+        direct = [name for name in mounted if name in carried]
     return LoopbackDeny(
         claude=list(claude_cli_agents(config)),
         agy=agy_agents(config) if direct else [],

@@ -21,7 +21,7 @@ from typing import Any
 
 from nexgen_core.files import atomic_write_text, backup_file
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import agy_compaction, agy_prereqs, agy_prompt_strip, plugin_patch
+from nexgen_core.openclaw import agy_bridge, agy_compaction, agy_prereqs, agy_prompt_strip, plugin_patch
 from nexgen_core.openclaw.setup_steps import Setup, openclaw_bin, print_output
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND, local_agy_backend
 from nexgen_core.processes import command_line_text
@@ -111,8 +111,27 @@ def _patch_plugin(setup: Setup, *, dry_run: bool | None = None) -> list[str]:
     lines = [
         _compaction_line(agy_compaction.apply(setup.state_dir, dry_run=dry)),
         _prompt_strip_line(agy_prompt_strip.apply(setup.state_dir, dry_run=dry)),
+        _bridge_line(agy_bridge.apply(setup.state_dir, dry_run=dry)),
     ]
     return [line for line in lines if line]
+
+
+def _bridge_line(patch: plugin_patch.Patch) -> str | None:
+    """What to tell the person about the MCP bridge fix, or nothing when it is already there."""
+    if patch.state == plugin_patch.WOULD_PATCH:
+        return t("dry run: the Antigravity plugin's MCP bridge would inject only the loopback server and "
+                 "lazy-mcp gateway into {path}; nothing is written.", path=patch.path)
+    if patch.state == plugin_patch.PATCHED:
+        return t("The Antigravity plugin's MCP bridge now injects only the loopback server and lazy-mcp gateway; "
+                 "restart the gateway to load it. The previous file is saved as {backup}.",
+                 backup=patch.backup or patch.path)
+    if patch.state == plugin_patch.UNEXPECTED:
+        return t("The Antigravity plugin's MCP bridge was not patched: {path} no longer has the shape this "
+                 "engine expects. Reinstall the pinned plugin or update the patch.", path=patch.path)
+    if patch.state == plugin_patch.FAILED:
+        return t("The Antigravity plugin's MCP bridge could not be patched ({error}); 'agy' may still start "
+                 "every connector directly.", error=patch.detail)
+    return None
 
 
 def _compaction_line(patch: plugin_patch.Patch) -> str | None:

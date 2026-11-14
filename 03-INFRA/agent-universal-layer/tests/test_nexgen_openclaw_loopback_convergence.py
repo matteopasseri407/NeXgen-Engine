@@ -254,3 +254,51 @@ def test_a_machine_with_no_claude_cli_agent_is_written_exactly_as_before(
     assert "__*" not in setup_write.render(document), "no connector pattern reached the file"
     assert not [item for item in (*plan.added, *plan.changed) if item.endswith(".deny")]
     assert check_claude_loopback(home, renderer.vault_data, renderer.engine_root) is None
+
+
+def test_provider_deny_is_stable_on_replanning(tmp_path: Path) -> None:
+    """A document already written with provider deny planned again leaves tools.byProvider unchanged."""
+    home = _home(tmp_path)
+    renderer = _renderer(tmp_path, home)
+    path = _put(home, _carried_file())
+
+    first_doc = _written(_plan(home, renderer), path)
+    first_by_provider = first_doc.get("tools", {}).get("byProvider", {})
+    assert "anthropic" in first_by_provider
+    first_deny = first_by_provider["anthropic"].get("deny", [])
+    assert first_deny == ["n8n-mcp__*", "vault-library__*"]
+
+    second_plan = _plan(home, renderer)
+    second_by_provider = second_plan.config.get("tools", {}).get("byProvider", {})
+    assert "anthropic" in second_by_provider
+    second_deny = second_by_provider["anthropic"].get("deny", [])
+
+    assert second_deny == first_deny
+    assert second_by_provider == first_by_provider
+
+
+def test_custom_key_in_byprovider_survives_plan(tmp_path: Path) -> None:
+    """A person's custom key in a tools.byProvider entry survives the plan."""
+    home = _home(tmp_path)
+    renderer = _renderer(tmp_path, home)
+    carried = _carried_file()
+    carried["tools"] = {
+        "byProvider": {
+            "anthropic": {
+                "profile": "minimal",
+            }
+        }
+    }
+    path = _put(home, carried)
+
+    plan = _plan(home, renderer)
+    by_provider = plan.config.get("tools", {}).get("byProvider", {})
+    assert "anthropic" in by_provider
+    entry = by_provider["anthropic"]
+    assert entry.get("profile") == "minimal"
+    assert entry.get("deny") == ["n8n-mcp__*", "vault-library__*"]
+
+    document = _written(plan, path)
+    doc_entry = document.get("tools", {}).get("byProvider", {}).get("anthropic", {})
+    assert doc_entry.get("profile") == "minimal"
+    assert doc_entry.get("deny") == ["n8n-mcp__*", "vault-library__*"]

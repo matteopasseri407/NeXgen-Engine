@@ -41,7 +41,7 @@ Lì il gateway non sta davanti ai connettori: serve esattamente ciò che il file
 
 È montato per gli agenti su `claude-cli`. OpenClaw gli passa un server MCP proprio, marcato `alwaysLoad: true`, che
 porta tutti i loro tool, connettori compresi: 943k token misurati per una richiesta. Il motore aggiunge `<server>__*`
-al `tools.deny` di quegli agenti, e il gateway è la strada che resta. OpenClaw avvia Claude Code con
+al `tools.deny` di quegli agenti e a `tools.byProvider` per i provider dei modelli instradati, e il gateway è la strada che resta. OpenClaw avvia Claude Code con
 `--strict-mcp-config --mcp-config <il proprio file>`, quindi `~/.claude.json` non viene mai letto; `lazy-mcp` è una
 voce normale in `mcp.servers`, quindi la Tool Search di OpenClaw lo rimanda ancora, e non finisce mai nella lista dei
 negati.
