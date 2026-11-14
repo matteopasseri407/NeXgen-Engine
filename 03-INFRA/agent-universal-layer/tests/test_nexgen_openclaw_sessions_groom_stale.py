@@ -36,7 +36,7 @@ def test_line_formatting_stale_tokens() -> None:
     decision = Decision(
         key="agent:main:main",
         agent_id="main",
-        tokens=7154550,
+        tokens=715455,
         idle_seconds=3600.0,
         reason="idle",
         runtime="",
@@ -44,7 +44,7 @@ def test_line_formatting_stale_tokens() -> None:
         tokens_fresh=False,
     )
     line = _line(decision, "compacted")
-    assert line == "agent:main:main: last known 7154550 tokens, counter stale, idle 60m (idle) -> compacted"
+    assert line == "agent:main:main: last known 715455 tokens, counter stale, idle 60m (idle) -> compacted"
 
 
 def test_plan_groom_populates_tokens_fresh() -> None:
@@ -59,7 +59,7 @@ def test_plan_groom_populates_tokens_fresh() -> None:
     stale_session = {
         "key": "agent:capo:main",
         "agentId": "capo",
-        "totalTokens": 7_154_550,
+        "totalTokens": 715_455,
         "totalTokensFresh": False,
         "lastInteractionAt": NOW - 7200 * 1000,
         "status": "done",
@@ -70,5 +70,5 @@ def test_plan_groom_populates_tokens_fresh() -> None:
     d_stale = next(d for d in decisions if d.key == "agent:capo:main")
     assert d_fresh.tokens_fresh is True
     assert d_stale.tokens_fresh is False
-    assert "last known 7154550 tokens, counter stale" in _line(d_stale, "ok")
+    assert "last known 715455 tokens, counter stale" in _line(d_stale, "ok")
     assert "40000 tokens, idle" in _line(d_fresh, "ok")
