@@ -1742,6 +1742,20 @@ MESSAGES: dict[str, str] = {
         "Il filtro del prompt del plugin Antigravity non è stato corretto: {path} non ha più la forma che questo motore si aspetta. Reinstalla il plugin bloccato o aggiorna la correzione.",
     "The Antigravity plugin's prompt filter could not be fixed ({error}); a Telegram message can still be dropped before 'agy' sees it.":
         "Il filtro del prompt del plugin Antigravity non è stato corretto ({error}); un messaggio Telegram può ancora sparire prima che 'agy' lo veda.",
+    "dry run: the Antigravity plugin's MCP bridge would inject only the loopback server and lazy-mcp gateway into {path}; nothing is written.":
+        "prova a vuoto: il bridge MCP del plugin Antigravity inietterebbe solo il server di loopback e il gateway lazy-mcp in {path}; non viene scritto nulla.",
+    "The Antigravity plugin's MCP bridge now injects only the loopback server and lazy-mcp gateway; restart the gateway to load it. The previous file is saved as {backup}.":
+        "Il bridge MCP del plugin Antigravity ora inietta solo il server di loopback e il gateway lazy-mcp; riavvia il gateway per caricarlo. Il file precedente è salvato come {backup}.",
+    "The Antigravity plugin's MCP bridge was not patched: {path} no longer has the shape this engine expects. Reinstall the pinned plugin or update the patch.":
+        "Il bridge MCP del plugin Antigravity non è stato corretto: {path} non ha più la forma che questo motore si aspetta. Reinstalla il plugin bloccato o aggiorna la patch.",
+    "The Antigravity plugin's MCP bridge could not be patched ({error}); 'agy' may still start every connector directly.":
+        "Il bridge MCP del plugin Antigravity non è stato corretto ({error}); 'agy' potrebbe ancora avviare ogni connettore direttamente.",
+    "The '{backend}' plugin's MCP bridge is patched: it injects only the loopback server and lazy-mcp gateway into 'agy'.":
+        "Il bridge MCP del plugin '{backend}' è corretto: inietta in 'agy' solo il server di loopback e il gateway lazy-mcp.",
+    "The '{backend}' plugin's MCP bridge is not patched: 'agy' may start every connector directly instead of on demand through 'lazy-mcp'.":
+        "Il bridge MCP del plugin '{backend}' non è corretto: 'agy' potrebbe avviare ogni connettore direttamente anziché su richiesta tramite 'lazy-mcp'.",
+    "Run 'nexgen openclaw setup' to patch the plugin.":
+        "Lancia 'nexgen openclaw setup' per applicare la patch al plugin.",
     "The Antigravity plugin {plugin} is {version}, not the pinned {pinned}: installing the pin.":
         "Il plugin Antigravity {plugin} è alla versione {version}, non alla {pinned} bloccata: installo quella bloccata.",
     "An agent runs on the local 'agy' CLI and the plugin is not installed: installing {pinned}.":

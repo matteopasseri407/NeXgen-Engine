@@ -21,6 +21,9 @@ of any engine release.
 - The OpenClaw doctor reports unconfigured agent folders present on disk that have no entry in `agents.entries` without touching their files.
 - OpenClaw unattended background jobs bypass unsupported CLI harnesses (such as `google-antigravity-cli`) and select the next direct cloud model in the agent's chain.
 - `sup run` matches model families to their effort variants for `agy`, forwards accepted model IDs, refuses unreadable or disallowed models before opening tabs, and trusts the command-line model when the harness cannot inspect sessions.
+- `nexgen openclaw setup` patches the installed `google-antigravity-cli` plugin's MCP bridge to inject only the loopback server and `lazy-mcp` gateway into `agy`, wiping leftover bridge entries from terminated runs at start.
+- `native_connectors.loopback_deny` denies every mounted connector on the loopback for `agy` agents when the bridge patch is present, routing them through `lazy-mcp`.
+- The OpenClaw doctor reports whether the `google-antigravity-cli` MCP bridge patch is in place.
 
 ## [2.28.4] - 2026-11-12
 
