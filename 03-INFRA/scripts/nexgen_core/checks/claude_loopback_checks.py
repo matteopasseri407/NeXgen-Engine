@@ -25,9 +25,11 @@ from typing import Any
 from nexgen_core.i18n import t
 from nexgen_core.mcp_placement import GATEWAY
 from nexgen_core.mcp_render.openclaw import is_engine_lazy_mcp
+from nexgen_core.openclaw.claude_cli import CLAUDE_CLI
 from nexgen_core.openclaw.claude_loopback import pattern_for
 from nexgen_core.openclaw.config_file import read_config
-from nexgen_core.openclaw.native_connectors import loopback_deny
+from nexgen_core.openclaw.loopback_provider_policy import routed_keys, undeclared_provider_patterns
+from nexgen_core.openclaw.native_connectors import ANTIGRAVITY_CLI, loopback_deny
 from nexgen_core.openclaw.node_only import detect_node_only, node_only_outcome
 from nexgen_core.paths import openclaw_config
 from nexgen_core.report import CheckOutcome, Severity
@@ -83,10 +85,11 @@ def _claude_problems(
     config: dict[str, Any],
     servers: list[str],
     agents: list[str],
+    provider_missing: list[str] | None = None,
 ) -> list[str]:
     """What is wrong with the agents on Claude Code's CLI, in the words a person reads."""
     found: list[str] = []
-    reachable = _undeclared(config, agents, servers)
+    reachable = sorted([*_undeclared(config, agents, servers), *(provider_missing or [])])
     if reachable:
         found.append(t("still on the loopback server: {connectors}", connectors=", ".join(reachable)))
     # A gateway is the road for the connectors this agent is denied. With none mounted
@@ -98,9 +101,14 @@ def _claude_problems(
     return found
 
 
-def _agy_problems(config: dict[str, Any], servers: list[str], agents: list[str]) -> list[str]:
+def _agy_problems(
+    config: dict[str, Any],
+    servers: list[str],
+    agents: list[str],
+    provider_missing: list[str] | None = None,
+) -> list[str]:
     """What is wrong with the agents on `agy`, whose only lost road is the loopback one."""
-    reachable = _undeclared(config, agents, servers)
+    reachable = sorted([*_undeclared(config, agents, servers), *(provider_missing or [])])
     if not reachable:
         return []
     return [t("still on the loopback server for an agent on 'agy': {connectors}",
@@ -129,13 +137,17 @@ def _action(has_agy: bool) -> str:
              "gateway in OpenClaw, which is where they load lazily.")
 
 
-def _ok(count: int, has_agy: bool) -> str:
+def _ok(count: int, has_agy: bool, providers: list[str] | None = None) -> str:
     """The line said when every agent judged keeps its connectors off the loopback."""
     if has_agy:
-        return t("The {count} agent(s) that read their connectors from their own CLI keep every connector "
+        base = t("The {count} agent(s) that read their connectors from their own CLI keep every connector "
                  "off the loopback server, and that CLI's configuration carries them.", count=count)
-    return t("The {count} agent(s) on Claude Code's CLI keep every connector off the loopback server and "
-             "reach them through the gateway in OpenClaw.", count=count)
+    else:
+        base = t("The {count} agent(s) on Claude Code's CLI keep every connector off the loopback server and "
+                 "reach them through the gateway in OpenClaw.", count=count)
+    if not providers:
+        return base
+    return f"{base} {t('Model providers covered: {providers}.', providers=', '.join(providers))}"
 
 
 def check_claude_loopback(
@@ -155,25 +167,38 @@ def check_claude_loopback(
         return None
     servers = _servers(config)
     deny = loopback_deny(config, servers, home)
-    if not deny.claude and not deny.agy:
+    prov_keys = routed_keys(config)
+    claude_prov_keys = [k for k, r in prov_keys.items() if r == CLAUDE_CLI]
+    agy_prov_keys = [k for k, r in prov_keys.items() if r == ANTIGRAVITY_CLI and deny.agy_connectors]
+
+    has_claude = bool(deny.claude or claude_prov_keys)
+    has_agy = bool(deny.agy or agy_prov_keys)
+    if not has_claude and not has_agy:
         return None
+
+    prov_missing = undeclared_provider_patterns(config, servers, deny.agy_connectors)
+    claude_prov_missing = [m for m in prov_missing if any(m.startswith(f"{k}: ") for k in claude_prov_keys)]
+    agy_prov_missing = [m for m in prov_missing if any(m.startswith(f"{k}: ") for k in agy_prov_keys)]
+
     problems: list[str] = []
-    if deny.claude:
-        problems.extend(_claude_problems(config, servers, deny.claude))
-    if deny.agy:
-        problems.extend(_agy_problems(config, deny.agy_connectors, deny.agy))
-    detail = ", ".join([*deny.claude, *deny.agy])
+    if has_claude:
+        problems.extend(_claude_problems(config, servers, deny.claude, claude_prov_missing))
+    if has_agy:
+        problems.extend(_agy_problems(config, deny.agy_connectors, deny.agy, agy_prov_missing))
+
+    detail = ", ".join(sorted(set([*deny.claude, *claude_prov_keys, *deny.agy, *agy_prov_keys])))
     if problems:
         return CheckOutcome(
             id=CHECK_ID,
             severity=Severity.BROKEN,
-            message=_message(bool(deny.claude), bool(deny.agy), problems),
-            action=_action(bool(deny.agy)),
+            message=_message(has_claude, has_agy, problems),
+            action=_action(has_agy),
             detail=detail,
         )
+    covered_providers = sorted(set([*claude_prov_keys, *agy_prov_keys]))
     return CheckOutcome(
         id=CHECK_ID,
         severity=Severity.OK,
-        message=_ok(len(deny.claude) + len(deny.agy), bool(deny.agy)),
+        message=_ok(len(deny.claude) + len(deny.agy), has_agy, covered_providers),
         detail=detail,
     )

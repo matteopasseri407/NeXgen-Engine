@@ -40,7 +40,7 @@ connector is reachable both ways.
 
 It is mounted because of the agents on `claude-cli`. OpenClaw hands them an MCP server of its own marked
 `alwaysLoad: true` carrying every tool they have, connectors included, measured at 943k tokens for one request. The
-engine adds `<server>__*` to the `tools.deny` of those agents, and the gateway is the road that remains. OpenClaw
+engine adds `<server>__*` to the `tools.deny` of those agents and to `tools.byProvider` for routed model providers, and the gateway is the road that remains. OpenClaw
 starts Claude Code with `--strict-mcp-config --mcp-config <its own file>`, so `~/.claude.json` is never read;
 `lazy-mcp` is a normal entry in `mcp.servers`, so OpenClaw's own Tool Search still defers it, and it is never added to
 the deny list.

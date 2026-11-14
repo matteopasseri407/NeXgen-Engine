@@ -10,6 +10,10 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- An OpenClaw chat that reaches Claude Code or `agy` through a model picked in the app or through a fallback no longer loads every connector schema in its first prompt (measured: 945k tokens). The engine now also writes the connector deny in `tools.byProvider`, keyed on the model provider that runs the chat, and the doctor fails when it is missing.
+
 ## [2.28.4] - 2026-11-12
 
 ### Fixed

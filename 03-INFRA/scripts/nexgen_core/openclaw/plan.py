@@ -16,7 +16,7 @@ from typing import Any
 from nexgen_core import quota_policy
 from nexgen_core.i18n import detect_language, t
 from nexgen_core.openclaw import companion as app_gateway
-from nexgen_core.openclaw import agy_prereqs, claude_loopback, hierarchy, observation
+from nexgen_core.openclaw import agy_prereqs, claude_loopback, hierarchy, loopback_provider_policy, observation
 from nexgen_core.openclaw.browser_profile import server_section
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.conversation_grant import with_engine_plugin
@@ -334,7 +334,7 @@ def _with_loopback(
         updated = claude_loopback.apply(updated, connectors, deny.claude)
     if deny.agy:
         updated = claude_loopback.apply(updated, deny.agy_connectors, deny.agy)
-    return updated
+    return loopback_provider_policy.apply(updated, connectors, deny.agy_connectors, current=current)
 
 
 def _with_server_browser(
