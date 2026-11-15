@@ -41,7 +41,7 @@ jobs:
 
       # The per-commit proof runs a fix's tests before and after the fix, so the test dependencies must be here.
       - name: Test dependencies
-        run: pip install pytest pyyaml 'langgraph>=1.0,<2' 'langgraph-checkpoint-sqlite>=3,<4' 'langchain-ollama>=1.0,<2' 'filelock>=4.2,<5' 'psutil>=6.0,<8' 'tomlkit>=0.15,<1'
+        run: pip install pytest pyyaml 'langgraph>=1.0,<2' 'langgraph-checkpoint-sqlite>=3,<4' 'langchain-ollama>=1.0,<2' 'filelock>=4.2,<5' 'psutil>=6.0,<8' 'tomlkit>=0.15,<1' 'mcp>=2.2.0,<3'
 
       # Shell/PowerShell, per-commit tests and test integrity gate every change; what is over the
       # size ceiling is printed as a warning and listed by `discipline.py report` (a split queue,
@@ -496,7 +496,7 @@ jobs:
             fi
             sleep 10
           done
-          pip install pytest pyyaml pytest-xdist 'langgraph>=1.0,<2' 'langgraph-checkpoint-sqlite>=3,<4' 'langchain-ollama>=1.0,<2' 'filelock>=4.2,<5' 'psutil>=6.0,<8' 'tomlkit>=0.15,<1'
+          pip install pytest pyyaml pytest-xdist 'langgraph>=1.0,<2' 'langgraph-checkpoint-sqlite>=3,<4' 'langchain-ollama>=1.0,<2' 'filelock>=4.2,<5' 'psutil>=6.0,<8' 'tomlkit>=0.15,<1' 'mcp>=2.2.0,<3'
 
       - name: Engine regression suite
         working-directory: 03-INFRA/agent-universal-layer/tests
@@ -655,7 +655,7 @@ jobs:
           python-version: "3.x"
 
       - name: Install test dependencies
-        run: pip install pytest pyyaml pytest-xdist 'langgraph>=1.0,<2' 'langgraph-checkpoint-sqlite>=3,<4' 'langchain-ollama>=1.0,<2' 'filelock>=4.2,<5' 'psutil>=6.0,<8' 'tomlkit>=0.15,<1'
+        run: pip install pytest pyyaml pytest-xdist 'langgraph>=1.0,<2' 'langgraph-checkpoint-sqlite>=3,<4' 'langchain-ollama>=1.0,<2' 'filelock>=4.2,<5' 'psutil>=6.0,<8' 'tomlkit>=0.15,<1' 'mcp>=2.2.0,<3'
 
       - name: Engine regression suite and agent_sync.py smoke
         working-directory: 03-INFRA/agent-universal-layer/tests
