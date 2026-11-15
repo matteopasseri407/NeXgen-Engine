@@ -207,7 +207,7 @@ def _service_unchanged(engine_root: Path, deployed: str | None, engine: str | No
     try:
         proc = subprocess.run(
             ["git", "-C", str(engine_root), "diff", "--quiet", deployed, engine, "--", SERVICE_PATHSPEC],
-            capture_output=True, text=True, timeout=GIT_TIMEOUT_SECONDS, check=False, **no_window_kwargs(),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT_SECONDS, check=False, **no_window_kwargs(),
         )
     except (OSError, subprocess.TimeoutExpired):  # nexgen: allow reason="a git that cannot answer leaves the question open; the check keeps the stricter verdict"
         return None
