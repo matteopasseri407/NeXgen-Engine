@@ -491,8 +491,29 @@ def cmd_install_autostart(remove: bool = False) -> int:
     if os.name != "nt":
         print("\n".join(_ensure_posix_boot_check(home)))
         return 0
-    print("\n".join(_ensure_windows_boot_check(home)))
+    notes = _ensure_windows_boot_check(home)
+    identity = _ensure_windows_toast_identity(home)
+    if identity:
+        notes.append(identity)
+    print("\n".join(notes))
     return 0
+
+
+def _ensure_windows_toast_identity(home: Path) -> str:
+    """Registers the engine as an application Windows will deliver a toast for.
+
+    One job: call the toast module at install time, so the first alert is not the
+    thing that creates the identity. A toast raised by an application Windows does
+    not know is dropped without a trace, and the old tray balloon it replaced is
+    what Windows 11 shows late or not at all.
+    """
+    from nexgen_core import windows_toast
+
+    if windows_toast.identity_present(home):
+        return "[autostart] notification identity already in place"
+    if windows_toast.register(home):
+        return f"[autostart] notification identity installed ({windows_toast.SHORTCUT_NAME})"
+    return f"{WARN}notification identity not installed: Windows alerts fall back to the old balloon"
 
 
 def _remove_autostart(home: Path) -> int:
@@ -502,6 +523,12 @@ def _remove_autostart(home: Path) -> int:
         leftover = not _remove_windows_fallback(os.fspath(home))
         if leftover:
             print(WARN + "Startup fallback copy could not be removed, delete it by hand")
+        from nexgen_core import windows_toast
+
+        if windows_toast.unregister(home):
+            print("[autostart] notification identity removed")
+        else:
+            print(WARN + "notification identity could not be removed, delete it by hand")
         return 0
     removed = []
     for path in (home / ".config" / "autostart" / "nexgen-update-check.desktop",
@@ -617,24 +644,17 @@ def _notify_passive(message: str) -> None:
 
 
 def _notify_passive_windows(message: str) -> None:
-    """Windows toast when BurntToast exists, otherwise nothing at all:
-    a boot service must never pop a blocking dialog."""
-    try:
-        probe = subprocess.run(
-            ["powershell", "-NoProfile", "-Command",
-             "Get-Module -ListAvailable -Name BurntToast | Select-Object -First 1"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=30,
-        )
-        if "BurntToast" not in (probe.stdout or ""):
-            return
-        from nexgen_core.processes import powershell_literal
+    """The boot notice as a real Windows toast, through the one desktop notifier.
 
-        toast = f"New-BurntToastNotification -Text 'NeXgen Engine', {powershell_literal(message[:380])}"
-        if _call_logo_path():
-            toast += f" -AppLogo {powershell_literal(str(_call_logo_path()))}"
-        subprocess.run(
-            ["powershell", "-NoProfile", "-Command", toast],
-            check=False, timeout=30,
-        )
+    It used to require BurntToast, a PowerShell module nobody installs on a fresh
+    machine, so the notice reached the screen only where somebody had prepared it.
+    The engine's own toast needs nothing installed, stays in the notification
+    centre, and names the engine; a boot service still never opens a dialog.
+    """
+    try:
+        from nexgen_core import notify
+
+        if notify.desktop_is_available():
+            notify.send_desktop("NeXgen Engine", message)
     except Exception:  # noqa: BLE001 - notifier never fails the shell
         pass

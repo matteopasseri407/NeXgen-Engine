@@ -21,6 +21,8 @@ import shutil
 import subprocess
 import sys
 
+from nexgen_core.processes import no_window_kwargs
+
 #: A notifier that hangs would hold the whole alerting path open.
 NOTIFY_TIMEOUT_SECONDS = 10
 
@@ -30,27 +32,25 @@ NOTIFY_TIMEOUT_SECONDS = 10
 BALLOON_SECONDS = 10
 
 
-def _run(command: list[str]) -> bool:
+def _run(command: list[str], timeout: int = NOTIFY_TIMEOUT_SECONDS) -> bool:
+    """Runs one notifier, and says whether it finished cleanly.
+
+    The timeout is the caller's because one notifier waits on purpose: the balloon
+    sleeps with its icon still up, and a budget equal to that pause kills it an
+    instant early, reports a failure for a notification that was already on
+    screen, and makes the next check show it again.
+    """
     try:
         result = subprocess.run(
-            command, capture_output=True, check=False, timeout=_budget(command)
+            command,
+            capture_output=True,
+            check=False,
+            timeout=timeout,
+            **no_window_kwargs(),
         )
         return result.returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
-
-
-def _budget(command: list[str]) -> int:
-    """How long this notifier may take.
-
-    The balloon script is the only one that waits on purpose (it sleeps
-    BALLOON_SECONDS with the icon still up), so its budget is the one that has to
-    outlast that pause: killed at the same instant, the send was reported as
-    failed for a balloon that was already on screen.
-    """
-    if command and command[0] == "powershell":
-        return NOTIFY_TIMEOUT_SECONDS + BALLOON_SECONDS
-    return NOTIFY_TIMEOUT_SECONDS
 
 
 def _linux(title: str, body: str) -> bool:
@@ -72,11 +72,31 @@ def _macos(title: str, body: str) -> bool:
 
 
 def _windows(title: str, body: str) -> bool:
+    """A real toast on Windows 10/11, and the old tray balloon only as a fallback.
+
+    The balloon this module used to raise is what Windows 11 shows late, small, or
+    not at all, especially from a scheduled task with no console: the notification
+    was delivered to a surface nobody was looking at. A toast goes to the
+    notification centre, stays there until it is read, and is attributed to the
+    engine because `windows_toast` registers the engine's own identity once.
+    """
     if shutil.which("powershell") is None:
         return False
-    # BurntToast is not assumed: a balloon through the shell's own tray icon
-    # needs nothing installed, which is the difference between a notification
-    # that arrives on a fresh machine and one that arrives on a prepared one.
+    from nexgen_core.windows_toast import show
+
+    if show(title, body, run=_run):
+        return True
+    return _balloon(title, body)
+
+
+def _balloon(title: str, body: str) -> bool:
+    """The fallback where the toast API is unavailable: the shell's own tray icon.
+
+    It needs nothing installed, which is the difference between a notification
+    that arrives on a fresh machine and one that arrives on a prepared one, and
+    its script sleeps BALLOON_SECONDS with the icon up because the balloon
+    disappears with the process that raised it.
+    """
     from nexgen_core.processes import powershell_literal
 
     script = (
@@ -88,7 +108,10 @@ def _windows(title: str, body: str) -> bool:
         "[System.Windows.Forms.ToolTipIcon]::Warning); "
         f"Start-Sleep -Seconds {BALLOON_SECONDS}; $n.Dispose()"
     )
-    return _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script])
+    return _run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+        timeout=NOTIFY_TIMEOUT_SECONDS + BALLOON_SECONDS,
+    )
 
 
 def desktop_is_available() -> bool:

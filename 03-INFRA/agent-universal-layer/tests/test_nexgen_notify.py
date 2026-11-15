@@ -16,7 +16,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core import notify
+from nexgen_core import notify, windows_toast
 
 
 def test_a_headless_linux_session_is_not_even_attempted(monkeypatch):
@@ -69,6 +69,8 @@ def test_the_windows_balloon_is_not_killed_by_its_own_timeout(monkeypatch):
     seen: dict = {}
     monkeypatch.setattr(notify.sys, "platform", "win32")
     monkeypatch.setattr(notify.shutil, "which", lambda name: "powershell" if name == "powershell" else None)
+    # Il pallone è il ripiego: qui si misura lui, quindi il toast si dichiara assente.
+    monkeypatch.setattr(windows_toast, "show", lambda *args, **kwargs: False)
 
     def fake_run(command, **kwargs):
         script = command[-1]
@@ -115,3 +117,53 @@ def test_quotes_in_the_message_cannot_escape_the_script(monkeypatch):
     script = seen[0][-1]
     assert '\\"titolo\\"' in script
     assert '\\"virgolette\\"' in script
+
+
+def test_the_test_command_sends_one_sample_and_says_so(monkeypatch, capsys):
+    """`nexgen notify --test` esiste per rispondere a "questo computer mi avvisa?".
+
+    Passa dal solo canale desktop e senza debounce: il percorso degli avvisi non
+    può rispondere, perché è fatto apposta per stare zitto quando non serve.
+    """
+    from nexgen_core import alerts, notify
+    from nexgen_core.cli import engine
+
+    sent: list[tuple[str, str]] = []
+    monkeypatch.setattr(notify, "desktop_is_available", lambda: True)
+    monkeypatch.setattr(notify, "send_desktop", lambda title, body: sent.append((title, body)) or True)
+
+    class _Args:
+        test = True
+
+    assert engine.cmd_notify(_Args()) == 0
+
+    title, message, action = alerts.TEST_NOTIFICATION.say()
+    assert sent == [(title, f"{message}\n\n{action}")]
+    assert capsys.readouterr().out.strip()
+
+
+def test_the_test_command_without_the_flag_sends_nothing(monkeypatch):
+    from nexgen_core import notify
+    from nexgen_core.cli import engine
+
+    called: list[str] = []
+    monkeypatch.setattr(notify, "send_desktop", lambda title, body: called.append(title) or True)
+
+    class _Args:
+        test = False
+
+    assert engine.cmd_notify(_Args()) == 0
+    assert called == []
+
+
+def test_the_test_command_reports_a_desktop_that_cannot_show_anything(monkeypatch, capsys):
+    from nexgen_core import notify
+    from nexgen_core.cli import engine
+
+    monkeypatch.setattr(notify, "desktop_is_available", lambda: False)
+
+    class _Args:
+        test = True
+
+    assert engine.cmd_notify(_Args()) == 1
+    assert capsys.readouterr().err.strip()
