@@ -29,11 +29,13 @@ def test_the_job_name_names_the_task_and_the_unit():
     assert jobs.job_name("2026-11-15-prova", "unita-1") == jobs.job_name("2026-11-15-prova", "Unità 1")
 
 
-@pytest.mark.skipif(os.name == "nt", reason="su Windows il job esiste: qui si prova la corsia POSIX")
-def test_posix_has_no_job_object_and_says_so():
+def test_posix_has_no_job_object_and_says_so(monkeypatch):
+    """Senza kernel32 (POSIX) nessuna funzione tocca l'API dei job: lo si simula anche su Windows."""
+    monkeypatch.setattr(jobs, "_kernel32", None)
     assert jobs.available() is False
     assert jobs.adopt("nexgen-sup:prova:prova", os.getpid()) == ""
     assert jobs.terminate("nexgen-sup:prova:prova", []) == {"job": False, "members": [], "strays": []}
+    assert jobs.held("nexgen-sup:prova:prova") is None
 
 
 @pytest.mark.skipif(struct.calcsize("P") != 8, reason="le misure documentate sono quelle a 64 bit")

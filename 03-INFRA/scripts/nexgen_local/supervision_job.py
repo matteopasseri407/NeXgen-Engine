@@ -242,7 +242,9 @@ def _create(name: str) -> int:
 
 
 def _open(name: str) -> int:
-    """The job a previous command created, or 0 when that name holds no job."""
+    """The job a previous command created, or 0 when that name holds no job (or no kernel has jobs)."""
+    if not available():
+        return 0
     return _kernel32.OpenJobObjectW(_JOB_OBJECT_ALL_ACCESS, False, name)
 
 
