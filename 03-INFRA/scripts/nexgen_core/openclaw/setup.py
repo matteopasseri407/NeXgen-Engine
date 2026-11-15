@@ -22,6 +22,7 @@ from pathlib import Path
 
 from nexgen_core.i18n import t
 from nexgen_core.openclaw import agy_prereqs, claude_native, setup_agy, setup_write
+from nexgen_core.openclaw.automations import read_jobs_with_detail
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.doctor import collect as doctor_collect
 from nexgen_core.openclaw.doctor import render as doctor_render
@@ -30,7 +31,7 @@ from nexgen_core.openclaw.plan import Plan, build_plan, render_plan, with_engine
 from nexgen_core.openclaw.profile import GATEWAY_PORT, Choices
 from nexgen_core.openclaw.setup_agents import snapshot_dirs
 from nexgen_core.openclaw.setup_app import app_gateway_stop, app_step, device_line
-from nexgen_core.openclaw.setup_cron import groom_job_step
+from nexgen_core.openclaw.setup_cron import groom_job_step, heartbeat_job_step
 from nexgen_core.openclaw.setup_service_env import write_gateway_service_env
 from nexgen_core.openclaw.server_gateway import server_stop
 from nexgen_core.openclaw.setup_steps import (
@@ -266,12 +267,14 @@ def _apply(
     _step(setup.out, 7, t("Module"))
     module_step(setup)
     groom_job_step(setup)
+    heartbeat_job_step(setup)
     _step(setup.out, 8, t("Phone"))
     phone_step(setup)
     _step(setup.out, 9, t("Doctor"))
     outcomes = doctor_collect(
         detected=installed, home=setup.home, env=setup.env, engine_root=setup.engine_root,
         vault_data=setup.vault_data, platform=setup.platform,
+        automations_reader=read_jobs_with_detail,
     )
     setup.out(doctor_render(outcomes))
     setup.out("")

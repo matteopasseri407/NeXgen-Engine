@@ -93,7 +93,8 @@ def test_claude_codex_go_and_ollama_together():
         "openai/gpt-6-luna": {"agentRuntime": {"id": "codex"}},
         "anthropic/*": {"agentRuntime": {"id": "claude-cli"}},
     }
-    assert defaults["heartbeat"] == {"every": "0m"}
+    # The retired key: a heartbeat is an automation job the setup converges, not a switch here.
+    assert "heartbeat" not in defaults
     assert config["agents"]["ownership"] == "explicit"
 
     agents = config["agents"]["entries"]
@@ -655,3 +656,29 @@ def test_an_existing_codex_block_without_discovery_receives_the_key():
     assert merged["plugins"]["entries"]["codex"]["config"] == {
         "discovery": {"enabled": False}, "appServer": {"homeScope": "user"},
     }
+
+def test_a_machine_that_answers_on_a_channel_gets_an_idle_reset():
+    """A reset costs no model call; the compaction that is the only other bound does."""
+    current = {"channels": {"telegram": {"enabled": True}},
+               "agents": {"entries": {"main": {"model": "opencode-go/deepseek-v4.1-flash"}}}}
+
+    config = build_config(machine(go=True), current=current)
+
+    assert config["session"] == {"reset": {"mode": "idle", "idleMinutes": 1440}}
+
+
+def test_a_machine_with_no_channel_gets_no_reset_policy():
+    config = build_config(machine(go=True), current={"channels": {}})
+
+    assert "session" not in config
+
+
+def test_a_reset_policy_the_person_wrote_survives():
+    current = {
+        "channels": {"telegram": {}},
+        "session": {"resetByChannel": {"telegram": {"mode": "idle", "idleMinutes": 30}}},
+    }
+
+    config = build_config(machine(go=True), current=current)
+
+    assert "session" not in config

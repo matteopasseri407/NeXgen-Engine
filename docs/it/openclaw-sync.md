@@ -18,7 +18,7 @@ La cartella di stato è quella in cui vive il file: `~/.openclaw` per impostazio
 | Istruzioni | un blocco in ogni `AGENTS.md` delle cartelle di lavoro | la fase istruzioni della guardia |
 | Skill | `~/.agents/skills/` (il catalogo condiviso) | la fase skill |
 | Il plugin | `<state dir>/extensions/nexgen/` | la fase permessi della guardia |
-| Briefing, checkpoint, postura, engine | `<state dir>/extensions/nexgen/nexgen.config.json` | la fase permessi e lo stato del modulo |
+| Briefing, checkpoint, engine | `<state dir>/extensions/nexgen/nexgen.config.json` | la fase permessi e lo stato del modulo |
 
 ## Connettori MCP
 
@@ -121,7 +121,7 @@ extensions/nexgen/
   openclaw.plugin.json          id: nexgen, onStartup, i nomi degli strumenti che possiede
   nexgen-guardrail-core.mjs     il nucleo condiviso che ogni adattatore importa
   nexgen-guardrail.config.json  quale corpo del guardrail, con quale timeout, il file di audit
-  nexgen.config.json            gli interruttori del motore: briefing, checkpoint, postura, engine,
+  nexgen.config.json            gli interruttori del motore: briefing, checkpoint, engine,
                                 governor, evidence
   nexgen-quota-state.json       cosa ha letto il battito l'ultima volta, per il governor
   vault-briefing.txt            il testo del briefing, condiviso con Claude Code
@@ -206,34 +206,31 @@ Il lavoro del checkpoint è controllato da `checkpoint.enabled` in `nexgen.confi
 
 ### Postura
 
-La postura del manifest privato dei permessi viaggia in `nexgen.config.json` nel vocabolario neutro, e il plugin la rende lì. `openclaw.json` non viene mai riscritto dalla fase permessi, perché si legge all'avvio del gateway e non deve cambiare sotto un gateway in esecuzione.
+Il motore non scrive nessuna postura. Il plugin legge ancora la chiave `posture` da `nexgen.config.json` (`bypass`, `accept-edits`, `ask`) quando è una persona a metterla lì, e si comporta come `bypass` quando manca o non è leggibile. La fase permessi non la scrive mai e non riscrive `openclaw.json`, perché quel file si legge all'avvio del gateway e non deve cambiare sotto un gateway in esecuzione.
 
-| Postura | Cosa fa OpenClaw |
+| Postura nel file | Cosa fa OpenClaw |
 |---|---|
-| `bypass` | decide solo il guardrail: ciò che il corpo permette gira senza domanda, ciò che nega viene bloccato, un corpo che chiede chiede comunque |
+| `bypass` (predefinita) | decide solo il guardrail: ciò che il corpo permette gira senza domanda, ciò che nega viene bloccato, un corpo che chiede chiede comunque |
 | `accept-edits` | come `bypass` per le scritture su file; un comando di shell che il corpo non nega chiede approvazione |
 | `ask` | ogni comando di shell chiede approvazione, e anche uno strumento che modifica file (`write`, `edit`, `apply_patch`) la chiede |
 
-Senza una postura nel manifest non viene scritto nulla, esattamente come nelle altre CLI; il plugin si comporta allora come `bypass`.
-
 ## Parità con Claude Code
 
-Il motore mette gli stessi sei strati in entrambi gli host. `nexgen doctor` riporta un esito `openclaw.parity.*` per strato e tace su una macchina che non ha entrambe le CLI.
+Il motore mette gli stessi cinque strati in entrambi gli host. `nexgen doctor` riporta un esito `openclaw.parity.*` per strato e tace su una macchina che non ha entrambe le CLI.
 
 | Strato | Claude Code | OpenClaw | Runtime `claude-cli` / `codex` |
 |---|---|---|---|
 | MCP | `mcpServers` in `~/.claude.json` | `mcp.servers` in `openclaw.json` | un agente `claude-cli` li raggiunge tramite la voce `lazy-mcp` in `mcp.servers` di OpenClaw (il file di Claude Code non viene mai letto lì); Codex usa la sua configurazione scritta dal renderer |
-| Istruzioni | `~/CLAUDE.md` punta all'`AGENTS.md` canonico | il blocco gestito nell'`AGENTS.md` di ogni cartella di lavoro | il runtime dell'agente carica le sue istruzioni |
+| Istruzioni | `~/.claude/CLAUDE.md` punta all'`AGENTS.md` canonico | il blocco gestito nell'`AGENTS.md` di ogni cartella di lavoro | il runtime dell'agente carica le sue istruzioni |
 | Skill | `~/.claude/skills` | `~/.agents/skills` (catalogo condiviso) | il runtime dell'agente carica le sue skill |
 | Guardrail | `PreToolUse` → `claude-guardrail-adapter.mjs` | `before_tool_call` nel plugin | il guardrail di Claude Code o di Codex, installato da questo motore |
 | Briefing | `SessionStart` → `claude-vault-checkpoint.mjs` | il briefing del plugin, stesso `vault-briefing.txt` | l'hook del checkpoint di Claude Code |
-| Postura | `permissions.defaultMode` | `posture` in `nexgen.config.json` | il file di postura di quella CLI |
 
 Uno strato allineato è un PASS; uno strato che un host ha e l'altro no è un WARN che nomina la lacuna. L'azione è quasi sempre `nexgen sync`, l'unica fase che scrive entrambi i lati. Lo strato MCP confronta solo i nomi, mai un blocco `env`: un token non viene mai letto, stampato o conservato.
 
 ## Cosa non copre
 
-Il plugin vede solo le chiamate che OpenClaw esegue lui stesso: il runner integrato, che è quello che usano gli agenti su OpenCode Go e sul modello locale. Un agente il cui runtime è `claude-cli` o `codex` esegue i suoi strumenti dentro Claude Code o Codex, dove sono già al comando il guardrail, il briefing e la postura di quella CLI, installati da questo stesso motore. Due di ciascuno su una chiamata significherebbero due politiche da tenere allineate; uno per chiamata è il punto.
+Il plugin vede solo le chiamate che OpenClaw esegue lui stesso: il runner integrato, che è quello che usano gli agenti su OpenCode Go e sul modello locale. Un agente il cui runtime è `claude-cli` o `codex` esegue i suoi strumenti dentro Claude Code o Codex, dove sono già al comando il guardrail e il briefing di quella CLI, installati da questo stesso motore. Due di ciascuno su una chiamata significherebbero due politiche da tenere allineate; uno per chiamata è il punto.
 
 `code_execution` esegue Python, non una riga di shell. È nell'insieme osservato perché un campo `command` su di esso verrebbe giudicato, ma il suo sorgente non viene passato a un corpo che confronta pattern di shell, dove corrisponderebbe per caso invece che per significato.
 

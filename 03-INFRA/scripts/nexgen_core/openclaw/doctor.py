@@ -6,8 +6,9 @@ installed and the Windows app has no gateway here, `collect` returns no
 outcomes at all, and `nexgen doctor` looks exactly as it did before this
 feature existed.
 
-The checks are read-only by construction. They read the configuration in force
-and they open one TCP connection. They never run `openclaw config validate`,
+The checks are read-only by construction. They read the configuration in force,
+the harness transcripts that say what a recent turn cost when the caller asks for
+them, and they open one TCP connection. They never run `openclaw config validate`,
 because starting or validating OpenClaw is B2's job, and they never write a file.
 Three commands a check may run, and only when the caller hands them in: the node
 list, and the exec approvals of the node an agent runs on, both behind the
@@ -27,13 +28,16 @@ from typing import Any
 from nexgen_core import quota_policy
 from nexgen_core.i18n import t
 from nexgen_core.openclaw import (
+    automations,
     background,
     companion,
     doctor_agents,
     doctor_agy,
     doctor_config,
+    doctor_lanes,
     doctor_mcp,
     doctor_runtime,
+    doctor_spend,
     node_approvals,
     node_checks,
     observation,
@@ -231,6 +235,7 @@ def _gateway_outcomes(
     policy: quota_policy.Failover,
     platform: str,
     env: Mapping[str, str] | None,
+    automations_reader: automations.Reader | None = None,
 ) -> list[CheckOutcome]:
     """Every check that judges the gateway this file would configure.
 
@@ -239,12 +244,18 @@ def _gateway_outcomes(
     the one line `collect` prints instead of them. The evidence check is here for
     the same reason: on a node the file it judges is the copy `node_retire` kept,
     not the configuration any gateway loads.
+
+    `automations_reader` asks the scheduler whether an automation job runs the
+    proactive check. It starts OpenClaw's CLI, so it is asked only by a caller that
+    handed one in; without it that one line says "unknown" instead of green.
     """
+    jobs = automations_reader() if automations_reader is not None else None
     outcomes = filter(None, [
         check_ollama_latest(config),
         check_cage(config),
         check_evidence(config, path),
-        doctor_config.check_heartbeat(config),
+        doctor_config.check_heartbeat(config, jobs=jobs),
+        doctor_config.check_context_guard(jobs),
         *_check_gateway(config),
         exposure(config),
         doctor_config.check_google(config),
@@ -277,6 +288,7 @@ def _config_outcomes(
     env: Mapping[str, str] | None = None,
     approvals: node_approvals.Reader | None = None,
     node_only: bool = False,
+    automations_reader: automations.Reader | None = None,
 ) -> list[CheckOutcome]:
     """Every check that reads the configuration in force, in the order a person reads them.
 
@@ -295,6 +307,7 @@ def _config_outcomes(
     if not node_only:
         outcomes.extend(_gateway_outcomes(
             config, snapshot, path, home_dir, manifest_p, connect, policy, platform, env,
+            automations_reader,
         ))
     outcomes.extend(filter(None, [
         *node_checks.check_nodes(config, _probe(home_dir, connect), node_lister),
@@ -302,6 +315,8 @@ def _config_outcomes(
         *node_approvals.check_agents(config, approvals),
         *doctor_runtime.check_workshop_skills(config, path.parent, home_dir),
         doctor_agents.check_unconfigured_agents(config, path.parent),
+        doctor_lanes.check_harness_lane(config),
+        doctor_lanes.check_acp_binding(config),
         doctor_runtime.check_unadopted(config, path, home_dir, resolve_vault_data(home_dir, vault_data)),
         doctor_runtime.check_bindings(config),
     ]))
@@ -369,11 +384,18 @@ def collect(
     failover: quota_policy.Failover | None = None,
     pending: Callable[[], list[dict[str, Any]] | None] | None = None,
     node_approvals_reader: node_approvals.Reader | None = None,
+    automations_reader: automations.Reader | None = None,
+    spend: bool = False,
 ) -> list[CheckOutcome]:
     """Every OpenClaw check that applies to this machine, or nothing at all.
 
-    `pending` and `node_approvals_reader` both start OpenClaw's CLI, so each is asked
-    only by a caller that handed one in: `nexgen doctor` on its schedule passes neither.
+    `pending`, `node_approvals_reader` and `automations_reader` all start OpenClaw's CLI,
+    so each is asked only by a caller that handed one in: `nexgen doctor` on its schedule
+    passes none, and the heartbeat line then reads "unknown" rather than claiming a
+    monitor is off because nobody looked. `spend` asks for the two readings of what the
+    recent harness turns cost: `nexgen openclaw doctor` asks (the person who runs the
+    gateway reads that command), and `nexgen doctor` does not, because it runs those two
+    checks itself and would otherwise report every one of them twice.
     """
     values = dict(os.environ) if env is None else {str(k): str(v) for k, v in env.items()}
     home_dir = resolve_home(home)
@@ -400,7 +422,12 @@ def collect(
         outcomes.extend(_config_outcomes(
             config, snapshot, path, home_dir, vault_data, failover, connect, node_lister, system,
             env=values, approvals=node_approvals_reader, node_only=bool(node_only),
+            automations_reader=automations_reader,
         ))
+        # A node runs no agent turn of its own: the transcripts of the agents it names
+        # are written on the gateway, and reading this home would measure nothing.
+        if spend and not node_only:
+            outcomes.extend(doctor_spend.outcomes(home_dir, config, values))
     if node_only:
         outcomes.append(node_only_outcome(NODE_MODE_CHECK_ID))
     outcomes.extend(_store_gateway_outcomes(home_dir, values, system))

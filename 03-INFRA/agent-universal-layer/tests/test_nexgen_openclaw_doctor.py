@@ -46,7 +46,6 @@ def clean_config() -> dict:
             "ownership": "explicit",
             "defaults": {
                 "models": {},
-                "heartbeat": {"every": "0m"},
             },
             "entries": {
                 "main": {"model": "opencode-go/deepseek-v4.1-flash"},
@@ -98,7 +97,7 @@ def declare(vault: Path, state: str = "local") -> Path:
 def run_doctor(tmp_path: Path, config_path: Path | None = None, *, declared: bool = True,
                platform: str = "linux", connect=None, detected: Detection | None = None,
                wsl_distributions=None, node_version=None, linger_dir=None, env=None, pending=None,
-               **machine_kwargs):
+               automations=None, spend: bool = False, **machine_kwargs):
     vault = declare(tmp_path / "vault") if declared else tmp_path / "vault"
     path = config_path or (tmp_path / "home" / ".openclaw" / "openclaw.json")
     snapshot = detected if detected is not None else machine(path, **machine_kwargs)
@@ -116,6 +115,11 @@ def run_doctor(tmp_path: Path, config_path: Path | None = None, *, declared: boo
         node_version=node_version or (lambda: "v24.22.1"),
         linger_dir=linger_dir,
         pending=pending,
+        # No scheduler is asked unless a test hands the jobs in: that is the scheduled
+        # doctor's own contract, and its heartbeat line then reads "unknown".
+        automations_reader=(lambda: automations) if automations is not None else None,
+        # The spend lines are the command's own question, never the scheduled doctor's.
+        spend=spend,
     )
 
 
@@ -184,11 +188,194 @@ def test_a_local_model_without_a_cage_is_a_failure(tmp_path):
     assert by_id(outcomes)["openclaw.cage"].severity == Severity.BROKEN
 
 
-def test_a_heartbeat_that_is_on_is_a_warning(tmp_path):
+def test_a_running_proactive_check_job_is_a_warning(tmp_path):
+    """The monitor is a job in this release: a job that runs is what the line must judge."""
+    jobs = [{"id": "job-1", "name": "Proactive check", "enabled": True, "schedule": {"cron": "*/30 * * * *"}}]
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()), automations=jobs)
+    heartbeat = by_id(outcomes)["openclaw.heartbeat"]
+    assert heartbeat.severity == Severity.WARN
+    assert "*/30 * * * *" in heartbeat.message
+
+
+def test_a_switched_off_proactive_check_is_a_pass(tmp_path):
+    jobs = [{"id": "job-1", "name": "Proactive check", "enabled": False, "schedule": {"every": "30m"}}]
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()), automations=jobs)
+    heartbeat = by_id(outcomes)["openclaw.heartbeat"]
+    assert heartbeat.severity == Severity.OK
+    assert "1 disabled job" in heartbeat.message
+
+
+def _light_check(**extra) -> dict:
+    """The job `nexgen openclaw setup` converges a proactive check into."""
+    job = {
+        "id": "job-1",
+        "name": "Proactive check",
+        "enabled": True,
+        "schedule": {"every": "6h"},
+        "sessionTarget": "isolated",
+        "payload": {"kind": "agentTurn", "lightContext": True, "toolsAllow": []},
+    }
+    job.update(extra)
+    return job
+
+
+def test_a_light_check_at_the_default_cadence_is_a_pass(tmp_path):
+    """The capability is kept on purpose, so a converged job must be able to be green."""
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()), automations=[_light_check()])
+    heartbeat = by_id(outcomes)["openclaw.heartbeat"]
+    assert heartbeat.severity == Severity.OK
+    assert "runs light" in heartbeat.message
+    assert "every 6h" in heartbeat.message
+
+
+def test_a_check_left_in_the_agents_conversation_is_a_warning_with_its_cost(tmp_path):
+    """30 minutes in the main session is 48 model calls a day over the whole chat."""
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()), automations=[_light_check(
+        schedule={"cron": "*/30 * * * *"}, sessionTarget="main",
+    )])
+    heartbeat = by_id(outcomes)["openclaw.heartbeat"]
+    assert heartbeat.severity == Severity.WARN
+    assert "78,717 tokens" in heartbeat.message
+    assert "48 runs a day" in heartbeat.message
+    assert "nexgen openclaw setup" in heartbeat.action
+
+
+def test_a_check_with_the_bootstrap_files_or_the_tools_is_not_light(tmp_path):
+    with_files = _light_check(sessionTarget="main", schedule={"every": "6h"})
+    tools = _light_check(payload={"kind": "agentTurn", "lightContext": True, "toolsAllow": ["*"]})
+    for job in (with_files, tools):
+        outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()), automations=[job])
+        assert by_id(outcomes)["openclaw.heartbeat"].severity == Severity.WARN
+
+
+def test_a_light_check_that_fires_every_half_hour_is_still_a_warning(tmp_path):
+    """Cheap is not free: every run is still a model call."""
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()), automations=[_light_check(
+        schedule={"every": "30m"},
+    )])
+    heartbeat = by_id(outcomes)["openclaw.heartbeat"]
+    assert heartbeat.severity == Severity.WARN
+    assert "every 30m" in heartbeat.message
+    assert "squad.yaml" in heartbeat.action
+
+
+def test_a_doctor_that_did_not_ask_the_scheduler_says_unknown(tmp_path):
+    """The scheduled doctor starts no CLI, and it must never claim a monitor is off."""
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()))
+    heartbeat = by_id(outcomes)["openclaw.heartbeat"]
+    assert heartbeat.severity == Severity.UNDETERMINED
+    assert "Unknown" in heartbeat.message
+
+
+def test_a_heartbeat_that_is_on_is_a_warning_where_the_key_is_still_there(tmp_path):
+    """The retired key is named, never read as a switch: upstream converts it into a job."""
     config = clean_config()
-    config["agents"]["defaults"]["heartbeat"]["every"] = "5m"
-    outcomes = run_doctor(tmp_path, write_config(tmp_path, config))
-    assert by_id(outcomes)["openclaw.heartbeat"].severity == Severity.WARN
+    config["agents"]["defaults"]["heartbeat"] = {"every": "5m"}
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, config), automations=[])
+    heartbeat = by_id(outcomes)["openclaw.heartbeat"]
+    assert heartbeat.severity == Severity.WARN
+    assert "agents.defaults.heartbeat" in heartbeat.message
+    assert "doctor --fix" in heartbeat.action
+
+
+#: The folder one agent runs in, and the folder name Claude Code derives from it: every
+#: character that is not a letter or a digit becomes a dash. The name carries "openclaw"
+#: on purpose, because that is how the first-prompt check recognises its own sessions.
+WORKSPACE = "/opt/openclaw/workspace-capo"
+TRANSCRIPT_FOLDER = "-opt-openclaw-workspace-capo"
+
+
+def _write_transcript(home: Path, *, first_prompt: int, cache_read: int) -> Path:
+    """One turn of one agent: a person's prompt, then the single model call that answered it."""
+    path = home / ".claude" / "projects" / TRANSCRIPT_FOLDER / "session.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join([
+        json.dumps({"type": "user", "message": {"content": "che ore sono"}}),
+        json.dumps({"type": "assistant", "message": {"id": "msg-1", "usage": {
+            "input_tokens": first_prompt,
+            "cache_read_input_tokens": cache_read,
+            "output_tokens": 120,
+        }}}),
+    ]) + "\n", encoding="utf-8")
+    return path
+
+
+def test_the_spend_lines_are_reported_by_the_openclaw_doctor(tmp_path, monkeypatch):
+    """The command a person runs on the gateway says what a turn cost: 2.1 M tokens here."""
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    config = clean_config()
+    config["agents"]["entries"]["capo"]["workspace"] = WORKSPACE
+    _write_transcript(tmp_path / "home", first_prompt=100_000, cache_read=2_000_000)
+
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, config), spend=True))
+
+    # One call of 100,000 input plus 2,000,000 cache-read tokens is over both ceilings:
+    # the seed counts those two, and the turn adds the 120 tokens it wrote.
+    assert outcomes["openclaw.turn_budget"].severity == Severity.WARN
+    assert "2,100,120" in outcomes["openclaw.turn_budget"].message
+    assert outcomes["openclaw.context_budget"].severity == Severity.BROKEN
+    assert "2,100,000" in outcomes["openclaw.context_budget"].message
+
+
+def test_the_scheduled_doctor_does_not_report_the_spend_lines(tmp_path, monkeypatch):
+    """`nexgen doctor` runs both checks itself: asking here too would print each line twice."""
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    config = clean_config()
+    config["agents"]["entries"]["capo"]["workspace"] = WORKSPACE
+    _write_transcript(tmp_path / "home", first_prompt=100_000, cache_read=2_000_000)
+
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, config)))
+
+    assert "openclaw.turn_budget" not in outcomes
+    assert "openclaw.context_budget" not in outcomes
+
+
+def _guard_job(**extra) -> dict:
+    """The job `setup` declares, as the scheduler lists it."""
+    job = {
+        "id": "job-2",
+        "name": "nexgen-context-guard",
+        "displayName": "Context guard",
+        "declarationKey": "nexgen:context-guard",
+        "enabled": True,
+        "schedule": {"cron": "0 * * * *"},
+        "delivery": {"mode": "none"},
+    }
+    job.update(extra)
+    return job
+
+
+def test_a_context_guard_that_records_no_delivery_is_a_pass(tmp_path):
+    """The hourly job the engine declares is what the line checks, never the absence of one."""
+    jobs = [_guard_job(), {"id": "job-1", "name": "Proactive check", "enabled": False}]
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, clean_config()), automations=jobs))
+    guard = outcomes["openclaw.cron.context_guard"]
+    assert guard.severity == Severity.OK
+    assert "records no delivery" in guard.message
+
+
+def test_a_context_guard_that_still_delivers_is_a_warning(tmp_path):
+    """A job registered before --no-deliver records a failed delivery every hour."""
+    jobs = [_guard_job(delivery={"mode": "announce"})]
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, clean_config()), automations=jobs))
+    guard = outcomes["openclaw.cron.context_guard"]
+    assert guard.severity == Severity.WARN
+    assert "announce" in guard.message
+    assert "nexgen openclaw setup" in guard.action
+
+
+def test_a_missing_context_guard_names_the_declaration_key(tmp_path):
+    """No job under the engine's key means no chat is compacted, and the setup fixes it."""
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, clean_config()), automations=[]))
+    guard = outcomes["openclaw.cron.context_guard"]
+    assert guard.severity == Severity.WARN
+    assert "nexgen:context-guard" in guard.message
+
+
+def test_an_unread_scheduler_says_nothing_about_the_context_guard(tmp_path):
+    """One unknown line is enough: the heartbeat check already reports the unread scheduler."""
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()))
+    assert "openclaw.cron.context_guard" not in by_id(outcomes)
 
 
 def test_a_gateway_bound_past_the_home_network_or_without_a_token_is_a_failure(tmp_path):

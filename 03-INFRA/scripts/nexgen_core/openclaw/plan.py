@@ -16,7 +16,7 @@ from typing import Any
 from nexgen_core import quota_policy
 from nexgen_core.i18n import detect_language, t
 from nexgen_core.openclaw import companion as app_gateway
-from nexgen_core.openclaw import agy_prereqs, hierarchy, observation
+from nexgen_core.openclaw import agy_prereqs, harness_lanes, hierarchy, observation
 from nexgen_core.openclaw.browser_profile import server_section
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.conversation_grant import with_engine_plugin
@@ -141,7 +141,12 @@ def _agent_notes(
 
 
 def _context_notes(config: dict[str, Any]) -> list[str]:
-    """Models whose context window the backend did not report, and so is not written."""
+    """Models whose context window the backend did not report, and so is not written.
+
+    A model the squad caps with `context_tokens` is not one of them: the cap is the
+    number the engine was asked to write, and calling it an unknown window would be a
+    note about a decision the person already made.
+    """
     providers = config.get("models", {}).get("providers")
     if not isinstance(providers, dict):
         return []
@@ -149,7 +154,12 @@ def _context_notes(config: dict[str, Any]) -> list[str]:
     for block in providers.values():
         models = block.get("models") if isinstance(block, dict) else None
         for entry in models or []:
-            if isinstance(entry, dict) and entry.get("id") and "contextWindow" not in entry:
+            if (
+                isinstance(entry, dict)
+                and entry.get("id")
+                and "contextWindow" not in entry
+                and "contextTokens" not in entry
+            ):
                 unknown.append(str(entry["id"]))
     if not unknown:
         return []
@@ -350,6 +360,9 @@ def build_plan(
         proposed, current,
         Path(snapshot.openclaw.config_path).parent if snapshot.openclaw.config_path else None,
     )
+    # The lane an agent declares with `harness:` is written as both halves or not at
+    # all, and the ones that cannot be written are named to the person below.
+    unrouted = harness_lanes.apply(proposed, squad_data, snapshot)
     config = with_engine_plugin(
         with_chains(with_skill_policy(proposed, vault_data, current), failover), _plugin_deposited(path, plugin_deposited),
         agy_installed=agy_prereqs.installed_version(path.parent) is not None,
@@ -359,11 +372,13 @@ def build_plan(
     config = _with_loopback(config, current, home=home_dir, vault_data=vault_data, engine_root=engine_root)
     config, browser_note = _with_server_browser(config, current, serve=chosen.serve, home=home_dir)
     changes = _diff(config, current)
+    lane_notes = [harness_lanes.problem(lane) for lane in unrouted]
     notes = [
         *_wanted_notes(config, snapshot, chosen, squad_data),
         # A fallback line the engine cannot use is named here too: the plan is what a person
         # reads before the setup writes anything, so a typo in the policy must not be silent.
         *failover_notes,
+        *[note for note in lane_notes if note],
         *([browser_note] if browser_note else []),
         *_change_notes(config, changes, current),
     ]

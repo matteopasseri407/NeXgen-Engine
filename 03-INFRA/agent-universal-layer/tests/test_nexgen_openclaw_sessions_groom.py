@@ -6,7 +6,13 @@ import subprocess
 from pathlib import Path
 
 from nexgen_core.openclaw import agy_compaction, groom_memory, sessions_groom
-from nexgen_core.openclaw.sessions_groom import HARD_TOKENS, IDLE_SECONDS, blocked_runtimes, plan_groom
+from nexgen_core.openclaw.sessions_groom import (
+    HARD_TOKENS,
+    IDLE_MIN_TOKENS,
+    IDLE_SECONDS,
+    blocked_runtimes,
+    plan_groom,
+)
 
 NOW = 1_800_000_000_000
 
@@ -15,7 +21,9 @@ def session(**overrides):
     base = {
         "key": "agent:main:main",
         "agentId": "main",
-        "totalTokens": 40_000,
+        # Above the idle floor: a chat this size is worth a summary. The floor itself is
+        # pinned by `test_an_idle_chat_below_the_floor_is_left_alone`.
+        "totalTokens": 160_000,
         "updatedAt": NOW,
         "lastInteractionAt": NOW,
         "status": "done",
@@ -31,6 +39,17 @@ def test_an_idle_agent_chat_is_compacted():
 
     assert [d.key for d in decisions] == ["agent:main:main"]
     assert decisions[0].reason == "idle"
+
+
+def test_an_idle_chat_below_the_floor_is_left_alone():
+    """A summary of a small chat costs more than the cold cache it prevents."""
+    small = session(totalTokens=IDLE_MIN_TOKENS - 1, lastInteractionAt=NOW - 10 * IDLE_SECONDS * 1000)
+
+    assert plan_groom([small], NOW) == []
+
+
+def test_the_floor_is_the_measured_first_prompt_budget():
+    assert IDLE_MIN_TOKENS == 150_000
 
 
 def test_a_chat_in_use_stays_alone_until_it_grows_too_much():
@@ -144,7 +163,7 @@ def test_a_stale_idle_direct_model_chat_is_picked_like_any_other():
 
 def test_an_idle_codex_session_is_picked_for_its_native_compaction():
     codex_backed = session(
-        key="agent:main:main", totalTokens=74_969, lastInteractionAt=NOW - 2 * IDLE_SECONDS * 1000,
+        key="agent:main:main", totalTokens=160_000, lastInteractionAt=NOW - 2 * IDLE_SECONDS * 1000,
         agentRuntime={"id": "codex", "source": "session-key"},
     )
 
@@ -279,9 +298,9 @@ def test_a_session_whose_counters_moved_is_offered_again(monkeypatch, tmp_path):
     gateway = FakeGateway([idle_session()], reply=(1, "", "Error: Already compacted."))
     run_groom(gateway, monkeypatch, tmp_path)
 
-    gateway.sessions = [idle_session(totalTokens=41_000)]
+    gateway.sessions = [idle_session(totalTokens=161_000)]
     run_groom(gateway, monkeypatch, tmp_path)
-    gateway.sessions = [idle_session(totalTokens=41_000, lastInteractionAt=NOW - 3 * IDLE_SECONDS * 1000)]
+    gateway.sessions = [idle_session(totalTokens=161_000, lastInteractionAt=NOW - 3 * IDLE_SECONDS * 1000)]
     run_groom(gateway, monkeypatch, tmp_path)
 
     assert gateway.compactions == ["agent:main:main", "agent:main:main", "agent:main:main"]
@@ -290,7 +309,7 @@ def test_a_session_whose_counters_moved_is_offered_again(monkeypatch, tmp_path):
 def _chat_that_the_compaction_itself_changes(gateway, chat):
     """The compaction moves the chat's date and shrinks its counter: nobody wrote to it."""
     def compacted(_key):
-        gateway.sessions = [{**chat, "totalTokens": 30_000, "updatedAt": chat["updatedAt"] + 5_000}]
+        gateway.sessions = [{**chat, "totalTokens": 160_000, "updatedAt": chat["updatedAt"] + 5_000}]
         return 0, '{"ok": true, "compacted": true}', ""
     gateway.reply = compacted
 
@@ -305,7 +324,7 @@ def test_a_compacted_harness_chat_waits_until_it_is_written_to(monkeypatch, tmp_
     run_groom(gateway, monkeypatch, tmp_path)
     assert gateway.compactions == ["agent:main:main"]
 
-    gateway.sessions = [{**chat, "totalTokens": 31_000, "updatedAt": NOW - IDLE_SECONDS * 1000 - 1}]
+    gateway.sessions = [{**chat, "totalTokens": 161_000, "updatedAt": NOW - IDLE_SECONDS * 1000 - 1}]
     run_groom(gateway, monkeypatch, tmp_path)
     assert gateway.compactions == ["agent:main:main", "agent:main:main"]
 
@@ -411,14 +430,19 @@ def test_a_stated_renewal_is_used_whichever_provider_reports_it():
     assert sessions_groom._quota_renews_at(outcome, NOW) == NOW + 3_600_000
 
 
-def test_a_failure_that_is_not_about_quota_is_retried_on_the_next_run(monkeypatch, tmp_path):
+def test_a_failure_that_is_not_about_quota_backs_off_for_six_hours(monkeypatch, tmp_path):
+    """A chat the gateway refuses is not asked again next hour: it would eat every run."""
+    hour = 60 * 60 * 1000
     gateway = FakeGateway([idle_session()], reply=(1, "", "Error: the gateway refused the command."))
 
     first = run_groom(gateway, monkeypatch, tmp_path)
-    second = run_groom(gateway, monkeypatch, tmp_path)
+    run_groom(gateway, monkeypatch, tmp_path, now=NOW + 5 * hour)
+    assert gateway.compactions == ["agent:main:main"]
+    assert first.failed == 1
 
+    again = run_groom(gateway, monkeypatch, tmp_path, now=NOW + 6 * hour)
     assert gateway.compactions == ["agent:main:main", "agent:main:main"]
-    assert first.failed == 1 and second.failed == 1
+    assert again.failed == 1
 
 
 def test_an_unconfirmed_native_compaction_is_success_and_is_not_retried(monkeypatch, tmp_path):
@@ -485,9 +509,10 @@ def test_a_gateway_that_does_not_compact_is_not_a_success_and_is_not_retried(mon
 def test_an_exit_zero_without_the_json_answer_is_never_a_success(monkeypatch, tmp_path):
     """A plain-text answer, however friendly, does not prove a compaction: it is retried and counted."""
     gateway = FakeGateway([idle_session()], reply=(0, "Compacted session agent:main:main.\n", ""))
+    six_hours = 6 * 60 * 60 * 1000
 
     first = run_groom(gateway, monkeypatch, tmp_path)
-    second = run_groom(gateway, monkeypatch, tmp_path)
+    second = run_groom(gateway, monkeypatch, tmp_path, now=NOW + six_hours)
 
     assert first.failed == 1 and second.failed == 1
     assert gateway.compactions == ["agent:main:main", "agent:main:main"]
@@ -600,14 +625,14 @@ def test_a_reason_on_stderr_is_read_even_when_stdout_has_chatter(monkeypatch, tm
     assert gateway.compactions == ["agent:main:main"]
 
 
-def test_an_attempt_that_times_out_is_a_failure_and_is_retried(monkeypatch, tmp_path):
+def test_an_attempt_that_times_out_is_a_failure_and_is_retried_later(monkeypatch, tmp_path):
     def timed_out(_key):
         raise subprocess.TimeoutExpired("openclaw", 300)
 
     gateway = FakeGateway([idle_session()], reply=timed_out)
 
     first = run_groom(gateway, monkeypatch, tmp_path)
-    second = run_groom(gateway, monkeypatch, tmp_path)
+    second = run_groom(gateway, monkeypatch, tmp_path, now=NOW + 6 * 60 * 60 * 1000)
 
     assert first.failed == 1 and second.failed == 1
     assert gateway.compactions == ["agent:main:main", "agent:main:main"]

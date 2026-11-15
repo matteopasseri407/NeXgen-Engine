@@ -106,7 +106,7 @@ def aligned_machine(tmp_path: Path) -> tuple[Path, Path]:
     (home / ".claude.json").write_text(json.dumps({
         "mcpServers": {"alpha": {"command": "npx"}, "beta": {"command": "npx"}},
     }), encoding="utf-8")
-    (home / "CLAUDE.md").write_text(
+    (home / ".claude" / "CLAUDE.md").write_text(
         f"Read {vault / '03-INFRA' / 'agent-universal-layer' / 'instructions' / 'AGENTS.md'}\n",
         encoding="utf-8",
     )
@@ -115,7 +115,6 @@ def aligned_machine(tmp_path: Path) -> tuple[Path, Path]:
 
     runtime = OpenClawRuntime()
     runtime.install_guardrail(home, a_body(tmp_path), HOOKS)
-    runtime.apply_posture(home, "bypass")
     return home, vault
 
 
@@ -137,9 +136,8 @@ def test_an_aligned_machine_is_green_on_every_layer(tmp_path):
         "openclaw.parity.skills",
         "openclaw.parity.guardrail",
         "openclaw.parity.briefing",
-        "openclaw.parity.posture",
     ]
-    assert [o.severity for o in outcomes] == [Severity.OK] * 6, [o.message for o in outcomes]
+    assert [o.severity for o in outcomes] == [Severity.OK] * 5, [o.message for o in outcomes]
 
 
 def test_a_server_only_one_cli_mounts_is_a_warning_with_the_action(tmp_path):
@@ -189,17 +187,6 @@ def test_a_briefing_on_one_side_only_is_a_warning(tmp_path):
     assert briefing.severity is Severity.WARN
     assert "OpenClaw" in briefing.message
     assert "claude-vault-checkpoint.mjs" in (briefing.action or "")
-
-
-def test_a_posture_that_diverges_names_both_sides(tmp_path):
-    home, vault = aligned_machine(tmp_path)
-    OpenClawRuntime().apply_posture(home, "ask")
-
-    outcomes = {o.id: o for o in check_openclaw_parity(home, vault)}
-
-    posture = outcomes["openclaw.parity.posture"]
-    assert posture.severity is Severity.WARN
-    assert "bypass" in posture.message and "ask" in posture.message
 
 
 def test_an_undeposited_plugin_is_reported_as_a_missing_guardrail(tmp_path):
@@ -260,6 +247,25 @@ def test_an_incomplete_instruction_block_is_a_warning(tmp_path):
     outcomes = {o.id: o for o in check_openclaw_parity(home, vault)}
 
     assert outcomes["openclaw.parity.instructions"].severity is Severity.WARN
+
+
+def test_the_old_home_pointer_no_longer_counts_as_claudes_instructions(tmp_path):
+    """The guard moved the pointer to `~/.claude/CLAUDE.md` and removes `~/CLAUDE.md`.
+
+    Reading the home file made this layer flip to a gap the engine had just created, with a
+    "run nexgen sync" that cannot close it because sync writes the other path.
+    """
+    home, vault = aligned_machine(tmp_path)
+    (home / ".claude" / "CLAUDE.md").unlink()
+    (home / "CLAUDE.md").write_text(
+        f"Read {vault / '03-INFRA' / 'agent-universal-layer' / 'instructions' / 'AGENTS.md'}\n",
+        encoding="utf-8",
+    )
+
+    outcomes = {o.id: o for o in check_openclaw_parity(home, vault)}
+
+    assert outcomes["openclaw.parity.instructions"].severity is Severity.WARN
+    assert "Claude Code does not" in outcomes["openclaw.parity.instructions"].message
 
 
 def test_the_parity_check_never_reads_an_mcp_env_block(tmp_path):

@@ -386,14 +386,20 @@ def _inert(_argv: list[str], _timeout: float) -> RunResult:
 
 
 def _gateway_smoke(run: Run, env: dict[str, str], binary: str | None) -> Callable[[], int]:
-    """The existing smoke test, with this phase's injected runner and the owner's CLI."""
+    """The existing smoke test, with this phase's injected runner and the owner's CLI.
+
+    The first-prompt budget is measured and printed but is not part of the verdict: this
+    function decides whether to keep an upgrade, and a large chat on this machine is not
+    evidence that the release is broken. Counting it here reinstalled the previous
+    OpenClaw and blocked the pin for a day over a token count.
+    """
     from nexgen_core.openclaw.smoke import run_smoke
 
     def runner(argv: list[str], _timeout: float) -> RunResult:
         return run([binary, *argv[1:]] if binary else argv, env)
 
     def fire() -> int:
-        return run_smoke(run=runner, out=lambda _line: None)
+        return run_smoke(run=runner, out=lambda _line: None, budget_decides=False)
 
     return fire
 

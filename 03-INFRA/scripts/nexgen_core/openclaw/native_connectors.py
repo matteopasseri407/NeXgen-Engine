@@ -15,13 +15,17 @@ and its runtime id are the same string, so `google-antigravity-cli/gemini-3.8-fl
 `agy` even when no `agentRuntime` is pinned anywhere in the file -- the shape `terms` reads
 as well.
 
-The second half of the `agy` question is the machine, connector by connector. `agy` receives
-the connectors directly from the engine's renderer, and only those may be denied on the
-loopback: a connector `agy`'s file does not carry is one the loopback is the only road to,
-and denying it would leave the agent with nothing. A file that exists proves nothing either
--- the `google-antigravity-cli` plugin writes its own entries into it for the length of a
-turn and leaves it empty afterwards -- so what counts is the server names it holds now, read
-tolerantly: no file, an unreadable one and one that is not JSON all mean "carries nothing".
+The second half of the `agy` question is the machine, connector by connector, and it has
+two rules rather than one. With the MCP bridge patched, the loopback carries `lazy-mcp` and
+only the connectors an agent names there, so every mounted connector has a road through the
+gateway and an `agy` agent may deny all of them. Without the patch the engine's renderer is
+the only hand that puts connectors into `agy`'s own file: an agent is named on the loopback
+only when that file carries at least one of these connectors, and only those are denied,
+because one it does not carry would be left with no road at all. A file that exists proves
+nothing either way -- the `google-antigravity-cli` plugin writes its own entries into it for
+the length of a turn and leaves it empty afterwards -- so what counts is the server names it
+holds now, read tolerantly: no file, an unreadable one and one that is not JSON all mean
+"carries nothing".
 """
 from __future__ import annotations
 

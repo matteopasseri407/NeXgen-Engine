@@ -38,6 +38,21 @@ agents:
     role: "Strategic lead, deep planning, and review"
     thinkingDefault: "high"
     reportsTo: "main"
+    # Opt-in consumption levers, both off unless you write them. On the `claude-cli`
+    # road every model call carries the gateway's whole tool catalogue and, without a
+    # cap, may grow to the model's native window: the measured `capo` turn was 74 calls
+    # of about 78,000 tokens, about 5.77 M per turn (docs/proposals/daru-burn.md).
+    #
+    # `lean` publishes a minimal tool surface on this agent's model instead: about
+    # 63,000 tokens per call and 4.66 M per turn, -19%, with connectors still reachable
+    # through the lazy-mcp gateway. Recommended value: "lean".
+    # tool_surface: "lean"
+    #
+    # A per-call context cap, in tokens. It bounds the worst case (14.8 M per turn
+    # instead of 74 M) and makes an older conversation a summary sooner. Recommended
+    # value: 200000. Experimental: it writes a `models` array for a provider a bundled
+    # plugin owns, so verify one real turn after enabling it (docs/squad.md).
+    # context_tokens: 200000
     # agents_md: "squad/capo.md"
     # The agent's execution policy, written to agents.entries.<id>.tools.exec.
     #
@@ -61,6 +76,17 @@ agents:
     model: "opencode-go/deepseek-v4.1-flash"
     role: "Code execution and development tasks"
     reportsTo: "capo"
+    # Which lane runs this agent's turn. Omitted, it keeps the lane it has today:
+    # OpenClaw itself calls the model API above. Set it to claude, codex or
+    # opencode and the real CLI runs instead, as its own agent, in this agent's
+    # workspace, on its own login: the turn then carries the harness's own prompt
+    # and skills instead of OpenClaw's, which is the whole difference in cost.
+    #
+    # Opt-in, and it needs a conversation bound to that agent: add a `bindings`
+    # entry below naming it, or the setup writes neither half (a runtime block
+    # with no bound session answers a chat with the default model instead).
+    # `agy` is accepted here and stays a CLI backend, never an ACP session.
+    # harness: "opencode"
     tools:
       exec:
         host: "node"
@@ -81,6 +107,30 @@ agents:
   #   model: "anthropic/claude-opus-5-5"
   #   reportsTo: "main"
   #   node: "MatteoPC"
+  #   # The lane, as on `sviluppo`: omitted, OpenClaw calls the model itself.
+  #   # harness: "claude"
+
+# The proactive check OpenClaw provisions, and what it costs. In the pinned release a
+# heartbeat is an ordinary automation job: every 30 minutes, in the agent's main
+# conversation, over whatever that conversation has grown to. That is 48 model calls a
+# day, and at the 78,717 tokens one `claude-cli` call was measured at it is about 3.8 M
+# tokens a day for a bot nobody may be talking to (docs/proposals/daru-burn.md).
+#
+# `nexgen openclaw setup` converges the job to this block. Omitting the block keeps the
+# default, which is `light`. The three modes, all of them keeping the check and its
+# delivery:
+#
+#   off     the job is switched off (`openclaw automations disable <id>`); nothing runs
+#   light   the default: every 6h, in an isolated session, without the bootstrap files
+#           and without tools, on the utility model, so a run costs a few thousand
+#           tokens instead of a whole conversation
+#   full    the job stays as OpenClaw provisioned it, every 30 minutes in the agent's
+#           main conversation; `every` and `model` are applied when this block names them
+#
+# heartbeat:
+#   mode: light                    # light (the default) | full | off
+#   every: 6h                      # optional: light and full
+#   model: "ollama/qwen3:8b"       # optional: light and full, defaults to the utility model
 
 models:
   # Optional model overrides or provider configurations
@@ -93,3 +143,10 @@ bindings:
   - match:
       channel: "telegram"
     agentId: "main"
+
+# Opt-in, and off when omitted: refuse a turn bound to an ACP lane whose plan is
+# already spent, instead of starting a harness turn that fails mid-loop. The plugin
+# reads the readings the hourly beat writes, so it costs no model call, and it
+# answers one line naming the plan and the window. Recommended value: true, once an
+# agent above declares `harness:`.
+# acp_admission: true

@@ -26,9 +26,8 @@ from nexgen_core.i18n import t
 from nexgen_core.modules import current_host, write_state_file
 from nexgen_core.openclaw import host_preflight, npm_prefix, setup_commands, setup_write
 from nexgen_core.openclaw.detect import Detection, detect
-from nexgen_core.openclaw.governor import governor_section
+from nexgen_core.openclaw.governor import admitted, sidecar_section
 from nexgen_core.openclaw.node_agents import node_agents
-from nexgen_core.openclaw.setup_cron import groom_job_step as groom_job_step
 from nexgen_core.openclaw.pin import node_satisfies, pinned_version, required_node_version
 from nexgen_core.openclaw.setup_agents import agent_dirs, created_by_openclaw, prepare
 from nexgen_core.openclaw_pairing import qr as pairing_qr
@@ -537,8 +536,15 @@ def governor_step(setup: Setup, plan) -> None:
     start, while this sidecar is read on every call, so a policy the person edited
     lands on the next turn instead of on the next restart. An empty policy writes
     nothing at all, and the plugin is told nothing it should not act on.
+
+    The ACP admission branch joins the same section when the squad asks for it
+    (`acp_admission: true`): it is read there because the squad is what declares
+    both the opt-in and the lane, and one write keeps the two halves in step.
     """
-    section = governor_section(plan.failover, plan.config)
+    from nexgen_core.openclaw.squad import find_squad_file, load_squad
+
+    squad = load_squad(find_squad_file(setup.vault_data, home=setup.home))
+    section = sidecar_section(plan.failover, plan.config, acp_admission=admitted(squad))
     if section is None:
         setup.out(t("No fallback policy names an agent of this setup: no chain was written."))
         return
@@ -546,8 +552,12 @@ def governor_step(setup: Setup, plan) -> None:
         setup.out(t("The engine plugin is not deposited: its fallback chains were not written."))
         return
     OpenClawRuntime().replace_governor(setup.home, section)
-    setup.out(t("The fallback chains reach {count} agents; the plugin reads them on every turn.",
-                count=len(section["agents"])))
+    if "agents" in section:
+        setup.out(t("The fallback chains reach {count} agents; the plugin reads them on every turn.",
+                    count=len(section["agents"])))
+    if "acp" in section:
+        setup.out(t("A spent plan stops these ACP lanes before the harness starts: {agents}",
+                    agents=", ".join(sorted(section["acp"]["agents"]))))
 
 
 def enable_openclaw_mcp(setup: Setup, vault: Path) -> bool:

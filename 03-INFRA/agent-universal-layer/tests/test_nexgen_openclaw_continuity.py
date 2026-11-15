@@ -60,6 +60,23 @@ def _env(tmp_path: Path, **extra: str) -> dict[str, str]:
     return env
 
 
+def _hook_env(tmp_path: Path, **extra: str) -> dict[str, str]:
+    """The environment one checkpoint-hook run gets: a home of its own and an engine that says nothing.
+
+    The hook asks the machine's engine for one line of quota, so an unguarded run
+    would carry whatever this person's subscriptions happen to be.
+    """
+    bin_dir = tmp_path / "hook-bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    (bin_dir / "nexgen.cmd").write_text("@echo off\r\n", encoding="utf-8")
+    silent = bin_dir / "nexgen"
+    silent.write_text("#!/bin/sh\n", encoding="utf-8")
+    silent.chmod(0o755)
+    env = _env(tmp_path, **extra)
+    env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+    return env
+
+
 def _deploy_plugin(tmp_path: Path, config: dict | None = None) -> Path:
     target = tmp_path / "plugin"
     target.mkdir(parents=True, exist_ok=True)
@@ -253,7 +270,7 @@ def test_claude_checkpoint_hook_injects_note_when_checkpoint_is_recent(tmp_path:
     }), encoding="utf-8")
 
     event = json.dumps({"hook_event_name": "SessionStart", "source": "compact"})
-    env = _env(tmp_path, AGENT_STATE_DIR=str(tmp_path / "state"))
+    env = _hook_env(tmp_path, AGENT_STATE_DIR=str(tmp_path / "state"))
     done = subprocess.run(
         [NODE, str(CLAUDE_HOOK)],
         input=event,
@@ -288,7 +305,7 @@ def test_claude_checkpoint_hook_omits_note_when_checkpoint_is_old(tmp_path: Path
     }), encoding="utf-8")
 
     event = json.dumps({"hook_event_name": "SessionStart", "source": "compact"})
-    env = _env(tmp_path, AGENT_STATE_DIR=str(tmp_path / "state"))
+    env = _hook_env(tmp_path, AGENT_STATE_DIR=str(tmp_path / "state"))
     done = subprocess.run(
         [NODE, str(CLAUDE_HOOK)],
         input=event,
@@ -308,7 +325,7 @@ def test_claude_checkpoint_hook_omits_note_when_checkpoint_is_old(tmp_path: Path
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_claude_checkpoint_hook_omits_note_when_checkpoint_is_absent(tmp_path: Path) -> None:
     event = json.dumps({"hook_event_name": "SessionStart", "source": "compact"})
-    env = _env(tmp_path, AGENT_STATE_DIR=str(tmp_path / "non-existent-state"))
+    env = _hook_env(tmp_path, AGENT_STATE_DIR=str(tmp_path / "non-existent-state"))
     done = subprocess.run(
         [NODE, str(CLAUDE_HOOK)],
         input=event,

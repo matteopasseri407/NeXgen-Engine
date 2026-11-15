@@ -46,6 +46,14 @@ RETIRED_VALUES: tuple[tuple[tuple[str, ...], Any], ...] = (
     (("tools", "toolSearch"), False),
 )
 
+#: The whole-agent runtime key an earlier engine wrote on an agent it wanted
+#: "embedded", and which the pinned release ignores: `runtime-and-cli-backends.md`
+#: says that session runtime pins and whole-agent runtime keys are not read by
+#: runtime selection. It is removed only where it still holds exactly this value,
+#: and it is a separate pass from `RETIRED_VALUES` because that table names a
+#: fixed path and this key can sit on any agent.
+EMBEDDED_RUNTIME: dict[str, Any] = {"type": "embedded"}
+
 
 def _merge_dict(current: dict[str, Any], proposed: dict[str, Any]) -> dict[str, Any]:
     """A recursive merge that never deletes: proposal wins, absent keys stay."""
@@ -161,17 +169,39 @@ def _binding_key(binding: Any) -> tuple[str, str]:
     return str(binding.get("agentId", "")), json.dumps(match, sort_keys=True, ensure_ascii=False, default=str)
 
 
+def _is_acp_upgrade(current: Any, proposed: Any) -> bool:
+    """Whether the proposal turns an existing route binding into an ACP session.
+
+    A squad that puts an agent on a harness asks for that agent's conversations to
+    reach the harness instead of OpenClaw's own loop. Both bindings carry the same
+    agent and the same match, so without this rule the route binding already in the
+    file would win and the request would never land: the ACP entry is the one place
+    where the proposal replaces an entry of the same key rather than adding beside it.
+    """
+    if not (isinstance(current, dict) and isinstance(proposed, dict)):
+        return False
+    return proposed.get("type") == "acp" and current.get("type") != "acp"
+
+
 def _merge_bindings(current: Any, proposed: Any) -> list[Any]:
-    """The person's bindings first, then the ones this setup adds. Never a replacement."""
+    """The person's bindings first, then the ones this setup adds. Never a replacement.
+
+    The single exception is a conversation the squad moves onto a harness: that
+    binding replaces the route entry with the same agent and match (`_is_acp_upgrade`).
+    """
     merged = [dict(item) for item in current if isinstance(item, dict)] if isinstance(current, list) else []
-    seen = {_binding_key(item) for item in merged}
+    positions = {_binding_key(item): index for index, item in enumerate(merged)}
     for binding in proposed if isinstance(proposed, list) else []:
         if not isinstance(binding, dict):
             continue
         key = _binding_key(binding)
-        if key not in seen:
-            merged.append(dict(binding))
-            seen.add(key)
+        if key in positions:
+            index = positions[key]
+            if _is_acp_upgrade(merged[index], binding):
+                merged[index] = dict(binding)
+            continue
+        positions[key] = len(merged)
+        merged.append(dict(binding))
     return merged
 
 
@@ -210,6 +240,7 @@ def merged_document(current: dict[str, Any] | None, proposed: dict[str, Any]) ->
     _drop_uncreated_agent(merged)
     _retire_replaced(merged, proposed)
     _retire(merged)
+    _retire_embedded_runtime(merged)
     agent_pairs.retire(merged, proposed)
     _drop_squad_model_entries(merged)
     return merged
@@ -322,6 +353,34 @@ def _retire(document: dict[str, Any]) -> None:
                     del parent[path[-1]]
             elif target == value:
                 del parent[path[-1]]
+
+
+def _retire_embedded_runtime(document: dict[str, Any]) -> None:
+    """Drops the ignored whole-agent runtime key an earlier engine wrote, on any agent.
+
+    `{"type": "embedded"}` was the engine's way of saying "OpenClaw runs this agent",
+    which is what OpenClaw does anyway: the pinned release neither needs nor reads
+    the key (`runtime-and-cli-backends.md`: whole-agent runtime keys are legacy and
+    are ignored by runtime selection). A file that carries it describes a lane that
+    does not exist, and a person reading the file has no way to know that. Only that
+    exact value goes: anything the person edited by hand is theirs, and an ACP block
+    this engine writes is a different value and stays.
+
+    The branch that changes is rebuilt rather than edited in place: a section only
+    the proposal carries is the proposal's own object, and this module promises
+    never to change its caller's input.
+    """
+    agents = document.get("agents")
+    entries = agents.get("entries") if isinstance(agents, dict) else None
+    if not isinstance(entries, dict):
+        return
+    cleaned: dict[str, Any] = {}
+    for agent_id, entry in entries.items():
+        if isinstance(entry, dict) and entry.get("runtime") == EMBEDDED_RUNTIME:
+            cleaned[agent_id] = {key: value for key, value in entry.items() if key != "runtime"}
+    if not cleaned:
+        return
+    document["agents"] = {**agents, "entries": {**entries, **cleaned}}
 
 
 def _drop_squad_model_entries(document: dict[str, Any]) -> None:

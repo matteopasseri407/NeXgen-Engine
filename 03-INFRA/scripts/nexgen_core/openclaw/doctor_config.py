@@ -1,14 +1,18 @@
 """What the configuration in force switches on, judged without asking anything.
 
 One job: the doctor's checks that read the OpenClaw file and nothing else. The
-heartbeat that starts jobs writing to the channels continuously, a Google
-subscription the terms do not allow, the ACP bridge that would carry one, the
-tool-search mode a large connector list makes matter, and the engine's lazy-mcp
-gateway an agent on `claude-cli` needs to reach its connectors.
+proactive check that turns a bot into a metered turn every half hour, the engine's
+own hourly context guard as the scheduler holds it, a Google subscription the terms
+do not allow, the ACP bridge that would carry one, the tool-search mode a large
+connector list makes matter, and the engine's lazy-mcp gateway an agent on
+`claude-cli` needs to reach its connectors.
 
 They were part of `doctor.py` until that file reached its size ceiling. None of
 them opens a socket, starts a process or writes a file, which is why they need
-nothing the rest of the doctor brings with it.
+nothing the rest of the doctor brings with it. The one question that needs the
+scheduler -- whether an automation job runs the proactive check, and how the
+context guard is declared -- arrives as a value the caller read, and a caller that
+read nothing says so.
 """
 from __future__ import annotations
 
@@ -22,24 +26,185 @@ from nexgen_core.report import CheckOutcome, Severity
 MANY_MCP_SERVERS_THRESHOLD = 4
 
 
-def check_heartbeat(config: dict[str, Any]) -> CheckOutcome:
-    """A live heartbeat starts system jobs that write on the channels continuously."""
+def _legacy_heartbeat_keys(config: dict[str, Any]) -> list[str]:
+    """The retired heartbeat settings still in this file, by path.
+
+    OpenClaw reads none of them any more: a heartbeat is an automation job and Doctor
+    removes these keys once it has converted the monitor. A file that still carries one
+    is a machine whose jobs may not exist yet, so what it schedules is not something the
+    job list can answer.
+    """
     agents = config.get("agents") if isinstance(config.get("agents"), dict) else {}
+    found: list[str] = []
     defaults = agents.get("defaults") if isinstance(agents.get("defaults"), dict) else {}
-    heartbeat = defaults.get("heartbeat") if isinstance(defaults.get("heartbeat"), dict) else {}
-    every = heartbeat.get("every")
-    if every == "0m":
+    if isinstance(defaults.get("heartbeat"), dict) and defaults["heartbeat"]:
+        found.append("agents.defaults.heartbeat")
+    entries = agents.get("entries") if isinstance(agents.get("entries"), dict) else {}
+    for agent_id, entry in sorted(entries.items()):
+        heartbeat = entry.get("heartbeat") if isinstance(entry, dict) else None
+        if isinstance(heartbeat, dict) and heartbeat:
+            found.append(f"agents.entries.{agent_id}.heartbeat")
+    return found
+
+
+def check_heartbeat(
+    config: dict[str, Any], jobs: list[dict[str, Any]] | None = None,
+) -> CheckOutcome:
+    """The proactive check, judged on the automation job that schedules it.
+
+    `jobs` is what the scheduler listed, or None when nobody asked it. This check never
+    starts a process itself (the doctor's contract), so a caller that did not ask says
+    so: an unread job list is "unknown", never the green line the retired
+    `agents.defaults.heartbeat` key used to earn while a job fired every half hour.
+    What a running check costs is `_running_check`'s question.
+    """
+    from nexgen_core.openclaw.automations import enabled_heartbeat_jobs, heartbeat_jobs, is_enabled
+
+    retained = _legacy_heartbeat_keys(config)
+    if retained:
         return CheckOutcome(
             id="openclaw.heartbeat",
-            severity=Severity.OK,
-            message=t("The heartbeat is off, as the engine configures it."),
+            severity=Severity.WARN,
+            message=t("The retired heartbeat settings are still in this file ({paths}): OpenClaw schedules "
+                      "heartbeats as automation jobs and its doctor converts these keys into them.",
+                      paths=", ".join(retained)),
+            action=t("Run 'openclaw doctor --fix' to convert them, then 'nexgen openclaw setup' to converge "
+                     "the migrated job."),
         )
+    if jobs is None:
+        return CheckOutcome(
+            id="openclaw.heartbeat",
+            severity=Severity.UNDETERMINED,
+            message=t("Unknown: nothing here asked the scheduler, so whether a proactive check runs is unread."),
+            action=t("Run 'nexgen openclaw doctor' (which asks the scheduler) or 'openclaw automations list --all'."),
+        )
+    running = enabled_heartbeat_jobs(jobs)
+    if running:
+        return _running_check(running)
+    switched_off = [job for job in heartbeat_jobs(jobs) if not is_enabled(job)]
+    detail = t(" ({count} disabled job matches)", count=len(switched_off)) if switched_off else ""
     return CheckOutcome(
         id="openclaw.heartbeat",
-        severity=Severity.WARN,
-        message=t("The heartbeat runs every '{every}': it starts system jobs that write to the channels.",
-                  every=every if isinstance(every, str) and every else t("(not set)")),
-        action=t("Set agents.defaults.heartbeat.every to '0m'."),
+        severity=Severity.OK,
+        message=t("No enabled automation job runs a proactive check{detail}.", detail=detail),
+    )
+
+
+def _running_check(running: list[dict[str, Any]]) -> CheckOutcome:
+    """What a check that actually runs costs, which is three facts about its payload.
+
+    Whether it runs in the agent's own conversation, whether it carries the workspace
+    bootstrap files, and whether it can call tools. Any of those makes a run a model call
+    over everything the conversation has grown to, and the squad's own prompt measured
+    78,717 tokens for one (docs/proposals/daru-burn.md). A light job is still a model
+    call, so a cadence faster than four runs a day is named as well, and only a light job
+    at that pace is a pass.
+    """
+    from nexgen_core.openclaw.automations import (
+        LIGHT_MAX_MINUTES,
+        cadence_minutes,
+        job_id,
+        job_name,
+        runs_light,
+        runs_per_day,
+        schedule_text,
+    )
+
+    expensive = [job for job in running if not runs_light(job)]
+    if expensive:
+        described = ", ".join(f"{job_name(job)} every {schedule_text(job)} ({job_id(job)})" for job in expensive)
+        return CheckOutcome(
+            id="openclaw.heartbeat",
+            severity=Severity.WARN,
+            message=t("An automation job runs the proactive check over the agent's own conversation: {jobs}. "
+                      "A run like that is one model call over everything that conversation holds, 78,717 "
+                      "tokens measured on this squad, at {count} runs a day.",
+                      jobs=described, count=_runs_a_day(expensive, runs_per_day)),
+            action=t("Run 'nexgen openclaw setup': it converges the job to its own session, without the "
+                     "bootstrap files and without tools, every 6 hours. A full check stays an opt-in in "
+                     "squad.yaml (heartbeat: mode: full)."),
+        )
+    frequent = [
+        job for job in running
+        if (cadence := cadence_minutes(job)) is not None and cadence < LIGHT_MAX_MINUTES
+    ]
+    if frequent:
+        described = ", ".join(f"{job_name(job)} every {schedule_text(job)}" for job in frequent)
+        return CheckOutcome(
+            id="openclaw.heartbeat",
+            severity=Severity.WARN,
+            message=t("The proactive check is light, but it fires more often than four times a day: {jobs}. "
+                      "Every run is still a model call.", jobs=described),
+            action=t("Run 'nexgen openclaw setup' to converge it to every 6 hours, or set "
+                     "'heartbeat: every:' in squad.yaml to the cadence you want."),
+        )
+    described = ", ".join(f"{job_name(job)} every {schedule_text(job)}" for job in running)
+    return CheckOutcome(
+        id="openclaw.heartbeat",
+        severity=Severity.OK,
+        message=t("The proactive check runs light: {jobs}, in its own session, without the bootstrap files "
+                  "and without tools.", jobs=described),
+    )
+
+
+def _runs_a_day(jobs: list[dict[str, Any]], per_day) -> str:
+    """How many model calls a day these jobs cost, as a number when the cadences are read."""
+    counts = [count for job in jobs if (count := per_day(job)) is not None]
+    if len(counts) == len(jobs) and counts:
+        return str(sum(counts))
+    return t("an unknown number of")
+
+
+def check_context_guard(jobs: list[dict[str, Any]] | None) -> CheckOutcome | None:
+    """The hourly context guard, judged on the job the scheduler actually holds.
+
+    `setup` registers the job with a declaration key and, with `--no-deliver`, a
+    delivery mode of `none`; without that flag the gateway records every hourly run as a
+    failed delivery while the doctor stays green. `jobs` is what the scheduler listed, or
+    None when nobody asked it: an unread scheduler is not a finding, because the
+    heartbeat check already says the list was never read.
+    """
+    from nexgen_core.openclaw.automations import (
+        CONTEXT_GUARD_DECLARATION_KEY,
+        context_guard_jobs,
+        delivery_mode,
+        is_enabled,
+        job_name,
+    )
+
+    if jobs is None:
+        return None
+    guard = context_guard_jobs(jobs)
+    if not guard:
+        return CheckOutcome(
+            id="openclaw.cron.context_guard",
+            severity=Severity.WARN,
+            message=t("No automation job carries the engine's context guard declaration "
+                      "({key}): no chat is compacted by it.", key=CONTEXT_GUARD_DECLARATION_KEY),
+            action=t("Run 'nexgen openclaw setup' with the gateway up. A person who wants no "
+                     "compaction at all switches it off with NEXGEN_OPENCLAW_MAX_COMPACTIONS=0."),
+        )
+    faults: list[str] = []
+    for job in guard:
+        name = job_name(job)
+        if not is_enabled(job):
+            faults.append(t("'{name}' is switched off", name=name))
+        mode = delivery_mode(job)
+        if mode != "none":
+            faults.append(t("'{name}' delivers every run ({mode})", name=name, mode=mode or t("unspecified")))
+    if faults:
+        return CheckOutcome(
+            id="openclaw.cron.context_guard",
+            severity=Severity.WARN,
+            message=t("The context guard job is not as the engine declares it: {faults}.",
+                      faults="; ".join(faults)),
+            action=t("Run 'nexgen openclaw setup' with the gateway up: it re-declares the job with "
+                     "--no-deliver, and OpenClaw patches the one the same declaration key names."),
+        )
+    return CheckOutcome(
+        id="openclaw.cron.context_guard",
+        severity=Severity.OK,
+        message=t("The hourly context guard job is registered and records no delivery."),
     )
 
 

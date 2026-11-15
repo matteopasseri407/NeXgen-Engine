@@ -85,61 +85,79 @@ def _check_turn(runner: Run, agent: str, out: Callable[[str], None]) -> bool:
     return ok
 
 
+def _agent_runs_on_claude_code(agent: str) -> bool | None:
+    """Whether OpenClaw would run this agent on Claude Code; None when the file cannot say.
+
+    The difference matters for the sentence a person reads: an agent that does run there
+    and wrote no transcript is a session this check could not find, while an agent on
+    `agy`, Codex or a direct model never writes one at all.
+    """
+    from nexgen_core.openclaw import background
+    from nexgen_core.openclaw.config_file import read_config
+    from nexgen_core.paths import openclaw_config
+
+    try:
+        config, failure = read_config(openclaw_config())
+    except OSError:  # nexgen: allow reason="a configuration that cannot be read says nothing about the runtime"
+        return None
+    if failure is not None or config is None:
+        return None
+    ref = background.agent_model_refs(config).get(agent)
+    if not ref:
+        return None
+    return background.cli_harness_runtime(config, ref, agent) == "claude-cli"
+
+
 def _check_first_prompt_budget(
     claude_dir: Path | None,
     start_time: float,
     budget: int | None,
     out: Callable[[str], None],
+    *,
+    agent: str = "main",
+    decides: bool = True,
 ) -> bool:
-    """Find the newest Claude Code transcript written during the turn and verify budget."""
+    """Measure the transcript this turn started, and judge it against the budget.
+
+    `decides` is what separates two questions this one number cannot answer. A person
+    asking `nexgen openclaw smoke` wants the budget to fail the run; the version gate
+    asks whether the release works, and rolling a good upgrade back because a chat was
+    large is the mistake this flag removes. There the line is a warning and the run's
+    verdict comes from the five functional checks.
+    """
     from nexgen_core.openclaw.context_budget import (
-        is_openclaw_slug,
+        claude_home,
         read_claude_first_prompt,
         resolved_budget,
+        transcript_started_since,
     )
-    from nexgen_core.paths import resolve_home
 
-    base = claude_dir if claude_dir is not None else resolve_home() / ".claude"
-    projects_dir = base / "projects"
+    base = claude_dir if claude_dir is not None else claude_home()
     ceiling = resolved_budget(budget)
+    session = transcript_started_since(base, start_time)
 
-    newest_file: Path | None = None
-    newest_mtime: float = start_time - 0.5
-
-    if projects_dir.is_dir():
-        try:
-            for p in projects_dir.iterdir():
-                if not p.is_dir() or not is_openclaw_slug(p.name):
-                    continue
-                for f in p.glob("*.jsonl"):
-                    if not f.is_file():
-                        continue
-                    try:
-                        m = f.stat().st_mtime
-                    except OSError:  # nexgen: allow reason="a disappearing session file during scan is ignored"
-                        continue
-                    if m >= newest_mtime:
-                        newest_mtime = m
-                        newest_file = f
-        except OSError:  # nexgen: allow reason="a disappearing projects directory during scan is ignored"
-            pass
-
-    if newest_file is None:
-        out(f"SKIP  {t('first prompt context budget: not measured (agent does not run on Claude Code)')}")
+    if session is None:
+        runs_here = _agent_runs_on_claude_code(agent)
+        reason = (t("no transcript for this turn")
+                  if runs_here is not False
+                  else t("agent {agent} does not run on Claude Code", agent=agent))
+        out(f"SKIP  {t('first prompt context budget: not measured ({reason})', reason=reason)}")
         return True
 
-    tokens = read_claude_first_prompt(newest_file)
+    tokens = read_claude_first_prompt(session.path)
     if tokens is None:
         out(f"SKIP  {t('first prompt context budget: not measured (no tokens recorded)')}")
         return True
 
     ok = tokens <= ceiling
-    _line(
-        out,
-        ok,
-        t("first prompt is within context budget"),
-        f"{tokens:,} <= {ceiling:,}" if ok else f"{tokens:,} > {ceiling:,}",
-    )
+    detail = f"{tokens:,} <= {ceiling:,}" if ok else f"{tokens:,} > {ceiling:,}"
+    if ok or decides:
+        _line(out, ok, t("first prompt is within context budget"), detail)
+    else:
+        # Not a PASS either: the number was measured and is over the ceiling, and only
+        # the doctor's own check is allowed to turn that into a fault.
+        out(f"WARN  {t('first prompt is over the context budget, which is not a verdict on the release')}: "
+            f"{detail}")
     return ok
 
 
@@ -152,8 +170,14 @@ def run_smoke(
     which: Callable[[str], str | None] | None = None,
     claude_dir: Path | None = None,
     budget: int | None = None,
+    budget_decides: bool = True,
 ) -> int:
-    """Runs the six checks, prints one line each, and says whether the gateway is usable."""
+    """Runs the six checks, prints one line each, and says whether the gateway is usable.
+
+    `budget_decides=False` keeps the first-prompt measurement but takes it out of the
+    verdict, which is what a caller proving a release needs: a token count is a health
+    metric of this machine, not evidence about OpenClaw.
+    """
     runner = run or (lambda argv, timeout: run_command(argv, timeout, which))
     failures = 0
 
@@ -164,7 +188,11 @@ def run_smoke(
 
     turn_start = time.time()
     failures += 0 if _check_turn(runner, agent, out) else 1
-    failures += 0 if _check_first_prompt_budget(claude_dir, turn_start, budget, out) else 1
+    within = _check_first_prompt_budget(
+        claude_dir, turn_start, budget, out, agent=agent, decides=budget_decides,
+    )
+    if budget_decides:
+        failures += 0 if within else 1
 
     if failures:
         out(t("{count} check(s) failed: the gateway is not usable as it stands.", count=failures))

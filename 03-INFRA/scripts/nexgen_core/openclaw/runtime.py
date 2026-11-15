@@ -4,16 +4,25 @@ One job: turn the `runtime` block of squad.yaml into the OpenClaw settings that
 decide how many chats an agent has, how long a manual fork survives, and which
 model does the housekeeping. Those settings are policy, not taste: without them
 a reinstall silently loses "one chat per agent" and the person is back to a
-sidebar full of stale threads.
+sidebar with stale threads.
 
 The block is deliberately small and validated. A typo must fail the setup, not
 write a key OpenClaw ignores.
+
+The second half of the file is the *whole-agent* runtime block, which is a
+different decision: it says an agent runs as an external harness (ACP) instead of
+OpenClaw's own loop. It is written only for an agent that declares a harness in
+its squad, because the pinned release ignores a whole-agent `runtime` key for
+every other agent (`runtime-and-cli-backends.md`: "Whole-agent runtime keys are
+legacy"), and a key that is read by nobody describes a lane that is not there.
 """
 from __future__ import annotations
 
 import re
 from collections.abc import Mapping
 from typing import Any
+
+from nexgen_core.openclaw.acp import acp_agent
 
 #: Every key the block accepts, and the config path it writes.
 _KEYS: dict[str, tuple[str, ...]] = {
@@ -86,3 +95,22 @@ def apply_runtime(config: dict[str, Any], runtime: Mapping[str, Any]) -> dict[st
             # Archiving only reports in warn mode: the duration alone would do nothing.
             _put(config, ("session", "maintenance", "mode"), "enforce")
     return config
+
+
+def acp_runtime(harness: str, workspace: str) -> dict[str, Any]:
+    """One agent's whole-agent runtime block: the harness runs as itself, in its folder.
+
+    `cwd` is that agent's workspace, so the harness reads the `AGENTS.md`, the
+    skills and the MCP configuration the engine already renders there. The block
+    is only half a lane: `acp.binding` writes the other half, and neither is
+    written alone (`harness_lanes.py` owns that decision).
+    """
+    return {
+        "type": "acp",
+        "acp": {
+            "agent": acp_agent(harness),
+            "backend": "acpx",
+            "mode": "persistent",
+            "cwd": str(workspace),
+        },
+    }

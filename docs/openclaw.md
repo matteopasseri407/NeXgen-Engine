@@ -1,8 +1,8 @@
-# OpenClaw, the harness with the interface
+# OpenClaw, the bot that stays on
 
 🇮🇹 [Italiano](it/openclaw.md)
 
-OpenClaw (MIT, npm `openclaw`) is NeXgen Engine's official harness and the entry point with an interface: a web panel and a phone app paired by QR, from which a person uses the flat subscriptions they already pay for and the models running on their own machine. The sync also writes it as a fifth CLI, which is the smaller half of its job.
+OpenClaw (MIT, npm `openclaw`) is the engine's always-on bot. It runs on the machine that never sleeps, it is the one a person reaches from the chat channels they already use, Telegram among them, and it carries an agent squad declared in `squad.yaml` with the channel bindings that route a chat to the right agent. It sits beside the apps a person works in day to day, which the sync configures, and it does not replace them. Its web panel and phone app, paired by QR, use the same flat subscriptions a person already pays for and the models running on their own machine. The sync also writes it as a fifth CLI, which is the smaller half of its job.
 
 The engine does not fork OpenClaw and does not own its file. It writes only the sections OpenClaw needs to reach the subscriptions and the Vault, and leaves everything else to OpenClaw and to the person using it.
 
@@ -41,7 +41,9 @@ The code agent also gets `CLAUDE.md` and `.claude/settings.json`, so Claude Code
 
 `nexgen openclaw smoke` is the check a version change owes. It asks OpenClaw for its version, validates the configuration, probes the gateway, runs `openclaw mcp doctor`, sends one short turn to an agent, and verifies the first-prompt context budget: six lines, one verdict, the same in a terminal and in a release check.
 
-The first-prompt ceiling measures the actual token cost paid on the first prompt of a session, read directly from local transcripts (Claude Code under `~/.claude/projects/` and Codex under `~/.codex/sessions/`). If a session starts over budget, `smoke` and `nexgen doctor` (`openclaw.context_budget`) fail immediately. The default ceiling is 150,000 tokens (calibrated against real measurements: ~13.5k–78k tokens with loopback denies in place, versus ~945k without them), overridable via the environment variable `NEXGEN_OPENCLAW_FIRST_PROMPT_BUDGET`. The `agy` CLI is not measured in tokens because it writes no local session transcript or usage file that can be trusted.
+The first-prompt ceiling measures the actual token cost paid on the first prompt of a session, read directly from local transcripts (Claude Code under `~/.claude/projects/` or `$CLAUDE_CONFIG_DIR`, Codex under `~/.codex/sessions/` or `$CODEX_HOME`). The transcript is the one the turn itself started, dated by its first record: a chat that happens to be writing meanwhile is somebody else's and is never measured. If a session starts over budget, `smoke` and `nexgen doctor` (`openclaw.context_budget`) fail, and a day with no OpenClaw session is not a finding at all. The version gate is the one place where this number does not decide: it prints a warning, because a large chat says nothing about whether a new OpenClaw works, and a rollback for a token count is not a verdict on a release. The default ceiling is 150,000 tokens (calibrated against real measurements: ~13.5k-78k tokens with loopback denies in place, versus ~945k without them), overridable via the environment variable `NEXGEN_OPENCLAW_FIRST_PROMPT_BUDGET`. The `agy` CLI is not measured in tokens because it writes no local session transcript or usage file that can be trusted.
+
+The seed is not the bill: a turn pays it on every model call. `nexgen doctor` (`openclaw.turn_budget`) therefore also groups the newest session of each configured agent into turns and reports, per turn, how many model calls it made and what they cost in input, cache read, cache write and output. A turn over the per-turn ceiling (2,000,000 tokens, `NEXGEN_OPENCLAW_TURN_BUDGET`) is a warning that names the worst turn, its call count and the agent, because a session that passes at 78,717 tokens and then makes 74 calls spends 5.8 M and used to look green. A prompt opens a turn; a tool result does not, so the 74 calls of one turn are not read as 74 turns. The folders come from the configuration in force: an ACP agent is measured in the `cwd` its runtime declares, every other agent in its `workspace`, and `agy` stays exempt for the reason above. Codex is measured by its first prompt only. The same doctor prints `openclaw.harness_lane` (which lane each agent's turn really runs on: `acp`, `cli` or `provider`, warning when a bound agent spends a paid plan on the provider lane) and `openclaw.acp_binding` (an ACP runtime with no binding behind it answers a direct chat with the default model).
 
 A gateway machine prepared by hand records its role with `nexgen role set server`. The setup does this by itself on `--server`. Without that record the engine cannot tell the machine is the server, and the Vault's copy beside it keeps committing in a clone nobody can push from. `nexgen role` prints what is recorded and changes nothing.
 
@@ -55,6 +57,8 @@ OpenClaw already moves a turn to the next model when a provider answers "this pl
 - It also writes the same chains, the block line and the maximum age of a reading into the engine-owned `nexgen.config.json` beside the plugin, where the governor job reads them on every turn.
 
 When a reading has passed the line (`block_at`, 95% by default), the governor returns `providerOverride` and `modelOverride` on `before_model_resolve`, so the turn starts on the next model instead of running, failing and falling back. It writes one line in the gateway log naming the provider, the window and the model it chose. It never computes a percentage: the beat leaves the numbers in `<state dir>/extensions/nexgen/nexgen-quota-state.json`, and a state older than `state_max_age_minutes` (180 by default) changes nothing. A missing, unreadable or empty policy changes nothing either.
+
+An ACP session is the harness running as itself, so OpenClaw's chains are never consulted for it. A squad that writes `acp_admission: true` also gets that lane gated: on `before_agent_reply` the same job reads the same readings and, when the plan the agent's model names is at or past the line, answers one line naming the plan and the window instead of starting the harness turn. It costs no model call, and nothing happens for a lane the state has no reading for. See [squad.md](squad.md#acp_admission-true).
 
 Two rules make this safe in a file the engine does not own:
 
@@ -91,17 +95,17 @@ None of this is a second door into the engine. The plugin starts the same CLI a 
 
 A council is the one job that does not answer in the same turn. It runs for minutes, so `/council` starts it detached and says so at once. The end arrives through the engine's megaphone, the one surface allowed to speak to the person, and the run's own session directory keeps the whole transcript.
 
-## The OpenCode agent, one to one
+## Which lane runs an agent
 
-`sviluppo` is OpenCode itself, launched over ACP, so the same CLI, logins, skills and guardrail apply whether a person opens OpenCode in a terminal or writes to the agent from the phone.
+`harness` on an agent in `squad.yaml` is the whole switch, and it is opt-in: an agent without the key keeps the lane it has today, so no setup moves an existing agent anywhere.
 
-Three settings make that work, and all three are needed:
+| `harness` | Lane | What runs the turn | What it costs |
+| --- | --- | --- | --- |
+| absent, or `none` | provider | OpenClaw itself, calling the model API it holds a key for | one turn of OpenClaw's own prompt, on that flat plan or key |
+| `opencode`, `claude`, `codex` | ACP session | the real CLI, as its own agent, in that agent's workspace, on its own login | the harness's own context on the harness's own plan; OpenClaw keeps channels, delivery and policy |
+| `agy` | CLI backend | the official `agy` CLI, through the `google-antigravity-cli` plugin | OpenClaw's prompt plus the loopback tool surface |
 
-- `runtime.type: "acp"` with `runtime.acp.agent: "opencode"`, `backend: "acpx"` and `mode: "persistent"`;
-- `model.primary` set to `opencode-go/deepseek-v4.1-flash`. For an ACP agent that field chooses the harness's model, and without it OpenClaw runs whatever the harness defaults to, which is how an agent once answered with the wrong model;
-- `acp.allowedAgents` listing only the harnesses this machine can actually run, chosen from `claude`, `codex` and `opencode`. `gemini` is never written: Google's terms do not allow its client outside Google's own applications.
-
-The `acpx` plugin goes in `plugins.allow` with `permissionMode: "approve-all"` and `nonInteractivePermissions: "deny"`. A non-interactive session has no way to click a permission prompt, so it either proceeds or denies and continues, and never hangs. `--no-sviluppo` leaves the agent out even when both prerequisites are there.
+An ACP lane is written as both halves or not at all: the `agents.entries.<id>.runtime` block and a `bindings` entry of `type: "acp"`, so an agent the key names and no binding routes a conversation to stays where it is instead of answering a direct chat with the default model, and `acp.allowedAgents` names only the harnesses this machine can really run, chosen from `claude`, `codex` and `opencode` (`gemini` is never written: Google's terms do not allow its client outside Google's applications). The `acpx` plugin goes in `plugins.allow` with `permissionMode: "approve-all"` and `nonInteractivePermissions: "deny"`, because a non-interactive session has no way to click a permission prompt and must either proceed or deny, and `agy` is never an ACP session: it is a CLI backend on Google's own client. `nexgen openclaw plan` names every case it cannot write, `nexgen openclaw doctor` prints each agent's lane, and `--no-sviluppo` leaves the OpenCode agent out even when both prerequisites are there.
 
 ## The cage around a local model
 
@@ -131,7 +135,45 @@ The check reads the conversation, which OpenClaw withholds from every non-bundle
 
 ## The jobs that run when nobody is watching
 
-Dreaming, compaction, the memory flush before a compaction and active memory all resolve their model through the agents' default model when their own key is unset. On a machine whose default is a local model, the 03:00 dreaming sweep, an automatic compaction and a recall load that model while nobody is watching, and on a machine without a graphics card that is the whole computer for minutes. The person chose a local model for a conversation, not for a sweep.
+A bot that stays on runs three kinds of work nobody types: automation jobs, the background jobs of the memory plugin, and the conversation itself. Each one is bounded here, and each one keeps a way back to the older, more expensive behaviour.
+
+### The proactive check
+
+A heartbeat is an ordinary automation job in the pinned release. `agents.defaults.heartbeat` is retired: OpenClaw's own doctor converts that key into a job and deletes it, and an explicit setup provisions one enabled **Proactive check** per ambient owner agent, every 30 minutes, in the agent's main conversation, delivering to the owner DM. That is 48 model calls a day over everything that conversation has grown to, and this squad's own agent pays 78,717 tokens to open one call (`docs/proposals/daru-burn.md`). The engine used to write `every: 0m` and its doctor read it back, which was a green line over a switch the release does not read: the job fires whatever the file says.
+
+The setup therefore converges the job itself, through the supported CLI, after the gateway is up. The default keeps the capability, the run, and its delivery, and removes what makes it expensive:
+
+| The check you want | What `nexgen openclaw setup` runs |
+| --- | --- |
+| cheap (the default) | `openclaw automations edit <id> --every 6h --session isolated --light-context --tools "" --model <utility model>` |
+| the full one | `heartbeat: mode: full` in `squad.yaml`: the job stays as OpenClaw provisioned it, and `every`/`model` are applied when the block names them |
+| none | `heartbeat: mode: off`: `openclaw automations disable <id>` |
+
+`--light-context` skips the workspace bootstrap files and is documented for isolated jobs only, which is why the session moves with it: a check left in the main conversation re-sends everything that conversation has grown to. `--tools ""` disables every agent tool for the run. The model is the utility model the same setup writes just below, so a check and a chat title cost the same cheap call instead of a turn on the primary model. Four light runs a day are a few thousand tokens against 3.8 million for 48 runs of 78,717.
+
+A check of your own is one line in `squad.yaml`, and the setup converges the job to it:
+
+```yaml
+heartbeat:
+  mode: full        # light (the default) | full | off
+  every: 6h
+  model: ollama/qwen3:8b
+```
+
+A scheduler that does not answer is never assumed converged: the line says so, and `nexgen openclaw doctor` reports it as `unknown` when nothing asked it. When something did ask, the doctor judges the job rather than its name: green only for a check that runs in its own session, without the bootstrap files and without tools, at four runs a day or fewer, and a warning that names the 78,717-token cost when it still runs over the agent's own conversation.
+
+### The calls nobody types
+
+Generated session and channel titles, progress narration, activity recaps, transcript summaries and side chat are separate model calls. Without `agents.defaults.utilityModel` every one of them is billed to the agent's primary model, which is how a five-hour window pays for a label.
+
+The setup writes that key to the cheapest model this machine has, in this order: a local model it serves, then the flat Go key's flash model, then Codex. It never proposes a Claude model, because that window is the thing being protected, and it writes nothing when the file already answers, including the empty string that switches utility routing off. A backend that is not running costs one retry on the primary model, which is OpenClaw's own rule for an exhausted utility chain, so a stopped local server slows a title down and never removes it.
+
+
+### Dreaming
+
+Upstream runs a full dreaming sweep every night at 03:00 unless somebody stops it (`plugins.entries.memory-core.config.dreaming.enabled`, default `true`, cadence `0 3 * * *`), and one sweep is a light, REM and deep phase over the recent notes and sessions. The engine writes `frequency: "0 3 * * 0"` where the file states no cadence, so the memory consolidation still happens and is paid for on one night in seven. Keeping the nightly sweep is a key of your own: `enabled: true` with upstream's cadence, or any `frequency` you write, is never overwritten. `enabled: false` is the other answer, and it removes nothing else: the memory plugin keeps working.
+
+Compaction, the memory flush before a compaction and active memory resolve their model through the agents' default model when their own key is unset. On a machine whose default is a local model, an automatic compaction and a recall load that model while nobody is watching, and on a machine without a graphics card that is the whole computer for minutes. The person chose a local model for a conversation, not for a sweep.
 
 When the default is local and an agent already runs a cloud model, the setup writes:
 
@@ -145,6 +187,21 @@ When the default is local and an agent already runs a cloud model, the setup wri
 The cloud model is the one an agent already runs, `main` first. `allowedModels` is merged as a set, so an allowlist the person wrote keeps its entries and gains this one. Nothing is written when the default is already cloud, when no agent has a cloud model, or when the person set that key: a key that is present is the person's, and an explicit `allowModelOverride: false` is read as a decision rather than as a gap. Active memory is written only when that plugin is switched on.
 
 `nexgen openclaw doctor` says in one line which job would still wake a local model.
+
+### One conversation that never rolls over
+
+OpenClaw's own session policy is `reset.mode: none`: DMs share the agent's main session and the only bound on it is compaction, which is a model call over the whole context every time it runs. A chat at a hundred thousand tokens makes every message a large prompt, and the proactive check above pays it too.
+
+A machine that answers on a channel therefore gets:
+
+```json5
+{ "session": { "reset": { "mode": "idle", "idleMinutes": 1440 } } }
+```
+
+One day of silence, then the next message starts a fresh conversation from the agent's memory files, which is where the durable half of a chat already lives. It is not abrupt: nothing is dropped while somebody is talking, and background writes (a cron wakeup, an automation job) do not renew the window, so an idle bot cannot hold a conversation open by itself. A `reset`, `resetByType` or `resetByChannel` already in the file is the person's and is never replaced. A machine with no channel gets nothing: one person talking to their own assistant is not the cost this is aimed at. `runtime.dm_scope` in `squad.yaml` splits a DM from the panel when the two should not share a conversation at all.
+
+Tool Search stays on, because it is what keeps the connector schemas out of every request: the engine never writes `tools.toolSearch`, and a legacy `tools.toolSearch: false` written by an older setup is retired on the next run. `nexgen openclaw doctor` prints both facts.
+
 
 ## The watcher, and the whole home
 
@@ -456,4 +513,4 @@ The pass runs from three places, all of them in the plugin OpenClaw already load
 
 `nexgen openclaw rpc health [--json] [--url URL]` inspects the gateway's operational state through the WebSocket `health` call, reporting uptime and the plugins it loaded without changing anything.
 
-`nexgen openclaw groom [--dry-run]` compacts the agent chats that sat idle or grew too large, capped at at most one session per run (the largest eligible one, prioritizing sessions over the hard threshold; overridable via `NEXGEN_OPENCLAW_MAX_COMPACTIONS`) to keep the single-threaded gateway responsive.
+`nexgen openclaw groom [--dry-run]` compacts the agent chats that sat idle or grew too large, capped at at most one session per run (the largest eligible one, prioritizing sessions over the hard threshold; overridable via `NEXGEN_OPENCLAW_MAX_COMPACTIONS`, and `0` switches the groom off) to keep the single-threaded gateway responsive. An idle chat is compacted only above `IDLE_MIN_TOKENS` tokens (150,000, the measured first-prompt budget): summarising a smaller one costs more than the cold cache it prevents, and the floor is what keeps an hourly bill off a bot nobody is talking to. A chat whose compaction failed does not take the run from the next one and is left alone for six hours, so one chat the gateway refuses cannot starve the queue, and a run that leaves chats waiting while compacting none of them raises one alert through the engine's alert channel. `--dry-run` previews the whole queue and says how many a real run would take. `nexgen openclaw doctor` judges the hourly job itself (`openclaw.cron.context_guard`): a job that is missing, switched off, or registered with a delivery mode instead of `--no-deliver` is a warning, because the second one makes the gateway record every run as a failed delivery.

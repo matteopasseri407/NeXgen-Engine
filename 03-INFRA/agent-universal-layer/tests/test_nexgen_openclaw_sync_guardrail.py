@@ -96,7 +96,7 @@ def test_the_permissions_phase_never_touches_openclaw_json(tmp_path):
     config_path = openclaw_config(home)
     before = config_path.read_bytes()
 
-    apply_all(home=home, engine_hooks_dir=HOOKS, posture={}, guardrail_source=body)
+    apply_all(home=home, engine_hooks_dir=HOOKS, guardrail_source=body)
 
     assert config_path.read_bytes() == before
     assert plugin_dir(home).is_dir()
@@ -344,14 +344,15 @@ def test_a_copy_with_no_deposit_anywhere_still_fails_closed(tmp_path):
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_the_build_copy_reads_the_posture_the_engine_deposited(tmp_path):
-    """Finding the sidecar but not the switches would run a stricter owner's `ask` as bypass."""
+def test_the_build_copy_reads_the_switches_the_engine_left_beside_the_deposit(tmp_path):
+    """Finding the sidecar but not the switches would run a stricter host's `ask` as bypass."""
     home = a_home(tmp_path, OPENCLAW_JSON)
     body = tmp_path / "guardrail-body.mjs"
     body.write_text(BODIES["allow.mjs"], encoding="utf-8")
-    runtime = OpenClawRuntime()
-    runtime.install_guardrail(home, body, HOOKS)
-    assert runtime.apply_posture(home, "ask")
+    OpenClawRuntime().install_guardrail(home, body, HOOKS)
+    switches = plugin_dir(home) / "nexgen.config.json"
+    switches.write_text(json.dumps({**json.loads(switches.read_text(encoding="utf-8")), "posture": "ask"}),
+                        encoding="utf-8")
 
     decision = fire(build_copy(home))["decision"]
 

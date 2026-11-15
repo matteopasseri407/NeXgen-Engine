@@ -6,8 +6,15 @@
 // job does the same thing one step earlier, because a plan at 95% still answers: the turn
 // would run, fail, and only then fall back.
 //
+// Two jobs live here, on two hooks, and they must not be confused:
+//   `before_model_resolve`  `decision`   move the turn to a plan that still has room
+//   `before_agent_reply`    `admission`  refuse a turn bound to an ACP lane whose plan is spent
+// The second exists because an ACP session is the harness running as itself: no fallback chain
+// of OpenClaw's is consulted there, so without it the one lane with the largest context per
+// turn is also the one lane with no gate at all.
+//
 // Two files, both read fresh on every turn, and this file invents neither:
-//   nexgen.config.json         the `governor` section: the line, the age limit, the chains
+//   nexgen.config.json         the `governor` section: the line, the age limit, the chains, the lanes
 //   nexgen-quota-state.json    the percentages the beat last read, per provider
 //
 // The plugin computes no percentage of its own: it compares the reading the engine wrote with
@@ -122,6 +129,45 @@ export function decision({
   return { providerOverride: target.provider, modelOverride: target.model };
 }
 
+//: The ACP lane a turn is bound to, and the one line a spent plan answers with.
+//: `governor.acp.agents` is `<agent id> -> <plan>`, written by the engine only when
+//: the squad asks for it (`acp_admission: true`): a lane the state has no reading
+//: for, a missing reading, an old one or another provider all leave the turn alone.
+export function admission({ ctx, configPath = CONFIG_PATH, statePath = STATE_PATH, now = Date.now() / 1000 } = {}) {
+  const governor = configSection(readPluginConfig(configPath), "governor");
+  const lanes = governor?.acp && typeof governor.acp.agents === "object" && !Array.isArray(governor.acp.agents)
+    ? governor.acp.agents
+    : {};
+  const agent = typeof ctx?.agentId === "string" ? ctx.agentId.trim() : "";
+  const plan = agent ? lanes[agent] : undefined;
+  if (typeof plan !== "string" || !plan) {
+    return undefined;
+  }
+  const blockAt = typeof governor.block_at === "number" ? governor.block_at : DEFAULT_BLOCK_AT;
+  const maxAge = typeof governor.state_max_age_seconds === "number" && governor.state_max_age_seconds > 0
+    ? governor.state_max_age_seconds
+    : DEFAULT_MAX_AGE_SECONDS;
+  const state = freshState(statePath, now, maxAge);
+  if (!state) {
+    return undefined;
+  }
+  const spent = state.providers[plan];
+  if (!spent || typeof spent.percent !== "number" || spent.percent < blockAt) {
+    return undefined;
+  }
+  const window = typeof spent.window === "string" && spent.window ? spent.window : "plan";
+  const percent = Math.round(spent.percent);
+  return {
+    handled: true,
+    reply: {
+      text:
+        `The ${plan} plan is at ${percent}% of its ${window} window, so this harness lane ` +
+        `(agent ${agent}) did not start. Wait for the window to reset, or send the same request ` +
+        `to an agent on another plan.`,
+    },
+  };
+}
+
 export function registerGovernor(api, { configPath = CONFIG_PATH, statePath = STATE_PATH } = {}) {
   // An OpenClaw older than its hook surface: nothing to register, nothing to break.
   if (typeof api.on !== "function") {
@@ -132,6 +178,14 @@ export function registerGovernor(api, { configPath = CONFIG_PATH, statePath = ST
       return decision({ ctx, configPath, statePath, log: api.logger });
     } catch {
       // A hook that throws is a turn nobody judged: leave the model OpenClaw resolved.
+      return undefined;
+    }
+  });
+  api.on("before_agent_reply", (_event, ctx) => {
+    try {
+      return admission({ ctx, configPath, statePath });
+    } catch {
+      // A hook that throws is a turn nobody judged: let OpenClaw answer it as usual.
       return undefined;
     }
   });

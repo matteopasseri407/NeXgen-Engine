@@ -363,7 +363,7 @@ def test_the_gateway_smoke_runs_the_cli_that_owns_the_install(tmp_path: Path, mo
     as_gateway(machine)
     fake = FakeRun(machine)
 
-    def a_smoke(*, run, out):
+    def a_smoke(*, run, out, budget_decides=True):
         run(["openclaw", "--version"], 1)
         return 0
 
@@ -376,6 +376,24 @@ def test_the_gateway_smoke_runs_the_cli_that_owns_the_install(tmp_path: Path, mo
 
     assert outcome.state == version_align.ALIGNED
     assert [str(machine.bin / "openclaw"), "--version"] in fake.calls
+
+
+def test_the_gate_does_not_let_a_token_count_roll_back_a_good_upgrade(tmp_path: Path, monkeypatch):
+    """The release verdict is the functional checks alone: a large chat is not a broken release."""
+    from nexgen_core.openclaw import smoke as smoke_module
+    from nexgen_core.openclaw_service import RunResult
+
+    asked: dict[str, bool] = {}
+
+    def a_smoke(*, run=None, out=None, budget_decides=True):
+        asked["budget_decides"] = budget_decides
+        return 0
+
+    monkeypatch.setattr(smoke_module, "run_smoke", a_smoke)
+    fire = version_align._gateway_smoke(lambda argv, env=None: RunResult(0, "", ""), {}, None)
+
+    assert fire() == 0
+    assert asked["budget_decides"] is False
 
 
 def test_a_gateway_that_does_not_come_back_puts_the_previous_release_back(tmp_path: Path):

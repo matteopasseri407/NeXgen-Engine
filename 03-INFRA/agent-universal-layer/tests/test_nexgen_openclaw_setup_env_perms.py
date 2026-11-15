@@ -5,6 +5,9 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
+from nexgen_core.i18n import set_language
 from nexgen_core.openclaw.setup_service_env import (
     extract_mounted_mcp_env_vars,
     extract_referenced_env_vars,
@@ -16,6 +19,14 @@ from nexgen_core.openclaw.setup_steps import (
     is_plugin_verified,
     plugin_step,
 )
+
+
+@pytest.fixture(autouse=True)
+def _english_step_messages():
+    """Pin the source language: the plugin step's messages are asserted below."""
+    set_language("en")
+    yield
+    set_language(None)
 
 
 def _make_dummy_setup(tmp_path: Path, platform: str = "linux") -> Setup:

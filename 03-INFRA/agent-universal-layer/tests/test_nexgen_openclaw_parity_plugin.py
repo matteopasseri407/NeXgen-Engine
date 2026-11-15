@@ -21,6 +21,26 @@ PLUGIN_SOURCE = HOOKS / "openclaw-guardrail-plugin"
 BRIEFING_TEXT = (HOOKS / "vault-briefing.txt").read_text(encoding="utf-8").strip()
 NODE = shutil.which("node")
 
+
+def hook_env(tmp_path: Path) -> dict[str, str]:
+    """The environment one checkpoint-hook run gets: an empty home and an engine that says nothing.
+
+    The hook asks the machine's engine for one line of quota. Left alone, these
+    tests would assert whatever this person's subscriptions happen to be, and a
+    real checkpoint in the real home would add a note no fixture wrote.
+    """
+    bin_dir = tmp_path / "hook-bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    (bin_dir / "nexgen.cmd").write_text("@echo off\r\n", encoding="utf-8")
+    silent = bin_dir / "nexgen"
+    silent.write_text("#!/bin/sh\n", encoding="utf-8")
+    silent.chmod(0o755)
+    home = tmp_path / "home"
+    env = {k: v for k, v in os.environ.items() if k != "AGENT_ENGINE_ROOT"}
+    env.update(HOME=str(home), USERPROFILE=str(home))
+    env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+    return env
+
 BODIES = {
     "allow.mjs": "process.stdin.resume(); process.stdin.on('end', () => process.exit(0));",
     "deny.mjs": (
@@ -234,7 +254,7 @@ console.log(JSON.stringify(await call("before_prompt_build", {prompt: "a", messa
     done = subprocess.run(
         [NODE, str(hook_dir / "claude-vault-checkpoint.mjs")],
         input=json.dumps({"hook_event_name": "SessionStart", "source": "compact"}),
-        capture_output=True, text=True, timeout=60, check=False,
+        capture_output=True, text=True, timeout=60, check=False, env=hook_env(tmp_path),
     )
     assert done.returncode == 0, done.stderr
     claude_context = json.loads(done.stdout)["hookSpecificOutput"]["additionalContext"]
@@ -252,7 +272,7 @@ def test_the_checkpoint_hook_stays_silent_on_a_fresh_start(tmp_path):
     done = subprocess.run(
         [NODE, str(hook_dir / "claude-vault-checkpoint.mjs")],
         input=json.dumps({"hook_event_name": "SessionStart", "source": "startup"}),
-        capture_output=True, text=True, timeout=60, check=False,
+        capture_output=True, text=True, timeout=60, check=False, env=hook_env(tmp_path),
     )
 
     assert done.returncode == 0 and done.stdout.strip() == ""
@@ -264,14 +284,10 @@ def test_a_checkpoint_hook_without_its_text_file_breaks_nothing(tmp_path):
     hook_dir.mkdir()
     shutil.copy2(HOOKS / "claude-vault-checkpoint.mjs", hook_dir / "claude-vault-checkpoint.mjs")
     # The hook also looks in the installed engine: a real home that carries the text would answer.
-    home = tmp_path / "home"
-    env = {k: v for k, v in os.environ.items() if k != "AGENT_ENGINE_ROOT"}
-    env.update(HOME=str(home), USERPROFILE=str(home))
-
     done = subprocess.run(
         [NODE, str(hook_dir / "claude-vault-checkpoint.mjs")],
         input=json.dumps({"hook_event_name": "SessionStart", "source": "compact"}),
-        capture_output=True, text=True, timeout=60, check=False, env=env,
+        capture_output=True, text=True, timeout=60, check=False, env=hook_env(tmp_path),
     )
 
     assert done.returncode == 0 and done.stdout.strip() == ""

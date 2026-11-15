@@ -2,7 +2,7 @@
 
 These tests run the real adapter against a temporary home: the plugin is deposited under
 `<state dir>/extensions/nexgen/`, the old `nexgen-guardrail` folder is taken back, the
-engine-owned switches (briefing, posture) land in `nexgen.config.json`, and
+engine-owned switches (briefing, checkpoint, engine) land in `nexgen.config.json`, and
 `openclaw.json` is never written. The parity control is exercised on a machine built to be
 aligned and on one built to diverge, because a check that only ever says PASS proves nothing.
 """
@@ -185,7 +185,6 @@ def test_the_permissions_phase_never_touches_openclaw_json(tmp_path):
     before = openclaw_config(home).read_bytes()
 
     deposit(home, tmp_path)
-    OpenClawRuntime().apply_posture(home, "ask")
 
     assert openclaw_config(home).read_bytes() == before
 
@@ -246,85 +245,5 @@ def test_a_corrupt_settings_file_does_not_touch_the_briefing(tmp_path):
     deposit(home, tmp_path)
 
     assert plugin_config(home)["briefing"] == {"enabled": True}
-
-
-# ----------------------------------------------------------- event sink cleanup
-
-
-def test_openclaw_cleanup_removes_legacy_event_sink_and_events_config(tmp_path):
-    home = a_home(tmp_path, OPENCLAW_JSON)
-    deposit(home, tmp_path)
-    pdir = plugin_dir(home)
-    (pdir / "nexgen-event-sink.mjs").write_text("// old sink", encoding="utf-8")
-    (pdir / "events.mjs").write_text("// old events", encoding="utf-8")
-    config_path = pdir / PLUGIN_CONFIG_NAME
-    config = json.loads(config_path.read_text(encoding="utf-8"))
-    config["events"] = {"enabled": True}
-    config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
-
-    runtime = OpenClawRuntime()
-    action = runtime.remove_event_sink(home)
-
-    assert action and "removed" in action
-    assert not (pdir / "nexgen-event-sink.mjs").exists()
-    assert not (pdir / "events.mjs").exists()
-    assert "events" not in plugin_config(home)
-    assert runtime.remove_event_sink(home) is None
-
-
-def test_openclaw_deposit_purges_obsolete_plugin_files(tmp_path):
-    home = a_home(tmp_path, OPENCLAW_JSON)
-    deposit(home, tmp_path)
-    pdir = plugin_dir(home)
-    (pdir / "events.mjs").write_text("// old events", encoding="utf-8")
-    (pdir / "nexgen-event-sink.mjs").write_text("// old sink", encoding="utf-8")
-
-    # Re-depositing must purge obsolete files
-    deposit(home, tmp_path)
-    assert not (pdir / "events.mjs").exists()
-    assert not (pdir / "nexgen-event-sink.mjs").exists()
-
-
-# -------------------------------------------------------------------- posture
-
-
-@pytest.mark.parametrize("posture", ["bypass", "accept-edits", "ask"])
-def test_each_neutral_posture_is_written_where_the_plugin_reads_it(tmp_path, posture):
-    home = a_home(tmp_path, OPENCLAW_JSON)
-    deposit(home, tmp_path)
-
-    action = OpenClawRuntime().apply_posture(home, posture)
-
-    assert action and posture in action
-    assert plugin_config(home)["posture"] == posture
-    assert OpenClawRuntime().read_posture(home) == posture
-
-
-def test_the_same_posture_twice_writes_nothing(tmp_path):
-    home = a_home(tmp_path, OPENCLAW_JSON)
-    deposit(home, tmp_path)
-    runtime = OpenClawRuntime()
-    runtime.apply_posture(home, "ask")
-
-    assert runtime.apply_posture(home, "ask") is None
-
-
-def test_a_posture_with_no_guardrail_deposited_is_nothing_to_apply(tmp_path):
-    home = a_home(tmp_path, OPENCLAW_JSON)
-
-    assert OpenClawRuntime().apply_posture(home, "bypass") is None
-    assert not (plugin_dir(home) / PLUGIN_CONFIG_NAME).exists()
-
-
-def test_an_unknown_posture_is_never_guessed(tmp_path):
-    home = a_home(tmp_path, OPENCLAW_JSON)
-    deposit(home, tmp_path)
-
-    assert OpenClawRuntime().apply_posture(home, "yolo") is None
-    assert "posture" not in plugin_config(home)
-
-
-def test_the_adapter_declares_the_three_neutral_postures(tmp_path):
-    assert set(OpenClawRuntime().rendered_postures()) == {"bypass", "accept-edits", "ask"}
 
 

@@ -112,6 +112,25 @@ console.log(JSON.stringify({{ answer: answer === undefined ? null : answer, logs
 """)
 
 
+def ask_admission(target: Path, ctx: dict | None = None) -> dict:
+    """Calls `admission` directly, which is what `before_agent_reply` runs."""
+    return fire(target, f"""
+import {{ dirname, join }} from "node:path";
+import {{ fileURLToPath }} from "node:url";
+const DIR = dirname(fileURLToPath(import.meta.url));
+const governor = await import({json.dumps((target / "governor.mjs").as_uri())});
+const answer = governor.admission({{ ctx: {json.dumps(ctx or {})},
+  configPath: join(DIR, "nexgen.config.json") }});
+console.log(JSON.stringify({{ answer: answer === undefined ? null : answer, logs }}));
+""")
+
+
+def a_lane(*, plan: str = "anthropic", agent: str = "sviluppo", block_at: float = 95) -> dict:
+    """A governor section as the engine writes it for a squad that opted into admission."""
+    return {"block_at": block_at, "state_max_age_seconds": 3 * 3600,
+            "acp": {"agents": {agent: plan}}}
+
+
 # ------------------------------------------------------------------- the wiring
 
 
@@ -312,3 +331,82 @@ console.log(JSON.stringify({{ ok: true }}));
 """)
 
     assert fired == {"ok": True}
+
+
+# ----------------------------------------------------------- the ACP admission
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_plugin_registers_the_admission_hook(tmp_path):
+    fired = fire(deployed(tmp_path), "console.log(JSON.stringify([...handlers.keys()]));\n")
+
+    assert "before_agent_reply" in fired
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_spent_plan_refuses_a_turn_on_that_harness_lane(tmp_path):
+    """The reply is one line naming the plan and the window, and no model call happens."""
+    target = deployed(tmp_path, governor=a_lane(plan="anthropic"), state=a_state(97.0, provider="anthropic"))
+
+    fired = ask_admission(target, {"agentId": "sviluppo", "sessionKey": "tg:1"})
+
+    assert fired["answer"]["handled"] is True
+    text = fired["answer"]["reply"]["text"]
+    assert "anthropic" in text and "97%" in text and "5h" in text
+    assert "\n" not in text
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_lane_under_the_line_is_left_to_the_harness(tmp_path):
+    target = deployed(tmp_path, governor=a_lane(), state=a_state(60.0, provider="anthropic"))
+
+    assert ask_admission(target, {"agentId": "sviluppo"})["answer"] is None
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_lane_exactly_on_the_line_is_refused(tmp_path):
+    target = deployed(tmp_path, governor=a_lane(block_at=95), state=a_state(95.0, provider="anthropic"))
+
+    assert ask_admission(target, {"agentId": "sviluppo"})["answer"]["handled"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_an_agent_on_no_harness_lane_is_never_refused(tmp_path):
+    """The branch is for bound ACP conversations only: a provider or CLI turn keeps its fallback chain."""
+    target = deployed(tmp_path, governor=a_lane(), state=a_state(99.0, provider="anthropic"))
+
+    assert ask_admission(target, {"agentId": "main"})["answer"] is None
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_lane_whose_plan_has_no_reading_is_left_alone(tmp_path):
+    target = deployed(tmp_path, governor=a_lane(plan="openai"), state=a_state(99.0, provider="anthropic"))
+
+    assert ask_admission(target, {"agentId": "sviluppo"})["answer"] is None
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_reading_older_than_the_policy_allows_does_not_refuse_a_lane(tmp_path):
+    target = deployed(tmp_path, governor=a_lane(), state=a_state(99.0, age=4 * 3600, provider="anthropic"))
+
+    assert ask_admission(target, {"agentId": "sviluppo"})["answer"] is None
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_fallback_policy_alone_refuses_nothing(tmp_path):
+    """Without `governor.acp` the plugin has no lane to judge, whatever the chains say."""
+    target = deployed(tmp_path, governor=a_governor("anthropic/claude-opus-5-5"),
+                      state=a_state(99.0, provider="anthropic"))
+
+    assert ask_admission(target, {"agentId": "sviluppo"})["answer"] is None
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_refused_turn_is_answered_with_the_harness_lane_named(tmp_path):
+    target = deployed(tmp_path, governor=a_lane(plan="opencode-go", agent="sviluppo"),
+                      state=a_state(99.0, provider="opencode-go"))
+
+    text = ask_admission(target, {"agentId": "sviluppo"})["answer"]["reply"]["text"]
+
+    assert text.startswith("The opencode-go plan is at 99% of its 5h window")
+    assert "agent sviluppo" in text

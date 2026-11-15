@@ -11,6 +11,27 @@ it stays alive and small until the person clears it by hand.
 An attempt is remembered (`groom_memory`) so a session that cannot get smaller
 is not retried every hour, and a backend that cannot confirm a native
 compaction is never asked: both are what issue #148 was.
+
+The idle rule is a cache argument, and a cache argument has a floor: below
+`IDLE_MIN_TOKENS` the compaction costs more than the cold cache it prevents, so a
+chat that sat quiet for an hour is only compacted when it is actually large. That
+floor is what stops an hourly model bill for a bot nobody is talking to.
+
+Which model pays for the summary is not this module's to choose: OpenClaw runs
+compaction on `agents.defaults.compaction.model` when it is set (the key `squad`
+writes through `runtime.compaction_model`, and `background` writes when the
+default is local) and on the session's own model otherwise. `openclaw sessions
+compact` takes a key, an agent, `--max-lines` and a timeout, and no model: the
+pinned 2026.11.2 answers `--help` with exactly those options, so the cheapest
+configured model is chosen where the key is written, not here.
+
+The cap buys responsiveness from the gateway, not fairness: the queue is walked
+past a chat whose attempt failed, so one chat the gateway refuses cannot starve
+every other, and a failure that is not about quota waits `FAILED_BACKOFF_MS`
+before it is asked again. A run that leaves chats waiting and compacts none of
+them raises one alert, because the hourly job runs with `--no-deliver` and its
+output otherwise reaches nobody; only the command hands in that channel, so
+nothing else alerts on the policy's behalf.
 """
 from __future__ import annotations
 
@@ -19,13 +40,25 @@ import os
 import re
 import subprocess
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexgen_core.i18n import t
 from nexgen_core.openclaw import agy_compaction, groom_memory
+from nexgen_core.openclaw.context_budget import FIRST_PROMPT_BUDGET
+from nexgen_core.openclaw.groom_lines import (
+    Decision,
+    GroomReport,
+    Outcome,
+    alert_stalled,
+    leftover_message,
+    line,
+    preview_lines,
+)
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
+
+if TYPE_CHECKING:
+    from nexgen_core.megaphone import Megaphone
 
 #: Compacting more than one session per run holds the single-threaded gateway and stalls chat requests.
 MAX_COMPACTIONS_PER_RUN = 1
@@ -34,8 +67,17 @@ MAX_COMPACTIONS_ENV_VAR = "NEXGEN_OPENCLAW_MAX_COMPACTIONS"
 
 #: A context this large is compacted even while the chat is in use.
 HARD_TOKENS = 600_000
-#: A chat untouched for this long is compacted, whatever its size.
+#: A chat untouched for this long is compacted, if it holds at least `IDLE_MIN_TOKENS`.
 IDLE_SECONDS = 60 * 60
+#: A chat smaller than this is left alone however long it sits idle.
+#:
+#: An idle compaction buys back the cold cache a chat would pay on its next message, and
+#: it pays for that with a model turn over the whole conversation. Below the size of a
+#: session's own first prompt (`FIRST_PROMPT_BUDGET`, measured between 77,840 and 945,389
+#: on this engine) there is nothing worth buying back: the summary would cost more than
+#: the cache it saves. Without the floor the hourly groom sums a summary per idle chat
+#: into a bill nobody asked for, which is the churn `openclaw-quota-burn` measured.
+IDLE_MIN_TOKENS = FIRST_PROMPT_BUDGET
 #: Session keys that belong to a run rather than to the person.
 SKIP_PARTS = (":subagent:", ":cron:", ":acp:", ":harness:")
 BUSY_STATES = {"running", "active", "starting"}
@@ -47,8 +89,6 @@ UNCONFIRMABLE_RUNTIMES = frozenset({"google-antigravity-cli"})
 #: codex: OpenClaw refuses the manual compact while the agent has a tools deny list ("host-isolated"), and answers
 #: ok with compacted=false; the memory then stops the retries until the chat is written to again.
 HARNESS_RUNTIMES = frozenset({"claude-cli", "codex", "google-antigravity-cli"})
-#: A session only looked at, because a dry run changes nothing.
-DRY_RUN = "dry-run"
 #: The reason a session is picked for size rather than for being idle.
 OVER_LIMIT = "over the limit"
 #: The renewal the provider states when a quota is spent; asking before it only earns another rejection.
@@ -60,37 +100,11 @@ _SPENT_QUOTA = re.compile(
 )
 #: How long to leave a spent quota alone when the provider does not say when it renews.
 UNDATED_QUOTA_WAIT_MS = 6 * 60 * 60 * 1000
-
-
-@dataclass(frozen=True)
-class Decision:
-    """One session the groomer wants to compact, and why, as it looked when it was picked."""
-
-    key: str
-    agent_id: str
-    tokens: int
-    idle_seconds: float
-    reason: str
-    runtime: str
-    fingerprint: dict[str, float]
-    provider: str = ""
-    tokens_fresh: bool = True
-
-
-@dataclass(frozen=True)
-class Outcome:
-    """What one compaction attempt really ended as, and the line a person reads."""
-
-    state: str
-    line: str
-
-
-@dataclass(frozen=True)
-class GroomReport:
-    """What a run did: the lines it emitted, and how many attempts really failed."""
-
-    lines: list[str]
-    failed: int
+#: How long a chat whose attempt failed for another reason is left alone.
+#:
+#: Six hours, the same window as an undated quota: asking again the next hour is what
+#: let one chat the gateway refuses eat a whole run, run after run.
+FAILED_BACKOFF_MS = 6 * 60 * 60 * 1000
 
 
 def _idle_seconds(entry: Mapping[str, Any], now_ms: float) -> float:
@@ -121,12 +135,15 @@ def _policy_decisions(entries: Iterable[Mapping[str, Any]], now_ms: float) -> li
         # plain chat in use: after a compaction it reports the summariser's own
         # usage. A harness is the exception: its native compact is the only way
         # down. Being idle needs no counter at all, so it applies to every chat.
-        stale = entry.get("totalTokensFresh") is False
+        freshness = entry.get("totalTokensFresh")
+        stale = freshness is False
         over_limit = tokens >= HARD_TOKENS and (not stale or _runtime_id(entry) in HARNESS_RUNTIMES)
         idle = _idle_seconds(entry, now_ms)
         if over_limit:
             reason = OVER_LIMIT
-        elif idle >= IDLE_SECONDS:
+        elif idle >= IDLE_SECONDS and (stale or tokens >= IDLE_MIN_TOKENS):
+            # A measured chat under `IDLE_MIN_TOKENS` costs less to leave alone than to
+            # summarise; a counter nobody marked fresh cannot claim anything about size.
             reason = "idle"
         else:
             continue
@@ -140,6 +157,9 @@ def _policy_decisions(entries: Iterable[Mapping[str, Any]], now_ms: float) -> li
             fingerprint=groom_memory.fingerprint(entry),
             provider=str(entry.get("modelProvider") or ""),
             tokens_fresh=not stale,
+            # An absent field is not a fresh counter: it is the gateway not saying, and
+            # the line then prints the number as a last known one instead of as a fact.
+            tokens_known=isinstance(freshness, bool),
         ))
     return decisions
 
@@ -290,12 +310,6 @@ def _state_dir(home: Path | None) -> Path | None:
         return None
 
 
-def _line(decision: Decision, outcome: str) -> str:
-    minutes = int(decision.idle_seconds // 60)
-    size = f"{decision.tokens} tokens" if decision.tokens_fresh else f"last known {decision.tokens} tokens, counter stale"
-    return f"{decision.key}: {size}, idle {minutes}m ({decision.reason}) -> {outcome}"
-
-
 def _sessions_after(binary: str, attempts: list[tuple[Decision, Outcome]]) -> dict[str, Mapping[str, Any]]:
     """The attempted sessions as they look now; empty when there were none or the gateway cannot say."""
     if not attempts:
@@ -336,19 +350,30 @@ def _remember_run(
     for decision, outcome in attempts:
         current = after.get(decision.key)
         mark = groom_memory.fingerprint(current) if current else decision.fingerprint
+        renews = _quota_renews_at(outcome, now_ms)
+        provider = decision.provider
+        if renews is None and outcome.state == groom_memory.FAILED:
+            # A failure that says nothing about quota is not asked again next hour: one
+            # chat the gateway refuses would otherwise eat every run. The wait is per
+            # chat, not per provider, so a broken chat does not hold its siblings back.
+            renews, provider = now_ms + FAILED_BACKOFF_MS, ""
         groom_memory.remember(
-            memory, decision.key, mark, outcome.state,
-            retry_at=_quota_renews_at(outcome, now_ms), provider=decision.provider,
+            memory, decision.key, mark, outcome.state, retry_at=renews, provider=provider,
         )
     if entries:
         groom_memory.prune(memory, (entry.get("key") for entry in entries if entry.get("key")))
 
 
 def get_max_compactions(env: Mapping[str, str] | None = None) -> int:
-    """The compaction cap in force: environment variable when set and valid, default otherwise."""
+    """The compaction cap in force: environment variable when set and valid, default otherwise.
+
+    Zero is a value, not a mistake: `NEXGEN_OPENCLAW_MAX_COMPACTIONS=0` switches the
+    groom off, which is how a person stops an hourly compaction bill without editing the
+    cron job. Anything that is not a count falls back to the default.
+    """
     source = env if env is not None else os.environ
     raw = source.get(MAX_COMPACTIONS_ENV_VAR, "").strip()
-    if raw.isdigit() and int(raw) > 0:
+    if raw.isdigit():
         return int(raw)
     return MAX_COMPACTIONS_PER_RUN
 
@@ -359,6 +384,73 @@ def _groom_priority(decision: Decision) -> tuple[int, int]:
     return (is_hard, decision.tokens)
 
 
+def _compact_queue(
+    binary: str,
+    planned: list[Decision],
+    limit: int,
+    moment: float,
+    emit: Callable[[str], None],
+) -> tuple[list[str], list[tuple[Decision, Outcome]], list[Decision]]:
+    """Walk the planned queue, and say what was attempted and what waits.
+
+    The cap is spent on outcomes, not on attempts: a chat whose attempt failed does
+    not take the turn away from the next one, so a chat the gateway refuses every
+    hour cannot starve the others. Failures are still bounded to one over the cap,
+    so a gateway refusing everything cannot hold the hourly job for the whole queue
+    either. A chat whose provider has just spent a quota in this run waits for the
+    next run instead of being asked and refused again.
+    """
+    lines: list[str] = []
+    attempts: list[tuple[Decision, Outcome]] = []
+    deferred: list[Decision] = []
+    spent: set[str] = set()
+    settled = failures = 0
+    for decision in planned:
+        if settled >= limit or failures > limit or decision.provider in spent:
+            deferred.append(decision)
+            continue
+        outcome = compact(binary, decision)
+        if decision.provider and _quota_renews_at(outcome, moment) is not None:
+            spent.add(decision.provider)
+        attempts.append((decision, outcome))
+        lines.append(line(decision, outcome.line))
+        # One line as each attempt ends: a compaction can take minutes.
+        emit(lines[-1])
+        if outcome.state == groom_memory.FAILED:
+            failures += 1
+        else:
+            settled += 1
+    return lines, attempts, deferred
+
+
+def _preview(
+    entries: list[dict[str, Any]],
+    planned: list[Decision],
+    limit: int,
+    moment: float,
+    blocked: frozenset[str],
+    emit: Callable[[str], None],
+) -> list[str]:
+    """The whole queue a run would pick from, preceded by the backends it cannot ask."""
+    lines: list[str] = []
+    for decision in unconfirmable(entries, moment, blocked):
+        lines.append(line(decision, t("skipped: the {runtime} backend cannot confirm a native compaction",
+                                      runtime=decision.runtime)))
+        emit(lines[-1])
+    lines.extend(preview_lines(planned, limit, emit))
+    return lines
+
+
+def _switched_off_lines(planned: list[Decision], emit: Callable[[str], None]) -> list[str]:
+    """What a run says when `NEXGEN_OPENCLAW_MAX_COMPACTIONS=0` switched it off."""
+    if not planned:
+        return []
+    note = t("Grooming is switched off ({variable}=0): {count} chats were left alone.",
+             variable=MAX_COMPACTIONS_ENV_VAR, count=len(planned))
+    emit(note)
+    return [note]
+
+
 def groom(
     openclaw: str | None = None,
     now_ms: float | None = None,
@@ -367,11 +459,14 @@ def groom(
     clock: Callable[[], float] | None = None,
     home: Path | None = None,
     env: Mapping[str, str] | None = None,
+    phone: Megaphone | None = None,
 ) -> GroomReport:
     """Compact what the policy says, and report one line per session touched.
 
     A dry run says what it would do and remembers nothing, so being curious
-    never changes what the next real run picks.
+    never changes what the next real run picks. `phone` is the alert channel a
+    stalled queue is raised through: the command hands one in, and a caller that
+    drives the policy alone gets silence rather than an alert nobody asked for.
     """
     import time as _time
 
@@ -380,41 +475,24 @@ def groom(
     entries = list_sessions(binary)
     memory = groom_memory.load_memory(home)
     blocked = blocked_runtimes(_state_dir(home))
-    lines: list[str] = []
-    if dry_run:
-        for decision in unconfirmable(entries, moment, blocked):
-            lines.append(_line(decision, t("skipped: the {runtime} backend cannot confirm a native compaction",
-                                           runtime=decision.runtime)))
-            emit(lines[-1])
-    attempts: list[tuple[Decision, Outcome]] = []
-    spent: set[str] = set()
-    planned = plan_groom(entries, moment, memory=memory, blocked=blocked)
-    sorted_decisions = sorted(planned, key=_groom_priority, reverse=True)
+    planned = sorted(
+        plan_groom(entries, moment, memory=memory, blocked=blocked),
+        key=_groom_priority, reverse=True,
+    )
     limit = get_max_compactions(env)
-    to_compact = sorted_decisions[:limit]
-    leftover = sorted_decisions[limit:]
-    for decision in to_compact:
-        if decision.provider in spent:
-            continue
-        outcome = Outcome(DRY_RUN, DRY_RUN) if dry_run else compact(binary, decision)
-        if decision.provider and _quota_renews_at(outcome, moment) is not None:
-            spent.add(decision.provider)
-        attempts.append((decision, outcome))
-        lines.append(_line(decision, outcome.line))
-        # One line as each attempt ends: a compaction can take minutes.
-        emit(lines[-1])
-    if leftover:
-        count = len(leftover)
-        msg = (
-            t("1 eligible session left for later")
-            if count == 1
-            else t("{count} eligible sessions left for later", count=count)
-        )
+    if dry_run:
+        return GroomReport(lines=_preview(entries, planned, limit, moment, blocked, emit), failed=0)
+    if limit <= 0:
+        return GroomReport(lines=_switched_off_lines(planned, emit), failed=0)
+    lines, attempts, deferred = _compact_queue(binary, planned, limit, moment, emit)
+    if deferred:
+        msg = leftover_message(len(deferred))
         lines.append(msg)
         emit(msg)
-    if not dry_run:
-        before = dict(memory)
-        _remember_run(memory, entries, attempts, _sessions_after(binary, attempts), moment)
-        if memory != before:
-            groom_memory.save_memory(memory, home)
+        if phone is not None and not any(outcome.state != groom_memory.FAILED for _, outcome in attempts):
+            alert_stalled(len(deferred), phone)
+    before = dict(memory)
+    _remember_run(memory, entries, attempts, _sessions_after(binary, attempts), moment)
+    if memory != before:
+        groom_memory.save_memory(memory, home)
     return GroomReport(lines=lines, failed=sum(1 for _, o in attempts if o.state == groom_memory.FAILED))
