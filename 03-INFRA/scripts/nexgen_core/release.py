@@ -205,6 +205,29 @@ def bump_version_files(repo_path: Path, new_version: str, notes: str = "") -> li
 PRIVATE_MARKER = "NEXGEN" "-PRIVATE-" "MAINTAINER-TOOL"
 
 
+def _parity_problem(repo: Path) -> str | None:
+    """Why the OpenClaw parity record does not speak for this release, or None.
+
+    The owner's rule is not negotiable: an agent that runs a harness inside OpenClaw
+    has to cost per call what the same harness costs run directly, plus a light
+    overhead. `nexgen openclaw parity` measures it on the gateway -- the only machine
+    that has both the gateway and the harnesses -- and keeps the record in the Vault,
+    which is why one preflight cannot produce it and refuses without it.
+    """
+    from nexgen_core.openclaw import parity_gate
+    from nexgen_core.paths import resolve_vault_data
+
+    def part_of_this_release(commit: str) -> bool:
+        """Whether this commit is the one being released, or comes before it."""
+        relation = subprocess.run(
+            ["git", "-C", str(repo), "merge-base", "--is-ancestor", commit, "HEAD"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=30,
+        )
+        return relation.returncode == 0
+
+    return parity_gate.release_refusal(vault=resolve_vault_data(), is_ancestor=part_of_this_release)
+
+
 def _preflight() -> int:
     """The checks a maintainer would otherwise have to remember.
 
@@ -282,6 +305,14 @@ def _preflight() -> int:
         problems.append("the lint gate does not pass; fix the findings rather than regenerating it")
     else:
         checked.append("lint gate passes")
+
+    # Last, because it is the one check that cannot be satisfied from this machine:
+    # the measurement runs on the gateway and its record arrives through the Vault.
+    parity_problem = _parity_problem(repo)
+    if parity_problem:
+        problems.append(f"the OpenClaw parity record does not cover this release: {parity_problem}")
+    else:
+        checked.append("a passing OpenClaw parity record covers this release")
 
     for line in checked:
         print(f"  ok   {line}")

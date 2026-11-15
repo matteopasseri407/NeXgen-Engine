@@ -46,6 +46,7 @@ from nexgen_core.openclaw import (
     node_approvals,
     node_checks,
     observation,
+    parity_gate,
     prompt_budget,
     second_service,
 )
@@ -324,6 +325,9 @@ def _config_outcomes(
             canonical_instructions(resolve_vault_data(home_dir, vault_data)),
             automations_reader,
         ))
+        # Evidence about this gateway's own turns, so a node, which runs none, is not asked.
+        outcomes.append(parity_gate.check(vault=resolve_vault_data(home_dir, vault_data),
+                                          home=home_dir, openclaw_version=snapshot.openclaw.version or ""))
     outcomes.extend(filter(None, [
         *node_checks.check_nodes(config, _probe(home_dir, connect), node_lister),
         node_checks.check_browser_attach(config),

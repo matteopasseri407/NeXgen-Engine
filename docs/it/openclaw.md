@@ -83,6 +83,27 @@ La risposta viene messa in cache per dieci minuti nella cartella di stato della 
 
 `nexgen openclaw doctor` aggiunge una riga dalla stessa cache, che dice quanto è costato ieri per agente. Non è mai rossa: una bolletta non dice niente sulla salute della macchina, e il `nexgen doctor` schedulato non la chiede, perché una schedulazione non ha da avviare un binario di terzi.
 
+## Quanto costa una harness dentro OpenClaw
+
+Un agente che esegue una harness attraverso OpenClaw deve costare, per singola chiamata al modello, quanto costa la stessa harness eseguita direttamente, più un overhead leggero di OpenClaw. Il proprietario ha fissato la tolleranza a 10.000 token di input per chiamata, e nessuna release parte finché la cosa non è stata misurata e superata. `nexgen openclaw parity [--lane LANE] [--json] [--dry-run]` è la misura.
+
+Legge `openclaw.json` con lo stesso risolutore di corsie che usa il doctor, quindi le corsie che conosce sono esattamente quelle che il file esegue davvero: `google-antigravity-cli` (`agy`), `claude-cli` e `codex-cli`. Le corsie provider non eseguono nessuna harness, e la loro riga dice "non applicabile", come quella di una corsia su cui non gira nessun agente configurato. Nemmeno una sessione ACP viene misurata, perché esegue la harness come se stessa sul proprio prompt invece di aggiungere un secondo prompt alla chiamata della harness.
+
+Si misura un agente per corsia, il primo che il file elenca, e costa due chiamate al modello: per questo niente lancia questa misura da una schedulazione. Il messaggio di prova è lo stesso dai due lati ed è corto apposta (`Rispondi solo con la parola OK.`), il comando nativo gira nella cartella di quell'agente, e il lato OpenClaw chiede una `--session-key` nuova così una chat ripresa non può far sembrare migliore nessuno dei due numeri:
+
+```sh
+agy -p "Rispondi solo con la parola OK." --output-format json --model gemini-3.8-flash
+claude -p "Rispondi solo con la parola OK." --output-format json --model claude-opus-5-5
+codex exec --json --model gpt-5-2-codex "Rispondi solo con la parola OK."
+openclaw agent --agent main --session-key parity-google-antigravity-cli-<epoch> --message "..." --json
+```
+
+Quello che si confronta è l'input **totale** di quella singola chiamata: `input` più la lettura della cache e la scrittura della cache, dai due lati, così un prompt caldo non può passare per uno economico. L'usage in forma Anthropic (Claude e `agy`) tiene la cache fuori da `input_tokens`, quindi si somma; Codex stampa la forma OpenAI, dove `cached_input_tokens` è un sottoinsieme di `input_tokens`, e sommarlo di nuovo darebbe un numero che non è una bolletta. L'overhead è `openclaw - native`, e una corsia passa fino a `PARITY_OVERHEAD_TOKENS` (10.000). La corsia `agy` misurata il 2026-11-15 è stata 18.307 in diretta contro 25.417 attraverso OpenClaw: 7.110 di overhead su OpenClaw 2026.11.2 e `agy` 1.5.9.
+
+Il record è `99-INDEX/OPENCLAW-PARITY.json` nel Vault: il commit del motore, le versioni di OpenClaw e delle harness, quando è stato misurato, e una riga per corsia con i due totali, l'overhead e il verdetto. Viene scritto dove gira la misura e pubblicato da una macchina che può pubblicare il Vault. Il gateway su un server non è quella macchina: il ruolo server legge il Vault, e la vault-library scrive solo note Markdown, quindi un record JSON non passa da quella strada. Lì il comando tiene il record nella cartella di stato della macchina e ne stampa il percorso, e il file viene copiato nel Vault dalla macchina che lo possiede, la stessa regola che `nexgen update` segue per il pin del motore. `--dry-run` stampa i due comandi per corsia e non spende niente.
+
+`nexgen openclaw doctor` lo riporta come `openclaw.parity.tokens`, solo sul gateway: verde con l'età del record e il peggior overhead misurato, un avviso quando il record non c'è, ha più di sette giorni o è stato misurato su un'altra versione di OpenClaw, e rosso quando una corsia è fallita. `release.py preflight`, che `nexgen release ship` esegue da solo, rifiuta una release quando nel Vault il record non c'è, una corsia è fallita, il record ha più di sette giorni, o nomina un commit del motore che non fa parte della release che si sta taggando.
+
 ## Cosa può fare la chat
 
 Il plugin trasforma i verbi del motore in comandi e strumenti, e ogni risposta è il testo che il motore ha già prodotto. Telefono e terminale quindi non possono contraddirsi.
@@ -527,6 +548,8 @@ Il passaggio parte da tre punti, tutti nel plugin che OpenClaw carica già: `/ad
 `nexgen openclaw package [--json]` costruisce il tarball npm del plugin nella cartella di stato del motore e stampa il file e il suo sha256, la coppia con cui si verifica un'installazione su un altro gateway. Non installa nulla e non scrive altro; `--json` riporta lo stesso percorso e lo stesso hash con i file dentro.
 
 `nexgen openclaw cost [--json] [--since DATA]` stampa quanto ha speso il bot, per giorno, per sessione e per agente, tramite il binario opzionale [ccusage](https://github.com/ccusage/ccusage) (MIT): le viste daily e session delle trascrizioni di OpenClaw, in cache per dieci minuti, con ogni sessione attribuita alla cartella dell'agente che possiede il suo file e contata intera nel giorno in cui è stata attiva l'ultima volta. Non scrive nulla, stampa una riga invece di un numero quando il binario manca o la forma del suo output non viene capita, e `--json` riporta la stessa lettura come numeri.
+
+`nexgen openclaw parity [--lane LANE] [--json] [--dry-run]` misura quanto costa una harness dentro OpenClaw rispetto a quanto costa eseguita direttamente: un agente per corsia CLI, lo stesso messaggio corto dai due lati, l'input totale dell'unica chiamata al modello e la differenza giudicata contro la tolleranza di 10.000 token del proprietario. Tiene `99-INDEX/OPENCLAW-PARITY.json` nel Vault, oppure nella cartella di stato con il percorso stampato quando questa macchina non può pubblicare lì, e `--dry-run` stampa i comandi e non spende niente. La sezione sopra dice cosa misura e quali corsie non misura.
 
 `nexgen openclaw restart` e `nexgen openclaw pair` riportano su il gateway e lasciano entrare un telefono, o un'altra macchina; sono descritti sopra, con il resto dell'installazione. `nexgen openclaw stop` lo spegne e aspetta che la porta sia libera, che è ciò che serve a una modifica a mano di `openclaw.json`.
 

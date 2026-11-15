@@ -83,6 +83,27 @@ The answer is cached for ten minutes in the machine-local state directory and th
 
 `nexgen openclaw doctor` adds one line from the same cache, saying what yesterday cost per agent. It is never red: a bill says nothing about whether the machine works, and the scheduled `nexgen doctor` does not ask, because a schedule has no business starting a third-party binary.
 
+## What a harness costs inside OpenClaw
+
+An agent that runs a harness through OpenClaw has to cost, per model call, what the same harness costs when it is run directly, plus a light OpenClaw overhead. The owner set that tolerance at 10,000 input tokens per call, and no release ships until it has been measured and passed. `nexgen openclaw parity [--lane LANE] [--json] [--dry-run]` is the measurement.
+
+It reads `openclaw.json` through the same lane resolver the doctor uses, which means the lanes it knows are exactly the ones the file really runs: `google-antigravity-cli` (`agy`), `claude-cli` and `codex-cli`. Provider lanes run no harness, so their row says "not applicable", and so does a lane no configured agent uses; an ACP session is not measured either, because it runs the harness as itself on its own prompt rather than adding a second prompt to the harness's call.
+
+One agent per lane is measured -- the first the file lists -- and it costs two model calls, which is why nothing runs this on a schedule. The probe message is the same on both sides and short on purpose (`Rispondi solo con la parola OK.`), the native command runs in that agent's own workspace, and the OpenClaw side asks for a fresh `--session-key` so a resumed chat cannot make either number look better:
+
+```sh
+agy -p "Rispondi solo con la parola OK." --output-format json --model gemini-3.8-flash
+claude -p "Rispondi solo con la parola OK." --output-format json --model claude-opus-5-5
+codex exec --json --model gpt-5-2-codex "Rispondi solo con la parola OK."
+openclaw agent --agent main --session-key parity-google-antigravity-cli-<epoch> --message "..." --json
+```
+
+What is compared is the **total** input of that one call: `input` plus the cache read and the cache write, on both sides, so a warm prompt cannot pass for a cheap one. Anthropic-shaped usage (Claude, and `agy`) keeps the cache out of `input_tokens`, so both are added; Codex prints OpenAI's shape, where `cached_input_tokens` is a subset of `input_tokens`, and adding it again would report a number that is not a bill. The overhead is `openclaw - native`, and a lane passes up to `PARITY_OVERHEAD_TOKENS` (10,000). The measured `agy` lane on 2026-11-15 was 18,307 natively against 25,417 through OpenClaw: 7,110 of overhead on OpenClaw 2026.11.2 and `agy` 1.5.9.
+
+The record is `99-INDEX/OPENCLAW-PARITY.json` in the Vault: the engine commit, the OpenClaw and harness versions, when it was measured, and one row per lane with the two totals, the overhead and the verdict. It is written where the measurement runs and published from a machine that may publish the Vault. The gateway on a server is not that machine: the server role reads the Vault, and the vault-library writes Markdown notes only, so a JSON record cannot travel that road. There the command keeps the record in the machine's state directory and prints the path, and the file is copied into the Vault from the machine that owns it -- the same rule `nexgen update` follows for the engine pin. `--dry-run` prints the two commands per lane and spends nothing.
+
+`nexgen openclaw doctor` reports it as `openclaw.parity.tokens` on the gateway only: green with the age of the record and the worst overhead it measured, a warning when there is no record, it is older than seven days, or it was measured on another OpenClaw version, and red when a lane failed. `release.py preflight` -- which `nexgen release ship` runs itself -- refuses a release when the Vault has no record, a lane failed, the record is older than seven days, or it names an engine commit that is not part of the release being tagged.
+
 ## What the chat can do
 
 The plugin turns the engine's own verbs into commands and tools, and every answer is text the engine already rendered. The phone and the terminal therefore cannot disagree.
@@ -527,6 +548,8 @@ The pass runs from three places, all of them in the plugin OpenClaw already load
 `nexgen openclaw package [--json]` builds the plugin's npm tarball in the engine's state folder and prints the file and its sha256, the pair an install on another gateway is checked against. It installs nothing and writes nothing else; `--json` reports the same path and hash with the files inside.
 
 `nexgen openclaw cost [--json] [--since DATE]` prints what the bot spent, per day, per session and per agent, through the optional [ccusage](https://github.com/ccusage/ccusage) binary (MIT): the daily and session views of OpenClaw's own transcripts, cached for ten minutes, with each session attributed to the agent folder that owns its file and counted whole on the day it was last active. It writes nothing, prints one line instead of a number when the binary is missing or its output shape is not understood, and `--json` reports the same reading as numbers.
+
+`nexgen openclaw parity [--lane LANE] [--json] [--dry-run]` measures what a harness costs inside OpenClaw against what it costs run directly: one agent per CLI-backend lane, the same short message on both sides, the total input of the one model call, and the difference judged against the owner's 10,000-token tolerance. It keeps `99-INDEX/OPENCLAW-PARITY.json` in the Vault, or in the state directory with the path printed when this machine may not publish there, and `--dry-run` prints the commands and spends nothing. The section above says what it measures and which lanes it does not.
 
 `nexgen openclaw restart` and `nexgen openclaw pair` bring the gateway back and let a phone, or another machine, in; they are described above, with the rest of the installation. `nexgen openclaw stop` takes it down and waits until the port is free, which is what a hand edit of `openclaw.json` needs.
 

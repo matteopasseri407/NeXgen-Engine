@@ -3403,4 +3403,89 @@ MESSAGES: dict[str, str] = {
         "Configurazione Claude lasciata al plugin",
     "Skill '{name}': the Claude view moved into the plugin":
         "Skill '{name}': la vista di Claude è passata nel plugin",
+
+    # --- openclaw/parity.py e parity_probe.py: quanto costa una harness dentro OpenClaw ---
+    "The {lane} command is not installed here.":
+        "Il comando {lane} non è installato qui.",
+    "The {lane} command did not answer within {seconds} seconds.":
+        "Il comando {lane} non ha risposto entro {seconds} secondi.",
+    "The folder {folder} this agent works in does not exist.":
+        "La cartella {folder} in cui lavora questo agente non esiste.",
+    "The {lane} command exited with code {code}: {detail}":
+        "Il comando {lane} è uscito con codice {code}: {detail}",
+    "The {lane} answer was not understood ({detail}).":
+        "Non ho capito la risposta di {lane} ({detail}).",
+    "The agent declares no model, so the two sides cannot be compared.":
+        "L'agente non dichiara un modello, quindi le due parti non si possono confrontare.",
+    "OpenClaw adds {overhead:,} input tokens to this call, over the {limit:,} the owner allows.":
+        "OpenClaw aggiunge {overhead:,} token di input a questa chiamata, oltre i {limit:,} che il proprietario concede.",
+    "No configured agent runs on this lane.":
+        "Nessun agente configurato gira su questa corsia.",
+    "This machine reads the Vault and must not publish it ({reason}), and the vault-library writes "
+    "Markdown notes only, so the record stays here: copy {path} to {target} from the machine that "
+    "owns the Vault, and release from there.":
+        "Questa macchina legge il Vault e non deve pubblicarlo ({reason}), e la vault-library scrive "
+        "solo note Markdown, quindi il record resta qui: copia {path} in {target} dalla macchina che "
+        "possiede il Vault, e rilascia da lì.",
+    "The record could not be written to {target} ({error}); it is in {path}.":
+        "Non ho potuto scrivere il record in {target} ({error}); è in {path}.",
+    "No OpenClaw token parity record this machine can read: nothing proves a harness inside "
+    "OpenClaw costs what it costs run directly.":
+        "Nessun record di parità dei token di OpenClaw leggibile da questa macchina: niente dimostra che "
+        "una harness dentro OpenClaw costi quanto costa eseguita direttamente.",
+    "Run 'nexgen openclaw parity' on the gateway: it measures each lane and keeps the record.":
+        "Lancia 'nexgen openclaw parity' sul gateway: misura ogni corsia e tiene il record.",
+    "OpenClaw's overhead is over the {limit:,} input tokens the owner allows on {lanes}.":
+        "L'overhead di OpenClaw supera i {limit:,} token di input concessi dal proprietario su {lanes}.",
+    "Run 'nexgen openclaw parity' on the gateway after fixing the lane: no release ships "
+    "on this record.":
+        "Lancia 'nexgen openclaw parity' sul gateway dopo aver sistemato la corsia: nessuna release "
+        "parte con questo record.",
+    "Run 'nexgen openclaw parity' on the gateway: the record has to describe the release "
+    "that is shipping.":
+        "Lancia 'nexgen openclaw parity' sul gateway: il record deve descrivere la release che sta partendo.",
+    "The OpenClaw token parity record was measured on OpenClaw {recorded}, and this machine "
+    "runs {installed}.":
+        "Il record di parità dei token è stato misurato su OpenClaw {recorded}, e questa macchina "
+        "esegue {installed}.",
+    "Run 'nexgen openclaw parity' on the gateway: a new OpenClaw is a new prompt to measure.":
+        "Lancia 'nexgen openclaw parity' sul gateway: un nuovo OpenClaw è un nuovo prompt da misurare.",
+    "OpenClaw token parity {age}: {worst}.":
+        "Parità dei token di OpenClaw {age}: {worst}.",
+    "The OpenClaw token parity record carries no date this machine can read.":
+        "Il record di parità dei token non porta una data che questa macchina sappia leggere.",
+    "The OpenClaw token parity record is {days} days old, and {allowed} is the limit.":
+        "Il record di parità dei token ha {days} giorni, e il limite è {allowed}.",
+    "is undated":
+        "non ha data",
+    "was measured less than a day ago":
+        "è stato misurato da meno di un giorno",
+    "was measured a day ago":
+        "è stato misurato ieri",
+    "was measured {days} days ago":
+        "è stato misurato {days} giorni fa",
+    "no lane was measurable":
+        "nessuna corsia era misurabile",
+    "the worst lane adds {overhead:,} input tokens ({lane}), under the {limit:,} allowed":
+        "la corsia peggiore aggiunge {overhead:,} token di input ({lane}), sotto i {limit:,} concessi",
+    "{measured} measured, {failed} failed, {skipped} not measurable, of {total} lanes. "
+    "The limit is {limit:,} input tokens per call.":
+        "{measured} misurate, {failed} fallite, {skipped} non misurabili, su {total} corsie. "
+        "Il limite è {limit:,} token di input per chiamata.",
+    "Cannot read the OpenClaw configuration at {path}{detail}.":
+        "Non riesco a leggere la configurazione di OpenClaw in {path}{detail}.",
+    "Unknown lane {lane}: this measures {lanes}.":
+        "Corsia sconosciuta: {lane}. Quelle misurate sono {lanes}.",
+    "Dry run: {count} lane(s), nothing is called and nothing is written.":
+        "Prova a vuoto: {count} corsie, non chiamo niente e non scrivo niente.",
+    "in {folder}":
+        "in {folder}",
+    "The record would be written to {path}.":
+        "Il record finirebbe in {path}.",
+    "Measure what each harness costs natively and inside OpenClaw":
+        "Misura quanto costa ogni harness da sola e dentro OpenClaw",
+    "Measure one lane only: google-antigravity-cli, claude-cli or codex-cli":
+        "Misura una sola corsia: google-antigravity-cli, claude-cli o codex-cli",
+    "Print the commands a run would start, and spend nothing":
+        "Stampa i comandi che una misura lancia, senza spendere niente",
 }

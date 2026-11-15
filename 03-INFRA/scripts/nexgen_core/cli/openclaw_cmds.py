@@ -137,6 +137,8 @@ def _register_upkeep(psub) -> None:
                    help=t("Only the days from this date on: 2026-11-14 or 20261114"))
     q.set_defaults(func=cmd_cost)
 
+    _register_parity(psub)
+
     q = psub.add_parser("rpc", help=t("Interact with OpenClaw Gateway via WebSocket RPC"))
     rpc_sub = q.add_subparsers(dest="rpc_command", metavar="action")
 
@@ -152,6 +154,17 @@ def _register_upkeep(psub) -> None:
     q = psub.add_parser("package", help=t("Build the reproducible plugin tarball for OpenClaw gateways"))
     q.add_argument("--json", action="store_true", help=t("Output in JSON format"))
     q.set_defaults(func=cmd_package)
+
+
+def _register_parity(psub) -> None:
+    """The measurement of what a harness costs inside OpenClaw, and its dry run."""
+    q = psub.add_parser("parity", help=t("Measure what each harness costs natively and inside OpenClaw"))
+    q.add_argument("--lane", default=None, metavar="LANE",
+                   help=t("Measure one lane only: google-antigravity-cli, claude-cli or codex-cli"))
+    q.add_argument("--json", action="store_true", help=t("Output in JSON format"))
+    q.add_argument("--dry-run", action="store_true",
+                   help=t("Print the commands a run would start, and spend nothing"))
+    q.set_defaults(func=cmd_parity)
 
 
 def register(sub) -> None:
@@ -286,6 +299,16 @@ def cmd_cost(args) -> int:
     else:
         print(render(spend))
     return 0
+
+
+def cmd_parity(args) -> int:
+    from nexgen_core.openclaw.parity import run_parity
+
+    return run_parity(
+        lane=getattr(args, "lane", None),
+        as_json=bool(getattr(args, "json", False)),
+        dry_run=bool(getattr(args, "dry_run", False)),
+    )
 
 
 def cmd_pair(args) -> int:
