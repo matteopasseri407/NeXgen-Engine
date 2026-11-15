@@ -64,6 +64,9 @@ class Alignment:
     deployed: str | None
     answered: bool
     detail: str = ""
+    #: The service's own files are the same at the deployed commit and at the engine's:
+    #: True, False, or None when that could not be asked (a commit this clone lacks).
+    service_unchanged: bool | None = None
 
     @property
     def aligned(self) -> bool:
@@ -174,12 +177,38 @@ def measure(
     address = mcp_address or mcp_url()
     body, detail = get_json(health_url(address), timeout=timeout)
     deployed = short_commit(str(body.get(COMMIT_FIELD) or "")) if body else None
+    engine = engine_commit(root)
     return Alignment(
-        engine=engine_commit(root),
+        engine=engine,
         pin=pinned_commit(vault),
         deployed=deployed,
         answered=body is not None,
         # One doctor line, not a stack trace: an operating system's own wording
         # can run for a paragraph, and the reader needs the route and the fact.
         detail=detail[:120],
+        service_unchanged=_service_unchanged(root, deployed, engine),
     )
+
+
+#: The files a vault-mcp image is built from, relative to the engine root.
+SERVICE_PATHSPEC = "deploy/vault-mcp"
+
+
+def _service_unchanged(engine_root: Path, deployed: str | None, engine: str | None) -> bool | None:
+    """Whether nothing under the service's folder changed between the two commits.
+
+    Every update moves the engine commit, most of them without touching the server:
+    comparing commits alone called every such server "behind", and the final doctor
+    of the update rolled the update back. What makes a server behind is a change to
+    the code it is built from.
+    """
+    if not deployed or not engine or deployed == engine:
+        return None if not deployed or not engine else True
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(engine_root), "diff", "--quiet", deployed, engine, "--", SERVICE_PATHSPEC],
+            capture_output=True, text=True, timeout=GIT_TIMEOUT_SECONDS, check=False, **no_window_kwargs(),
+        )
+    except (OSError, subprocess.TimeoutExpired):  # nexgen: allow reason="a git that cannot answer leaves the question open; the check keeps the stricter verdict"
+        return None
+    return {0: True, 1: False}.get(proc.returncode)

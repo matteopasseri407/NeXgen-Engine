@@ -230,3 +230,54 @@ def test_measure_says_which_route_it_could_not_read(tmp_path: Path, monkeypatch:
     assert state.answered is False
     assert state.deployed is None
     assert state.detail == "nothing listening"
+
+
+def test_a_server_built_before_changes_that_never_touched_it_is_current(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Every update moves the engine commit; most do not touch the server, and calling those
+    servers 'behind' made the final doctor roll the update back on the VPS."""
+    _as_server(monkeypatch)
+    state = alignment.Alignment(engine="aeba8c527", pin="aeba8c527", deployed="f8c70d175", answered=True,
+                                service_unchanged=True)
+
+    outcome = _outcome(tmp_path, monkeypatch, state=state)
+
+    assert outcome.severity == Severity.OK
+    assert "f8c70d175" in outcome.message
+
+
+def test_a_server_whose_own_files_changed_since_its_build_is_still_behind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    _as_server(monkeypatch)
+    state = alignment.Alignment(engine="aeba8c527", pin="aeba8c527", deployed="f8c70d175", answered=True,
+                                service_unchanged=False)
+
+    outcome = _outcome(tmp_path, monkeypatch, state=state)
+
+    assert outcome.severity == Severity.BROKEN
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=True).stdout.strip()
+
+
+def test_the_service_question_is_asked_of_the_service_folder_only(tmp_path: Path):
+    repo = tmp_path / "engine"
+    (repo / "deploy" / "vault-mcp").mkdir(parents=True)
+    _git(tmp_path, "init", "-q", str(repo))
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "t")
+    (repo / "deploy" / "vault-mcp" / "server.py").write_text("v1\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "server v1")
+    built = _git(repo, "rev-parse", "HEAD")
+    (repo / "other.py").write_text("x\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "engine only")
+    unrelated = _git(repo, "rev-parse", "HEAD")
+    (repo / "deploy" / "vault-mcp" / "server.py").write_text("v2\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "server v2")
+    changed = _git(repo, "rev-parse", "HEAD")
+
+    assert alignment._service_unchanged(repo, built[:9], unrelated[:9]) is True
+    assert alignment._service_unchanged(repo, built[:9], changed[:9]) is False
+    assert alignment._service_unchanged(repo, "0123abcde", changed[:9]) is None

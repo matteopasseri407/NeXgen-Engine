@@ -63,6 +63,13 @@ def check_deploy_alignment(
             severity=Severity.OK,
             message=t("Engine, Vault pin and deployed vault-mcp are on {commit}", commit=state.engine),
         )
+    if state.deployed != state.engine and state.service_unchanged:
+        return CheckOutcome(
+            id=CHECK_ID,
+            severity=Severity.OK,
+            message=t("The deployed vault-mcp was built from {deployed}; nothing it is built from has changed up to "
+                      "{engine}, so the server half is current.", deployed=state.deployed, engine=state.engine),
+        )
     if state.deployed != state.engine:
         return CheckOutcome(
             id=CHECK_ID,

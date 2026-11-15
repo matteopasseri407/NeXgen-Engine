@@ -3313,6 +3313,8 @@ MESSAGES: dict[str, str] = {
         "Sul server esegui '{command}': ricostruisce il servizio e ci scrive dentro il commit con cui l'ha costruito.",
     "Engine and deployed vault-mcp are on {commit}":
         'Motore e vault-mcp distribuito sono sullo stesso commit {commit}',
+    "The deployed vault-mcp was built from {deployed}; nothing it is built from has changed up to {engine}, so the server half is current.":
+        'Il vault-mcp distribuito è stato costruito da {deployed}; da allora fino a {engine} non è cambiato niente di ciò da cui è costruito, quindi la metà server è aggiornata.',
     "The deployed vault-mcp was built from {deployed}, this engine is {engine}: the server half is behind.":
         'Il vault-mcp distribuito è stato costruito da {deployed}, questo motore è {engine}: la metà server è indietro.',
     "On the server run '{command}': it rebuilds that one service, probes it, and puts the previous image back if the probe fails. An update on a server now does this by itself.":
