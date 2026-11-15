@@ -121,7 +121,10 @@ sporco il checkout, dall'elenco delle dipendenze in `pyproject.toml`. I launcher
 verificato, e fino ad allora ripiegano su un Python adatto qualsiasi, così la guardia e il doctor continuano a non aver
 bisogno di altro che PyYAML. `nexgen runtime check` dice se l'interprete che stai eseguendo riesce a importare tutto,
 `nexgen runtime ensure` crea o ripara l'ambiente a mano, e `nexgen doctor` segnala una libreria mancante come guasto,
-con quel comando. Un'installazione da pacchetto è già un ambiente proprio e viene solo verificata.
+con quel comando. Un'installazione da pacchetto è già un ambiente proprio e viene solo verificata. Quando `uv` è nel
+`PATH` quell'ambiente lo costruisce lui, con `uv venv` e `uv pip install`; altrimenti il motore lo crea con
+`python -m venv` e lo riempie con pip, e le due strade finiscono sullo stesso timbro e sullo stesso controllo degli
+import.
 
 La sequenza manuale qui sotto resta la strada di recupero per le installazioni MINIMAL e per l'unico aggiornamento di
 bootstrap da una versione precedente al comando.
@@ -159,20 +162,43 @@ bootstrap da una versione precedente al comando.
    comportarsi come prima (MINIMAL), qualcosa nella nuova versione non si adatta al tuo setup. Torna indietro con
    `git reset --hard <commit-o-tag-precedente>` e segnala cosa si è rotto.
 
-## Se usi un'installazione Cloud-Server, quella VPS è una seconda installazione
+## Se usi un'installazione Cloud-Server, il server segue il motore da solo
 
-Tutto quanto sopra aggiorna la macchina su cui l'hai digitato. Non tocca il tuo server. `03-INFRA/deploy/` (la porta di
-scrittura `vault-mcp` con cui parla `vault-library`, l'API OCR, n8n) è codice del motore che gira altrove, e la VPS
-continua a eseguire i container con cui è stata distribuita l'ultima volta. Niente sulla tua postazione può riavviarli
-per te.
+Tutto quanto sopra aggiorna la macchina su cui l'hai digitato. I container sotto `03-INFRA/deploy/` (la porta di
+scrittura `vault-mcp` con cui parla `vault-library`, l'API OCR, n8n) girano sul server, e continuavano a eseguire il
+codice con cui erano stati costruiti mentre il motore andava avanti. Tre cose ora tengono insieme le due metà.
 
-`nexgen doctor` non confronta la versione del server `vault-mcp` distribuito con quella del motore; quel controllo non
-esiste. `CHANGELOG.md` è il segnale per ogni stack sotto `deploy/`: se una release nomina `deploy/`, dai per scontato
-che la VPS abbia bisogno dello stesso tag.
+**L'immagine dice da cosa è stata costruita.** `nexgen deploy vault-mcp` costruisce il container con dentro il commit del
+motore, e il servizio pubblica quel commit breve sulla sua rotta di salute non autenticata. Nient'altro viene pubblicato lì.
 
-La ridistribuzione è breve ed è documentata una volta sola in [`03-INFRA/deploy/README.md`](../../03-INFRA/deploy/README.md)
-alla voce "Upgrading the server side": scarica lo stesso tag sulla VPS e riesegui `bootstrap-vps.sh`. Tieni il server
-sul tag su cui stanno le tue postazioni, non su `main`.
+**`nexgen doctor` misura la distanza.** Su ogni macchina che dichiara il ruolo server o un'installazione Cloud-Server
+stampa una riga `deploy.alignment` che confronta tre commit: quello di questo motore, quello registrato in
+`99-INDEX/ENGINE-PIN.txt` per la flotta, e quello che il `vault-mcp` distribuito dichiara. Se coincidono la riga è verde.
+Un server costruito da un altro commit è un guasto che nomina entrambi e l'unico comando che lo chiude:
+
+```bash
+# sul server
+nexgen deploy vault-mcp
+```
+
+**Un aggiornamento sul server ridistribuisce lo stack che ha spostato.** Dopo un `nexgen update` riuscito su una macchina
+con il ruolo server, se la release ha cambiato `03-INFRA/deploy/vault-mcp` il comando ricostruisce quel solo servizio e lo
+sonda, anche negli aggiornamenti non presidiati, perché su una VPS senza sessione è il timer la via che aggiorna il
+motore. Un aggiornamento che non ha toccato lo stack non riavvia niente. La ricostruzione avviene *prima* del controllo
+finale del doctor, quindi un server non resta mai a metà: una ricostruzione che fallisce rimette il proprio container
+sull'immagine che funzionava, e l'aggiornamento viene disfatto per intero.
+
+Il deploy è lo stesso comando a mano, ed è scritto per non essere sorvegliato. Mette da parte il sorgente attuale, tiene
+l'immagine in esecuzione con il tag `<immagine>-pre-deploy`, ricostruisce **solo** il servizio `vault-mcp`, e poi chiede
+al server ricostruito le due chiamate MCP che fa un client (l'handshake e la lista dei tool). Se quella sonda fallisce
+rimette l'immagine precedente, ripristina il sorgente salvato ed esce con un codice diverso da zero dicendolo. Una
+ricostruzione è un riavvio della porta di scrittura: le note sono committate a ogni scrittura, quindi niente di ciò che è
+in corso va perso, ma una chiamata a un tool in corso fallisce. Fai il deploy quando non sei a metà sessione.
+
+Due cose restano manuali, e il doctor lo dice invece di far finta del contrario. L'API OCR e n8n non hanno una sonda che
+dichiari il loro commit, quindi una release che li tocca è ancora segnalata da `CHANGELOG.md` e distribuita rieseguendo
+`bootstrap-vps.sh`; e un server il cui container è stato costruito da una copia del sorgente fuori dal checkout nomina
+quella cartella una volta con `NEXGEN_VAULT_MCP_SRC`, che il deploy riaggiorna dall'albero del motore a ogni esecuzione.
 
 Un'installazione Local-Only non ha niente di tutto questo: nessuna VPS, nessun `deploy/`, niente da aggiornare due
 volte.
@@ -182,10 +208,10 @@ volte.
 Lo stesso rischio di deriva vale una macchina più vicino. In modalità Local-Full gli stessi connettori sotto
 `03-INFRA/deploy/` girano sul Docker di questa macchina invece che su una VPS, avviati con `nexgen stack up`. Un
 `nexgen sync` o `nexgen update` qui aggiorna il codice del motore e la configurazione delle CLI, ma non riavvia né
-ridistribuisce i container in esecuzione, e `nexgen doctor` non confronta nemmeno la versione dello stack in esecuzione
-con quella del motore: quel controllo non esiste, come per Cloud-Server. Tieni d'occhio `CHANGELOG.md` per qualsiasi
-cosa nomini `deploy/`, poi riesegui `nexgen stack up`, che riapplica le definizioni compose attuali, per portare i
-container al corrente. `nexgen stack status` mostra cosa sta davvero girando.
+ridistribuisce i container in esecuzione, e `nexgen doctor` non ne parla: `nexgen deploy` è il comando del server, e una
+postazione di lavoro riavvia il proprio stack con `nexgen stack up`, che riapplica le definizioni compose attuali. Tieni
+d'occhio `CHANGELOG.md` per qualsiasi cosa nomini `deploy/`, poi rieseguilo. `nexgen stack status` mostra cosa sta davvero
+girando.
 
 ## Campi del manifest e del manifest delle skill
 

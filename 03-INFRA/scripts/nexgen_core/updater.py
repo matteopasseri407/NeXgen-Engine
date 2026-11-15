@@ -784,9 +784,38 @@ def _report_success(target: update_channel.TargetPlan, post_fail: int | None) ->
         print(f"The machine still has {post_fail} pre-existing doctor failure(s).")
     print("Other machines remain behind until they run nexgen-update too.")
     print(
-        "Cloud-Server note: the VPS is a separate install; follow "
-        "03-INFRA/deploy/README.md before redeploying it."
+        "Cloud-Server note: the containers under 03-INFRA/deploy/ run on the server, and an update "
+        "there rebuilds the one this release changed; 'nexgen deploy vault-mcp' does it by hand."
     )
+
+
+def _redeploy_stacks(
+    *,
+    engine_repo: Path,
+    data_repo: Path,
+    state_dir: Path,
+    previous_head: str,
+    target: update_channel.TargetPlan,
+) -> list[str]:
+    """Rebuilds the deployed stack this update moved, on the machine that runs it.
+
+    It runs before the final doctor on purpose. The doctor measures the deployed
+    commit, so a stack that did not rebuild is a failure of *this* update and is
+    undone with it, engine and container together: a machine that serves new
+    code from an engine it then rolled back would be the half-new machine the
+    updater exists to prevent. The deploy has already put its own container back
+    on the image that worked when it fails, so the rollback below starts from a
+    consistent server.
+    """
+    from nexgen_core.deploy import after_update
+
+    deployed = after_update.deploy_after_update(
+        engine_repo=engine_repo, vault_data=data_repo, state_dir=state_dir,
+        previous_head=previous_head or target.rev, target_rev=target.rev,
+    )
+    if deployed:
+        print(f"\nRedeployed on this server: {', '.join(deployed)}.")
+    return deployed
 
 
 def main(
@@ -929,6 +958,21 @@ def main(
                 previous_head=previous_head,
                 engine_repo=engine_repo,
             )
+
+        # The server half of a Cloud-Server install moves with the engine: the
+        # stack under 03-INFRA/deploy/ was built from the tree that just moved,
+        # and the final doctor measures that gap. Undone with the update, whole.
+        try:
+            _redeploy_stacks(
+                engine_repo=engine_repo, data_repo=data_repo, state_dir=state_dir,
+                previous_head=previous_head, target=target,
+            )
+        except (OSError, subprocess.SubprocessError, NexgenError) as exc:
+            raise PostMergeError(
+                f"engine tag merged, but a deployed stack did not rebuild: {exc}",
+                previous_head=previous_head,
+                engine_repo=engine_repo,
+            ) from exc
 
         post_fail, post_doctor_rc = _doctor(entry, data_repo=data_repo)
         if post_fail is None:

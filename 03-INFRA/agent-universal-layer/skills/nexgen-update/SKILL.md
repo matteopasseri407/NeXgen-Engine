@@ -34,11 +34,15 @@ Use the real cross-platform `nexgen update` command (historical name
    Skills the user owns (`origin: vault`) are never touched by an upgrade.
 7. Report the result and remind the user that every other machine must run the
    same update.
-8. A second install is never upgraded by this command; say so plainly.
-   On Cloud-Server that is the VPS: the redeploy runbook is
-   `03-INFRA/deploy/README.md`, section "Upgrading the server side".
-   Do not run it for the user because restarting those containers interrupts
-   every agent using the vault.
+8. A second install is upgraded by this command only where the machine runs it.
+   On Cloud-Server that is the VPS: an update on a machine with the server role
+   rebuilds `vault-mcp` itself when the release moved `03-INFRA/deploy/vault-mcp`,
+   and `nexgen deploy vault-mcp` is the same rebuild by hand (it probes the
+   service and rolls back if the probe fails). What stays manual is the OCR API
+   and n8n, redeployed by `bootstrap-vps.sh` as `03-INFRA/deploy/README.md`,
+   section "Upgrading the server side", describes.
+   Do not run that by hand for the user because restarting those containers
+   interrupts every agent using the vault.
    On Local-Full the same connectors run in Docker on this machine, and they
-   are not restarted either: `nexgen stack up` re-applies the current compose
+   are not restarted: `nexgen stack up` re-applies the current compose
    definitions, and `nexgen stack status` says what is actually running.

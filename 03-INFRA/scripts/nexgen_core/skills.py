@@ -122,6 +122,14 @@ class SkillMaterializer:
             self.codex_dir, self.opencode_dir, self.opencode_native_dir,
         )
 
+        #: Claude Code reads its skills from the native plugin (`plugin_claude`) when this
+        #: installation opted in: a link here would load every skill twice, so the folder
+        #: stops being a Claude target and the pruning pass takes its links back.
+        from nexgen_core.plugin_claude import installed as claude_runs_as_a_plugin
+
+        self.claude_plugin = claude_runs_as_a_plugin(self.home, self.vault_data)
+        self.dirs_by_target["claude"] = () if self.claude_plugin else (self.claude_dir,)
+
     def load_manifest(self) -> dict[str, SkillEntry]:
         manifest_file = skills_manifest(self.vault_data)
         if not manifest_file.is_file():
@@ -330,9 +338,21 @@ class SkillMaterializer:
                         shutil.rmtree(candidate)
                 except OSError:
                     continue
-                actions.append(t("Skill '{name}' is lazy again for {target}",
-                                 name=name, target=self._view_label(directory)))
+                if directory == self.claude_dir and self.claude_plugin:
+                    actions.append(t("Skill '{name}': the Claude view moved into the plugin", name=name))
+                else:
+                    actions.append(t("Skill '{name}' is lazy again for {target}",
+                                     name=name, target=self._view_label(directory)))
         return actions
+
+    def desired(self) -> dict[str, SkillEntry]:
+        """The manifest entries that concern whoever is using this machine, by name.
+
+        The one public name for the filter `_collect_desired` applies: a second component
+        that needs to know which skills exist here (the native plugin) must not re-derive
+        `scope` and `owner` on its own.
+        """
+        return self._collect_desired(self.load_manifest())
 
     def _collect_desired(self, skills: dict[str, SkillEntry]) -> dict[str, SkillEntry]:
         """Which manifest entries concern whoever is using this machine."""

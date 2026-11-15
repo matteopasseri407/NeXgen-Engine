@@ -1083,3 +1083,68 @@ def test_an_interrupt_during_apply_rolls_the_engine_back(tmp_path, monkeypatch):
         code = None
     assert code not in (None, 0), "l'interruzione deve uscire con un esito, non propagarsi"
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
+
+
+def test_a_deployed_stack_is_rebuilt_before_the_final_doctor(tmp_path, capsys, monkeypatch):
+    """The doctor measures the deployed commit, so the rebuild cannot come after it.
+
+    An update that moved `03-INFRA/deploy/` must leave the container on the new
+    code *before* the summary that counts failures, or the machine rolls itself
+    back for the one change it just made.
+    """
+    updater = _load_updater()
+    _origin, engine = _upgrade_fixture(tmp_path)
+    order = []
+    real_run = updater._run
+    entry = _tree_entry(engine)
+
+    def fake_run(args, **kwargs):
+        if args == entry + ["apply"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return real_run(args, **kwargs)
+
+    def fake_doctor(*_args, **_kwargs):
+        order.append("doctor")
+        return (0, 0)
+
+    def fake_redeploy(**_kwargs):
+        order.append("redeploy")
+        return ["vault-mcp"]
+
+    monkeypatch.setattr(updater, "_run", fake_run)
+    monkeypatch.setattr(updater, "_doctor", fake_doctor)
+    monkeypatch.setattr(updater, "_redeploy_stacks", fake_redeploy)
+
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
+
+    assert result == 0
+    assert order == ["doctor", "redeploy", "doctor"]
+
+
+def test_a_failed_stack_rebuild_rolls_the_engine_back(tmp_path, capsys, monkeypatch):
+    """A server never stays half-new: the engine goes back with its container."""
+    from nexgen_core.deploy.vault_mcp import DeployError
+
+    updater = _load_updater()
+    _origin, engine = _upgrade_fixture(tmp_path)
+    previous = _git(engine, "rev-parse", "HEAD").stdout.strip()
+    real_run = updater._run
+    entry = _tree_entry(engine)
+
+    def fake_run(args, **kwargs):
+        if args == entry + ["apply"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return real_run(args, **kwargs)
+
+    def explode(**_kwargs):
+        raise DeployError("the build failed: docker refused")
+
+    monkeypatch.setattr(updater, "_run", fake_run)
+    monkeypatch.setattr(updater, "_redeploy_stacks", explode)
+    monkeypatch.setattr(updater, "_doctor", lambda *_a, **_k: (0, 0))
+
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
+
+    assert result == 1
+    assert _git(engine, "rev-parse", "HEAD").stdout.strip() == previous
+    assert "a deployed stack did not rebuild" in capsys.readouterr().err

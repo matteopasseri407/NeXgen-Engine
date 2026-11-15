@@ -52,6 +52,56 @@ the CLIs would, and checks that it lists tools. If one does not work, every pin 
 configurations are regenerated from the old ones; nothing is committed. Behind the gateway, a server that is only
 missing a credential in this session does not count against the update.
 
+## What updates by itself, what waits for you
+
+Every third-party item follows one of five paths, and `nexgen thirdparty status` prints, one line per item, which one
+applies to it, the version it is pinned to, the newest one upstream, when that was last checked, and the exact
+command that moves it. Ask that command before asking anything else.
+
+| Policy it prints | What it means | How it moves |
+| --- | --- | --- |
+| `moves by itself` | The bytes are identical between the old pin and the new one, so nothing can change. | The hourly watch raises it and commits. Nothing to do. |
+| `waits for your yes` | Prose only, a descendant commit, or an npm patch: safe-shaped and small. | `nexgen skills bump`, one yes for all of them. |
+| `needs a look first` | A new script, a hook touched, a minor or major version, a rewritten history, or a version its publisher withdrew. | **No command raises it.** Read what changed, then edit the pin in the file the line names. |
+| `by hand, where it runs` | A component inside a module: the n8n image, the Playwright launcher, OpenClaw itself. | Replace it where it runs, after trying it. The engine never rewrites these. |
+| `floating, no pin` | An `npx` server with no `package@version`, or an endpoint somebody else serves (`mcp.vercel.com`). | It already changes without anyone deciding. Served by its owner, or pin a version to take that back. |
+
+Three things that surprise people:
+
+- **Nothing updates on `nexgen sync`.** The sync materializes the pin written in the manifest. A pinned skill or
+  server is byte-identical before and after a sync, whatever upstream published in the meantime.
+- **A newer version is not an approved update.** The dependency watch only says that something moved; the guardian
+  decides whether the move is boring. `nexgen info` counts what moved, so its number can be larger than the number of
+  things waiting for you.
+- **`nexgen skills bump` doing nothing is an answer, not a failure.** It prints how many items stay held, and
+  `nexgen thirdparty status` says what each of them needs.
+
+`nexgen doctor` carries one line for all of it: how many updates are cleared and waiting for a yes (with the command
+that applies them), or how many need a look. It is never red because of a pending update, and `doctor -v` prints it.
+
+### Where those mechanics come from
+
+The engine decides what governs an item and keeps the manifest; the mechanics of a given source are increasingly
+somebody else's, and that is deliberate: a maintained project that owns installing one kind of thing will notice a
+change upstream before this engine does.
+
+- **A github skill** is fetched by the [`skills` CLI](https://github.com/vercel-labs/skills) (MIT, pinned to
+  npm `skills@1.8.1`) when Node is installed: it resolves the commit in the manifest and downloads that one skill
+  folder instead of the whole repository, and the folder it leaves is the one the engine copies into the library. The
+  integrity check is the tool's own `skills-lock.json`, which must name the pinned commit and a content hash, or the
+  bytes are refused. A machine without Node clones the repository at the pin, exactly as before; a tool that is absent,
+  fails or answers with another commit costs nothing, because the clone follows. The tool's `update` is not used: it
+  moves its own installs and its own agent directories, so it would be a second writer of the same bytes. The mover
+  stays `nexgen skills bump`.
+- **A plugin** belongs to the harness that installed it, and the engine reports it instead of copying the update:
+  `nexgen thirdparty status` ends with the plugins Claude Code, Codex and Antigravity report through their own
+  `plugin list --json`, each with the command that moves it (`claude plugin update <plugin>`,
+  `codex plugin marketplace upgrade`, `agy plugin install <plugin>`). Nothing there is ever run by the engine.
+- **The version of an MCP server** is read from npm and from nowhere else. The official MCP registry was measured
+  against it and refused: it trails npm (one publisher's server was fourteen releases behind), and two of the servers
+  this machine pins are not listed under their package name at all, so reading it would have hidden the releases the
+  watch exists to report.
+
 ## Skills the engine ships
 
 Older installs copied the engine's starter skills into the Vault and declared the copies `origin: vault`. A copy is

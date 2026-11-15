@@ -129,6 +129,7 @@ class _Upstream:
 
 
 def _describe_update(kind: str, name: str, pins: list[dict[str, Any]], verdict: dict[str, Any] | None) -> dict[str, Any]:
+    """What the watch found for one item, in one dict the callers can read without knowing the files."""
     withdrawn = next((p["deprecated"] for p in pins if p.get("deprecated")), None)
     extra = {"deprecated": withdrawn} if withdrawn else {}
     stale = next((p for p in pins if p.get("stale")), None)
@@ -141,10 +142,15 @@ def _describe_update(kind: str, name: str, pins: list[dict[str, Any]], verdict: 
         }
         if verdict:
             out["verdict"] = {"auto": "ready", "batch": "ready", "hold": "held"}[verdict["tier"]]
+            # The guardian's tier itself, kept because "ready" hides the difference between an item
+            # the hourly beat raises alone and one waiting for a single human yes.
+            out["tier"] = verdict["tier"]
             out["plain"] = verdict.get("plain") or ""
         return out
     if any(p.get("upstream") for p in pins):
-        return {"state": "current", **extra}
+        # The newest the watch saw travels too: a pin whose publisher withdrew it may compare "lower"
+        # than the pin itself (a date train against semver), and then this is the only number to act on.
+        return {"state": "current", "upstream": next(p["upstream"] for p in pins if p.get("upstream")), **extra}
     return {"state": "unknown"}
 
 
