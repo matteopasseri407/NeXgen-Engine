@@ -503,3 +503,184 @@ def test_conflicting_note_references_reach_the_model(tmp_path: Path):
     assert not isinstance(raised.value, UnexpectedToolError)
     assert "conflicting" in str(raised.value)
     assert "other.md" in str(raised.value)
+
+
+# --- Ogni errore di dominio dice al modello il motivo e il passo dopo ---
+#
+# "Error executing tool read_note" da solo è la forma che ha prodotto 9
+# chiamate fallite e 0 retry utili in 14 giorni: il modello non sa se il nome
+# era sbagliato, se qualcun altro ha scritto la nota, o se il percorso è
+# vietato, quindi ritenta alla cieca. Qui si verifica il testo che legge.
+
+
+def _tool_error(settings: Settings, name: str, arguments: dict[str, Any]) -> str:
+    """The message a model reads for a call that must fail, proven to be a `ToolError`."""
+    from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+
+    with pytest.raises(ToolError) as raised:
+        _mcp_call(settings, name, arguments)
+
+    assert not isinstance(raised.value, UnexpectedToolError), "the reason did not travel as a ToolError"
+    return str(raised.value)
+
+
+@pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
+def test_a_missing_note_names_the_closest_ones_and_the_next_tool(tmp_path: Path):
+    settings = _settings(tmp_path)
+    (settings.vault_root / "deploy-runbook.md").write_text("# Deploy runbook\n", encoding="utf-8")
+
+    message = _tool_error(settings, "read_note", {"note_ref": "deploy-runbok.md"})
+
+    assert "No note matches 'deploy-runbok.md'" in message
+    assert "deploy-runbook.md" in message
+    assert "search_notes" in message
+
+
+@pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
+def test_an_ambiguous_reference_says_which_paths_it_means(tmp_path: Path):
+    settings = _settings(tmp_path)
+    (settings.vault_root / "one").mkdir()
+    (settings.vault_root / "two").mkdir()
+    (settings.vault_root / "one" / "notes.md").write_text("# One\n", encoding="utf-8")
+    (settings.vault_root / "two" / "notes.md").write_text("# Two\n", encoding="utf-8")
+
+    message = _tool_error(settings, "read_note", {"note_ref": "notes"})
+
+    assert "Ambiguous note reference 'notes'" in message
+    assert "one/notes.md" in message and "two/notes.md" in message
+    assert "full relative path" in message
+
+
+@pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
+def test_a_hash_mismatch_says_how_to_get_the_right_one(tmp_path: Path):
+    settings = _single_line_vault(tmp_path)
+
+    message = _tool_error(
+        settings, "update_note", {"note_ref": "seed.md", "content": "# replaced\n", "expected_hash": "0" * 64}
+    )
+
+    assert "expected_hash does not match" in message
+    assert "read_note" in message
+    assert "content_hash" in message
+
+
+@pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
+def test_an_unknown_section_names_the_headings_it_can_address(tmp_path: Path):
+    settings = _crlf_vault(tmp_path)
+
+    message = _tool_error(
+        settings,
+        "update_section",
+        {"note_ref": "crlf.md", "section_heading": "## Missing", "content": "## Missing\n\nx\n", "expected_hash": "0" * 64},
+    )
+
+    assert "Section not found: '## Missing'" in message
+    assert "## Keep" in message and "## Edit" in message
+    assert "section_heading" in message
+
+
+@pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
+def test_a_path_the_write_rule_refuses_says_which_rule(tmp_path: Path):
+    settings = _write_settings(tmp_path, VAULT_TOKEN="s3cret")
+
+    message = _tool_error(settings, "create_note", {"note_path": "99-SECRETS/leak.md", "content": "# leak\n"})
+
+    assert "blocked: 99-SECRETS/leak.md" in message
+    assert "99-SECRETS" in message
+    assert "Nothing was written" in message
+
+
+@pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
+def test_a_write_over_the_size_limit_says_how_much_and_what_to_do(tmp_path: Path):
+    settings = _write_settings(tmp_path, VAULT_TOKEN="s3cret", MAX_WRITE_BYTES="100")
+
+    message = _tool_error(settings, "create_note", {"note_path": "big.md", "content": "x" * 200})
+
+    assert "content is 200 bytes" in message
+    assert "MAX_WRITE_BYTES (100)" in message
+    assert "append_note" in message
+
+
+# --- read_note: il budget di caratteri e la lettura per sezione ---
+
+#: The note the section tests read, written as a literal so the expected
+#: section text is a known value and not recomputed the way the code splits it.
+SECTIONED_NOTE = "# Alpha\n\nalpha body\n\n## Beta\n\nbeta body\n\n## Gamma\n\ngamma body\n"
+
+
+def _sectioned_vault(tmp_path: Path) -> Settings:
+    """A write-enabled vault with one committed note that has two sections.
+
+    Written as bytes so the note on disk is the literal above (a text-mode
+    write turns `\\n` into CRLF on Windows, and the section text is compared
+    as a literal).
+    """
+    settings = _write_settings(tmp_path, VAULT_TOKEN="s3cret")
+    (settings.vault_root / "sectioned.md").write_bytes(SECTIONED_NOTE.encode("utf-8"))
+    _git(settings.vault_root, "add", "-A")
+    _git(settings.vault_root, "commit", "-q", "-m", "sectioned note")
+    return settings
+
+
+@pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
+def test_a_small_note_keeps_exactly_the_shape_it_had(tmp_path: Path):
+    settings = _sectioned_vault(tmp_path)
+
+    note = _mcp_call(settings, "read_note", {"note_ref": "sectioned.md"}).structured_content
+
+    assert set(note) == {
+        "path", "title", "tags", "size_bytes", "modified_at", "truncated",
+        "content", "full_content", "content_hash", "sections",
+    }
+    assert note["content"] == "# Alpha\n\nalpha body\n\n## Beta\n\nbeta body\n\n## Gamma\n\ngamma body\n"
+
+
+@pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
+def test_a_large_note_is_cut_and_says_how_to_read_the_rest(tmp_path: Path):
+    settings = _sectioned_vault(tmp_path)
+
+    note = _mcp_call(settings, "read_note", {"note_ref": "sectioned.md", "max_chars": 20}).structured_content
+
+    assert note["content_truncated"] is True
+    assert note["content"] == SECTIONED_NOTE[:20]
+    assert note["returned_chars"] == 20
+    assert note["total_chars"] == len(SECTIONED_NOTE)
+    assert "section=" in note["next_step"] and "max_chars" in note["next_step"]
+    # the section list survives the cut: it is what makes the next call possible
+    assert [section["heading"] for section in note["sections"]] == ["# Alpha", "## Beta", "## Gamma"]
+
+
+@pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
+def test_a_section_read_returns_only_that_section_and_its_hash(tmp_path: Path):
+    settings = _sectioned_vault(tmp_path)
+    sections = {
+        section["heading"]: section["content_hash"]
+        for section in _mcp_call(settings, "read_note", {"note_ref": "sectioned.md"}).structured_content["sections"]
+    }
+
+    section = _mcp_call(settings, "read_note", {"note_ref": "sectioned.md", "section": "## Beta"}).structured_content
+
+    assert section["section"] == "## Beta"
+    # a section's span runs to the next heading of the same level, so it keeps
+    # the blank line that separates the two: it is exactly what update_section
+    # replaces and what its hash covers
+    assert section["content"] == "## Beta\n\nbeta body\n\n"
+    # the hash is the one update_section compares against, not a hash of the read
+    assert section["content_hash"] == sections["## Beta"]
+
+    written = _mcp_call(
+        settings,
+        "update_section",
+        {
+            "note_ref": "sectioned.md",
+            "section_heading": section["section"],
+            "content": "## Beta\n\nrewritten\n",
+            "expected_hash": section["content_hash"],
+        },
+    ).structured_content
+
+    assert written["action"] == "updated_section"
+    assert (settings.vault_root / "sectioned.md").read_text(encoding="utf-8").replace("\r\n", "\n") == (
+        "# Alpha\n\nalpha body\n\n## Beta\n\nrewritten\n\n## Gamma\n\ngamma body\n"
+    )
+
