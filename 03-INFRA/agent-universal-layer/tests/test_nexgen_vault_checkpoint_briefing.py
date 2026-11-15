@@ -46,10 +46,15 @@ def fake_engine(folder: Path, *, line: str = "", wait_s: int = 0) -> Path:
     return folder
 
 
+#: Resolved before any test narrows `PATH`: on POSIX the child's own `PATH` is the one
+#: searched, so a test that empties it to hide the engine would also hide `node`.
+NODE = shutil.which("node") or "node"
+
+
 def _run(script: Path, env: dict[str, str], source: str = "compact") -> str:
     event = json.dumps({"hook_event_name": "SessionStart", "source": source})
     done = subprocess.run(
-        ["node", str(script)], input=event, capture_output=True, text=True,
+        [NODE, str(script)], input=event, capture_output=True, text=True,
         encoding="utf-8", env=env, timeout=60, check=False,
     )
     assert done.returncode == 0
