@@ -22,7 +22,7 @@ Read "What the gates guarantee, and what they do not" before relying on a PASS.
 A unit adds `20-brief-<unit>.md` (the brief as written), `22-ambiente-<unit>.md` (where the copy is, on which branch, inside which boundary), `40-pacchetto-<unit>.md` and `50-gate-<unit>.txt` (the review package and the raw gate output), plus its own working copy in `23-unita-<unit>/`.
 A review adds `45-revisione-<unit>-<round>.md`, and every request the engine refuses to execute goes to `07-richieste-proprietario.md`.
 
-The journal is the machine truth. Its events are `started`, `unit_created`, `unit_started`, `unit_queued`, `attached`, `harness_session_lost`, `harness_session_foreign`, `unit_reworked`, `unit_model_refused`, `unit_stalled`, `unit_resumed`, `unit_rebased`, `unit_collected`, `report_relocated`, `unit_reviewed`, `unit_published`, `unit_publish_failed`, `unit_retired`, `unit_retire_failed`, `session_closed`, `workboard_card`, `workboard_moved`, `local_server_started`, `local_server_stopped`, and for the scout `scout_opened` and `scout_finished`.
+The journal is the machine truth. Its events are `started`, `unit_created`, `unit_started`, `unit_queued`, `attached`, `harness_session_lost`, `harness_session_foreign`, `unit_reworked`, `unit_model_refused`, `unit_stalled`, `unit_resumed`, `unit_rebased`, `unit_collected`, `report_relocated`, `unit_reviewed`, `unit_published`, `unit_publish_failed`, `unit_retired`, `unit_retire_failed`, `session_closed`, `unit_unjobbed`, `workboard_card`, `workboard_moved`, `local_server_started`, `local_server_stopped`, and for the scout `scout_opened` and `scout_finished`.
 The Markdown files are what a person reads and writes, and the engine never rewrites them, so an edit is not lost.
 
 ## The verbs
@@ -178,6 +178,9 @@ Shared git hooks are never touched: they live in the common directory and stay e
 
 `--mcp <name>` is how the supervisor gives the unit a connector it actually needs.
 Without it the copy's profile has no MCP server at all, and every global one is switched off in the copy by name, as the `mcp` column above says: the connectors the owner uses in their own sessions are not the executor's budget.
+
+A `.worktreeinclude` at the repository root is read, with the gitignore syntax and the two rules the same file carries in Claude Code, Conductor, Codex and `ccmanager`: a path is carried into the new copy only when a pattern of that file matches it **and** git really ignores it.
+So a `.env` or a local config the work cannot run without is there, a tracked file is never copied over the copy, and the unit's `22-ambiente-<unità>.md` names what was carried.
 
 The fetch URL and the blocked push URL of every remote are written into the journal when the unit is created, and its refs are read with `git ls-remote` on that URL.
 `sup collect` asks three questions: are the creation's remotes still configured with the same fetch URL and the blocked push URL, did the unit add a remote of its own, and does any remote ref point at a commit of this unit's `base..head`?
@@ -406,7 +409,7 @@ The executor's report is not evidence; every line below is read from git or run 
 | `configurazione git` | either configuration file of the copy changed since the unit was created (the repository's shared `.git/config`, which every checkout reads, or the worktree's own `config.worktree`), or the effective configuration carries a `url.*.insteadOf` or `url.*.pushInsteadOf` key the creation did not have; the file or the key is named |
 | `remoto intatto` | a remote of the creation is gone, added, points at another fetch URL or push URL, or one of its refs carries a commit of the unit's interval (the unit pushed); a branch that advanced for another reason is not a failure |
 | `albero pulito` | the unit's copy has uncommitted work |
-| `scansione fughe` | the project declares CI's anti-leak scan (a workflow names `leak_scan.py`) and the scan exits non-zero on the unit's `base..head`, or the script and its patterns are not where the workflow says; a project that declares no scan adds no line |
+| `scansione fughe` | the project declares CI's anti-leak scan (a workflow names `leak_scan.py`) and the scan exits non-zero on the unit's `base..head`, or the script and its rules (`leak-scan/gitleaks.toml`) are not where the workflow says; a project that declares no scan adds no line |
 
 The verdict is PASS only when every line is.
 The package (`40-pacchetto-<unit>.md`) carries the verdict, the gate lines, the `test_removal_ok` entries the unit added, the diffstat, the diff with a declared cap of 400 lines, and the cost of the attached session.
@@ -590,6 +593,12 @@ Two things stop closing: if another unit sharing the tab is still open, the tab 
 When it closes, `tab_closed` records the pids.
 A tab the owner already closed is not an error.
 
+On Windows the turn the engine starts for a unit also lives inside a job object carrying `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, named after the task and the unit (`nexgen-sup:<task>:<unit>`).
+The turn is adopted into it as soon as it exists and receives a handle by duplication, so the job lives exactly as long as the work does, and closing the tab ends that whole tree with one kernel call instead of a walk of the process table that can miss whatever was born while it was being read.
+A process the job does not hold — a descendant this machine's own job chain lets break away, or one created through `Win32_Process.Create`, whose parent is the provider and not the unit — cannot be ended by the kernel: those are stopped one by one with psutil and counted in the line (`3 fuori dal job`) and in `tab_closed`'s `outside_job`, which is the difference between a job that worked and a job that silently held nothing.
+A turn the kernel will not hold is still delivered, and the journal says so with `unit_unjobbed` and the reason.
+POSIX is unchanged: `start_new_session` and the process group do the same work.
+
 ## Resuming a task
 
 `sup resume <id>` walks a task through the steps the owner already runs by hand: `unità -> esecuzione -> raccolta -> revisione -> pubblicazione`.
@@ -663,7 +672,7 @@ One line per unit, kind and sentence goes to `07-richieste-proprietario.md`, and
 ## Visible windows
 
 `supervision_windows` opens a terminal that runs a command and stays open; the engine never reads its output, and a window that cannot be opened raises instead of falling back to a hidden process.
-A tab opened by the engine carries its marker in one exact place, and only a shell is looked at: on Windows the assignment in the command line (`$env:NEXGEN_SUP_TAB=nexgen-sup:<task>:<role>`), on Linux the exported variable in `/proc/<pid>/environ`.
+A tab opened by the engine carries its marker in one exact place, and only a shell is looked at: on Windows the assignment in the command line (`$env:NEXGEN_SUP_TAB=nexgen-sup:<task>:<role>`), on Linux the exported variable in the shell's environment (`/proc/<pid>/environ`, read through psutil).
 A `grep` or an editor that merely quotes the marker is not a tab and is never touched.
 The engine closes exactly that tab when the work is done: at publication (`sup publish`), at retirement (`sup review --approve ... --close`), and during cleanup (`sup pulizia --chiudi`).
 A shared tab stays until the last unit using it is done, published, closed or retired, while separate tabs close with their unit.
@@ -674,7 +683,7 @@ The marker names the task and the role, so which unit a tab serves is what its c
 When `sup run`, `sup review --rework` or `--resend` open a tab for a unit that already has one, the old tab is closed first (`close_unit_tab`, same marker rule and same refusal around the shared server), and retirement closes the unit's own tab before its copy goes; a unit whose tab was never recorded costs no process-table read.
 Nine forgotten tabs of units already published were, measured on the owner's PC, the reason a cleanup found nothing to collect.
 
-On Linux the tab is a terminal window whose shell is the tab: the tree is read from `/proc` (stat, cmdline, environ) and stopped deepest first, and the window follows its shell.
+On Linux the tab is a terminal window whose shell is the tab: the tree is read through psutil, from each process's command line and environment, and stopped deepest first, and the window follows its shell.
 The same rule about the shared server applies, so a machine where the terminal started `opencode serve` keeps that window.
 
 `sup pulizia` is the verb for what the engine left behind.
@@ -718,6 +727,7 @@ The source is the unit's own harness, through its adapter: OpenCode and the loca
 Codex reports tokens and no money, and `agy` reports neither: the row says the number is unreadable instead of writing a zero.
 
 `sup costi` without an id shows what the harness archive says was spent in the last 5 hours, 7 days and 30 days: every session row in `session_v2`, or the old `session` table, children included, windowed by `time_updated`.
+The dollars for those sessions come from the optional [ccusage](https://github.com/ccusage/ccusage) binary (MIT), whose OpenCode reader skips the message rows a v2 fork copied from its parent and prices a model from its bundled list when the harness stored zero, which is what a flat subscription stores: when it is installed, one `ccusage opencode session --json --offline` answers per ten minutes; when it is missing, or its answer has a shape the engine does not recognise, the archive's own `cost` column is summed exactly as before.
 The store is opened read-only, and a store that cannot be read makes the window unknown with the reason, never zero.
 No budget rule lives in the engine: the numbers are shown, and what to do about them stays the owner's decision.
 

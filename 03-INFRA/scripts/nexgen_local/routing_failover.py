@@ -13,6 +13,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from nexgen_core import alerts
+
 from . import routing_tiers as rt
 from . import supervision_costs as costs
 from . import supervision_harness as harness
@@ -102,7 +104,7 @@ def _move(task_id: str, record: dict, reason: str, detail: str, ttl: float) -> s
         line = f"worker {model} bloccato ({reason}): nessun candidato libero, nessun rilancio"
         _journal(task_id, name, session, model=model, next_model="", outcome="candidati finiti",
                  reason=reason, detail=detail)
-        _alert(session, line)
+        _alert(session, alerts.WORKER_STUCK)
         return line
     _journal(task_id, name, session, model=model, next_model=candidate["model"], outcome="rilanciata",
              reason=reason, detail=detail)
@@ -110,7 +112,7 @@ def _move(task_id: str, record: dict, reason: str, detail: str, ttl: float) -> s
     line = f"worker {model} bloccato ({reason}): rilanciato su {candidate['model']}"
     if result.get("mode") == "refused":
         line = f"worker {model} bloccato ({reason}): rilancio su {candidate['model']} rifiutato"
-    _alert(session, line)
+    _alert(session, alerts.WORKER_RELAUNCHED)
     return line
 
 
@@ -142,15 +144,21 @@ def _journal(task_id: str, name: str, session: str, **fields: str) -> None:
     state.append_event(task_id, "unit_failover", unit=name, session=session, **fields)
 
 
-def _alert(session: str, line: str) -> None:
-    """The owner's alert, once per blocked session; a failed alert never undoes a relaunch."""
+def _alert(session: str, alert) -> None:
+    """The owner's alert, once per blocked session; a failed alert never undoes a relaunch.
+
+    The wording arrives as one of the engine's own alerts, not as the journal line:
+    the line is written for whoever reads the log, and it is full of model names and
+    quota reasons that a person cannot act on.
+    """
     try:
         from nexgen_core.megaphone import Megaphone
 
+        title, message, action = alert.say()
         Megaphone().send_alert(
-            title="Worker bloccato, unità gestita",
-            message=f"{line}. Dettaglio nel diario del compito.",
-            action=None,
+            title=title,
+            message=message,
+            action=action,
             alert_key=f"unit_failover:{session}",
         )
     except Exception as exc:  # nexgen: allow reason="un avviso perso non annulla il rilancio già fatto"

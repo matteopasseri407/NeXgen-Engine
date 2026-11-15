@@ -21,6 +21,7 @@ from nexgen_core.processes import no_window_kwargs, windows_command_argv
 
 from . import supervision_adapters as adapters
 from . import supervision_costs as costs
+from . import supervision_job as jobs
 from . import supervision_policy as policy
 from . import supervision_quota as quota_gate
 from . import supervision_state as state
@@ -359,6 +360,7 @@ def _enter_the_session(
         )
         return {"unit": unit, "mode": "queued", "session": session, "reason": reason}
     proc = runner(session, prompt, folder, model)
+    _hold_turn(task_id, unit, proc)
     state.append_event(
         task_id, event, unit=unit, harness=adapter.name, session=session, mode="run",
         pid=getattr(proc, "pid", None), folder=str(folder), **extra,
@@ -566,6 +568,7 @@ def _open_turn(
     """
     started_ms = int(time.time() * 1000)
     proc = runner(session, prompt, folder, model)
+    _hold_turn(task_id, unit, proc)
     pid = getattr(proc, "pid", None)
     state.append_event(
         task_id, event, unit=unit, harness=adapter.name, session=session, mode="turn",
@@ -733,6 +736,20 @@ def _run_turn(adapter, executable: str, session: str, prompt: str, folder: Path,
             )
     except OSError as exc:
         raise HarnessError(f"sessione {session} non raggiungibile: {exc}") from exc
+
+
+def _hold_turn(task_id: str, unit: str, proc) -> None:
+    """Put this turn inside the unit's job object, and journal the reason when it cannot hold it.
+
+    The job is what lets stopping the unit end the whole tree in one kernel call. A
+    turn the kernel will not hold still runs: the engine says so in the journal
+    (`unit_unjobbed`) instead of pretending, and the stop falls back to the pids.
+    """
+    note = jobs.adopt(jobs.job_name(task_id, unit), getattr(proc, "pid", None))
+    if note:
+        state.append_event(
+            task_id, "unit_unjobbed", unit=unit, pid=getattr(proc, "pid", None), reason=note,
+        )
 
 
 def _runner_for(adapter):

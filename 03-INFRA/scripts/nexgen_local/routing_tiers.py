@@ -255,12 +255,14 @@ def handle_quota_failover(model: str, error_or_reason: Any, *, limited: bool = F
     if not is_quota:
         return None
     mark_exhausted(model, reason)
+    from nexgen_core import alerts
     from nexgen_core.megaphone import Megaphone
     phone = megaphone or Megaphone()
+    title, message, action = alerts.MODEL_OUT_OF_QUOTA.say(model=model, reason=reason)
     phone.send_alert(
-        title="Modello esaurito per fine quota",
-        message=f"Il modello «{model}» ha esaurito la quota ({reason}). Passaggio al candidato successivo.",
-        action=None,
+        title=title,
+        message=message,
+        action=action,
         alert_key=f"quota_exhausted:{model}",
     )
     try:

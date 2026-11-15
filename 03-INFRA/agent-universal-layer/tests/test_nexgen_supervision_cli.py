@@ -39,6 +39,9 @@ def lane(tmp_path, monkeypatch):
     monkeypatch.setattr(costs.shutil, "which", lambda name: r"C:\fake\opencode.cmd")
     # L'archivio delle sessioni vive in una casa temporanea: mai quello vero.
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    # La lista dei prezzi comprata da `ccusage` è uno stato della macchina: anche
+    # lei in una cartella temporanea, come l'archivio che descrive.
+    monkeypatch.setenv("AGENT_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setattr(
         costs.subprocess, "run",
         lambda argv, **kwargs: costs.subprocess.CompletedProcess(argv, 0, json.dumps(EXPORT), ""),

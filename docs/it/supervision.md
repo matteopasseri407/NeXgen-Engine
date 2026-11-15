@@ -406,7 +406,7 @@ Il resoconto dell'esecutore non è una prova; ogni riga qui sotto viene letta da
 | `configurazione git` | uno dei due file di configurazione della copia è cambiato da quando l'unità è stata creata (il `.git/config` condiviso del repository, che ogni checkout legge, oppure il `config.worktree` del worktree), o la configurazione effettiva porta una chiave `url.*.insteadOf` o `url.*.pushInsteadOf` che la creazione non aveva; vengono nominati il file o la chiave |
 | `remoto intatto` | un remote della creazione è sparito, è stato aggiunto, punta a un altro URL di fetch o di push, oppure uno dei suoi ref porta un commit dell'intervallo dell'unità (l'unità ha spinto); un ramo avanzato per un altro motivo non è un guasto |
 | `albero pulito` | la copia dell'unità ha lavoro non committato |
-| `scansione fughe` | il progetto dichiara la scansione anti-fuga della CI (un workflow nomina `leak_scan.py`) e la scansione esce con codice diverso da zero sul `base..head` dell'unità, oppure lo script e i suoi pattern non sono dove il workflow dice; un progetto che non dichiara nessuna scansione non aggiunge righe |
+| `scansione fughe` | il progetto dichiara la scansione anti-fuga della CI (un workflow nomina `leak_scan.py`) e la scansione esce con codice diverso da zero sul `base..head` dell'unità, oppure lo script e le sue regole (`leak-scan/gitleaks.toml`) non sono dove il workflow dice; un progetto che non dichiara nessuna scansione non aggiunge righe |
 
 Il verdetto è PASS solo quando ogni riga lo è.
 Il pacchetto (`40-pacchetto-<unit>.md`) porta il verdetto, le righe dei cancelli, le voci di `test_removal_ok` aggiunte dall'unità, il diffstat, il diff con un tetto dichiarato di 400 righe e il costo della sessione agganciata.
@@ -663,7 +663,7 @@ Una riga per unità, tipo e frase va in `07-richieste-proprietario.md`, e una fr
 ## Finestre visibili
 
 `supervision_windows` apre un terminale che esegue un comando e resta aperto; il motore non ne legge mai l'output, e una finestra che non si riesce ad aprire solleva un errore invece di ripiegare su un processo nascosto.
-Una scheda aperta dal motore porta il suo marcatore in un punto esatto, e viene guardata solo una shell: su Windows l'assegnazione nella riga di comando (`$env:NEXGEN_SUP_TAB=nexgen-sup:<task>:<role>`), su Linux la variabile esportata in `/proc/<pid>/environ`.
+Una scheda aperta dal motore porta il suo marcatore in un punto esatto, e viene guardata solo una shell: su Windows l'assegnazione nella riga di comando (`$env:NEXGEN_SUP_TAB=nexgen-sup:<task>:<role>`), su Linux la variabile esportata nell'ambiente della shell (`/proc/<pid>/environ`, letto con psutil).
 Un `grep` o un editor che si limita a citare il marcatore non è una scheda e non viene mai toccato.
 Il motore chiude esattamente quella scheda quando il lavoro è finito: alla pubblicazione (`sup publish`), al ritiro (`sup review --approve ... --close`) e durante la pulizia (`sup pulizia --chiudi`).
 Una scheda condivisa resta finché l'ultima unità che la usa non è finita, pubblicata, chiusa o ritirata, mentre le schede separate si chiudono con la loro unità.
@@ -674,7 +674,7 @@ Il marcatore nomina il compito e il ruolo, quindi quale unità serve una scheda 
 Quando `sup run`, `sup review --rework` o `--resend` aprono una scheda per un'unità che ne ha già una, la vecchia scheda viene chiusa prima (`close_unit_tab`, stessa regola del marcatore e stesso rifiuto intorno al server condiviso), e il ritiro chiude la scheda dell'unità prima che la copia se ne vada; un'unità la cui scheda non è mai stata registrata non costa nessuna lettura della tabella dei processi.
 Nove schede dimenticate di unità già pubblicate sono state, misurate sul PC del proprietario, il motivo per cui una pulizia non trovava nulla da raccogliere.
 
-Su Linux la scheda è una finestra di terminale la cui shell è la scheda: l'albero si legge da `/proc` (stat, cmdline, environ) e si ferma dal più profondo, e la finestra segue la sua shell.
+Su Linux la scheda è una finestra di terminale la cui shell è la scheda: l'albero si legge con psutil, dalla riga di comando e dall'ambiente di ogni processo, e si ferma dal più profondo, e la finestra segue la sua shell.
 Vale la stessa regola sul server condiviso, quindi una macchina in cui il terminale ha avviato `opencode serve` tiene quella finestra.
 
 `sup pulizia` è il verbo per quello che il motore ha lasciato indietro.
@@ -718,6 +718,7 @@ La fonte è l'harness dell'unità, attraverso il suo adattatore: OpenCode e l'es
 Codex riporta token e nessun denaro, e `agy` non riporta nessuno dei due: la riga dice che il numero è illeggibile invece di scrivere zero.
 
 `sup costi` senza id mostra quello che l'archivio dell'harness dice essere stato speso nelle ultime 5 ore, 7 giorni e 30 giorni: ogni riga di sessione in `session_v2`, o nella vecchia tabella `session`, figli compresi, finestrata per `time_updated`.
+I dollari di quelle sessioni li dà il binario opzionale [ccusage](https://github.com/ccusage/ccusage) (MIT), il cui lettore OpenCode salta le righe di messaggio che una fork v2 ha copiato dal genitore e prezza un modello dal listino incluso quando l'harness ha scritto zero, che è quello che scrive un abbonamento flat: quando è installato, un `ccusage opencode session --json --offline` risponde una volta ogni dieci minuti; quando manca, o la sua risposta ha una forma che il motore non riconosce, si somma la colonna `cost` dell'archivio esattamente come prima.
 L'archivio viene aperto in sola lettura, e un archivio che non si riesce a leggere rende la finestra sconosciuta con il motivo, mai zero.
 Nessuna regola di budget vive nel motore: i numeri si mostrano, e cosa farne resta una decisione del proprietario.
 

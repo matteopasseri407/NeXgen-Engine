@@ -274,3 +274,60 @@ def test_a_session_without_a_marker_is_never_touched_and_blocks_the_collection(p
     assert before == 1000.0
     assert {row["pid"] for row in targets} == {301}, "solo ciò che è nato prima, e non la sessione"
     assert any("senza marcatore" in line and "blocca la raccolta" in line for line in lines)
+
+
+# --- il job dell'unità, chiuso insieme alla scheda ----------------------------
+
+
+def _ended(*, members: list[int], strays: list[int], job: bool = True) -> dict:
+    return {"job": job, "members": members, "strays": strays}
+
+
+def test_the_job_of_a_unit_ends_with_the_tab_and_names_what_it_never_held(task, copy, posix, monkeypatch):
+    """Il kernel chiude i membri; chi è fuori dal job si ferma a mano, e la riga lo dice."""
+    killer = Killer()
+    monkeypatch.setattr(windows.jobs, "held", lambda name: [500])
+    monkeypatch.setattr(windows.jobs, "terminate", lambda name, table: _ended(members=[500], strays=[501]))
+
+    result = windows.close_unit_tab(
+        task, UNIT, lister=lambda: [_tab(task), _tui(), _child()], killer=killer,
+    )
+
+    assert sorted(killer.stopped) == [100, 200, 501], "la scheda, il suo albero e il fuggitivo del job"
+    assert result["line"] == "scheda esecutore di prova chiusa (2 processi), 1 fuori dal job"
+    closed = [row for row in state.read_events(task) if row["event"] == "tab_closed"]
+    assert closed[0]["outside_job"] == [501]
+
+
+def test_a_unit_whose_work_was_a_turn_has_no_tab_and_still_has_its_job_ended(task, copy, posix, monkeypatch):
+    """Un'unità consegnata come turno non ha scheda: senza questo, il suo albero sopravvive alla decisione."""
+    killer = Killer()
+    monkeypatch.setattr(windows.jobs, "held", lambda name: [500])
+    monkeypatch.setattr(windows.jobs, "terminate", lambda name, table: _ended(members=[500], strays=[501]))
+
+    result = windows.close_unit_tab(task, UNIT, lister=lambda: [_server()], killer=killer)
+
+    assert killer.stopped == [501], "il membro lo chiude il kernel, il fuggitivo no"
+    assert result["line"] == (
+        "nessuna scheda esecutore di prova da chiudere, 1 processo fuori dal job fermati"
+    )
+    assert not [row for row in state.read_events(task) if row["event"] == "tab_closed"]
+
+
+def test_a_job_that_holds_the_shared_server_is_never_ended(task, copy, posix, monkeypatch):
+    """Chiudere il job del servizio condiviso fermerebbe ogni altra sessione del proprietario."""
+    killer = Killer()
+    monkeypatch.setattr(windows.jobs, "held", lambda name: [SERVER_PID])
+    monkeypatch.setattr(
+        windows.jobs, "terminate",
+        lambda name, table: pytest.fail("il job del servizio condiviso non si chiude"),
+    )
+
+    result = windows.close_unit_tab(
+        task, UNIT, lister=lambda: [_server(), _child(pid=300)], killer=killer,
+    )
+
+    assert killer.stopped == []
+    assert "servizio condiviso" in result["reason"]
+    left = [row for row in state.read_events(task) if row["event"] == "tab_left_open"]
+    assert len(left) == 1 and "servizio condiviso" in left[0]["reason"]

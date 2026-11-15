@@ -40,7 +40,7 @@ Durante il lavoro lancia solo i test dei file toccati e dei moduli vicini, mai l
 pytest <file dei test toccati>
 python 03-INFRA/scripts/discipline.py check --base <base>
 python 03-INFRA/scripts/ruff_baseline_check.py
-python 03-INFRA/agent-universal-layer/leak-scan/leak_scan.py --patterns 03-INFRA/agent-universal-layer/leak-scan/leak_patterns.yaml --repo . --commit-range <base>..HEAD
+python 03-INFRA/agent-universal-layer/leak-scan/leak_scan.py --config 03-INFRA/agent-universal-layer/leak-scan/gitleaks.toml --repo . --commit-range <base>..HEAD
 ```
 
 ## Fatto quando

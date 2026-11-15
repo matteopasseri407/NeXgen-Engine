@@ -4,9 +4,16 @@ The executor works in a git worktree created from the unit's base, on a branch
 that is never pushed, with the push blocked inside that copy alone. This module
 creates it, writes down what the engine will judge, and says in the unit folder
 how to remove it; publication stays a later phase's decision.
+
+The copy also carries what `.worktreeinclude` names: the gitignored files (a
+`.env`, a local config) the work cannot run without. A file is copied only when a
+pattern of that file matches it **and** git really ignores it, so nothing tracked
+is ever duplicated over the copy.
 """
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -22,6 +29,8 @@ UNITS_DIR = "23-unita"
 BLOCKED_PUSH_URL = "nexgen-sup-disabled://push-blocked"
 #: A remote that does not answer within this budget is reported as unreadable, never as unchanged.
 REMOTE_TIMEOUT_S = 30.0
+#: The file other worktree tools read: gitignored paths a new copy must carry.
+INCLUDE_FILE = ".worktreeinclude"
 
 
 class WorktreeError(SupervisionError):
@@ -119,13 +128,16 @@ def create(
     try:
         _block_push(root, folder)
         _set_identity(folder, owner)
+        included = carry_included(root, folder)
     except (GitError, OSError) as exc:
         _discard(root, folder, branch)
         raise WorktreeError(f"configurazione della copia non riuscita in {folder}: copia rimossa ({exc})") from exc
     snapshot = remote_refs(root)
-    (Path(folder).parent / f"20-brief-{state.slug(unit)}.md").write_text(brief_text, encoding="utf-8")
-    environment = _environment_text(task_id, unit, folder, branch, base, base_sha, scope, verify, identity=owner)
-    (Path(folder).parent / f"22-ambiente-{state.slug(unit)}.md").write_text(environment, encoding="utf-8")
+    environment = _environment_text(
+        task_id, unit, folder, branch, base, base_sha, scope, verify, identity=owner,
+        included=included,
+    )
+    _write_papers(unit, folder, brief_text, environment)
     mcp_assigned = list(dict.fromkeys(
         str(item).strip() for item in (mcp or []) if str(item).strip()
     ))
@@ -140,6 +152,7 @@ def create(
         "verify": verify,
         "identity": owner,
         "mcp": mcp_assigned,
+        "included": included,
         "remotes": snapshot,
         "remote_urls": remote_urls(root),
         "remote_pushurls": push_urls(Path(folder)),
@@ -230,9 +243,70 @@ def _discard(root: Path, folder: Path, branch: str) -> None:
     git(root, "branch", "-D", branch, check=False)
 
 
+def _write_papers(unit: str, folder: Path, brief_text: str, environment: str) -> None:
+    """The brief and the environment the executor reads, written beside its copy."""
+    task_folder = Path(folder).parent
+    (task_folder / f"20-brief-{state.slug(unit)}.md").write_text(brief_text, encoding="utf-8")
+    (task_folder / f"22-ambiente-{state.slug(unit)}.md").write_text(environment, encoding="utf-8")
+
+
+def include_patterns(root: Path) -> list[str]:
+    """What `.worktreeinclude` asks for, in gitignore syntax; a missing file asks for nothing."""
+    patterns_file = root / INCLUDE_FILE
+    if not patterns_file.is_file():
+        return []
+    text = patterns_file.read_text(encoding="utf-8")
+    return [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
+def included_files(root: Path, folder: Path) -> list[str]:
+    """The files to carry over: named by a pattern **and** really ignored by git.
+
+    Both halves are asked of git, not of a matcher written here, so the answer is
+    gitignore's own: `--exclude-standard` is what this repository really ignores, and
+    the same listing with the file's patterns keeps only what those patterns name.
+    A tracked file is in neither list, so it can never be copied over itself.
+    """
+    patterns = include_patterns(root)
+    if not patterns:
+        return []
+    ignored = _untracked(root, ["--ignored", "--exclude-standard"])
+    matched = _untracked(root, ["--ignored", *(f"--exclude={pattern}" for pattern in patterns)])
+    inside = os.path.normcase(os.path.abspath(folder)) + os.sep
+    return sorted(
+        path for path in ignored & matched
+        if not os.path.normcase(os.path.abspath(root / path)).startswith(inside)
+    )
+
+
+def _untracked(root: Path, options: list[str]) -> set[str]:
+    """The repository-relative paths git lists as untracked under these options."""
+    listed = git(root, "ls-files", "-z", "--others", *options)
+    return {path for path in listed.split("\0") if path}
+
+
+def carry_included(root: Path, folder: Path) -> list[str]:
+    """Copy what `.worktreeinclude` names into the new copy, keeping each file's own mode and time."""
+    carried: list[str] = []
+    for relative in included_files(root, folder):
+        source = root / relative
+        if not source.is_file():
+            continue  # a link git reported and the copy cannot follow: nothing to carry
+        target = folder / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        carried.append(relative)
+    return carried
+
+
 def _environment_text(
     task_id: str, unit: str, folder: Path, branch: str, base: str, base_sha: str,
     scope: list[str], verify: str, identity: dict[str, str] | None = None,
+    included: list[str] | None = None,
 ) -> str:
     """The environment the executor has to know: where it is and what it may not do."""
     lines = [
@@ -244,6 +318,7 @@ def _environment_text(
         f"- base: {base} ({base_sha})",
         *( [f"- identità: {identity['name']} <{identity['email']}>"] if identity else [] ),
         f"- verifica: {verify or 'nessuna dichiarata'}",
+        *(["- file inclusi da `.worktreeinclude`: " + ", ".join(included)] if included else []),
         "",
         "## Confine",
         "",
