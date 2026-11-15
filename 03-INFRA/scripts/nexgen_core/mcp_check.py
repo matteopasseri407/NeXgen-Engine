@@ -12,18 +12,14 @@ from __future__ import annotations
 
 import json
 import os
-import queue
+import time
 import urllib.error
 import urllib.request
-import subprocess
-import threading
-import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from nexgen_core.i18n import t
 from nexgen_core.mcp_placement import CLIS, DIRECT, GATEWAY, GATEWAY_CLI_ENV, GATEWAY_KIND, gateway_servers_for, place
-from nexgen_core.processes import force_stop_process_tree, no_window_kwargs, windows_command_argv
 
 META_TOOLS = frozenset({"lazy_list", "lazy_load", "lazy_call", "lazy_mutate"})
 
@@ -41,63 +37,42 @@ class CliResult:
 
 
 class _Session:
-    """One stdio MCP connection, newline-delimited JSON, with a deadline on every read."""
+    """One stdio MCP connection through the official SDK client, with a deadline on every call.
+
+    The SDK is imported where it is used, not at the top of this module: `META_TOOLS` is
+    read by the OpenClaw tool surface, which the command line imports at startup, and an
+    async server stack has no business in the path of `nexgen --help`.
+    """
 
     def __init__(self, argv: list[str], env: dict[str, str], cwd: str | None = None) -> None:
-        self.proc = subprocess.Popen(
-            windows_command_argv(argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            text=True, encoding="utf-8", errors="replace", env=env, cwd=cwd, start_new_session=os.name == "posix",
-            **no_window_kwargs(),
-        )
-        self._lines: queue.Queue[str | None] = queue.Queue()
-        threading.Thread(target=self._pump, daemon=True).start()
-        self._next = 0
+        from nexgen_core.mcp_stdio import StdioSession
 
-    def _pump(self) -> None:
-        for line in self.proc.stdout:  # type: ignore[union-attr]
-            self._lines.put(line)
-        self._lines.put(None)
+        self._session = StdioSession(argv, env=env, cwd=cwd)
 
     def request(self, method: str, params: dict[str, Any] | None, timeout: float) -> dict[str, Any]:
-        self._next += 1
-        rid = self._next
-        self.proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": rid, "method": method, "params": params or {}}) + "\n")  # type: ignore[union-attr]
-        self.proc.stdin.flush()  # type: ignore[union-attr]
-        deadline = time.monotonic() + timeout
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError(t("no answer to {method} within {seconds:g}s", method=method, seconds=timeout))
-            try:
-                line = self._lines.get(timeout=remaining)
-            except queue.Empty:
-                continue
-            if line is None:
-                raise RuntimeError(t("the process ended before answering {method}", method=method))
-            try:
-                message = json.loads(line)
-            except ValueError:
-                continue
-            if message.get("id") == rid:
-                if "error" in message:
-                    raise RuntimeError(f"{method}: {message['error'].get('message', message['error'])}")
-                return message.get("result") or {}
+        """One request, its result, or the reason it did not arrive."""
+        from nexgen_core.mcp_stdio import CONNECTION_CLOSED, MCPError, leaf
+
+        try:
+            return self._session.call(method, params, timeout)
+        except TimeoutError:
+            raise TimeoutError(t("no answer to {method} within {seconds:g}s", method=method, seconds=timeout)) from None
+        except MCPError as exc:
+            if exc.code == CONNECTION_CLOSED:
+                raise RuntimeError(t("the process ended before answering {method}", method=method)) from None
+            raise RuntimeError(f"{method}: {exc.message}") from None
+        except ExceptionGroup as exc:  # nexgen: allow reason="a transport that failed in a task group is reported as the one reason it carries, not as 'unhandled errors'"
+            raise RuntimeError(str(leaf(exc))) from None
 
     def notify(self, method: str) -> None:
-        self.proc.stdin.write(json.dumps({"jsonrpc": "2.0", "method": method}) + "\n")  # type: ignore[union-attr]
-        self.proc.stdin.flush()  # type: ignore[union-attr]
+        """Nothing to send: the SDK client already sent `notifications/initialized`."""
 
     def handshake(self, timeout: float) -> None:
-        self.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
-                                    "clientInfo": {"name": "nexgen-mcp-check", "version": "1"}}, timeout)
-        self.notify("notifications/initialized")
+        """Completes the session's handshake, which is also what opens the process."""
+        self.request("initialize", None, timeout)
 
     def close(self) -> None:
-        try:
-            self.proc.stdin.close()  # type: ignore[union-attr]
-        except OSError:
-            pass
-        force_stop_process_tree(self.proc, process_group=self.proc.pid if os.name == "posix" else None, timeout=5.0)
+        self._session.close()
 
 
 def _spawn_env(entry_env: dict[str, str]) -> dict[str, str]:

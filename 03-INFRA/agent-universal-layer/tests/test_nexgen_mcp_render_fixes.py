@@ -517,6 +517,104 @@ def test_codex_keeps_the_app_state_of_a_server_it_manages(tmp_path):
                      "tools": {"read": {"approval_mode": "approve"}}}
 
 
+def test_codex_keeps_every_line_the_engine_does_not_own(tmp_path):
+    """The engine owns `[mcp_servers.*]` and nothing else in this file.
+
+    A hand-written connector (with its comment and its env sub-table), the app's own
+    tables and the comments inside a managed section come out of a render byte for
+    byte as they went in, the engine's marker appears once, and a second render
+    writes nothing.
+    """
+    renderer = make_renderer(tmp_path)
+    cfg = tmp_path / "home/.codex/config.toml"
+    cfg.parent.mkdir(parents=True)
+    private = ('[mcp_servers."private.local"]\ncommand = "node"\n'
+               'args = ["private-plugin.js"]  # my own comment\n\n'
+               '[mcp_servers."private.local".env]\nLOCAL_MODE = "manual"\n')
+    apps = '[apps.connector_demo]\nenabled = true\n'
+    cfg.write_text('# kept by hand\nmodel = "private-default"\n\n' + private + '\n'
+                   '[mcp_servers.alpha]\ncommand = "old"\nargs = []\n'
+                   '# the app wrote this list\ndisabled_tools = ["write_note"]\n\n'
+                   '[mcp_servers.alpha.tools.read]\napproval_mode = "approve"\n\n' + apps,
+                   encoding="utf-8")
+
+    renderer.render_codex(write=True)
+
+    text = cfg.read_text(encoding="utf-8")
+    assert '# kept by hand\nmodel = "private-default"\n' in text
+    assert private in text
+    assert '# the app wrote this list\ndisabled_tools = ["write_note"]\n' in text
+    # The app's own table stays where the app put it: the engine does not move a
+    # line it does not own, for the same reason it does not rewrite one.
+    assert text.index("[apps.connector_demo]") > text.index("[mcp_servers.alpha]")
+    assert apps in text
+    assert text.count("# NeXgen Engine - Codex MCP configuration, auto-generated") == 1
+    assert tomllib.loads(text)["mcp_servers"]["alpha"] == {
+        "command": "python", "args": ["-V"], "disabled_tools": ["write_note"],
+        "tools": {"read": {"approval_mode": "approve"}},
+    }
+    renderer.render_codex(write=True)
+    assert cfg.read_text(encoding="utf-8") == text
+
+
+def test_codex_refuses_any_edit_that_would_reach_the_app_state():
+    """`_validate_unchanged` is the promise behind every render.
+
+    Rewriting a managed section is allowed; changing a setting or a connector the
+    engine does not own, or writing something that is not a `mcp_servers` table, is
+    refused rather than written.
+    """
+    from nexgen_core.mcp_render import codex
+
+    upstream = {"model": "private", "mcp_servers": {"mine": {"command": "node"}}}
+
+    def check(generated, previous=upstream):
+        codex._validate_unchanged(generated, previous, {"alpha"}, set())
+
+    check({"model": "private", "mcp_servers": {"mine": {"command": "node"}, "alpha": {"command": "python"}}})
+    with pytest.raises(ValueError, match="unrelated settings"):
+        check({"model": "changed", "mcp_servers": {"mine": {"command": "node"}}})
+    with pytest.raises(ValueError, match="unmanaged connector"):
+        check({"model": "private", "mcp_servers": {"mine": {"command": "changed"}}})
+    with pytest.raises(ValueError, match="must be a table"):
+        check({"model": "private"}, {"model": "private", "mcp_servers": 5})
+
+
+def test_codex_save_landing_mid_render_is_not_lost(tmp_path, monkeypatch):
+    """The Codex app saves its own tables into this same file, and the save can land
+    after the render has read it and built the sections, while the write is still to
+    come. The render reads the file again at the last moment and rebuilds from it, so
+    that save survives instead of being overwritten by a stale render.
+
+    The save is injected from inside the verification that runs between the read and
+    the write, which is the window a re-read at the top of the render cannot cover.
+    """
+    from nexgen_core.mcp_render import codex
+
+    renderer = make_renderer(tmp_path)
+    cfg = tmp_path / "home/.codex/config.toml"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text('[mcp_servers.alpha]\ncommand = "old"\nargs = []\n', encoding="utf-8")
+    real_validate = codex._validate_unchanged
+    saves: list[int] = []
+
+    def app_saves_after_the_sections_are_built(generated, previous, managed, unmounted):
+        real_validate(generated, previous, managed, unmounted)
+        if not saves:
+            saves.append(1)
+            cfg.write_text(cfg.read_text(encoding="utf-8") + '\n[apps.connector_demo]\nenabled = true\n',
+                           encoding="utf-8")
+
+    monkeypatch.setattr(codex, "_validate_unchanged", app_saves_after_the_sections_are_built)
+    renderer.render_codex(write=True)
+
+    data = tomllib.loads(cfg.read_text(encoding="utf-8"))
+    assert data["apps"] == {"connector_demo": {"enabled": True}}
+    assert tomllib.loads(cfg.read_text(encoding="utf-8"))["mcp_servers"]["alpha"] == {
+        "command": "python", "args": ["-V"],
+    }
+
+
 def test_antigravity_save_landing_mid_render_is_not_lost(tmp_path, monkeypatch):
     """The app's MCP screen saves into this file too, and the save can land after the
     render read it and computed `mcpServers`, while the write is still to come. The

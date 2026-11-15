@@ -16,6 +16,7 @@ import time
 from typing import Any, Callable
 
 import lazy_manifest
+import lazy_schema
 import lazy_server_handle
 
 INDEX_MAX_TOKENS = int(os.environ.get("LAZY_MCP_INDEX_MAX_TOKENS", "4000"))
@@ -168,6 +169,19 @@ class Waiter:
             return {"error": f"server '{server}' is unavailable: {handle.last_error}"}
         return {"error": f"tool '{tool}' not found on {server}"}
 
+    def _loaded_schema(self, handle: lazy_server_handle.ServerHandle, tool: str) -> Any:
+        """The tool's `inputSchema` from the index this gateway already built, without a round trip.
+
+        `lazy_list` is what a model calls first, and it indexes every server, so the schema of the
+        tool it is about to call is already here. A call that arrives before any index exists is
+        forwarded unchecked on purpose: probing for it would start a server that is dead a second
+        time (measured: 1.7s became 4.1s on a crashing child) to fail the call it was asked for.
+        """
+        for entry in handle.index or []:
+            if entry.get("name") == tool:
+                return entry.get("inputSchema")
+        return None
+
     def call(
         self, server: str, tool: str, arguments: dict[str, Any], confirm: bool = False, *, via: str = "lazy_call",
     ) -> dict[str, Any]:
@@ -197,6 +211,17 @@ class Waiter:
             if not confirm:
                 self._audit(server, tool, "refused", confirmed=False)
                 return {"error": f"'{tool}' on '{server}' changes state: call again with \"confirm\": true."}
+        schema = self._loaded_schema(handle, tool)
+        problem = lazy_schema.arguments_problem(schema, arguments)
+        if problem:
+            # A call its own schema refuses is never forwarded: the upstream would spend a round
+            # trip to say the same thing, in one line the model cannot act on.
+            self._audit(server, tool, "refused", confirmed=False)
+            return {"error": (
+                f"{problem}. '{tool}' on '{server}' was not called: "
+                f"call lazy_load with server \"{server}\" and tool \"{tool}\" for its full definition. "
+                f"inputSchema: {lazy_schema.compact_schema(schema)}"
+            )}
         with self._lock:
             handle.active_calls += 1
         try:

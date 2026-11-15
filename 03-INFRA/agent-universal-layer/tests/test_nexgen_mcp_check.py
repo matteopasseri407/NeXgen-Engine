@@ -34,7 +34,12 @@ for line in sys.stdin:
     method, rid = req.get("method"), req.get("id")
     if rid is None:
         continue
-    if method == "tools/list":
+    if method == "initialize":
+        out = {"jsonrpc": "2.0", "id": rid, "result": {
+            "protocolVersion": req["params"]["protocolVersion"],
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "good", "version": "1.0"}}}
+    elif method == "tools/list":
         out = {"jsonrpc": "2.0", "id": rid, "result": {"resultType": "complete", "tools": TOOLS}}
     else:
         out = {"jsonrpc": "2.0", "id": rid, "result": {"resultType": "complete"}}

@@ -16,6 +16,7 @@ import threading
 from typing import Any
 
 from lazy_server_handle import PROTOCOL_VERSION
+from mcp_stdio import use_utf8
 
 SERVER_NAME = "lazy-mcp"
 SERVER_VERSION = "0.2.1"
@@ -304,6 +305,7 @@ def _dispatch(req: dict[str, Any], waiter) -> None:
 
 def serve(waiter) -> int:
     """Read the protocol stream until the client closes it, then stop every server this gateway started."""
+    use_utf8()
     previous = {}
 
     def interrupted(signum, _frame):

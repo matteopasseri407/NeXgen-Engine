@@ -40,23 +40,6 @@ TOKEN = "lifecycle-token-for-the-stand-in"
 FAKE_MCP = "import sys\nfor line in sys.stdin:\n    pass\n"
 
 
-@pytest.fixture(autouse=True)
-def never_taskkill(monkeypatch):
-    """No `taskkill` on the machine that runs the suite."""
-    def _kill(proc, *, process_group=None, timeout=5.0):
-        try:
-            proc.kill()
-        except OSError:
-            pass
-        try:
-            proc.wait(timeout=timeout)
-        except Exception:  # noqa: BLE001 - a test double that will not die must not fail the test
-            pass
-        return True
-
-    monkeypatch.setattr("nexgen_core.mcp_bridge_channel.force_stop_process_tree", _kill)
-
-
 @pytest.fixture
 def sandbox(tmp_path: Path, monkeypatch):
     """A fake home: the state file and the token deposit both stay inside `tmp_path`."""
