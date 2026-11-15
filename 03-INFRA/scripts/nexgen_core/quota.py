@@ -34,7 +34,7 @@ from pathlib import Path
 
 import yaml
 
-from nexgen_core import quota_antigravity, quota_claude, quota_codex, quota_policy, quota_tokscale
+from nexgen_core import quota_agy, quota_antigravity, quota_claude, quota_codex, quota_policy, quota_tokscale
 from nexgen_core.i18n import t
 from nexgen_core.paths import codex_home, resolve_home, resolve_vault_data
 
@@ -406,7 +406,10 @@ def _claude_rows(usage: quota_claude.ClaudeUsage, now: float) -> list[QuotaRow]:
 
 
 def _antigravity_rows(home: Path | None, now: float, notes: list[str]) -> list[QuotaRow]:
-    """Antigravity's prompt credits, kept only while its log is a day old or less."""
+    """Antigravity's plan as its own CLI reports it; the IDE extension's log only where `agy` is absent."""
+    live = quota_agy.read_windows(home=home, now=now)
+    if live:
+        return quota_agy.to_rows(live)
     usage = quota_antigravity.read_usage(home=home, now=now)
     if not usage.known:
         return []

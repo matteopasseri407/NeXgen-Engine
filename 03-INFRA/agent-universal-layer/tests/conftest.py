@@ -171,6 +171,9 @@ def isolated_runtime_overrides(monkeypatch, tmp_path_factory):
     # test may spawn it or touch the network: a test that is about that backend
     # replaces its own seams, and the switch here is the same one a person uses.
     monkeypatch.setenv("NEXGEN_QUOTA_TOKSCALE", "off")
+    # The same for Antigravity's own client: `agy -p /usage` asks Google's quota
+    # service with the login of whoever runs the suite.
+    monkeypatch.setenv("NEXGEN_QUOTA_AGY", "off")
 
 
 @pytest.fixture(autouse=True)
@@ -269,6 +272,7 @@ class Sandbox:
         # here and asks the provider's own endpoint: no environment redirect
         # hides those, so a sandbox silences it the way a person would.
         e["NEXGEN_QUOTA_TOKSCALE"] = "off"
+        e["NEXGEN_QUOTA_AGY"] = "off"
         # Manual apply now performs a strict readiness classification. Keep
         # sandbox smoke tests deterministic and prevent a real host CLI from
         # being invoked through an inherited PATH.

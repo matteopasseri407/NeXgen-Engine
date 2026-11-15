@@ -101,6 +101,8 @@ They were 613 MB in eight days on the machine this was written on, which is affo
 
 ### Antigravity
 
+The first source is Antigravity's own CLI. `agy -p /usage` prints the plan's windows the same way its interactive `/usage` does (Gemini and Claude/GPT models, each with a weekly and a five-hour limit, the share remaining and the reset), and the engine turns each row into a quota row: used is what the client says is gone, and the Gemini rows carry the provider id `google-antigravity-cli`, so the delegation gate reads them like any other plan. The command answers from Google's quota service with the login the client already holds; the engine never reads that login or calls Google itself, and it costs no model tokens. One answer is kept for ten minutes in the state directory, so the hourly beat, the doctor and a session's first line share it; `NEXGEN_QUOTA_AGY=off` stops the client from being asked. Only where `agy` is not installed, or prints nothing readable, does the engine fall back to the IDE extension's log below.
+
 Antigravity's desktop environment logs prompt credit usage through the `ag-quota` extension into local session logs (`*-Antigravity Quota.log` under `%APPDATA%\Antigravity IDE\logs` or `%APPDATA%\Antigravity\logs`).
 The engine reads the tail of the newest log, extracts the monthly prompt credits used percentage for the `30d` window, and carries the moment the log entry was written, so the row prints how old the reading is like every other row.
 The reading is dropped as stale after a day, not after the 30 days of its window: the extension only writes while the IDE runs, so a percentage that is still inside its monthly window can be weeks old and describe a period that has already reset.
