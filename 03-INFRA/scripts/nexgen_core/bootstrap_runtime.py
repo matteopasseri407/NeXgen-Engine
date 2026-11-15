@@ -57,8 +57,13 @@ def provision_before_prerequisites(argv: list[str], *, check: bool = False) -> i
 
     Returns the exit code when the bootstrap must stop here, and None when it can
     carry on with the interpreter it is already running on.
+
+    It is not only PyYAML: a Python that already has some of the declared libraries
+    (a developer's, or one an earlier tool filled) passed this step, built nothing,
+    and the install then died on the first library it lacked (filelock, on 3.0).
     """
-    if yaml_available():
+    absent = [] if not yaml_available() else missing_imports()
+    if yaml_available() and not absent:
         return None
     clone = _engine_clone()
     if clone is None or os.environ.get(REEXEC_MARKER):
@@ -71,23 +76,32 @@ def provision_before_prerequisites(argv: list[str], *, check: bool = False) -> i
         # Reading is allowed: an environment an earlier install built answers the
         # whole plan. Building one is not, so without it the plan stays partial.
         if python.is_file():
-            _reexec(python, argv)
+            return _reexec(python, argv)
         return None
-    print(t("PyYAML is missing: the engine is creating its own Python environment in {dir} "
-            "(a few minutes, once per machine).", dir=runtime_dir))
+    if absent:
+        print(t("The engine's environment lacks {names}: installing the engine's dependency list "
+                "into {dir}, then running the command again.", names=", ".join(absent), dir=runtime_dir))
+    else:
+        print(t("PyYAML is missing: the engine is creating its own Python environment in {dir} "
+                "(a few minutes, once per machine).", dir=runtime_dir))
     try:
         ensure_runtime(runtime_dir, clone)
     except RuntimeProvisionError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    _reexec(python, argv)
-    return None
+    return _reexec(python, argv)
 
 
-def _reexec(python: Path, argv: list[str]) -> None:
+def _reexec(python: Path, argv: list[str]) -> int | None:
     """This same bootstrap, again, in the engine's interpreter; marked so it cannot loop."""
     os.environ[REEXEC_MARKER] = "1"
-    os.execv(str(python), [str(python), str(BOOTSTRAP_SCRIPT), *argv])
+    command = [str(python), str(BOOTSTRAP_SCRIPT), *argv]
+    if os.name == "nt":
+        # Windows has no exec: os.execv starts the child and ends this process at once,
+        # so install.ps1 got exit 0 back while the install was still running beside it.
+        return subprocess.call(command)
+    os.execv(str(python), command)
+    return None
 
 
 def role_plan_ready(check: bool) -> bool:
