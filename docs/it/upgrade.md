@@ -126,6 +126,13 @@ con quel comando. Un'installazione da pacchetto è già un ambiente proprio e vi
 `python -m venv` e lo riempie con pip, e le due strade finiscono sullo stesso timbro e sullo stesso controllo degli
 import.
 
+Un aggiornamento che aggiunge una dipendenza non ti chiede niente. Il primo comando del nuovo albero che gira in
+quell'ambiente e trova mancante una libreria dichiarata installa l'elenco delle dipendenze e si rilancia, così
+l'aggiornamento che porta la 3.0 (filelock, psutil e tomlkit sono nuove) le installa strada facendo, e un'installazione
+da zero crea l'ambiente quando manca una qualsiasi libreria dichiarata, non solo PyYAML. Il salto a una nuova versione
+maggiore non avviene mai da solo: lancia `nexgen update` una volta da un terminale, dove vedi il piano e rispondi alla
+conferma.
+
 La sequenza manuale qui sotto resta la strada di recupero per le installazioni MINIMAL e per l'unico aggiornamento di
 bootstrap da una versione precedente al comando.
 

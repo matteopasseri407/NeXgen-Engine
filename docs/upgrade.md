@@ -120,6 +120,12 @@ package install is its own environment and is only verified. When `uv` is on `PA
 `uv venv` and `uv pip install`; otherwise the engine creates it with `python -m venv` and fills it with pip, and both
 routes end at the same stamp and the same import check.
 
+An update that adds a dependency needs nothing from you. The first command of the new tree that runs in that
+environment and finds a declared library missing installs the dependency list into it and runs itself again, so the
+update that brings 3.0 (filelock, psutil and tomlkit are new) installs them on its way, and a fresh install builds the
+environment whenever any declared library is missing, not only PyYAML. A jump to a new major version is never taken
+unattended: run `nexgen update` once from a terminal, where you see the plan and answer the confirmation.
+
 The manual sequence below remains the recovery path for MINIMAL installs and for the one bootstrap upgrade from a
 version that predates the command.
 
