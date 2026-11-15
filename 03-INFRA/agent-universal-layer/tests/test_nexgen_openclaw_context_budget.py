@@ -165,7 +165,7 @@ def test_the_doctor_reads_codex_sessions_where_codex_writes_them(tmp_path, monke
     rollout_dir.mkdir(parents=True)
     (rollout_dir / "rollout-1.jsonl").write_text(
         json.dumps({"type": "session_meta",
-                    "payload": {"cwd": "/home/matte/.openclaw/workspace"}}) + "\n"
+                    "payload": {"cwd": "/home/user/.openclaw/workspace"}}) + "\n"
         + json.dumps({"type": "token_usage_record",
                       "payload": {"usage": {"input_tokens": 200_000, "cached_input_tokens": 190_000}}}) + "\n",
         encoding="utf-8",

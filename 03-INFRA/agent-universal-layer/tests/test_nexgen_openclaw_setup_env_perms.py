@@ -57,7 +57,6 @@ def _make_dummy_setup(tmp_path: Path, platform: str = "linux") -> Setup:
         which=lambda cmd: "/bin/" + cmd,
         run=MagicMock(return_value=MagicMock(returncode=0, stdout="", stderr="")),
         service=service_mock,
-        stamp="20261024-test",
         platform=platform,
     )
 

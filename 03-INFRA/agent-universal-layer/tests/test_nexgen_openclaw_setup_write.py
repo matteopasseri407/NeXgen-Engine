@@ -1,18 +1,20 @@
-"""`openclaw.json` writes: private on POSIX, merged without losing the person's lists.
+"""`openclaw.json` changes: only the sections that differ, and the person's lists kept.
 
 The file carries the gateway token, and the sections the engine owns sit beside
 keys OpenClaw and the person wrote. Two promises are tested here, both about
-what survives a write: who can read the bytes, and which lists keep the entries
-a person added by hand.
+what survives a change: which sections are handed to OpenClaw at all, and which
+lists keep the entries a person added by hand.
+
+Nothing here writes an `openclaw.json`: `openclaw config patch` owns the atomic
+publish, the backup ring and the refusal that leaves the file alone. The patch
+document it is handed, and the verdict OpenClaw returns, are tested beside this in
+`test_nexgen_openclaw_config_write.py`.
 """
 from __future__ import annotations
 
 import copy
-import os
 import sys
 from pathlib import Path
-
-import pytest
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
@@ -21,113 +23,51 @@ if str(SCRIPTS_DIR) not in sys.path:
 from nexgen_core.openclaw import setup_write  # noqa: E402 - sys.path shim for cloned checkout
 
 
-# --------------------------------------------------------------- permissions
+# ------------------------------------------------------------ the patch sent
 
 
-def _chmod_calls(monkeypatch) -> list[tuple[Path, int]]:
-    calls: list[tuple[Path, int]] = []
-    monkeypatch.setattr(os, "chmod", lambda target, mode: calls.append((Path(target), mode)))
-    return calls
+def test_only_the_sections_that_differ_are_sent():
+    """OpenClaw merges what it is given: unchanged sections are not re-asserted."""
+    current = {"gateway": {"port": 18789}, "plugins": {"allow": ["mine"]}}
+    proposed = {"gateway": {"port": 18789}, "plugins": {"allow": ["mine", "nexgen"]}}
+
+    merged = setup_write.merged_document(current, proposed)
+    patch, replace_paths = setup_write.patch_document(current, merged)
+
+    assert patch == {"plugins": {"allow": ["mine", "nexgen"]}}
+    assert replace_paths == ["plugins"]
 
 
-def test_the_file_holding_the_gateway_token_is_private_on_posix(tmp_path, monkeypatch, pretend_os):
-    """`openclaw onboard` leaves 0644: the token must not stay readable by others."""
-    path = tmp_path / "openclaw.json"
-    calls = _chmod_calls(monkeypatch)
-    pretend_os(setup_write, "posix")
+def test_a_document_already_in_force_sends_nothing():
+    """The second identical run has no patch to hand over, so nothing is written."""
+    current = {"gateway": {"port": 18789}}
 
-    setup_write.write_document(path, "{}\n")
+    patch, replace_paths = setup_write.patch_document(current, dict(current))
 
-    assert calls == [(path, 0o600)]
-
-
-def test_the_document_never_inherits_the_previous_mode(tmp_path, monkeypatch):
-    """The old 0644 was carried across the rename: the temp must already be private."""
-    seen: dict = {}
-
-    def writer(path, text, *, preserve_mode=True, **kwargs):
-        seen["preserve_mode"] = preserve_mode
-        Path(path).write_text(text, encoding="utf-8")
-
-    monkeypatch.setattr(setup_write, "atomic_write_text", writer)
-
-    setup_write.write_document(tmp_path / "openclaw.json", "{}\n")
-
-    assert seen["preserve_mode"] is False
+    assert patch == {}
+    assert replace_paths == []
 
 
-@pytest.mark.skipif(os.name == "nt", reason="mode bits are a POSIX concept")
-def test_a_0644_file_becomes_0600_on_posix(tmp_path):
-    path = tmp_path / "openclaw.json"
-    path.write_text("{}\n", encoding="utf-8")
-    os.chmod(path, 0o644)
+def test_a_retired_key_is_removed_by_replacing_its_section():
+    """A merge into the file would keep `security`/`ask`; a replaced section does not."""
+    current = {"tools": {"exec": {"security": "allowlist", "ask": "on-miss"}}}
+    proposed = {"tools": {"exec": {"mode": "auto"}}}
 
-    setup_write.write_document(path, "{}\n")
+    merged = setup_write.merged_document(current, proposed)
+    patch, replace_paths = setup_write.patch_document(current, merged)
 
-    assert path.stat().st_mode & 0o777 == 0o600
-
-
-def test_the_backup_of_the_token_file_is_private_on_posix(tmp_path, monkeypatch, pretend_os):
-    """The copy beside the file holds the same token, so it gets the same mode."""
-    path = tmp_path / "openclaw.json"
-    path.write_text('{"gateway": {"auth": {"token": "secret"}}}\n', encoding="utf-8")
-    calls = _chmod_calls(monkeypatch)
-    pretend_os(setup_write, "posix")
-
-    backup = setup_write.backup_file(path, "20260101-000000")
-
-    assert backup is not None
-    assert len(calls) == 1
-    published, mode = calls[0]
-    assert mode == 0o600
-    assert published.parent == path.parent
-    assert published.name.startswith(backup.name + "."), "the mode is set on the bytes before they are published"
+    assert patch["tools"]["exec"] == {"mode": "auto"}
+    assert "tools" in replace_paths
 
 
-def test_on_windows_no_posix_mode_is_forced(tmp_path, monkeypatch, pretend_os):
-    path = tmp_path / "openclaw.json"
-    calls = _chmod_calls(monkeypatch)
-    pretend_os(setup_write, "nt")
+def test_a_missing_file_is_sent_whole():
+    """There is nothing to merge into, so every section is the engine's."""
+    merged = setup_write.merged_document(None, {"gateway": {"port": 18789}, "plugins": {"allow": []}})
 
-    setup_write.write_document(path, "{}\n")
+    patch, replace_paths = setup_write.patch_document(None, merged)
 
-    assert calls == []
-
-
-def test_a_crash_during_restore_never_truncates_the_file(tmp_path, monkeypatch):
-    """`copy2` wrote into the destination: a crash left openclaw.json half written."""
-    path = tmp_path / "openclaw.json"
-    backup = tmp_path / "openclaw.json.pre-nexgen-1"
-    path.write_text('{"current": 1}\n', encoding="utf-8")
-    backup.write_text('{"previous": 1}\n', encoding="utf-8")
-
-    def crash(*args, **kwargs):
-        raise OSError("power cut")
-
-    monkeypatch.setattr(setup_write.os, "replace", crash)
-
-    with pytest.raises(OSError):
-        setup_write.restore_file(path, backup)
-
-    assert path.read_text(encoding="utf-8") == '{"current": 1}\n'
-    assert not list(tmp_path.glob("*.tmp")), "the unpublished temp file was left behind"
-
-
-def test_a_crash_during_backup_leaves_no_partial_copy(tmp_path, monkeypatch):
-    path = tmp_path / "openclaw.json"
-    path.write_text('{"gateway": {"auth": {"token": "secret"}}}\n', encoding="utf-8")
-
-    def crash(*args, **kwargs):
-        raise OSError("power cut")
-
-    monkeypatch.setattr(setup_write.os, "replace", crash)
-
-    with pytest.raises(OSError):
-        setup_write.backup_file(path, "20260101-000000")
-
-    assert not list(tmp_path.glob("openclaw.json.pre-nexgen-*"))
-    assert not list(tmp_path.glob("*.tmp"))
-    assert "secret" in path.read_text(encoding="utf-8")
+    assert patch == {"gateway": {"port": 18789}, "plugins": {"allow": []}}
+    assert replace_paths == ["gateway", "plugins"]
 
 
 # ------------------------------------------------------------------- merging

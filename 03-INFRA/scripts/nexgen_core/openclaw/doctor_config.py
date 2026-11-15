@@ -5,7 +5,9 @@ proactive check that turns a bot into a metered turn every half hour, the engine
 own hourly context guard as the scheduler holds it, a Google subscription the terms
 do not allow, the ACP bridge that would carry one, the tool-search mode a large
 connector list makes matter, and the engine's lazy-mcp gateway an agent on
-`claude-cli` needs to reach its connectors.
+`claude-cli` needs to reach its connectors. It also says where OpenClaw looks for
+skills, because a state directory of its own hides the shared root the engine
+writes into.
 
 They were part of `doctor.py` until that file reached its size ceiling. None of
 them opens a socket, starts a process or writes a file, which is why they need
@@ -16,6 +18,8 @@ read nothing says so.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import t
@@ -334,3 +338,68 @@ def check_mcp_lazy(config: dict[str, Any]) -> CheckOutcome:
         message=t("A custom 'lazy-mcp' connector is configured under mcp.servers; OpenClaw does not use the engine gateway."),
         action=t("Verify if this custom connector is needed or rename it to avoid collision with the engine gateway."),
     )
+
+
+def check_skill_root(
+    config: dict[str, Any], env: Mapping[str, str], home: Path,
+) -> CheckOutcome | None:
+    """Where OpenClaw looks for skills, against the folder the engine writes them into.
+
+    The engine's views land in the shared `~/.agents/skills`, which OpenClaw
+    discovers as its own "personal agent skills" root only while its state
+    directory is the default one. Its documentation (`docs.openclaw.ai/tools/skills`)
+    says that when `OPENCLAW_STATE_DIR` points somewhere else, session skill
+    indexes exclude home-scoped personal roots: every skill the engine
+    materialises stays invisible to the bot, and nothing anywhere reports it.
+    A node is not asked, because its agents run on the gateway and that machine's
+    state directory is the one that decides.
+    """
+    gateway = config.get("gateway") if isinstance(config.get("gateway"), dict) else {}
+    mode = gateway.get("mode")
+    if isinstance(mode, str) and mode.strip() == "remote":
+        return None
+    raw = str(env.get("OPENCLAW_STATE_DIR") or "").strip()
+    default = home / ".openclaw"
+    if not raw:
+        return CheckOutcome(
+            id="openclaw.skills.root",
+            severity=Severity.OK,
+            message=t("OpenClaw keeps its state in {default}, so it reads the shared ~/.agents/skills the "
+                      "engine materialises its views into.", default=default),
+        )
+    configured = _configured_state_dir(raw, home)
+    try:
+        same = configured.resolve() == default.resolve()
+    except OSError:  # nexgen: allow reason="a folder that cannot be resolved cannot be the default one, and the line then reports the path as it is set"
+        same = False
+    if same:
+        return CheckOutcome(
+            id="openclaw.skills.root",
+            severity=Severity.OK,
+            message=t("OPENCLAW_STATE_DIR is set to the default folder ({configured}), so the shared "
+                      "~/.agents/skills is still read.", configured=configured),
+        )
+    return CheckOutcome(
+        id="openclaw.skills.root",
+        severity=Severity.BROKEN,
+        message=t("OPENCLAW_STATE_DIR points at {configured}, and OpenClaw then leaves the shared "
+                  "~/.agents/skills out of its skill indexes: every skill the engine materialises is "
+                  "invisible to the bot, with no error anywhere.", configured=configured),
+        action=t("Unset OPENCLAW_STATE_DIR where the gateway is started, so OpenClaw reads {default} and "
+                 "the shared skills with it. A state directory that must stay where it is needs the skills "
+                 "beside it, under {configured}/skills.", default=default, configured=configured),
+    )
+
+
+def _configured_state_dir(raw: str, home: Path) -> Path:
+    """The folder `OPENCLAW_STATE_DIR` names, with `~` expanded against this home.
+
+    Expanded by hand, like `org_block._openclaw_path`: this check must answer
+    about the home it was given, and `expanduser` would answer about the
+    environment's instead.
+    """
+    if raw == "~":
+        return home
+    if raw.startswith(("~/", "~\\")):
+        return home / raw[2:]
+    return Path(raw)

@@ -12,6 +12,7 @@ One promise per test:
 - a second run finds its own marker and writes nothing;
 - a file whose shape changed is left alone and named;
 - a dry run prints the plan and writes nothing;
+- the groom puts the declaration back when a plugin update removed it, and only then;
 - the setup says one line per outcome and stays quiet when the patch is already there.
 """
 from __future__ import annotations
@@ -112,6 +113,21 @@ def test_a_dry_run_plans_and_writes_nothing(tmp_path: Path) -> None:
     assert result.state == plugin_patch.WOULD_PATCH
     assert path.read_text(encoding="utf-8") == before
     assert result.backup is None
+
+
+def test_reapply_puts_the_declaration_back_after_a_plugin_update(tmp_path: Path) -> None:
+    """The update rewrites the file without the marker, and the hourly groom must fix it itself."""
+    path = _installed(tmp_path)
+
+    assert agy_compaction.reapply(tmp_path) is True
+    assert agy_compaction.MARKER in path.read_text(encoding="utf-8")
+    # The second call has nothing to do: a patched plugin is never rewritten.
+    assert agy_compaction.reapply(tmp_path) is False
+
+
+def test_reapply_writes_nothing_when_the_plugin_is_absent(tmp_path: Path) -> None:
+    assert agy_compaction.reapply(tmp_path) is False
+    assert not agy_compaction.backend_file(tmp_path).exists()
 
 
 def test_the_setup_says_one_line_per_outcome(tmp_path: Path) -> None:

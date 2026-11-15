@@ -31,15 +31,31 @@ OpenClaw registers a systemd user unit at `~/.config/systemd/user/openclaw-gatew
 systemctl --user status|start|stop|restart openclaw-gateway.service
 ```
 
-## Windows 11 pitfalls and verified remedies
+## Windows 11: what the engine does, and what it no longer does
 
-`openclaw gateway restart` is unreliable. On Windows it often hangs or leaves orphan child processes, and two gateways end up competing for the same socket. `nexgen_core.openclaw_service` runs a clean kill-and-relaunch cycle instead:
+The service is OpenClaw's. The engine asks for it with `openclaw gateway install`,
+`start`, `stop`, `restart`, `status --json` and `uninstall`, and keeps only the
+policy around those calls: the status JSON read into the shape the setup and the
+doctor already use, a dry run that runs nothing, the Store Companion check below,
+and the wait for the port after a restart. OpenClaw's own recovery verifies the
+recorded PID and process start time before terminating anything, confirms the exit
+and the release of state ownership, retries a transient SQLite share, and the task
+supervisor it generates propagates the child's exit result. The engine used to
+drive a Startup VBS, `schtasks` and a `taskkill` loop beside that service, and two
+mechanisms registering the same daemon is how a gateway ended up invisible to both.
 
-1. Enumerate processes to find every `node` instance running `openclaw` and `dist\index.js gateway`, plus any `cmd.exe` running `gateway.cmd`.
-2. Terminate the process tree with `taskkill.exe /PID <pid> /T /F`.
-3. Relaunch through `wscript.exe "<startup>\OpenClaw Gateway.vbs"`, or `schtasks /Run /TN "OpenClaw Gateway"` when the task exists.
+A cold start can take up to five minutes before port `18789` accepts connections.
+OpenClaw's own readiness check may give up before that, so `restart(wait=True,
+timeout_s=600.0)` treats `restart-health-failed` as still starting and waits on the
+engine's own ten-minute budget, reporting the elapsed seconds when it is ready and
+a timeout error when it is not. A restart OpenClaw refuses is reported as it came,
+and nothing is started beside it.
 
-A cold start of the gateway can take up to five minutes before port `18789` accepts connections. `restart(wait=True, timeout_s=600.0)` polls the TCP port on loopback with a default ten-minute timeout, reports the elapsed seconds when it is ready, and returns a timeout error when it is not.
+`nexgen openclaw doctor` adds one line when something else on this machine can
+start a gateway too, which is a registration an older release or a second profile
+left behind. It names the registration and prints the command that removes it, and
+the engine never runs that command: it did not create the registration. A node host
+is left out of the line, because it connects out and opens no port here.
 
 Editing the `plugins` block of `openclaw.json` while the gateway runs corrupts the running state and the active MCP subscriptions. Use the `stopped()` context manager whenever you mutate the configuration:
 

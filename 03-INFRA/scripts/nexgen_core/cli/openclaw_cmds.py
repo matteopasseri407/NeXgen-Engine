@@ -131,6 +131,12 @@ def _register_upkeep(psub) -> None:
     q.add_argument("--dry-run", action="store_true", help=t("Show what would be compacted, change nothing"))
     q.set_defaults(func=cmd_groom)
 
+    q = psub.add_parser("cost", help=t("What OpenClaw spent, through the optional ccusage binary"))
+    q.add_argument("--json", action="store_true", help=t("Output in JSON format"))
+    q.add_argument("--since", default=None, metavar="DATE",
+                   help=t("Only the days from this date on: 2026-11-14 or 20261114"))
+    q.set_defaults(func=cmd_cost)
+
     q = psub.add_parser("rpc", help=t("Interact with OpenClaw Gateway via WebSocket RPC"))
     rpc_sub = q.add_subparsers(dest="rpc_command", metavar="action")
 
@@ -184,6 +190,7 @@ def cmd_doctor(args) -> int:
     from nexgen_core.openclaw.automations import read_jobs_with_detail
     from nexgen_core.openclaw.doctor import collect, exit_code, render
     from nexgen_core.openclaw_pairing import listed as gateway_devices
+    from nexgen_core.openclaw_service import extra_services
 
     asked = getattr(args, "nodes", False)
     outcomes = collect(
@@ -197,6 +204,10 @@ def cmd_doctor(args) -> int:
         # What the recent turns cost, from local transcripts: the gateway machine is
         # where this command is read, and the scheduled doctor reports its own copy.
         spend=True,
+        # A registration an older release left beside the managed service costs the
+        # whole service inventory to find, so the command a person ran asks for it
+        # and the scheduled `nexgen doctor` never does.
+        second_service_reader=extra_services,
     )
     if getattr(args, "json", False):
         print(json.dumps([outcome.to_dict() for outcome in outcomes], indent=2, ensure_ascii=False))
@@ -259,6 +270,22 @@ def cmd_smoke(args) -> int:
     from nexgen_core.openclaw.smoke import run_smoke
 
     return run_smoke(agent=getattr(args, "agent", "main") or "main")
+
+
+def cmd_cost(args) -> int:
+    """What the bot spent, in the two views the optional backend reads."""
+    from nexgen_core.openclaw.spend import as_dict, read_spend, render
+
+    try:
+        spend = read_spend(since=getattr(args, "since", None))
+    except ValueError as error:
+        print(t("Cannot read the spend: {error}", error=error))
+        return 2
+    if getattr(args, "json", False):
+        print(json.dumps(as_dict(spend), indent=2, ensure_ascii=False))
+    else:
+        print(render(spend))
+    return 0
 
 
 def cmd_pair(args) -> int:

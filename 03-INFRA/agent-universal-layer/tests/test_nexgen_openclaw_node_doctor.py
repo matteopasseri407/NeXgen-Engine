@@ -375,7 +375,7 @@ def test_apply_node_records_the_node_role(tmp_path: Path) -> None:
     code = apply_node(
         REMOTE_HOST, name="desktop", join_target=f"https://{REMOTE_HOST}/j/one-shot", home=home,
         platform="linux", runner=_RecordingRunner(), systemd_user_dir=tmp_path / "units",
-        wait_probe_fn=lambda: True, out=lambda _line: None,
+        out=lambda _line: None,
     )
 
     assert code == 0

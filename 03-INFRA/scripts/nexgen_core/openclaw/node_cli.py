@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from nexgen_core.i18n import t
@@ -61,13 +61,17 @@ def launch_argv(argv: list[str], which: Which | None = None) -> list[str] | None
     return [*launch, *argv[1:]]
 
 
-def run_command(argv: list[str], timeout: float, which: Which | None = None) -> RunResult:
+def run_command(
+    argv: list[str], timeout: float, which: Which | None = None,
+    env: Mapping[str, str] | None = None,
+) -> RunResult:
     """Run one command once and bring back its output; a failure is a sentence, never a raise.
 
     `timeout` is passed in by the caller because only the caller knows whether it is
-    asking a question or changing a service. A test that forgets to inject its own
-    recorder gets nothing run at all: `openclaw gateway stop` is not something to
-    execute by accident on the machine the tests are written on.
+    asking a question or changing a service. `env` is passed by the caller that has
+    to point OpenClaw at a specific configuration file. A test that forgets to
+    inject its own recorder gets nothing run at all: `openclaw gateway stop` is not
+    something to execute by accident on the machine the tests are written on.
     """
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return RunResult(1, "", "test mode: real command execution prevented")
@@ -85,6 +89,7 @@ def run_command(argv: list[str], timeout: float, which: Which | None = None) -> 
             errors="replace",
             check=False,
             timeout=timeout,
+            env=dict(env) if env is not None else None,
             **no_window_kwargs(),
         )
     except FileNotFoundError:

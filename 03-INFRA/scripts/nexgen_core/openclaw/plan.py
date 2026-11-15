@@ -38,7 +38,7 @@ from nexgen_core.openclaw.profile import (
 from nexgen_core.openclaw.skills_policy import with_skill_policy
 from nexgen_core.openclaw.squad import apply_squad, find_squad_file, load_squad
 from nexgen_core.paths import openclaw_config, resolve_home, resolve_vault_data
-from nexgen_core.runtimes.openclaw import PLUGIN_ID
+from nexgen_core.runtimes.openclaw import PLUGIN_ID, OpenClawRuntime
 
 DISPLAY_NAMES = {"main": "assistente", "capo": "capo", "automazioni": "automazioni", "sviluppo": "sviluppo"}
 
@@ -363,9 +363,9 @@ def build_plan(
     # The lane an agent declares with `harness:` is written as both halves or not at
     # all, and the ones that cannot be written are named to the person below.
     unrouted = harness_lanes.apply(proposed, squad_data, snapshot)
-    config = with_engine_plugin(
-        with_chains(with_skill_policy(proposed, vault_data, current), failover), _plugin_deposited(path, plugin_deposited),
-        agy_installed=agy_prereqs.installed_version(path.parent) is not None,
+    config = _engine_plugin_block(
+        with_chains(with_skill_policy(proposed, vault_data, current), failover),
+        path, plugin_deposited, home_dir,
     )
     # Last, and on purpose: the deny is decided on the document the write will leave,
     # so it sees what every pass above proposed and what the merge will keep.
@@ -396,6 +396,29 @@ def _plugin_deposited(path: Path, asked: bool | None) -> bool:
     if asked is not None:
         return asked
     return (path.parent / "extensions" / PLUGIN_ID / "index.mjs").is_file()
+
+
+def _engine_plugin_block(
+    config: dict[str, Any],
+    path: Path,
+    asked: bool | None,
+    home_dir: Path,
+) -> dict[str, Any]:
+    """The engine's own plugin in the proposal: enabled only when it is there, with its switches.
+
+    The switches go into `plugins.entries.nexgen.config`, which OpenClaw validates against the
+    plugin's manifest and hands to it as `api.pluginConfig`. They are derived from the proposal
+    itself, not from the file being replaced, so the plan a second setup builds names the same
+    sections and the write step finds nothing to write. They are derived only for a deposited
+    plugin: they describe files the deposit wrote, and a plugin that is not there obeys nothing.
+    """
+    deposited = _plugin_deposited(path, asked)
+    return with_engine_plugin(
+        config,
+        deposited,
+        agy_installed=agy_prereqs.installed_version(path.parent) is not None,
+        switches=OpenClawRuntime().plugin_switches(home_dir, config) if deposited else None,
+    )
 
 
 def _diff(config: dict[str, Any], current: dict[str, Any] | None) -> dict[str, tuple[str, ...]]:

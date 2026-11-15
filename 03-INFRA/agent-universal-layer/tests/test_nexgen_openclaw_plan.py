@@ -455,6 +455,27 @@ def test_plugin_not_enabled_when_folder_exists_without_index_mjs(tmp_path):
     assert "plugins.entries.nexgen.enabled" in plan_with_entrypoint.added
 
 
+def test_the_plan_puts_the_engine_switches_where_the_host_reads_them(tmp_path):
+    """OpenClaw hands `plugins.entries.nexgen.config` to the plugin as `api.pluginConfig`."""
+    home = tmp_path / "home"
+    path = put_config(home, {})
+    plugin_dir = path.parent / "extensions" / "nexgen"
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "index.mjs").write_text("// entrypoint", encoding="utf-8")
+    (plugin_dir / "vault-briefing.txt").write_text("the vault\n", encoding="utf-8")
+
+    plan = build_plan(detected=detected(path), home=home, env={})
+
+    switches = plan.config["plugins"]["entries"]["nexgen"]["config"]
+    assert switches["briefing"] == {"enabled": True}
+    assert switches["checkpoint"]["enabled"] is True
+    assert switches["checkpoint"]["state_dir"] == str(home / ".local" / "state" / "nexgen")
+    # The evidence list names the local model the proposal writes, not the one the old file had:
+    # a second setup derives the same section and finds nothing to write.
+    assert switches["evidence"] == {"enabled": True, "providers": ["ollama"]}
+    assert "plugins.entries.nexgen.config.briefing.enabled" in plan.added
+
+
 
 def test_a_squad_that_writes_the_default_agent_says_so_in_the_plan(tmp_path):
     """A roster with more than one explicit agent needs an owner, or OpenClaw refuses the main session."""

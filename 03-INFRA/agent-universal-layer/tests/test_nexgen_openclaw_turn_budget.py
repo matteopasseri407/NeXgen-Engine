@@ -172,7 +172,7 @@ def test_the_folder_a_harness_writes_is_named_after_its_working_directory():
         "-home-openclaw--openclaw-workspace-automazioni"
     )
     # Only ASCII letters and digits survive: an accented folder gets dashes, as Claude Code writes it.
-    assert slug_for_cwd("/home/matte/Notés") == "-home-matte-Not-s"
+    assert slug_for_cwd("/home/user/Notés") == "-home-user-Not-s"
 
 
 def test_a_74_call_turn_of_the_measured_call_is_over_the_budget(tmp_path):

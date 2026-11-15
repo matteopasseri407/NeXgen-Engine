@@ -11,6 +11,10 @@ for no window, because a PC that is off at night would never update: it waits on
 own service to be idle, that is for the pid `openclaw node status --json` reports to have no
 child process, since the command an agent runs on the node is a child of it. A state that
 cannot be read postpones the cycle instead of passing for an idle machine.
+
+Since 2026-11-15 the install itself is OpenClaw's own `update --tag <pin>`: these tests assert
+that command, not an npm invocation, and that a release the updater refuses to own, or a
+release that does not answer here, is reported in the updater's own words.
 """
 from __future__ import annotations
 
@@ -28,17 +32,19 @@ from nexgen_core.openclaw_service import RunResult
 PIN = "2026.10.7"
 OLD = "2026.10.6"
 NODE_RANGE = ">=24.22.1 <25 || >=26.12.1"
-ALLOW = "--allow-scripts=@google/genai,esbuild,koffi,protobufjs,openclaw"
 #: 04:00 and 14:00 local: inside and outside the 03:00-06:00 window a gateway waits for.
 NIGHT = datetime(2026, 10, 30, 4, 0).timestamp()
 DAY = datetime(2026, 10, 30, 14, 0).timestamp()
 #: The pid the node service reports, as `openclaw node status --json` prints it.
 SERVICE_PID = 474701
+#: What the updater prints when it accepted the pin (`run.status`, from the 2026.11.2
+#: release's own vocabulary: succeeded, failed, rolled-back, skipped).
+APPLIED = json.dumps({"run": {"status": "succeeded"}, "currentVersion": PIN})
 
 
-def an_install(npm: Path | str, version: str) -> list[str]:
-    """The one argv `setup_commands.install_argv` produces, written out as a literal."""
-    return [str(npm), "install", "-g", f"openclaw@{version}", ALLOW]
+def an_update(binary: Path | str, version: str) -> list[str]:
+    """The one argv `version_align` produces for a release, written out as a literal."""
+    return [str(binary), "update", "--tag", version, "--json", "--yes"]
 
 
 @dataclass
@@ -105,17 +111,19 @@ BUSY = "[openclaw] The CLI command failed.\n[openclaw] For help, run `openclaw d
 class FakeRun:
     """Every external program this phase starts, answered from one place."""
 
-    def __init__(self, machine: Machine, *, node: str = "v24.22.1", install_code: int = 0,
-                 statuses: tuple[str, ...] = ("running",), foreign_root: Path | None = None,
+    def __init__(self, machine: Machine, *, node: str = "v24.22.1",
+                 update_code: int = 0, update_stdout: str = APPLIED, update_stderr: str = "",
+                 statuses: tuple[str, ...] = ("running",),
                  sessions: list[dict] | None = None, sessions_code: int = 0,
                  cron_jobs: list[dict] | None = None, cron_code: int = 0,
                  node_pid: int | None = SERVICE_PID, node_code: int = 0,
                  restart_failures: int = 0):
         self.machine = machine
         self.node = node
-        self.install_code = install_code
+        self.update_code = update_code
+        self.update_stdout = update_stdout
+        self.update_stderr = update_stderr
         self.statuses = list(statuses)
-        self.foreign_root = foreign_root
         self.sessions = sessions or []
         self.sessions_code = sessions_code
         self.cron_jobs = cron_jobs or []
@@ -129,13 +137,11 @@ class FakeRun:
         self.calls.append(list(argv))
         program = Path(argv[0]).name
         if program.startswith("npm") and argv[1:3] == ["root", "-g"]:
-            if self.foreign_root is not None and Path(argv[0]).parent != self.machine.bin:
-                return RunResult(0, str(self.foreign_root), "")
             return RunResult(0, str(self.machine.root), "")
         if program.startswith("node") and argv[1:] == ["--version"]:
             return RunResult(0, self.node, "")
-        if program.startswith("npm") and argv[1:2] == ["install"]:
-            return RunResult(self.install_code, "", "" if not self.install_code else "npm ERR! boom")
+        if program == "openclaw" and argv[1:2] == ["update"]:
+            return RunResult(self.update_code, self.update_stdout, self.update_stderr)
         if program == "openclaw" and argv[1:3] == ["node", "restart"]:
             if self.restart_failures:
                 self.restart_failures -= 1
@@ -157,7 +163,6 @@ class FakeRun:
                 return RunResult(self.cron_code, "", "the gateway needs credentials")
             return RunResult(0, json.dumps({"jobs": self.cron_jobs}), "")
         return RunResult(0, "", "")
-
 
 
 def _node_status(state: str, pid: int | None = SERVICE_PID) -> dict:
@@ -213,24 +218,14 @@ def as_gateway(machine: Machine) -> None:
     unit.write_text("[Service]\nExecStart=openclaw gateway run\n", encoding="utf-8")
 
 
-class FakeService:
-    """The existing gateway restart path, recorded instead of executed."""
-
-    def __init__(self, ok: bool = True):
-        self.ok = ok
-        self.restarted = 0
-
-    def restart(self, **_kwargs):
-        self.restarted += 1
-        return {"ok": self.ok, "error": None if self.ok else "the gateway refused to start"}
-
-    def stop(self, **_kwargs):
-        return {"ok": True}
+def updates(calls: list[list[str]]) -> list[list[str]]:
+    """Only the `openclaw update` calls, in order."""
+    return [call for call in calls if call[1:2] == ["update"]]
 
 
-def installs(calls: list[list[str]]) -> list[list[str]]:
-    """Only the `npm install` calls, in order."""
-    return [call for call in calls if call[1:2] == ["install"]]
+def restarts(calls: list[list[str]]) -> list[list[str]]:
+    """Only the `openclaw node restart` calls, in order."""
+    return [call for call in calls if call[1:3] == ["node", "restart"]]
 
 
 # --------------------------------------------------------------- the decision
@@ -244,10 +239,10 @@ def test_a_machine_already_on_the_pin_is_left_alone(tmp_path: Path):
                                  which=lookup(machine), run=fake)
 
     assert outcome.state == version_align.UNCHANGED
-    assert installs(fake.calls) == []
+    assert updates(fake.calls) == []
 
 
-def test_a_machine_behind_installs_the_pin_with_the_npm_beside_its_node(tmp_path: Path):
+def test_a_machine_behind_is_brought_onto_the_pin_by_the_native_updater(tmp_path: Path):
     machine = a_machine(tmp_path)
     as_node(machine)
     fake = FakeRun(machine)
@@ -257,57 +252,7 @@ def test_a_machine_behind_installs_the_pin_with_the_npm_beside_its_node(tmp_path
                                  node_children=idle_node)
 
     assert outcome.state == version_align.ALIGNED
-    assert installs(fake.calls) == [an_install(machine.bin / "npm", PIN)]
-    assert [str(machine.bin / "openclaw"), "node", "restart"] in fake.calls
-
-
-def test_the_npm_of_another_node_release_is_never_the_one_used(tmp_path: Path):
-    """An nvm machine keeps one prefix per Node: the install must land in the running one."""
-    machine = a_machine(tmp_path)
-    as_node(machine)
-    other = tmp_path / "other-node"
-    other.mkdir()
-    (other / "npm").write_text("#!/bin/sh\n", encoding="utf-8")
-    stale_root = tmp_path / "stale-root"
-    (stale_root / "openclaw").mkdir(parents=True)
-    (stale_root / "openclaw" / "package.json").write_text(
-        json.dumps({"version": "2026.1.1"}), encoding="utf-8")
-    fake = FakeRun(machine, foreign_root=stale_root)
-
-    def which(name: str) -> str | None:
-        return {"node": str(machine.bin / "node"), "npm": str(other / "npm"),
-                "openclaw": str(machine.bin / "openclaw")}.get(name)
-
-    outcome = version_align.align(machine.home, machine.engine, env={}, platform="linux",
-                                 which=which, run=fake, clock=lambda: NIGHT,
-                                 node_children=idle_node)
-
-    assert outcome.state == version_align.ALIGNED
-    assert installs(fake.calls) == [an_install(machine.bin / "npm", PIN)]
-    # The version read is the one in the owning prefix, not the stale one PATH pointed at.
-    assert [str(other / "npm"), "root", "-g"] not in fake.calls
-
-
-
-def test_an_npm_in_another_folder_is_not_used_to_update_this_one(tmp_path: Path):
-    """No npm beside the owning Node means no safe prefix: the engine installs nothing."""
-    machine = a_machine(tmp_path)
-    as_node(machine)
-    (machine.bin / "npm").unlink()
-    other = tmp_path / "other-node"
-    other.mkdir()
-    (other / "npm").write_text("#!/bin/sh\n", encoding="utf-8")
-    fake = FakeRun(machine)
-
-    def which(name: str) -> str | None:
-        return {"node": str(machine.bin / "node"), "npm": str(other / "npm"),
-                "openclaw": str(machine.bin / "openclaw")}.get(name)
-
-    outcome = version_align.align(machine.home, machine.engine, env={}, platform="linux",
-                                 which=which, run=fake)
-
-    assert outcome.state == version_align.WARN
-    assert installs(fake.calls) == []
+    assert updates(fake.calls) == [an_update(machine.bin / "openclaw", PIN)]
 
 
 def test_the_node_floor_blocks_the_install_and_names_the_range(tmp_path: Path):
@@ -321,7 +266,7 @@ def test_the_node_floor_blocks_the_install_and_names_the_range(tmp_path: Path):
     assert outcome.state == version_align.WARN
     assert NODE_RANGE in outcome.line
     assert NODE_RANGE in outcome.action
-    assert installs(fake.calls) == []
+    assert updates(fake.calls) == []
 
 
 def test_a_busy_gateway_waits_for_the_next_cycle(tmp_path: Path):
@@ -331,28 +276,29 @@ def test_a_busy_gateway_waits_for_the_next_cycle(tmp_path: Path):
 
     outcome = version_align.align(
         machine.home, machine.engine, env={}, platform="linux", which=lookup(machine), run=fake,
-        service=FakeService(), smoke=lambda: 0, clock=lambda: NIGHT,
+        smoke=lambda: 0, clock=lambda: NIGHT,
     )
 
     assert outcome.state == version_align.SKIPPED
-    assert installs(fake.calls) == []
+    assert updates(fake.calls) == []
 
 
-def test_a_gateway_is_restarted_and_smoked_and_the_cycle_is_green(tmp_path: Path):
+def test_a_gateway_is_verified_here_and_not_restarted_a_second_time(tmp_path: Path):
+    """The native update restarts the gateway itself; the engine's part is the smoke test."""
     machine = a_machine(tmp_path)
     as_gateway(machine)
     fake = FakeRun(machine)
-    service = FakeService()
+    smokes: list[int] = []
 
     outcome = version_align.align(
         machine.home, machine.engine, env={}, platform="linux", which=lookup(machine), run=fake,
-        service=service, smoke=lambda: 0, clock=lambda: NIGHT,
+        smoke=lambda: smokes.append(1) or 0, clock=lambda: NIGHT,
     )
 
     assert outcome.state == version_align.ALIGNED
-    assert service.restarted == 1
-    assert [str(machine.bin / "openclaw"), "node", "restart"] not in fake.calls
-
+    assert updates(fake.calls) == [an_update(machine.bin / "openclaw", PIN)]
+    assert smokes == [1]
+    assert restarts(fake.calls) == []
 
 
 def test_the_gateway_smoke_runs_the_cli_that_owns_the_install(tmp_path: Path, monkeypatch):
@@ -371,7 +317,7 @@ def test_the_gateway_smoke_runs_the_cli_that_owns_the_install(tmp_path: Path, mo
 
     outcome = version_align.align(
         machine.home, machine.engine, env={}, platform="linux", which=lookup(machine), run=fake,
-        service=FakeService(), clock=lambda: NIGHT,
+        clock=lambda: NIGHT,
     )
 
     assert outcome.state == version_align.ALIGNED
@@ -400,24 +346,42 @@ def test_a_gateway_that_does_not_come_back_puts_the_previous_release_back(tmp_pa
     machine = a_machine(tmp_path)
     as_gateway(machine)
     fake = FakeRun(machine)
-    service = FakeService()
 
     outcome = version_align.align(
         machine.home, machine.engine, env={}, platform="linux", which=lookup(machine), run=fake,
-        service=service, smoke=lambda: 1, clock=lambda: NIGHT,
+        smoke=lambda: 1, clock=lambda: NIGHT,
     )
 
     assert outcome.state == version_align.FAILED
-    assert installs(fake.calls) == [
-        an_install(machine.bin / "npm", PIN),
-        an_install(machine.bin / "npm", OLD),
+    assert updates(fake.calls) == [
+        an_update(machine.bin / "openclaw", PIN),
+        an_update(machine.bin / "openclaw", OLD),
     ]
-    assert service.restarted == 2  # the restart after the install, and the one after the rollback
+    assert "was put back" in outcome.line
     remembered = json.loads((machine.state / version_align.STATE_FILE).read_text(encoding="utf-8"))
     assert remembered["pin"] == PIN
 
 
-def test_a_node_that_does_not_report_running_is_rolled_back(tmp_path: Path):
+def test_a_release_with_no_known_predecessor_is_reported_and_not_rolled_back(tmp_path: Path):
+    """A version nobody could read is not a target: the engine says so instead of guessing one."""
+    machine = a_machine(tmp_path)
+    as_gateway(machine)
+    fake = FakeRun(machine)
+    without_npm = {"node": str(machine.bin / "node"),
+                   "openclaw": str(machine.bin / "openclaw")}.get
+
+    outcome = version_align.align(
+        machine.home, machine.engine, env={}, platform="linux", which=without_npm, run=fake,
+        smoke=lambda: 1, clock=lambda: NIGHT,
+    )
+
+    assert outcome.state == version_align.FAILED
+    assert updates(fake.calls) == [an_update(machine.bin / "openclaw", PIN)]
+    assert "was put back" not in outcome.line
+    assert (machine.state / version_align.STATE_FILE).is_file()
+
+
+def test_a_node_that_does_not_report_running_is_put_back(tmp_path: Path):
     machine = a_machine(tmp_path)
     as_node(machine)
     fake = FakeRun(machine, statuses=("running", *["stopped"] * align_node.ATTEMPTS))
@@ -428,7 +392,7 @@ def test_a_node_that_does_not_report_running_is_rolled_back(tmp_path: Path):
 
     assert outcome.state == version_align.FAILED
     assert "2026.10.7" in outcome.line
-    assert installs(fake.calls)[-1] == an_install(machine.bin / "npm", OLD)
+    assert updates(fake.calls)[-1] == an_update(machine.bin / "openclaw", OLD)
 
 
 def test_a_node_still_migrating_its_state_after_the_restart_is_waited_for(tmp_path: Path):
@@ -442,7 +406,21 @@ def test_a_node_still_migrating_its_state_after_the_restart_is_waited_for(tmp_pa
                                  node_children=idle_node)
 
     assert outcome.state == version_align.ALIGNED
-    assert installs(fake.calls) == [an_install(machine.bin / "npm", PIN)]
+    assert updates(fake.calls) == [an_update(machine.bin / "openclaw", PIN)]
+
+
+def test_a_node_service_is_restarted_after_the_native_update(tmp_path: Path):
+    """The updater knows the gateway service; the node service that runs here is the engine's."""
+    machine = a_machine(tmp_path)
+    as_node(machine)
+    fake = FakeRun(machine)
+
+    outcome = version_align.align(machine.home, machine.engine, env={}, platform="linux",
+                                 which=lookup(machine), run=fake, clock=lambda: DAY,
+                                 node_children=idle_node)
+
+    assert outcome.state == version_align.ALIGNED
+    assert restarts(fake.calls) == [[str(machine.bin / "openclaw"), "node", "restart"]]
 
 
 def test_a_node_restart_that_fails_once_is_asked_again(tmp_path: Path):
@@ -455,10 +433,10 @@ def test_a_node_restart_that_fails_once_is_asked_again(tmp_path: Path):
                                  node_children=idle_node)
 
     assert outcome.state == version_align.ALIGNED
-    assert installs(fake.calls) == [an_install(machine.bin / "npm", PIN)]
+    assert updates(fake.calls) == [an_update(machine.bin / "openclaw", PIN)]
 
 
-def test_a_node_restart_that_never_succeeds_is_rolled_back(tmp_path: Path):
+def test_a_node_restart_that_never_succeeds_is_put_back(tmp_path: Path):
     machine = a_machine(tmp_path)
     as_node(machine)
     fake = FakeRun(machine, restart_failures=align_node.ATTEMPTS)
@@ -468,13 +446,39 @@ def test_a_node_restart_that_never_succeeds_is_rolled_back(tmp_path: Path):
                                  node_children=idle_node)
 
     assert outcome.state == version_align.FAILED
-    assert installs(fake.calls)[-1] == an_install(machine.bin / "npm", OLD)
+    assert updates(fake.calls)[-1] == an_update(machine.bin / "openclaw", OLD)
 
 
-def test_an_install_that_fails_is_reported_and_remembered(tmp_path: Path):
+# ------------------------------------------------- what the updater itself answers
+
+
+def test_a_failed_update_reports_the_updaters_own_reason(tmp_path: Path):
+    """The engine does not paraphrase a failure it did not produce: the updater's words are the report."""
     machine = a_machine(tmp_path)
     as_node(machine)
-    fake = FakeRun(machine, install_code=1)
+    reported = json.dumps({
+        "run": {
+            "status": "failed",
+            "failure": {"code": "target-registry-dist-tag", "message": "The registry dist-tag did not resolve"},
+        }
+    })
+    fake = FakeRun(machine, update_code=1, update_stdout=reported, update_stderr="npm ERR! 404")
+
+    outcome = version_align.align(machine.home, machine.engine, env={}, platform="linux",
+                                 which=lookup(machine), run=fake, clock=lambda: NIGHT,
+                                 node_children=idle_node)
+
+    assert outcome.state == version_align.FAILED
+    assert "The registry dist-tag did not resolve" in outcome.line
+    assert "npm ERR! 404" not in outcome.line
+    remembered = json.loads((machine.state / version_align.STATE_FILE).read_text(encoding="utf-8"))
+    assert remembered["pin"] == PIN
+
+
+def test_a_failed_update_with_no_json_is_reported_from_its_last_line(tmp_path: Path):
+    machine = a_machine(tmp_path)
+    as_node(machine)
+    fake = FakeRun(machine, update_code=1, update_stdout="", update_stderr="npm ERR! boom")
 
     outcome = version_align.align(machine.home, machine.engine, env={}, platform="linux",
                                  which=lookup(machine), run=fake, clock=lambda: NIGHT,
@@ -482,8 +486,198 @@ def test_an_install_that_fails_is_reported_and_remembered(tmp_path: Path):
 
     assert outcome.state == version_align.FAILED
     assert "npm ERR! boom" in outcome.line
+    assert updates(fake.calls) == [an_update(machine.bin / "openclaw", PIN)]
+
+
+def test_a_rolled_back_update_is_a_failure_even_when_it_exits_zero(tmp_path: Path):
+    """The updater restores the previous release and says so; the engine must not call that aligned."""
+    machine = a_machine(tmp_path)
+    as_gateway(machine)
+    reported = json.dumps({"run": {"status": "rolled-back",
+                                  "failure": {"message": "post-install verify failed"}}})
+    fake = FakeRun(machine, update_code=0, update_stdout=reported)
+
+    outcome = version_align.align(
+        machine.home, machine.engine, env={}, platform="linux", which=lookup(machine), run=fake,
+        smoke=lambda: 0, clock=lambda: NIGHT,
+    )
+
+    assert outcome.state == version_align.FAILED
+    assert "post-install verify failed" in outcome.line
+    assert updates(fake.calls) == [an_update(machine.bin / "openclaw", PIN)]
+
+
+def test_the_update_command_is_the_native_shape_with_and_without_a_resolved_binary():
+    """One literal, asserted as the help page shows it: a discovered pin never goes through npm."""
+    assert version_align._update_argv("/usr/bin/openclaw", "2026.10.7") == [
+        "/usr/bin/openclaw", "update", "--tag", "2026.10.7", "--json", "--yes",
+    ]
+    assert version_align._update_argv(None, "2026.10.7") == [
+        "openclaw", "update", "--tag", "2026.10.7", "--json", "--yes",
+    ]
+
+
+def test_a_failed_update_costs_no_smoke_turn_and_no_node_restart(tmp_path: Path):
+    """Nothing changed on this machine, so nothing is woken up to prove it works."""
+    machine = a_machine(tmp_path)
+    as_gateway(machine)
+    fake = FakeRun(machine, update_code=1, update_stdout="", update_stderr="npm ERR! boom")
+    smokes: list[int] = []
+
+    outcome = version_align.align(
+        machine.home, machine.engine, env={}, platform="linux", which=lookup(machine), run=fake,
+        smoke=lambda: smokes.append(1) or 0, clock=lambda: NIGHT,
+    )
+
+    assert outcome.state == version_align.FAILED
+    assert smokes == []
+    assert restarts(fake.calls) == []
+
+
+def test_the_updaters_next_action_is_preferred_over_its_reason_code(tmp_path: Path):
+    """A slug is not a sentence a person can act on: the updater's own next step is."""
+    reported = json.dumps({"run": {
+        "status": "failed",
+        "reason": "target-registry-dist-tag",
+        "origin": {"nextAction": "Check npm config get registry and retry."},
+    }})
+    machine = a_machine(tmp_path)
+    as_node(machine)
+    fake = FakeRun(machine, update_code=1, update_stdout=reported)
+
+    outcome = version_align.align(machine.home, machine.engine, env={}, platform="linux",
+                                 which=lookup(machine), run=fake, clock=lambda: NIGHT,
+                                 node_children=idle_node)
+
+    assert outcome.state == version_align.FAILED
+    assert "Check npm config get registry and retry." in outcome.line
+    assert "target-registry-dist-tag" not in outcome.line
+
+
+def test_a_run_record_is_empty_when_the_answer_carries_none():
+    """A shape this engine does not recognise costs a sentence, never an exception."""
+    assert version_align._run_record("not json at all") == {}
+    assert version_align._run_record("") == {}
+    assert version_align._run_record(json.dumps(["a", "list"])) == {}
+    assert version_align._run_record(json.dumps({"run": "a string"})) == {}
+    assert version_align._run_record(json.dumps({"run": {"status": "succeeded"}})) == {"status": "succeeded"}
+
+
+def test_a_pin_the_engine_cannot_read_is_a_warning_and_touches_nothing(tmp_path: Path):
+    """No pin means no target: a guess would install a release nobody chose."""
+    machine = a_machine(tmp_path)
+    (machine.engine / "agent-universal-layer" / "openclaw" / "pin.json").write_text("{}", encoding="utf-8")
+    fake = FakeRun(machine)
+
+    outcome = version_align.align(machine.home, machine.engine, env={}, platform="linux",
+                                 which=lookup(machine), run=fake, clock=lambda: NIGHT)
+
+    assert outcome.state == version_align.WARN
+    assert "pin.json" in outcome.action
+    assert updates(fake.calls) == []
+
+
+@pytest.mark.parametrize(("role", "expected"), [
+    (version_align.GATEWAY, "OpenClaw 2026.10.7 is installed and the gateway answers."),
+    (version_align.NODE, "OpenClaw 2026.10.7 is installed and the node service answers."),
+    (version_align.NOTHING, "OpenClaw 2026.10.7 is installed on this machine."),
+])
+def test_the_success_line_names_what_answered(role: str, expected: str):
+    """The sentence a person reads in the cycle log says which role was proven."""
+    assert version_align._success_line(role, PIN) == expected
+
+
+def test_a_held_pin_says_why_it_waits_and_costs_no_update(tmp_path: Path):
+    """The hold is visible: a skipped cycle names the pin and the day, and asks nothing."""
+    machine = a_machine(tmp_path)
+    as_node(machine)
+    machine.state.mkdir(parents=True, exist_ok=True)
+    (machine.state / version_align.STATE_FILE).write_text(
+        json.dumps({"pin": PIN, "failed_at": NIGHT - 60}), encoding="utf-8")
+    fake = FakeRun(machine)
+
+    outcome = version_align.align(machine.home, machine.engine, env={}, platform="linux",
+                                 which=lookup(machine), run=fake, clock=lambda: NIGHT + 3_600,
+                                 node_children=idle_node)
+
+    assert outcome.state == version_align.SKIPPED
+    assert PIN in outcome.line
+    assert "24 hours" in outcome.line
+    assert updates(fake.calls) == []
+
+
+def test_a_refused_update_remembers_the_pin_and_keeps_the_cycle_green(tmp_path: Path):
+    """A package-manager refusal the engine cannot fix is one warning, not a paged failure every cycle."""
+    machine = a_machine(tmp_path)
+    as_node(machine)
+    reported = json.dumps({"run": {"status": "skipped", "reason": "container-image-install"}})
+    fake = FakeRun(machine, update_code=0, update_stdout=reported)
+
+    first = version_align.align(machine.home, machine.engine, env={}, platform="linux",
+                                which=lookup(machine), run=fake, clock=lambda: NIGHT,
+                                node_children=idle_node)
+    second = version_align.align(machine.home, machine.engine, env={}, platform="linux",
+                                 which=lookup(machine), run=fake, clock=lambda: NIGHT + 60,
+                                 node_children=idle_node)
+
+    assert first.state == version_align.WARN
+    assert "container-image-install" in first.line
+    assert json.loads((machine.state / version_align.STATE_FILE).read_text(encoding="utf-8"))["pin"] == PIN
+    assert second.state == version_align.SKIPPED
+    assert updates(fake.calls) == [an_update(machine.bin / "openclaw", PIN)]
+
+
+def test_a_pin_that_later_arrives_clears_the_retry_marker(tmp_path: Path):
+    """The 24-hour hold exists for a failed pin, not for the machine: a success drops it."""
+    machine = a_machine(tmp_path)
+    as_node(machine)
+    fake = FakeRun(machine, update_code=1, update_stdout="", update_stderr="npm ERR! boom")
+    version_align.align(machine.home, machine.engine, env={}, platform="linux",
+                        which=lookup(machine), run=fake, clock=lambda: NIGHT,
+                        node_children=idle_node)
+    marker = machine.state / version_align.STATE_FILE
+    assert marker.is_file()
+
+    later = a_machine(tmp_path, version=PIN)
+    outcome = version_align.align(later.home, later.engine, env={}, platform="linux",
+                                 which=lookup(later), run=FakeRun(later), clock=lambda: NIGHT)
+
+    assert outcome.state == version_align.UNCHANGED
+    assert not marker.is_file()
+
+
+def test_an_update_the_updater_refuses_to_own_is_a_warning_and_is_not_retried(tmp_path: Path):
+    """A skipped run exits 0 and installs nothing: reporting it as aligned would hide a stale pin."""
+    machine = a_machine(tmp_path)
+    as_node(machine)
+    reported = json.dumps({"run": {
+        "status": "skipped",
+        "reason": "unmanaged-package-install",
+        "origin": {"nextAction": "No npm, pnpm, or Bun global owner was detected."},
+    }})
+    fake = FakeRun(machine, update_code=0, update_stdout=reported)
+
+    outcome = version_align.align(machine.home, machine.engine, env={}, platform="linux",
+                                 which=lookup(machine), run=fake, clock=lambda: NIGHT,
+                                 node_children=idle_node)
+
+    assert outcome.state == version_align.WARN
+    assert "No npm, pnpm, or Bun global owner was detected." in outcome.line
     remembered = json.loads((machine.state / version_align.STATE_FILE).read_text(encoding="utf-8"))
     assert remembered["pin"] == PIN
+
+
+def test_an_update_answer_that_is_not_json_is_taken_as_applied_when_it_exited_zero(tmp_path: Path):
+    """An older CLI may print prose; a zero exit is then the only answer there is."""
+    machine = a_machine(tmp_path)
+    as_node(machine)
+    fake = FakeRun(machine, update_code=0, update_stdout="OpenClaw updated to 2026.10.7")
+
+    outcome = version_align.align(machine.home, machine.engine, env={}, platform="linux",
+                                 which=lookup(machine), run=fake, clock=lambda: NIGHT,
+                                 node_children=idle_node)
+
+    assert outcome.state == version_align.ALIGNED
 
 
 def test_the_same_failed_pin_is_not_retried_for_24_hours(tmp_path: Path):
@@ -503,7 +697,7 @@ def test_the_same_failed_pin_is_not_retried_for_24_hours(tmp_path: Path):
                                node_children=idle_node)
 
     assert early.state == version_align.SKIPPED
-    assert installs(fake.calls) == [an_install(machine.bin / "npm", PIN)]
+    assert updates(fake.calls) == [an_update(machine.bin / "openclaw", PIN)]
     assert late.state == version_align.ALIGNED
 
 
@@ -527,21 +721,16 @@ def test_an_unexpected_error_is_an_outcome_and_never_a_raise(tmp_path: Path):
     as_gateway(machine)
     fake = FakeRun(machine)
 
-    class ExplodingService:
-        def stop(self, **_kwargs):
-            return {"ok": True}
-
-        def restart(self, **_kwargs):
-            raise RuntimeError("the service controller broke")
+    def exploding_smoke() -> int:
+        raise RuntimeError("the smoke test broke")
 
     outcome = version_align.align(
         machine.home, machine.engine, env={}, platform="linux", which=lookup(machine), run=fake,
-        service=ExplodingService(), smoke=lambda: 0, clock=lambda: NIGHT,
+        smoke=exploding_smoke, clock=lambda: NIGHT,
     )
 
     assert outcome.state == version_align.FAILED
-    assert "the service controller broke" in outcome.line
-
+    assert "the smoke test broke" in outcome.line
 
 
 def test_openclaw_that_is_not_installed_is_a_quiet_no_op(tmp_path: Path):
@@ -605,48 +794,42 @@ def test_outside_the_night_window_the_gateway_is_left_alone(tmp_path: Path):
     machine = a_machine(tmp_path)
     as_gateway(machine)
     fake = FakeRun(machine)
-    service = FakeService()
 
     outcome = version_align.align(
         machine.home, machine.engine, env={}, platform="linux", which=lookup(machine), run=fake,
-        service=service, smoke=lambda: 0, clock=lambda: DAY,
+        smoke=lambda: 0, clock=lambda: DAY,
     )
 
     assert outcome.state == version_align.SKIPPED
-    assert installs(fake.calls) == []
-    assert service.restarted == 0
+    assert updates(fake.calls) == []
 
 
 def test_inside_the_night_window_an_idle_gateway_aligns(tmp_path: Path):
     machine = a_machine(tmp_path)
     as_gateway(machine)
     fake = FakeRun(machine)
-    service = FakeService()
 
     outcome = version_align.align(
         machine.home, machine.engine, env={}, platform="linux", which=lookup(machine), run=fake,
-        service=service, smoke=lambda: 0, clock=lambda: NIGHT,
+        smoke=lambda: 0, clock=lambda: NIGHT,
     )
 
     assert outcome.state == version_align.ALIGNED
-    assert installs(fake.calls) == [an_install(machine.bin / "npm", PIN)]
-    assert service.restarted == 1
+    assert updates(fake.calls) == [an_update(machine.bin / "openclaw", PIN)]
 
 
 def test_a_running_automation_postpones_the_install(tmp_path: Path):
     machine = a_machine(tmp_path)
     as_gateway(machine)
     fake = FakeRun(machine, cron_jobs=[{"id": "morning-brief", "enabled": True, "status": "running"}])
-    service = FakeService()
 
     outcome = version_align.align(
         machine.home, machine.engine, env={}, platform="linux", which=lookup(machine), run=fake,
-        service=service, smoke=lambda: 0, clock=lambda: NIGHT,
+        smoke=lambda: 0, clock=lambda: NIGHT,
     )
 
     assert outcome.state == version_align.SKIPPED
-    assert installs(fake.calls) == []
-    assert service.restarted == 0
+    assert updates(fake.calls) == []
 
 
 def test_an_automation_that_recorded_a_start_time_but_no_status_postpones_too(tmp_path: Path):
@@ -657,11 +840,11 @@ def test_an_automation_that_recorded_a_start_time_but_no_status_postpones_too(tm
 
     outcome = version_align.align(
         machine.home, machine.engine, env={}, platform="linux", which=lookup(machine), run=fake,
-        service=FakeService(), smoke=lambda: 0, clock=lambda: NIGHT,
+        smoke=lambda: 0, clock=lambda: NIGHT,
     )
 
     assert outcome.state == version_align.SKIPPED
-    assert installs(fake.calls) == []
+    assert updates(fake.calls) == []
 
 
 def test_an_unreadable_session_list_is_never_taken_for_idle(tmp_path: Path):
@@ -672,11 +855,11 @@ def test_an_unreadable_session_list_is_never_taken_for_idle(tmp_path: Path):
 
     outcome = version_align.align(
         machine.home, machine.engine, env={}, platform="linux", which=lookup(machine), run=fake,
-        service=FakeService(), smoke=lambda: 0, clock=lambda: NIGHT,
+        smoke=lambda: 0, clock=lambda: NIGHT,
     )
 
     assert outcome.state == version_align.SKIPPED
-    assert installs(fake.calls) == []
+    assert updates(fake.calls) == []
 
 
 def test_a_session_list_that_is_not_json_is_never_taken_for_idle(tmp_path: Path):
@@ -689,11 +872,11 @@ def test_a_session_list_that_is_not_json_is_never_taken_for_idle(tmp_path: Path)
 
     outcome = version_align.align(
         machine.home, machine.engine, env={}, platform="linux", which=lookup(machine), run=fake,
-        service=FakeService(), smoke=lambda: 0, clock=lambda: NIGHT, list_sessions=list_sessions,
+        smoke=lambda: 0, clock=lambda: NIGHT, list_sessions=list_sessions,
     )
 
     assert outcome.state == version_align.SKIPPED
-    assert installs(fake.calls) == []
+    assert updates(fake.calls) == []
 
 
 def test_a_session_lister_that_raises_postpones_instead_of_failing_the_phase(tmp_path: Path):
@@ -706,11 +889,11 @@ def test_a_session_lister_that_raises_postpones_instead_of_failing_the_phase(tmp
 
     outcome = version_align.align(
         machine.home, machine.engine, env={}, platform="linux", which=lookup(machine), run=fake,
-        service=FakeService(), smoke=lambda: 0, clock=lambda: NIGHT, list_sessions=list_sessions,
+        smoke=lambda: 0, clock=lambda: NIGHT, list_sessions=list_sessions,
     )
 
     assert outcome.state == version_align.SKIPPED
-    assert installs(fake.calls) == []
+    assert updates(fake.calls) == []
 
 
 def test_an_unreadable_cron_list_on_the_gateway_is_never_taken_for_idle(tmp_path: Path):
@@ -720,11 +903,11 @@ def test_an_unreadable_cron_list_on_the_gateway_is_never_taken_for_idle(tmp_path
 
     outcome = version_align.align(
         machine.home, machine.engine, env={}, platform="linux", which=lookup(machine), run=fake,
-        service=FakeService(), smoke=lambda: 0, clock=lambda: NIGHT,
+        smoke=lambda: 0, clock=lambda: NIGHT,
     )
 
     assert outcome.state == version_align.SKIPPED
-    assert installs(fake.calls) == []
+    assert updates(fake.calls) == []
 
 
 def test_a_node_aligns_in_the_middle_of_the_day_when_no_command_runs_on_it(tmp_path: Path):
@@ -738,7 +921,7 @@ def test_a_node_aligns_in_the_middle_of_the_day_when_no_command_runs_on_it(tmp_p
                                  node_children=idle_node)
 
     assert outcome.state == version_align.ALIGNED
-    assert installs(fake.calls) == [an_install(machine.bin / "npm", PIN)]
+    assert updates(fake.calls) == [an_update(machine.bin / "openclaw", PIN)]
     # The session list is the gateway's signal: a node never reads it.
     assert not any(call[1:3] == ["sessions", "list"] for call in fake.calls)
 
@@ -755,7 +938,7 @@ def test_a_node_running_a_command_waits(tmp_path: Path):
 
     assert outcome.state == version_align.SKIPPED
     assert "a command is running on this node" in outcome.line
-    assert installs(fake.calls) == []
+    assert updates(fake.calls) == []
 
 
 def test_a_node_whose_children_cannot_be_read_waits(tmp_path: Path):
@@ -787,7 +970,7 @@ def test_a_children_reader_that_raises_postpones_instead_of_failing_the_phase(tm
                                  node_children=exploding)
 
     assert outcome.state == version_align.SKIPPED
-    assert installs(fake.calls) == []
+    assert updates(fake.calls) == []
 
 
 def test_a_node_that_reports_no_pid_is_never_taken_for_idle(tmp_path: Path):
@@ -802,7 +985,7 @@ def test_a_node_that_reports_no_pid_is_never_taken_for_idle(tmp_path: Path):
 
     assert outcome.state == version_align.SKIPPED
     assert "the work state cannot be read" in outcome.line
-    assert installs(fake.calls) == []
+    assert updates(fake.calls) == []
 
 
 def test_a_node_service_that_is_not_running_is_never_taken_for_idle(tmp_path: Path):
@@ -816,7 +999,7 @@ def test_a_node_service_that_is_not_running_is_never_taken_for_idle(tmp_path: Pa
 
     assert outcome.state == version_align.SKIPPED
     assert "the work state cannot be read" in outcome.line
-    assert installs(fake.calls) == []
+    assert updates(fake.calls) == []
 
 
 def test_a_node_status_that_cannot_be_read_is_never_taken_for_idle(tmp_path: Path):
@@ -830,7 +1013,7 @@ def test_a_node_status_that_cannot_be_read_is_never_taken_for_idle(tmp_path: Pat
 
     assert outcome.state == version_align.SKIPPED
     assert "the work state cannot be read" in outcome.line
-    assert installs(fake.calls) == []
+    assert updates(fake.calls) == []
 
 
 def test_a_node_reads_no_cron_list_because_the_scheduler_runs_on_the_gateway(tmp_path: Path):
@@ -920,7 +1103,7 @@ def test_each_postpone_says_which_reason_it_was(tmp_path: Path):
     def run_once(*, fake: FakeRun, moment: float):
         return version_align.align(
             machine.home, machine.engine, env={}, platform="linux", which=lookup(machine),
-            run=fake, service=FakeService(), smoke=lambda: 0, clock=lambda: moment,
+            run=fake, smoke=lambda: 0, clock=lambda: moment,
         )
 
     day = run_once(fake=FakeRun(machine), moment=DAY)
@@ -1011,67 +1194,6 @@ def test_a_postponed_cycle_is_neither_a_failure_nor_a_warning(tmp_path: Path, mo
     assert any("finestra notturna" in a for a in result.actions_taken)
 
 
-
-class PrefixRun(FakeRun):
-    """npm answers the global prefix it installs into, as `npm config get prefix` prints it."""
-
-    def __init__(self, machine: Machine, prefix: Path, **kwargs):
-        super().__init__(machine, **kwargs)
-        self.prefix = prefix
-
-    def __call__(self, argv: list[str], env=None) -> RunResult:
-        if Path(argv[0]).name.startswith("npm") and argv[1:] == ["config", "get", "prefix"]:
-            self.calls.append(list(argv))
-            return RunResult(0, f"{self.prefix}\n", "")
-        return super().__call__(argv, env)
-
-
-def a_user_prefix(tmp_path: Path) -> tuple[Machine, Path, Path]:
-    """The VPS layout: OpenClaw in ~/.npm-global/bin, Node and npm from the system, elsewhere."""
-    machine = a_machine(tmp_path)
-    prefix = machine.home / ".npm-global"
-    (prefix / "bin").mkdir(parents=True)
-    (prefix / "bin" / "openclaw").write_text("#!/bin/sh\n", encoding="utf-8")
-    system = tmp_path / "usr" / "bin"
-    system.mkdir(parents=True)
-    for name in ("node", "npm"):
-        (system / name).write_text("#!/bin/sh\n", encoding="utf-8")
-    return machine, prefix, system
-
-
-def test_the_npm_whose_prefix_holds_openclaw_updates_it(tmp_path: Path):
-    """Seen on the VPS: no npm beside ~/.npm-global/bin/openclaw, so the gateway could never align."""
-    machine, prefix, system = a_user_prefix(tmp_path)
-    as_gateway(machine)
-    fake = PrefixRun(machine, prefix)
-    which = {"node": str(system / "node"), "npm": str(system / "npm"),
-             "openclaw": str(prefix / "bin" / "openclaw")}.get
-
-    outcome = version_align.align(
-        machine.home, machine.engine, env={}, platform="linux", which=which, run=fake,
-        service=FakeService(), smoke=lambda: 0, clock=lambda: NIGHT,
-    )
-
-    assert outcome.state == version_align.ALIGNED
-    assert installs(fake.calls) == [an_install(system / "npm", PIN)]
-
-
-def test_an_npm_that_installs_somewhere_else_is_not_the_owner(tmp_path: Path):
-    machine, prefix, system = a_user_prefix(tmp_path)
-    as_gateway(machine)
-    fake = PrefixRun(machine, tmp_path / "usr")
-    which = {"node": str(system / "node"), "npm": str(system / "npm"),
-             "openclaw": str(prefix / "bin" / "openclaw")}.get
-
-    outcome = version_align.align(
-        machine.home, machine.engine, env={}, platform="linux", which=which, run=fake,
-        service=FakeService(), smoke=lambda: 0, clock=lambda: NIGHT,
-    )
-
-    assert outcome.state == version_align.WARN
-    assert installs(fake.calls) == []
-
-
 class EnvRun(FakeRun):
     """Records the PATH every program was started with."""
 
@@ -1084,10 +1206,9 @@ class EnvRun(FakeRun):
         return super().__call__(argv, env)
 
 
-def test_npm_and_the_cli_run_under_the_node_that_owns_openclaw(tmp_path: Path):
-    """Seen on a desktop: `~/.local/bin/node` linked to an older Node came first on PATH. npm's
-    `#!/usr/bin/env node` ran under it, read that Node's global prefix and its old OpenClaw,
-    and tried to install the pin there, where the pin refuses that Node."""
+def test_the_cli_runs_under_the_node_that_owns_openclaw(tmp_path: Path):
+    """Seen on a desktop: `~/.local/bin/node` linked to an older Node came first on PATH, and
+    `openclaw` starts with `#!/usr/bin/env node`, so the wrong Node ran this release."""
     machine = a_machine(tmp_path)
     as_node(machine)
     stale = tmp_path / "stale-local-bin"

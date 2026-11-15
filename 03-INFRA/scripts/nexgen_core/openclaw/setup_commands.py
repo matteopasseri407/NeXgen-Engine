@@ -11,7 +11,7 @@ installed" on the machine this was written for.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from pathlib import Path
 
 #: Where a person without Node goes. The engine never installs it: a system-wide
@@ -43,9 +43,26 @@ def onboard_argv(openclaw: str) -> list[str]:
     ]
 
 
-def validate_argv(openclaw: str) -> list[str]:
-    """Let OpenClaw judge the file that was just written."""
-    return [openclaw, "config", "validate"]
+def patch_argv(
+    openclaw: str,
+    patch_file: Path,
+    *,
+    dry_run: bool = False,
+    replace_paths: Collection[str] = (),
+) -> list[str]:
+    """The one validated write: OpenClaw merges the patch, checks it, and publishes it.
+
+    `--replace-path` makes the object at that path exactly the one in the patch
+    instead of merging into what is there, which is how a key the engine retires
+    actually leaves the file. `--dry-run --json` answers whether the whole result
+    would be accepted and touches nothing.
+    """
+    argv = [openclaw, "config", "patch", "--file", str(patch_file)]
+    for path in replace_paths:
+        argv.extend(["--replace-path", path])
+    if dry_run:
+        argv.extend(["--dry-run", "--json"])
+    return argv
 
 
 def config_env(env: Mapping[str, str], path: Path) -> dict[str, str]:

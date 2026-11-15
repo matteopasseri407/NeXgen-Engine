@@ -1122,3 +1122,66 @@ def test_a_node_is_judged_on_its_remote_gateway_not_on_a_local_listener(tmp_path
     assert "no listener" in outcomes["openclaw.gateway.bind"].message
     assert "openclaw.gateway.auth" not in outcomes
     assert not [o for o in outcomes.values() if o.severity == Severity.BROKEN]
+
+
+def test_a_state_directory_of_its_own_hides_the_shared_skills(tmp_path):
+    """OpenClaw leaves `~/.agents/skills` out of its indexes, and nothing else says so."""
+    outcomes = run_doctor(
+        tmp_path, write_config(tmp_path, clean_config()),
+        env={"OPENCLAW_STATE_DIR": str(tmp_path / "elsewhere")},
+    )
+
+    root = by_id(outcomes)["openclaw.skills.root"]
+    assert root.severity == Severity.BROKEN
+    assert "~/.agents/skills" in root.message
+    assert "OPENCLAW_STATE_DIR" in (root.action or "")
+
+
+def test_the_default_state_directory_still_reads_the_shared_skills(tmp_path):
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()))
+
+    root = by_id(outcomes)["openclaw.skills.root"]
+    assert root.severity == Severity.OK
+    assert "~/.agents/skills" in root.message
+
+
+def test_a_state_directory_set_to_the_default_folder_is_not_a_finding(tmp_path):
+    """Setting it explicitly to `~/.openclaw` changes nothing OpenClaw reads."""
+    outcomes = run_doctor(
+        tmp_path, write_config(tmp_path, clean_config()),
+        env={"OPENCLAW_STATE_DIR": str(tmp_path / "home" / ".openclaw")},
+    )
+
+    assert by_id(outcomes)["openclaw.skills.root"].severity == Severity.OK
+
+
+def test_a_node_does_not_ask_where_its_skills_live(tmp_path):
+    """Its agents run on the gateway: the state directory that decides is that machine's."""
+    config = clean_config()
+    config["gateway"] = {"mode": "remote", "port": 18789, "remote": {"url": "wss://gw.example.ts.net"}}
+    outcomes = run_doctor(
+        tmp_path, write_config(tmp_path, config),
+        env={"OPENCLAW_STATE_DIR": str(tmp_path / "elsewhere")},
+    )
+
+    assert "openclaw.skills.root" not in by_id(outcomes)
+
+
+def test_a_bootstrap_limit_shorter_than_the_pointer_warns(tmp_path):
+    config = clean_config()
+    config["agents"]["defaults"]["bootstrapMaxChars"] = 100
+
+    outcome = by_id(run_doctor(tmp_path, write_config(tmp_path, config)))["openclaw.prompt_budget"]
+
+    assert outcome.severity == Severity.WARN
+    assert "pointer block" in outcome.message
+
+
+def test_the_documented_prompt_limits_pass_and_are_named(tmp_path):
+    outcome = by_id(run_doctor(tmp_path, write_config(tmp_path, clean_config())))["openclaw.prompt_budget"]
+
+    assert outcome.severity == Severity.OK
+    assert "20000 characters per injected file" in outcome.message
+    assert "60000 in total" in outcome.message
+    assert "18000 for the skills catalog" in outcome.message
+    assert "documented defaults" in outcome.message

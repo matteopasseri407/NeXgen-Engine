@@ -21,7 +21,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.openclaw import node_retire  # noqa: E402
+from nexgen_core.openclaw import config_write, node_retire  # noqa: E402
 from nexgen_core.openclaw.node_apply import apply_node  # noqa: E402
 from nexgen_core.openclaw.node_retire import (  # noqa: E402
     RetireResult,
@@ -31,9 +31,32 @@ from nexgen_core.openclaw.node_retire import (  # noqa: E402
     report,
 )
 from nexgen_core.openclaw_service import RunResult  # noqa: E402
+from openclaw_patch_fake import apply_patch  # noqa: E402 - the stand-in for `openclaw config patch`
 
 #: The profile the engine adds on a node: the shared Chrome keeps its port, OpenClaw only attaches.
 NEXGEN_PROFILE = {"cdpUrl": "http://127.0.0.1:9222", "attachOnly": True}
+
+#: Every patch the node role sent, in order, so a test can read what was asked for.
+PATCHES: list[dict] = []
+
+
+@pytest.fixture(autouse=True)
+def _openclaw_applies_the_patch(monkeypatch):
+    """`openclaw config patch`, played by the stub: it merges, backs up and reports accepted.
+
+    The node role hands its change to OpenClaw instead of writing the file itself,
+    so the whole file is here without starting OpenClaw on the machine running the
+    tests.
+    """
+    PATCHES.clear()
+
+    def apply(run, openclaw, config_path, env, replace_paths):
+        document = json.loads(config_write.patch_path(Path(config_path)).read_text(encoding="utf-8"))
+        PATCHES.append(document)
+        apply_patch(Path(config_path), document, replace_paths)
+        return config_write.Verdict(True)
+
+    monkeypatch.setattr(config_write, "apply", apply)
 
 
 @pytest.fixture(autouse=True)
@@ -63,15 +86,18 @@ NODE_ELSEWHERE = {
 class RecordingRunner:
     """Records every command and answers from canned output."""
 
-    def __init__(self, node_status: dict | None = None, code: int = 0):
+    def __init__(self, node_status: dict | None = None, code: int = 0, connect_code: int = 0):
         self.calls: list[list[str]] = []
         self.node_status = node_status if node_status is not None else STOPPED_NODE
         self.code = code
+        self.connect_code = connect_code
 
     def __call__(self, argv: list[str], timeout: float | None = None) -> RunResult:
         self.calls.append(list(argv))
         if argv[:3] == ["openclaw", "node", "status"]:
             return RunResult(0, json.dumps(self.node_status), "")
+        if argv[:2] == ["openclaw", "connect"]:
+            return RunResult(self.connect_code, "", "")
         return RunResult(self.code, "", "")
 
     def issued(self, *argv: str) -> bool:
@@ -116,6 +142,38 @@ def test_prepare_config_puts_the_file_in_node_state(tmp_path: Path) -> None:
     assert document["agents"] == {"entries": {"main": {}}}
     assert document["mcp"]["servers"]["vault-library"] == {"command": "vault-mcp"}
     assert change.backup is not None and change.backup.is_file()
+
+
+def test_the_node_state_is_expressed_as_the_patch_openclaw_applies(tmp_path: Path) -> None:
+    """The three keys the node role owns, as a patch: a delete, a flip, and an add."""
+    path = _config(tmp_path, _gateway_document())
+
+    prepare_config(path, out=lambda _line: None)
+
+    assert PATCHES == [{
+        "gateway": {"auth": None},
+        "channels": {"telegram": {"enabled": False}},
+        "nodeHost": {"workerRuns": {"enabled": True}},
+    }]
+
+
+def test_a_refused_patch_leaves_the_node_configuration_untouched(tmp_path: Path, monkeypatch) -> None:
+    """OpenClaw refuses before it commits, so the node keeps the file it had."""
+    path = _config(tmp_path, _gateway_document())
+    before = path.read_text(encoding="utf-8")
+    printed: list[str] = []
+
+    def refuse(run, openclaw, config_path, env, replace_paths):
+        return config_write.Verdict(False, "gateway.auth: cannot be removed on this release")
+
+    monkeypatch.setattr(config_write, "apply", refuse)
+
+    change = prepare_config(path, out=printed.append)
+
+    assert path.read_text(encoding="utf-8") == before
+    assert change.backup is None
+    assert change.auth_removed is False
+    assert any("gateway.auth: cannot be removed on this release" in line for line in printed)
 
 
 def test_prepare_config_is_idempotent(tmp_path: Path) -> None:
@@ -297,7 +355,6 @@ def test_apply_node_retires_the_local_gateway_before_enrolling(tmp_path: Path) -
     drop_in = unit_dir / "openclaw-gateway.service.d"
     drop_in.mkdir(parents=True)
     runner = RecordingRunner()
-    probes: list[bool] = []
 
     code = apply_node(
         "central.tail.ts.net",
@@ -307,7 +364,6 @@ def test_apply_node_retires_the_local_gateway_before_enrolling(tmp_path: Path) -
         platform="linux",
         runner=runner,
         systemd_user_dir=unit_dir,
-        wait_probe_fn=lambda: probes.append(True) or True,
         out=lambda _line: None,
     )
 
@@ -318,13 +374,38 @@ def test_apply_node_retires_the_local_gateway_before_enrolling(tmp_path: Path) -
     assert len(connect) == 1
     assert "--service" in connect[0] and "--session-host" in connect[0] and "--target-file" in connect[0]
     assert runner.calls.index(["openclaw", "gateway", "stop"]) < runner.calls.index(connect[0])
-    assert probes == [True]
+    # Nothing asks the node whether it attached after the fact: connect already did.
+    after = runner.calls[runner.calls.index(connect[0]) + 1:]
+    assert not [call for call in after if call[:3] == ["openclaw", "node", "status"]]
 
     document = json.loads(path.read_text(encoding="utf-8"))
     assert "auth" not in document["gateway"]
     assert document["channels"]["telegram"]["enabled"] is False
     assert document["nodeHost"]["workerRuns"]["enabled"] is True
     assert not drop_in.exists()
+
+
+def test_a_refused_enrolment_fails_the_apply_after_the_retirement(tmp_path: Path) -> None:
+    """A spent join code is a failure, and it is reported as one instead of a finished node."""
+    _config(tmp_path, _gateway_document())
+    runner = RecordingRunner(connect_code=7)
+    said: list[str] = []
+
+    code = apply_node(
+        "central.tail.ts.net",
+        name="desktop",
+        join_target="https://central.tail.ts.net/j/spent",
+        home=tmp_path,
+        platform="linux",
+        runner=runner,
+        systemd_user_dir=tmp_path,
+        out=said.append,
+    )
+
+    assert code == 1
+    assert runner.issued("openclaw", "gateway", "stop")
+    assert "Node connect failed (exit code 7)." in "\n".join(said)
+    assert "openclaw node status" not in "\n".join(said)
 
 
 def test_apply_node_refuses_another_gateway_without_force(tmp_path: Path) -> None:

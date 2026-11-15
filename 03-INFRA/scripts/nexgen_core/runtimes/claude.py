@@ -15,12 +15,13 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from nexgen_core.i18n import t
 from nexgen_core.paths import claude_settings
 from nexgen_core.runtimes.base import GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
 
 _ADAPTER_NAME = "claude-guardrail-adapter.mjs"
 #: The body gets 5 s; the hook gets 10, so the adapter answers (and says why) before Claude kills it.
-_BODY_TIMEOUT_SECONDS = 5
+BODY_TIMEOUT_SECONDS = 5
 _HOOK_TIMEOUT_SECONDS = 10
 
 #: The tools whose commands the guardrail must see. Claude names a shell call by its tool, and on
@@ -37,6 +38,58 @@ _GUARDRAIL_MATCHERS_COVERING = (None, "", "*", _GUARDRAIL_MATCHER)
 #: registration in Claude's own settings is the observable fact that Claude receives a briefing.
 #: OpenClaw's plugin follows the same fact, so the two hosts brief the same sessions.
 CHECKPOINT_HOOK_NAME = "claude-vault-checkpoint.mjs"
+
+
+def adapter_name() -> str:
+    """The file name of the fail-closed adapter, as every Claude surface names it."""
+    return _ADAPTER_NAME
+
+
+def plugin_hook_group(adapter: str) -> dict[str, Any]:
+    """The `PreToolUse` group a native plugin contributes, in Claude Code's `hooks.json` shape.
+
+    One definition with the registration in `settings.json`: the same matcher (both shell
+    tools, see `_GUARDRAIL_MATCHER`) and the same timeout, so turning the plugin switch on
+    cannot change what the guardrail does. The adapter is reached through
+    `${CLAUDE_PLUGIN_ROOT}` because the installer owns where the directory lives.
+    """
+    return {
+        "matcher": _GUARDRAIL_MATCHER,
+        "hooks": [
+            {
+                "type": "command",
+                "command": f'node "${{CLAUDE_PLUGIN_ROOT}}/hooks/{adapter}"',
+                "timeout": _HOOK_TIMEOUT_SECONDS,
+            }
+        ],
+    }
+
+
+def _retire_guardrail_hook(entries: list[Any], commands: tuple[str, ...]) -> bool:
+    """Takes our handler out of `PreToolUse`, and the group with it when it held nothing else.
+
+    Only the exact command strings this engine has written are matched, so another tool's
+    handler in the same group stays where it is. Returns True when something was removed.
+    """
+    kept: list[Any] = []
+    removed = False
+    for group in entries:
+        hooks = group.get("hooks") if isinstance(group, dict) else None
+        if not isinstance(hooks, list):
+            kept.append(group)
+            continue
+        remaining = [h for h in hooks if not (isinstance(h, dict) and h.get("command") in commands)]
+        if len(remaining) == len(hooks):
+            kept.append(group)
+            continue
+        removed = True
+        if remaining:
+            group["hooks"] = remaining
+            kept.append(group)
+    if removed:
+        entries[:] = kept
+    return removed
+
 
 
 def _register_guardrail_hook(entries: list[Any], command: str, legacy_command: str) -> str:
@@ -138,7 +191,42 @@ class ClaudeRuntime(Runtime):
         return home / ".claude" / GUARDRAIL_SIDECAR_NAME
 
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
+        from nexgen_core.plugin_claude import installed as claude_runs_as_a_plugin
+
+        if claude_runs_as_a_plugin(home):
+            # This installation asked for the native plugin: the hook travels in its
+            # `hooks.json`, so writing it here too would run the guardrail twice per command.
+            return self._stand_down(home, hook_source)
         return self._install_guardrail_impl(home, hook_source, engine_hooks_dir)
+
+    def _stand_down(self, home: Path, hook_source: Path) -> str | None:
+        """Removes this engine's own registration, once, when the plugin carries the hook instead.
+
+        Only the two command strings this engine writes are touched -- today's adapter and
+        the body itself, as engines before the adapter registered it -- so a group a person
+        or another tool wrote is left exactly as it is.
+        """
+        data = self._load_settings(home)
+        if data is None:
+            return None
+        hooks = data.get("hooks")
+        entries = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
+        if not isinstance(entries, list):
+            return None
+        claude_dir = home / ".claude"
+        commands = (
+            f'node "{claude_dir / _ADAPTER_NAME}"',
+            f'node "{claude_dir / hook_source.name}"',
+        )
+        if not _retire_guardrail_hook(entries, commands):
+            return None
+        if not entries:
+            # The event holds nothing else: an empty list is noise in a file a person reads.
+            hooks.pop("PreToolUse", None)
+        path = self._settings_path(home)
+        self.backup(path)
+        self.atomic_write(path, json.dumps(data, indent=2) + "\n")
+        return t("claude: guardrail hook moved into the plugin (removed from {path})", path=path)
 
     def _install_guardrail_impl(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
         from nexgen_core.runtimes.base import Runtime
@@ -164,7 +252,7 @@ class ClaudeRuntime(Runtime):
         adapter_changed = self.deploy_bytes(adapter_dst, adapter_src.read_bytes())
         adapter_changed |= self.deploy_guardrail_core(claude_dir, engine_hooks_dir)
         sidecar_changed = self.write_guardrail_sidecar(
-            claude_dir / GUARDRAIL_SIDECAR_NAME, body=body_dst, home=home, timeout=_BODY_TIMEOUT_SECONDS,
+            claude_dir / GUARDRAIL_SIDECAR_NAME, body=body_dst, home=home, timeout=BODY_TIMEOUT_SECONDS,
         )
 
         command = f'node "{adapter_dst}"'

@@ -10,11 +10,16 @@ from pathlib import Path
 
 import pytest
 from conftest import REAL_VAULT
-from nexgen_core.checks.guardrail_checks import check_guardrail_consulted, check_permission_posture
+from nexgen_core.checks.guardrail_checks import (
+    check_codex_guardrail_trust,
+    check_guardrail_consulted,
+    check_permission_posture,
+)
 from nexgen_core.report import Severity
 from nexgen_core.runtimes.antigravity import AntigravityRuntime
 from nexgen_core.runtimes.base import GuardrailError
 from nexgen_core.runtimes.claude import ClaudeRuntime
+from nexgen_core.runtimes.codex import STALE, TRUSTED, UNTRUSTED, CodexRuntime, guardrail_trust
 from nexgen_core.runtimes.opencode import OpenCodeRuntime
 
 HOOKS = REAL_VAULT / "03-INFRA" / "agent-universal-layer" / "hooks"
@@ -508,3 +513,286 @@ def test_a_manifest_without_a_posture_says_nothing(tmp_path):
 
 def test_a_machine_without_the_private_manifest_says_nothing(tmp_path):
     assert check_permission_posture(tmp_path / "vault") is None
+
+
+# ------------------------------------------------------------------ Codex: the registration and its trust
+
+
+#: What a person wrote in `~/.codex/hooks.json` here: hooks of their own, in the same file the
+#: engine now registers into. None of them may move.
+PERSONS_CODEX_HOOKS = {
+    "hooks": {
+        "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "node someone-elses.mjs", "timeout": 5}]}],
+        "PreToolUse": [{"matcher": "apply_patch", "hooks": [{"type": "command", "command": "node patch-check.mjs"}]}],
+        "Stop": [{"hooks": [{"type": "command", "command": "node stop.mjs", "timeout": 30}]}],
+    }
+}
+
+
+@pytest.fixture
+def codex_installed(monkeypatch):
+    """A machine where the Codex binary exists; the autouse fixture hides every binary."""
+    monkeypatch.setattr("nexgen_core.runtimes.codex.shutil.which", lambda name: f"/fake/{name}")
+
+
+def _codex_home(tmp_path: Path, hooks: dict | None = None, config: str = "") -> tuple[Path, Path, Path]:
+    """A Codex home with the hooks a person already had and its own config.toml."""
+    home = tmp_path / "home"
+    codex = home / ".codex"
+    codex.mkdir(parents=True)
+    hooks_path = codex / "hooks.json"
+    if hooks is not None:
+        hooks_path.write_text(json.dumps(hooks, indent=2), encoding="utf-8")
+    config_path = codex / "config.toml"
+    config_path.write_text(config, encoding="utf-8")
+    return home, hooks_path, config_path
+
+
+def _codex_entries(hooks_path: Path) -> list[dict]:
+    return json.loads(hooks_path.read_text(encoding="utf-8"))["hooks"]["PreToolUse"]
+
+
+def _our_codex_index(hooks_path: Path) -> int:
+    return next(
+        index for index, group in enumerate(_codex_entries(hooks_path))
+        if any("codex-guardrail-adapter.mjs" in handler.get("command", "") for handler in group["hooks"])
+    )
+
+
+def _codex_trusts(config_path: Path, hooks_path: Path, index: int, value: str) -> None:
+    """Exactly what Codex writes into its own config.toml when a person accepts a hook in /hooks."""
+    config_path.write_text(
+        "[hooks.state]\n\n"
+        f"[hooks.state.'{hooks_path}:pre_tool_use:{index}:0']\n"
+        f'trusted_hash = "{value}"\n',
+        encoding="utf-8",
+    )
+
+
+def test_codex_registers_our_hook_and_leaves_every_hook_a_person_wrote_alone(tmp_path):
+    home, hooks_path, _config = _codex_home(tmp_path, PERSONS_CODEX_HOOKS)
+    rt = CodexRuntime()
+
+    action = rt.install_guardrail(home, _body(tmp_path), HOOKS)
+
+    entries = _codex_entries(hooks_path)
+    assert entries[0] == PERSONS_CODEX_HOOKS["hooks"]["PreToolUse"][0]  # untouched, and still first
+    assert entries[1] == {
+        "matcher": "Bash",
+        "hooks": [{"type": "command",
+                   "command": f'node "{home / ".codex" / "codex-guardrail-adapter.mjs"}"',
+                   "timeout": 10}],
+    }
+    written = json.loads(hooks_path.read_text(encoding="utf-8"))["hooks"]
+    assert written["UserPromptSubmit"] == PERSONS_CODEX_HOOKS["hooks"]["UserPromptSubmit"]
+    assert written["Stop"] == PERSONS_CODEX_HOOKS["hooks"]["Stop"]
+    assert "/hooks" in action and "trust" in action  # the person is told what Codex will demand
+    assert rt.install_guardrail(home, _body(tmp_path), HOOKS) is None  # and it settles
+
+
+def test_codex_gets_a_hook_file_when_it_has_none_yet(tmp_path):
+    """hooks.json is created by hand, not by Codex: a machine with the CLI and no file has no hooks at all."""
+    home, hooks_path, _config = _codex_home(tmp_path)
+    assert not hooks_path.exists()
+
+    action = CodexRuntime().install_guardrail(home, _body(tmp_path), HOOKS)
+
+    assert "registered" in action
+    assert _codex_entries(hooks_path)[0]["matcher"] == "Bash"
+
+
+def test_the_codex_hook_is_found_by_its_command_not_by_its_position(tmp_path):
+    """A group index says nothing about who wrote what: the same hook twice would run twice."""
+    home, hooks_path, _config = _codex_home(tmp_path, PERSONS_CODEX_HOOKS)
+    CodexRuntime().install_guardrail(home, _body(tmp_path), HOOKS)
+    entries = _codex_entries(hooks_path)
+    entries[1]["hooks"][0]["timeout"] = 2  # an older engine's registration, or a hand edit
+    hooks_path.write_text(json.dumps({"hooks": {"PreToolUse": entries}}), encoding="utf-8")
+
+    action = CodexRuntime().install_guardrail(home, _body(tmp_path), HOOKS)
+
+    entries = _codex_entries(hooks_path)
+    assert len(entries) == 2 and entries[1]["hooks"][0]["timeout"] == 10
+    assert entries[0] == PERSONS_CODEX_HOOKS["hooks"]["PreToolUse"][0]
+    assert "updated" in action
+
+
+def test_the_codex_sidecar_is_strict_and_its_body_answers_before_codex_gives_up(tmp_path):
+    """Codex lets a tool run when a hook fails: the closed answer is the only one that brakes."""
+    home, _hooks, _config = _codex_home(tmp_path, PERSONS_CODEX_HOOKS)
+    rt = CodexRuntime()
+
+    rt.install_guardrail(home, _body(tmp_path), HOOKS)
+
+    sidecar = rt.read_guardrail_sidecar(rt.guardrail_sidecar(home))
+    assert sidecar["strict"] is True
+    assert sidecar["hooks"][0]["timeout"] == 5  # the hook is given 10 s, so the adapter always answers
+
+
+def test_a_missing_core_is_refused_before_codex_registers_anything(tmp_path):
+    home, hooks_path, _config = _codex_home(tmp_path, PERSONS_CODEX_HOOKS)
+    hooks = tmp_path / "hooks"
+    shutil.copytree(HOOKS, hooks)
+    (hooks / "nexgen-guardrail-core.mjs").unlink()
+    before = hooks_path.read_text(encoding="utf-8")
+
+    with pytest.raises(GuardrailError, match="core"):
+        CodexRuntime().install_guardrail(home, _body(tmp_path), hooks)
+
+    assert hooks_path.read_text(encoding="utf-8") == before
+
+
+def test_a_codex_hook_file_that_is_not_json_is_refused_not_replaced(tmp_path):
+    home, hooks_path, _config = _codex_home(tmp_path)
+    hooks_path.write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(GuardrailError, match="not valid JSON"):
+        CodexRuntime().install_guardrail(home, _body(tmp_path), HOOKS)
+
+    assert hooks_path.read_text(encoding="utf-8") == "{not json"
+
+
+def test_a_registered_hook_codex_never_accepted_is_not_trusted(tmp_path):
+    home, _hooks_path, _config = _codex_home(tmp_path, PERSONS_CODEX_HOOKS)
+
+    CodexRuntime().install_guardrail(home, _body(tmp_path), HOOKS)
+
+    assert guardrail_trust(home) == UNTRUSTED
+
+
+def test_a_hash_a_removed_hook_left_at_the_same_slot_is_not_an_acceptance(tmp_path):
+    """This machine's config.toml still carries one for a hook that is no longer in the file.
+
+    Trust is a hash Codex compares with the hook it has, so a leftover says nothing about the hook
+    the engine just wrote: reading presence as consent is the fake this test exists to refuse.
+    """
+    home, hooks_path, config_path = _codex_home(tmp_path)
+    _codex_trusts(config_path, hooks_path, 0, "sha256:left-by-a-hook-that-is-gone")
+
+    CodexRuntime().install_guardrail(home, _body(tmp_path), HOOKS)
+
+    assert _our_codex_index(hooks_path) == 0  # the leftover is at exactly our slot
+    assert guardrail_trust(home) == UNTRUSTED
+
+
+def test_the_acceptance_codex_records_after_the_person_opens_hooks_is_seen(tmp_path):
+    home, hooks_path, config_path = _codex_home(tmp_path, PERSONS_CODEX_HOOKS)
+    CodexRuntime().install_guardrail(home, _body(tmp_path), HOOKS)
+
+    _codex_trusts(config_path, hooks_path, _our_codex_index(hooks_path), "sha256:accepted")
+
+    assert guardrail_trust(home) == TRUSTED
+
+
+def test_a_later_guard_cycle_does_not_lose_the_acceptance(tmp_path):
+    """The engine re-installs every few minutes: adopting the accepted hash as its baseline would
+    turn a hook the person accepted into an unaccepted one on the next cycle."""
+    home, hooks_path, config_path = _codex_home(tmp_path, PERSONS_CODEX_HOOKS)
+    rt = CodexRuntime()
+    rt.install_guardrail(home, _body(tmp_path), HOOKS)
+    _codex_trusts(config_path, hooks_path, _our_codex_index(hooks_path), "sha256:accepted")
+
+    assert rt.install_guardrail(home, _body(tmp_path), HOOKS) is None
+
+    assert guardrail_trust(home) == TRUSTED
+
+
+def test_a_changed_declaration_needs_a_fresh_acceptance(tmp_path, monkeypatch):
+    """Codex hashes the hook definition: what it accepted is not what is on disk any more."""
+    home, hooks_path, config_path = _codex_home(tmp_path, PERSONS_CODEX_HOOKS)
+    rt = CodexRuntime()
+    rt.install_guardrail(home, _body(tmp_path), HOOKS)
+    _codex_trusts(config_path, hooks_path, _our_codex_index(hooks_path), "sha256:first")
+    assert guardrail_trust(home) == TRUSTED
+
+    monkeypatch.setattr("nexgen_core.runtimes.codex._HOOK_TIMEOUT_SECONDS", 30)
+    rt.install_guardrail(home, _body(tmp_path), HOOKS)
+
+    assert guardrail_trust(home) == STALE
+    _codex_trusts(config_path, hooks_path, _our_codex_index(hooks_path), "sha256:second")
+    assert guardrail_trust(home) == TRUSTED
+
+
+def test_an_edited_hook_is_reported_as_needing_a_review_again(tmp_path):
+    """A hand edit to the declaration changes what Codex hashes, with no cycle of ours in between."""
+    home, hooks_path, config_path = _codex_home(tmp_path, PERSONS_CODEX_HOOKS)
+    CodexRuntime().install_guardrail(home, _body(tmp_path), HOOKS)
+    _codex_trusts(config_path, hooks_path, _our_codex_index(hooks_path), "sha256:accepted")
+    assert guardrail_trust(home) == TRUSTED
+
+    entries = _codex_entries(hooks_path)
+    entries[_our_codex_index(hooks_path)]["hooks"][0]["statusMessage"] = "Edited by hand"
+    hooks_path.write_text(json.dumps({"hooks": {"PreToolUse": entries}}), encoding="utf-8")
+
+    assert guardrail_trust(home) == STALE
+
+def test_the_doctor_says_the_codex_guardrail_is_untrusted_and_what_to_do(tmp_path, codex_installed):
+    import nexgen_core.i18n as i18n
+
+    home, _hooks_path, _config = _codex_home(tmp_path, PERSONS_CODEX_HOOKS)
+    CodexRuntime().install_guardrail(home, _body(tmp_path), HOOKS)
+    i18n.set_language("en")
+    try:
+        outcome = check_codex_guardrail_trust(home)
+    finally:
+        i18n.set_language(None)
+
+    assert outcome.id == "guardrail.codex_trust" and outcome.severity == Severity.WARN
+    assert outcome.message == "Codex: the guardrail hook is registered but not trusted, so Codex skips it."
+    assert outcome.action == "Open Codex, run /hooks and accept the NeXgen guardrail hook."
+
+
+def test_the_doctor_says_the_codex_guardrail_was_accepted(tmp_path, codex_installed):
+    import nexgen_core.i18n as i18n
+
+    home, hooks_path, config_path = _codex_home(tmp_path, PERSONS_CODEX_HOOKS)
+    CodexRuntime().install_guardrail(home, _body(tmp_path), HOOKS)
+    _codex_trusts(config_path, hooks_path, _our_codex_index(hooks_path), "sha256:accepted")
+    i18n.set_language("en")
+    try:
+        outcome = check_codex_guardrail_trust(home)
+    finally:
+        i18n.set_language(None)
+
+    assert outcome.severity == Severity.OK
+    assert outcome.message == "Codex has accepted the guardrail hook, so Codex runs it."
+
+
+def test_the_doctor_reports_a_guardrail_codex_would_not_read(tmp_path, codex_installed):
+    import nexgen_core.i18n as i18n
+
+    home, hooks_path, _config = _codex_home(tmp_path, PERSONS_CODEX_HOOKS)
+    CodexRuntime().install_guardrail(home, _body(tmp_path), HOOKS)
+    hooks_path.write_text(json.dumps({"hooks": {"PreToolUse": []}}), encoding="utf-8")  # an engine's write, undone
+    i18n.set_language("en")
+    try:
+        outcome = check_codex_guardrail_trust(home)
+    finally:
+        i18n.set_language(None)
+
+    assert outcome.severity == Severity.WARN
+    assert outcome.message == "Codex: the guardrail is deployed but not registered in its own hooks.json."
+
+
+def test_the_doctor_says_nothing_about_codex_without_its_guardrail(tmp_path, codex_installed):
+    home, _hooks_path, _config = _codex_home(tmp_path, PERSONS_CODEX_HOOKS)
+
+    assert check_codex_guardrail_trust(home) is None
+    assert guardrail_trust(home) is None
+
+
+def test_the_doctor_reports_a_codex_hook_file_it_cannot_read(tmp_path, codex_installed):
+    import nexgen_core.i18n as i18n
+
+    home, hooks_path, _config = _codex_home(tmp_path, PERSONS_CODEX_HOOKS)
+    CodexRuntime().install_guardrail(home, _body(tmp_path), HOOKS)
+    hooks_path.write_text("{not json", encoding="utf-8")
+    i18n.set_language("en")
+    try:
+        outcome = check_codex_guardrail_trust(home)
+    finally:
+        i18n.set_language(None)
+
+    assert outcome.severity == Severity.WARN
+    assert outcome.message.startswith("Codex: its own hook file could not be read, so the guardrail's trust is unknown")
+

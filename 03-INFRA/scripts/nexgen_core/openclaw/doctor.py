@@ -14,8 +14,11 @@ Three commands a check may run, and only when the caller hands them in: the node
 list, and the exec approvals of the node an agent runs on, both behind the
 `--nodes` flag with the read-only queries OpenClaw documents; and the gateway's own
 device list, because `nexgen openclaw doctor` is where a person asks whether the
-app is paired. None of them runs on `nexgen doctor`'s own schedule, which has no
-business launching a CLI.
+app is paired. A fourth, OpenClaw's deep service inventory, is asked the same way
+and only by that command, because it is how a registration an older release left
+beside the service is found. None of them runs on `nexgen doctor`'s own schedule,
+which has no business launching a CLI. The optional `ccusage` binary behind `openclaw.spend` is
+asked in the same spirit: only by `nexgen openclaw doctor`, never by the schedule.
 """
 from __future__ import annotations
 
@@ -28,12 +31,14 @@ from typing import Any
 from nexgen_core import quota_policy
 from nexgen_core.i18n import t
 from nexgen_core.openclaw import (
+    acpx_plugin,
     automations,
     background,
     companion,
     doctor_agents,
     doctor_agy,
     doctor_config,
+    doctor_groom,
     doctor_lanes,
     doctor_mcp,
     doctor_runtime,
@@ -41,6 +46,8 @@ from nexgen_core.openclaw import (
     node_approvals,
     node_checks,
     observation,
+    prompt_budget,
+    second_service,
 )
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
@@ -57,7 +64,9 @@ from nexgen_core.openclaw.node_only import NODE_MODE_CHECK_ID, detect_node_only,
 from nexgen_core.openclaw.pin import pinned_version, required_node_version
 from nexgen_core.openclaw.profile import PENDING_TOKEN
 from nexgen_core.openclaw.server_gateway import exposure
+from nexgen_core.openclaw.spend import check_spend
 from nexgen_core.paths import (
+    canonical_instructions,
     is_machine_home,
     mcp_manifest,
     openclaw_config,
@@ -235,6 +244,7 @@ def _gateway_outcomes(
     policy: quota_policy.Failover,
     platform: str,
     env: Mapping[str, str] | None,
+    canon: Path,
     automations_reader: automations.Reader | None = None,
 ) -> list[CheckOutcome]:
     """Every check that judges the gateway this file would configure.
@@ -256,13 +266,17 @@ def _gateway_outcomes(
         check_evidence(config, path),
         doctor_config.check_heartbeat(config, jobs=jobs),
         doctor_config.check_context_guard(jobs),
+        doctor_groom.check_groom(jobs, home_dir),
         *_check_gateway(config),
         exposure(config),
         doctor_config.check_google(config),
         *doctor_agy.check_local_agy(config, state_dir=path.parent, home=home_dir),
         doctor_config.check_acp(config),
+        acpx_plugin.check(config, path.parent),
         doctor_config.check_tool_search(config),
         doctor_config.check_mcp_lazy(config),
+        doctor_config.check_skill_root(config, env or os.environ, home_dir),
+        prompt_budget.check(config, canon),
         doctor_mcp.check_mcp_secret_url(config, manifest_p, env or os.environ),
         check_agent_models(config, snapshot),
         check_model_overrides(config),
@@ -307,6 +321,7 @@ def _config_outcomes(
     if not node_only:
         outcomes.extend(_gateway_outcomes(
             config, snapshot, path, home_dir, manifest_p, connect, policy, platform, env,
+            canonical_instructions(resolve_vault_data(home_dir, vault_data)),
             automations_reader,
         ))
     outcomes.extend(filter(None, [
@@ -338,6 +353,7 @@ def _plugin_outcomes(path: Path, config: dict[str, Any]) -> list[CheckOutcome]:
     plugin_dir = path.parent / "extensions" / "nexgen"
     outcomes = [
         doctor_runtime.check_plugin_enabled(config, plugin_dir),
+        doctor_runtime.check_switch_home(config, plugin_dir),
         doctor_runtime.check_checkpoint(plugin_dir),
     ]
     return [outcome for outcome in outcomes if outcome is not None]
@@ -385,6 +401,7 @@ def collect(
     pending: Callable[[], list[dict[str, Any]] | None] | None = None,
     node_approvals_reader: node_approvals.Reader | None = None,
     automations_reader: automations.Reader | None = None,
+    second_service_reader: Callable[[], list[dict[str, Any]]] | None = None,
     spend: bool = False,
 ) -> list[CheckOutcome]:
     """Every OpenClaw check that applies to this machine, or nothing at all.
@@ -392,10 +409,12 @@ def collect(
     `pending`, `node_approvals_reader` and `automations_reader` all start OpenClaw's CLI,
     so each is asked only by a caller that handed one in: `nexgen doctor` on its schedule
     passes none, and the heartbeat line then reads "unknown" rather than claiming a
-    monitor is off because nobody looked. `spend` asks for the two readings of what the
-    recent harness turns cost: `nexgen openclaw doctor` asks (the person who runs the
-    gateway reads that command), and `nexgen doctor` does not, because it runs those two
-    checks itself and would otherwise report every one of them twice.
+    monitor is off because nobody looked. `second_service_reader` follows the same rule:
+    a registration an older release left costs the whole deep service inventory. `spend`
+    asks for the two readings of what the recent harness turns cost: `nexgen openclaw
+    doctor` asks (the person who runs the gateway reads that command), and `nexgen doctor`
+    does not, because it runs those two checks itself and would otherwise report every one
+    of them twice.
     """
     values = dict(os.environ) if env is None else {str(k): str(v) for k, v in env.items()}
     home_dir = resolve_home(home)
@@ -428,9 +447,11 @@ def collect(
         # are written on the gateway, and reading this home would measure nothing.
         if spend and not node_only:
             outcomes.extend(doctor_spend.outcomes(home_dir, config, values))
+            outcomes.extend(filter(None, [check_spend(home_dir, state_dir=path.parent)]))
     if node_only:
         outcomes.append(node_only_outcome(NODE_MODE_CHECK_ID))
     outcomes.extend(_store_gateway_outcomes(home_dir, values, system))
+    outcomes.extend(second_service.outcome(second_service_reader))
     app_outcome = doctor_runtime.check_companion_gateway(
         app_gateway, snapshot.openclaw.installed, system, pending,
     )

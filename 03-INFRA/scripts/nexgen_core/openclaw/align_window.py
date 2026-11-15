@@ -10,7 +10,7 @@ The rules, in the order they are read:
 
 - on the machine that runs the gateway, the night window, 03:00-06:00 local time of this
   machine: that is when nobody is asking it anything;
-- on the gateway, no agent session in a busy state (`BUSY_STATES` of the session groomer)
+- on the gateway, no agent session in a busy state (`BUSY_STATES` of `sessions_rows`)
   and no automation executing either: `openclaw cron list --json` marks a job `running`
   while it runs, and older payloads carry `state.runningAtMs`;
 - on a node, no window and no list. A night window would mean a PC that is off at night
@@ -42,7 +42,7 @@ from typing import Any
 
 from nexgen_core.i18n import t
 from nexgen_core.openclaw.node_status import parse_node_status_payload
-from nexgen_core.openclaw.sessions_groom import BUSY_STATES
+from nexgen_core.openclaw.sessions_rows import BUSY_STATES
 from nexgen_core.openclaw_service import RunResult
 
 #: Local hours of the window: [03:00, 06:00), read by the gateway alone.

@@ -31,15 +31,33 @@ OpenClaw registra un'unità systemd utente in `~/.config/systemd/user/openclaw-g
 systemctl --user status|start|stop|restart openclaw-gateway.service
 ```
 
-## Trappole di Windows 11 e rimedi verificati
+## Windows 11: cosa fa il motore, e cosa non fa più
 
-`openclaw gateway restart` non è affidabile. Su Windows spesso si blocca o lascia processi figli orfani, e due gateway finiscono per contendersi lo stesso socket. `nexgen_core.openclaw_service` esegue invece un ciclo pulito di terminazione e rilancio:
+Il servizio è di OpenClaw. Il motore lo chiede con `openclaw gateway install`,
+`start`, `stop`, `restart`, `status --json` e `uninstall`, e tiene solo la politica
+intorno a quelle chiamate: il JSON di stato letto nella forma che setup e doctor già
+usano, una prova a vuoto che non esegue niente, il controllo dell'app Companion qui
+sotto, e l'attesa della porta dopo un riavvio. Il recupero di OpenClaw verifica PID e
+ora di avvio registrati prima di terminare qualcosa, conferma l'uscita e il rilascio
+della proprietà dello stato, ritenta una condivisione SQLite transitoria, e il
+supervisore di attività che genera propaga l'esito del processo figlio. Prima il
+motore guidava un VBS nella cartella Esecuzione automatica, `schtasks` e un ciclo di
+`taskkill` accanto a quel servizio, e due meccanismi che registrano lo stesso daemon
+sono il modo in cui un gateway è diventato invisibile a entrambi.
 
-1. Enumera i processi per trovare ogni istanza `node` che esegue `openclaw` e `dist\index.js gateway`, più ogni `cmd.exe` che esegue `gateway.cmd`.
-2. Termina l'albero dei processi con `taskkill.exe /PID <pid> /T /F`.
-3. Rilancia tramite `wscript.exe "<startup>\OpenClaw Gateway.vbs"`, oppure `schtasks /Run /TN "OpenClaw Gateway"` quando l'attività esiste.
+Un avvio a freddo può richiedere fino a cinque minuti prima che la porta `18789`
+accetti connessioni. Il controllo di prontezza di OpenClaw può arrendersi prima, così
+`restart(wait=True, timeout_s=600.0)` tratta `restart-health-failed` come "ancora in
+avvio" e aspetta sul budget di dieci minuti del motore, riportando i secondi trascorsi
+quando è pronto e un errore di timeout quando non lo è. Un riavvio che OpenClaw
+rifiuta viene riportato com'è, e accanto non parte niente.
 
-Un avvio a freddo del gateway può richiedere fino a cinque minuti prima che la porta `18789` accetti connessioni. `restart(wait=True, timeout_s=600.0)` interroga la porta TCP su loopback con un timeout predefinito di dieci minuti, riporta i secondi trascorsi quando è pronto e restituisce un errore di timeout quando non lo è.
+`nexgen openclaw doctor` aggiunge una riga quando anche qualcos'altro su questa
+macchina può avviare un gateway, cioè una registrazione lasciata da una release
+precedente o da un secondo profilo. Nomina la registrazione e stampa il comando che
+la rimuove, e il motore quel comando non lo esegue mai: la registrazione non l'ha
+creata lui. Un host nodo resta fuori dalla riga, perché si collega in uscita e qui non
+apre nessuna porta.
 
 Modificare il blocco `plugins` di `openclaw.json` mentre il gateway gira corrompe lo stato in esecuzione e le sottoscrizioni MCP attive. Usa il context manager `stopped()` ogni volta che modifichi la configurazione:
 

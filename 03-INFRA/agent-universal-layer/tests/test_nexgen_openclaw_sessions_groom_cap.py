@@ -17,7 +17,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from nexgen_core import i18n  # noqa: E402
 from nexgen_core.openclaw import sessions_groom  # noqa: E402
-from nexgen_core.openclaw.sessions_groom import HARD_TOKENS, IDLE_SECONDS  # noqa: E402
+from nexgen_core.openclaw.groom_policy import HARD_TOKENS, IDLE_SECONDS  # noqa: E402
 
 NOW = 200_000.0 * 1000.0
 
@@ -247,7 +247,7 @@ def test_a_stalled_queue_raises_one_alert(monkeypatch, tmp_path):
     run_groom(gateway, monkeypatch, tmp_path, phone=phone)
 
     assert [alert["alert_key"] for alert in phone.alerts] == ["openclaw:groom:stalled"]
-    assert phone.alerts[0]["message"] == "The last run compacted none of the chats waiting for it. Waiting now: 1."
+    assert phone.alerts[0]["message"] == "The last tidy-up closed none of them. Chats still waiting: 1."
 
 
 def test_a_run_that_compacted_something_raises_no_alert(monkeypatch, tmp_path):

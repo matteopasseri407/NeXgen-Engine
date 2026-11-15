@@ -14,14 +14,18 @@ The rules that make it safe:
   pinned release; the engine never installs Node;
 - an install only happens when this machine is provably free: an idle gateway inside the
   night window, an idle node service at any hour (`align_window.py` owns that rule);
-- the npm used is the one beside that Node, so an nvm machine updates its own
-  prefix instead of another release's;
-- an upgrade that cannot be restarted and verified is rolled back to the release
-  that was installed, and the pin is not retried for 24 hours.
+- the install is `openclaw update --tag <pin>` and nothing of the engine's own: that
+  command stages the candidate, has it admit the live install, migrates and restarts
+  what it owns, verifies process, health and plugins, and can put the previous release
+  back;
+- what stays the engine's is what that command cannot know: the pin, the window, the
+  gateway verification this machine needs, and the retry state;
+- an upgrade that does not answer here is put back through the same command, and the
+  pin is not retried for 24 hours.
 
 It reports an outcome and never raises: a guard phase may fail, but it may not
-take the cycle down with it. Every process call is injected (`run`, `service`,
-`smoke`, `list_sessions`) so a test drives the whole decision with fakes.
+take the cycle down with it. Every process call is injected (`run`, `smoke`,
+`list_sessions`) so a test drives the whole decision with fakes.
 """
 from __future__ import annotations
 
@@ -36,13 +40,13 @@ from pathlib import Path
 
 from nexgen_core import files
 from nexgen_core.i18n import t
-from nexgen_core.openclaw import align_node, align_window, gateway_doctor, setup_commands
+from nexgen_core.openclaw import align_node, align_window
 from nexgen_core.openclaw.detect import Installation, _detect_openclaw
-from nexgen_core.openclaw.host_preflight import npm_prefix, read_node_version
+from nexgen_core.openclaw.host_preflight import read_node_version
 from nexgen_core.openclaw.node_only import detect_node_only
 from nexgen_core.openclaw.node_transition import detect_local_gateway
 from nexgen_core.openclaw.pin import node_satisfies, pinned_version, required_node_version
-from nexgen_core.openclaw_service import OpenClawService, RunResult
+from nexgen_core.openclaw_service import RunResult
 from nexgen_core.paths import openclaw_config, resolve_home, resolve_state_dir
 
 #: What one alignment ended as. `FAILED` is the only one the guard turns into a failed phase.
@@ -51,6 +55,17 @@ ALIGNED = "aligned"
 SKIPPED = "skipped"
 WARN = "warn"
 FAILED = "failed"
+
+#: The three answers `openclaw update --json` gives to a run. A skipped run exits 0
+#: without installing anything: no package-manager owner was detected, so the exit
+#: code alone would report a pin as applied on a machine that never received it.
+UPDATE_APPLIED = "applied"
+UPDATE_SKIPPED = "skipped"
+UPDATE_FAILED = "failed"
+
+#: The `run.status` values the updater reports as a failed attempt (`openclaw update`
+#: 2026.11.2, `dist/update-run-vocabulary-*.mjs`: succeeded, failed, rolled-back, skipped).
+UPDATE_BROKEN_STATUSES = frozenset({"failed", "rolled-back"})
 
 #: The pin that failed here, and when: no retry until this much time has passed.
 STATE_FILE = "openclaw-version-align.json"
@@ -81,11 +96,9 @@ class _Release:
     """The one install this cycle performs, and everything its rollback would need."""
 
     pinned: str
-    previous: str
-    npm: str
+    previous: str | None
     role: str
     binary: str | None
-    service: OpenClawService | None
     smoke: Callable[[], int] | None
     memory: Path
     moment: float
@@ -99,7 +112,6 @@ def align(
     platform: str | None = None,
     which: Which | None = None,
     run: Run | None = None,
-    service: OpenClawService | None = None,
     smoke: Callable[[], int] | None = None,
     list_sessions: Sessions | None = None,
     node_children: align_window.Children | None = None,
@@ -107,11 +119,11 @@ def align(
     state_dir: Path | None = None,
     gateway_present: Callable[[], bool] | None = None,
 ) -> Outcome:
-    """The whole decision: compare, check the floor, install, restart, verify, or roll back."""
+    """The whole decision: compare, check the floor, update, verify, or put the pin back."""
     try:
         return _align(
             home=home, engine_root=engine_root, env=env, platform=platform, which=which,
-            run=run, service=service, smoke=smoke, list_sessions=list_sessions,
+            run=run, smoke=smoke, list_sessions=list_sessions,
             node_children=node_children, clock=clock, state_dir=state_dir,
             gateway_present=gateway_present,
         )
@@ -121,7 +133,7 @@ def align(
 
 def _align(
     *, home: Path | None, engine_root: Path | None, env: Mapping[str, str] | None,
-    platform: str | None, which: Which | None, run: Run | None, service: OpenClawService | None,
+    platform: str | None, which: Which | None, run: Run | None,
     smoke: Callable[[], int] | None, list_sessions: Sessions | None,
     node_children: align_window.Children | None, clock: Callable[[], float] | None,
     state_dir: Path | None, gateway_present: Callable[[], bool] | None,
@@ -139,11 +151,11 @@ def _align(
     moment = (clock or _now)()
     pinned = pinned_version(engine_root)
     values = _owner_node_first(values, lookup)
-    node, npm = _owner_tools(lookup, runner, values, system)
+    node = lookup("node")
     config = openclaw_config(home_dir, values)
     if not config.is_file():
         return Outcome(UNCHANGED, t("OpenClaw has no configuration here: nothing runs on this machine."))
-    install = _installed(home_dir, values, config, runner, _owner_which(lookup, node, npm))
+    install = _installed(home_dir, values, config, runner, lookup)
 
     if not install.installed:
         return Outcome(UNCHANGED, t("OpenClaw is not installed on this machine: nothing to align here."))
@@ -156,7 +168,7 @@ def _align(
         _forget_failure(_state_folder(state_dir, home_dir))
         return Outcome(UNCHANGED)
     memory = _state_folder(state_dir, home_dir)
-    blocked = _not_yet(engine_root, install, pinned, node, npm, runner, values, memory, moment)
+    blocked = _not_yet(engine_root, install, pinned, node, runner, values, memory, moment)
     if blocked is not None:
         return blocked
     role = _role(home_dir, values, system, gateway_present)
@@ -168,33 +180,27 @@ def _align(
     )
     if postponed is not None:
         return Outcome(SKIPPED, postponed)
-    service, smoke = _gateway_tools(role, service, smoke, home_dir, system, runner, values, binary)
     release = _Release(
-        pinned=pinned, previous=install.version or "?", npm=npm, role=role, binary=binary,
-        service=service, smoke=smoke, memory=memory, moment=moment,
+        pinned=pinned, previous=install.version, role=role, binary=binary,
+        smoke=smoke or (_gateway_smoke(runner, values, binary) if role == GATEWAY else None),
+        memory=memory, moment=moment,
     )
     return _upgrade(release, runner, values)
 
 
 def _not_yet(
-    engine_root: Path | None, install: Installation, pinned: str, node: str | None, npm: str | None,
+    engine_root: Path | None, install: Installation, pinned: str, node: str | None,
     run: Run, env: dict[str, str], memory: Path, moment: float,
 ) -> Outcome | None:
     """What stops this cycle from installing the pin, before anything on the machine is touched.
 
     The Node floor comes first: installing a release this Node cannot run would break the
-    gateway it is serving. Then npm, which lives beside that Node and nowhere else. Then the
-    pin that failed here in the last day, which the next cycle must not retry.
+    gateway it is serving. Then the pin that failed here in the last day, which the next
+    cycle must not retry.
     """
     floor = _floor(engine_root, install, pinned, node, run, env)
     if floor is not None:
         return floor
-    if npm is None:
-        return Outcome(
-            WARN, t("OpenClaw {version} is installed but npm is not beside its Node: it cannot be updated from here.",
-                    version=install.version or "?"),
-            t("Install Node from {url}: it brings npm with it.", url=setup_commands.NODE_DOWNLOAD_URL),
-        )
     if _recent_failure(memory, pinned, moment):
         return Outcome(SKIPPED, t(
             "The last attempt to install OpenClaw {pinned} failed less than 24 hours ago: the next attempt is "
@@ -202,43 +208,75 @@ def _not_yet(
     return None
 
 
-def _gateway_tools(
-    role: str, service: OpenClawService | None, smoke: Callable[[], int] | None, home: Path,
-    system: str, run: Run, env: dict[str, str], binary: str | None,
-) -> tuple[OpenClawService | None, Callable[[], int] | None]:
-    """The two collaborators only a gateway needs: its controller and its smoke test."""
-    if role != GATEWAY:
-        return service, smoke
-    return (
-        service or OpenClawService(home=home, platform=system),
-        smoke or _gateway_smoke(run, env, binary),
-    )
-
-
 def _upgrade(release: _Release, run: Run, env: dict[str, str]) -> Outcome:
-    """Install, restart, verify; or put the previous release back and remember the failed pin."""
-    installed = run(setup_commands.install_argv(release.npm, release.pinned), env)
-    if installed.returncode != 0:
+    """Let OpenClaw's updater install the pin, verify it here, and put it back when it does not answer."""
+    answer, reason = _native_answer(run(_update_argv(release.binary, release.pinned), env))
+    if answer == UPDATE_SKIPPED:
         _remember_failure(release.memory, release.pinned, release.moment)
-        return Outcome(FAILED, t("Installing OpenClaw {pinned} failed (exit {code}): {detail}",
-                                 pinned=release.pinned, code=installed.returncode, detail=_tail(installed)))
-    migration = _migrate(release, run, env)
-    problem = (migration.problem or _restart(release.role, release.service, release.binary, run, env)
+        return Outcome(WARN, t("OpenClaw {pinned} was not installed here: {reason}",
+                               pinned=release.pinned, reason=reason))
+    if answer == UPDATE_FAILED:
+        return _remembered(release, t("Installing OpenClaw {pinned} failed: {reason}",
+                                      pinned=release.pinned, reason=reason))
+    problem = (_restart(release.role, release.binary, run, env)
                or _verify(release.role, release.smoke, release.binary, run, env))
     if problem is None:
         _forget_failure(release.memory)
         return Outcome(ALIGNED, _success_line(release.role, release.pinned))
-    rollback = _rollback(release.role, release.service, release.binary, release.npm, release.previous, run, env)
+    rollback = _rollback(release, run, env)
+    return _remembered(release, t("OpenClaw {pinned} did not work here ({problem}).{rollback}",
+                                  pinned=release.pinned, problem=problem, rollback=rollback))
+
+
+def _remembered(release: _Release, line: str) -> Outcome:
+    """The failed outcome, with this pin held back for a day."""
     _remember_failure(release.memory, release.pinned, release.moment)
-    return Outcome(FAILED, gateway_doctor.failure_line(
-        release.pinned, release.previous, problem, rollback, migration.migrated))
+    return Outcome(FAILED, line)
 
 
-def _migrate(release: _Release, run: Run, env: dict[str, str]) -> gateway_doctor.Migration:
-    """The gateway's database migration, between install and restart; a node has none to run."""
-    if release.role != GATEWAY:
-        return gateway_doctor.Migration()
-    return gateway_doctor.migrate(release.service, release.binary, run, env)
+def _update_argv(binary: str | None, target: str) -> list[str]:
+    """The one native command that puts a release on this machine.
+
+    `--tag` takes the pinned version instead of a channel, `--json` makes the answer
+    machine-readable, and `--yes` answers the downgrade prompt a pin lower than the
+    installed release raises: following the pin is the point of this phase.
+    """
+    return [binary or "openclaw", "update", "--tag", target, "--json", "--yes"]
+
+
+def _native_answer(result: RunResult) -> tuple[str, str]:
+    """What `openclaw update` did, and why, in the updater's own words."""
+    record = _run_record(result.stdout)
+    status = str(record.get("status") or "")
+    if result.returncode != 0 or status in UPDATE_BROKEN_STATUSES:
+        return UPDATE_FAILED, _native_reason(record, result)
+    if status == UPDATE_SKIPPED:
+        return UPDATE_SKIPPED, _native_reason(record, result)
+    return UPDATE_APPLIED, ""
+
+
+def _run_record(stdout: str) -> dict:
+    """The `run` record `openclaw update --json` printed, or an empty one when it printed none."""
+    try:
+        loaded = json.loads(stdout or "")
+    except ValueError:  # nexgen: allow reason="an answer that is not JSON is read from its last line instead"
+        return {}
+    record = loaded.get("run") if isinstance(loaded, dict) else None
+    return record if isinstance(record, dict) else {}
+
+
+def _native_reason(record: dict, result: RunResult) -> str:
+    """The updater's reason for what it did, and its own next step when it names one.
+
+    `run.origin.nextAction` comes before the bare reason code: a person needs the
+    sentence ("No npm, pnpm, or Bun global owner was detected"), not the slug.
+    """
+    failure = record.get("failure") if isinstance(record.get("failure"), dict) else {}
+    origin = record.get("origin") if isinstance(record.get("origin"), dict) else {}
+    for value in (failure.get("message"), origin.get("nextAction"), failure.get("code"), record.get("reason")):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return _tail(result) or t("openclaw update exited {code}", code=result.returncode)
 
 
 def _default_run(argv: list[str], env: Mapping[str, str] | None = None) -> RunResult:
@@ -262,31 +300,12 @@ def _now() -> float:
     return time.time()
 
 
-def _owner_tools(which: Which, run: Run, env: Mapping[str, str],
-                 system: str) -> tuple[str | None, str | None]:
-    """The Node and the npm that own the OpenClaw this machine runs.
-
-    An nvm machine keeps one bin folder per Node release, and each `npm` installs into
-    its own prefix. Taking the npm from PATH can therefore update a release the running
-    gateway never reads: the folder OpenClaw itself was installed into decides. A user
-    prefix (`~/.npm-global`, `~/.local`) holds OpenClaw without an npm beside it: there
-    the npm on PATH owns it when its global prefix is that folder, and only then.
-    """
-    node = which("node")
-    binary = which("openclaw")
-    folder = Path(binary).parent if binary else (Path(node).parent if node else None)
-    if folder is None:
-        return node, which("npm")
-    owner = _sibling(folder, "npm") or _prefix_owner(folder, which, run, env, system)
-    return _sibling(folder, "node") or node, owner
-
-
 def _owner_node_first(env: dict[str, str], which: Which) -> dict[str, str]:
     """The environment with the owning Node's folder first on PATH.
 
-    npm and the `openclaw` CLI start with `#!/usr/bin/env node`: run under another Node
-    found earlier on PATH (a stale `~/.local/bin/node` link on a desktop), npm reads that
-    Node's global prefix, sees the old release there and installs into the wrong folder.
+    The `openclaw` CLI starts with `#!/usr/bin/env node`: run under another Node found
+    earlier on PATH (a stale `~/.local/bin/node` link on a desktop), it is the wrong
+    Node's rules that decide whether this release starts at all.
     """
     binary = which("openclaw")
     node = (_sibling(Path(binary).parent, "node") if binary else None) or which("node")
@@ -297,24 +316,6 @@ def _owner_node_first(env: dict[str, str], which: Which) -> dict[str, str]:
     return {**env, "PATH": os.pathsep.join([folder, *rest])}
 
 
-def _prefix_owner(folder: Path, which: Which, run: Run, env: Mapping[str, str], system: str) -> str | None:
-    """The npm on PATH, when the global packages it installs land in `folder`."""
-    npm = which("npm")
-    prefix = npm_prefix(run, npm, env) if npm else None
-    if prefix is None:
-        return None
-    installs_into = prefix if system == "win32" else prefix / "bin"
-    return npm if _same_folder(installs_into, folder) else None
-
-
-def _same_folder(left: Path, right: Path) -> bool:
-    """Two spellings of one folder, links followed where the filesystem can answer."""
-    try:
-        return left.resolve() == right.resolve()
-    except OSError:  # nexgen: allow reason="an unresolvable path compares as written"
-        return left == right
-
-
 def _sibling(folder: Path, name: str) -> str | None:
     """The executable `name` in `folder`, in the suffixes npm uses on this platform."""
     for suffix in ("", ".exe", ".cmd"):
@@ -322,18 +323,6 @@ def _sibling(folder: Path, name: str) -> str | None:
         if candidate.is_file():
             return str(candidate)
     return None
-
-
-def _owner_which(which: Which, node: str | None, npm: str | None) -> Which:
-    """`which`, with Node and npm answered from the folder that owns this OpenClaw."""
-    chosen = {"node": node, "npm": npm}
-
-    def lookup(name: str) -> str | None:
-        if name in chosen:
-            return chosen[name]
-        return which(name)
-
-    return lookup
 
 
 def _installed(home: Path, env: dict[str, str], config: Path, run: Run, which: Which) -> Installation:
@@ -404,17 +393,11 @@ def _gateway_smoke(run: Run, env: dict[str, str], binary: str | None) -> Callabl
     return fire
 
 
-def _restart(role: str, service: OpenClawService | None, binary: str | None, run: Run,
-             env: dict[str, str]) -> str | None:
-    """Restart what this machine runs; the sentence that says what went wrong, or None."""
-    if role == GATEWAY:
-        if service is None:
-            return t("the gateway service controller is not available")
-        result = service.restart()
-        return None if result.get("ok") else str(result.get("error") or t("the gateway did not restart"))
-    if role == NODE:
-        return align_node.restart(run, binary or "openclaw", env)
-    return None
+def _restart(role: str, binary: str | None, run: Run, env: dict[str, str]) -> str | None:
+    """Restart the node service; a gateway is restarted by the native updater itself."""
+    if role != NODE:
+        return None
+    return align_node.restart(run, binary or "openclaw", env)
 
 
 def _verify(role: str, smoke: Callable[[], int] | None, binary: str | None, run: Run,
@@ -429,16 +412,14 @@ def _verify(role: str, smoke: Callable[[], int] | None, binary: str | None, run:
     return None
 
 
-def _rollback(role: str, service: OpenClawService | None, binary: str | None, npm: str,
-              previous: str, run: Run, env: dict[str, str]) -> str:
-    """Put the release that was there back, and say so when even that fails."""
-    if not previous:
+def _rollback(release: _Release, run: Run, env: dict[str, str]) -> str:
+    """Put the release that was there back, through the same updater, and say so when even that fails."""
+    if release.previous is None:
         return ""
-    reinstalled = run(setup_commands.install_argv(npm, previous), env)
-    if reinstalled.returncode != 0:
-        return t(" Reinstalling {previous} failed too ({detail}).", previous=previous, detail=_tail(reinstalled))
-    restarted = _restart(role, service, binary, run, env)
-    return "" if restarted is None else t(" Restarting it failed too ({error}).", error=restarted)
+    answer, reason = _native_answer(run(_update_argv(release.binary, release.previous), env))
+    if answer != UPDATE_APPLIED:
+        return t(" Putting {previous} back failed too ({reason}).", previous=release.previous, reason=reason)
+    return t(" {previous} was put back.", previous=release.previous)
 
 
 def _success_line(role: str, pinned: str) -> str:

@@ -25,6 +25,7 @@ from nexgen_core.i18n import t
 from nexgen_core.openclaw import companion as app
 from nexgen_core.openclaw import host_preflight
 from nexgen_core.openclaw.companion import Companion
+from nexgen_core.openclaw.config_file import plugin_entry
 from nexgen_core.openclaw.node_app import NODE_TASK_NAME, CliNodeService, detect_cli_node_service
 from nexgen_core.openclaw.node_app import pairing_again_sentence, pairing_first_sentence
 from nexgen_core.openclaw.pin import node_satisfies
@@ -610,6 +611,39 @@ def check_plugin_enabled(config: dict[str, Any], plugin_dir: Path) -> CheckOutco
                   path=plugin_dir, reason=reason),
         action=t("Run 'nexgen openclaw setup' with the gateway stopped: it adds {plugin} to plugins.allow and "
                  "enables its entry.", plugin=PLUGIN_ID),
+    )
+
+
+def check_switch_home(config: dict[str, Any], plugin_dir: Path) -> CheckOutcome | None:
+    """Where the plugin reads the engine's switches, and the file it still reads for one release.
+
+    OpenClaw parses `plugins.entries.<id>.config`, validates it against the plugin's manifest and
+    hands the result to `register(api)` as `api.pluginConfig`, which is the native home of these
+    switches. `nexgen.config.json` beside the plugin still holds them and is still written by every
+    guard deposit, so a machine that has synced but not run the setup since this release keeps its
+    old file and nothing breaks; the line says so, because the file is what goes away next.
+    """
+    if not plugin_dir.is_dir():
+        return None
+    from nexgen_core.runtimes.openclaw import PLUGIN_ID  # lazy: the adapter imports the engine around this module
+
+    entry = plugin_entry(config, PLUGIN_ID)
+    if entry.get("enabled") is not True:
+        return None  # the line above already says the plugin will not load
+    handed = entry.get("config") if isinstance(entry.get("config"), dict) else {}
+    if handed:
+        return CheckOutcome(
+            id="openclaw.plugin_switches",
+            severity=Severity.OK,
+            message=t("The plugin reads its switches from plugins.entries.{plugin}.config.", plugin=PLUGIN_ID),
+        )
+    return CheckOutcome(
+        id="openclaw.plugin_switches",
+        severity=Severity.WARN,
+        message=t("The plugin still reads its switches from nexgen.config.json: the file is kept for "
+                  "one release and then removed."),
+        action=t("Run 'nexgen openclaw setup' with the gateway stopped: it writes the same switches to "
+                 "plugins.entries.{plugin}.config.", plugin=PLUGIN_ID),
     )
 
 

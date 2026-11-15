@@ -1,10 +1,11 @@
-"""Merging the proposal into `openclaw.json`, atomically, with a way back.
+"""The sections the engine owns, merged into the configuration in force.
 
-One job: take the sections the engine owns, put them inside the file that is
-already in force without losing a single key the person wrote, publish the
-result in one atomic step, and be able to put the previous file back. Nothing
-here decides *when* that happens: the gateway must be stopped first, and that
-is the orchestrator's business.
+One job: take the sections the engine owns, put them beside the keys the person
+wrote without losing one of them, and say which sections that changes. Nothing
+here touches a file: `config_write` hands the change to OpenClaw, which merges,
+validates, backs up and publishes it. That division is why this module is pure —
+what it decides can be printed by `nexgen openclaw plan` as well as applied by
+the setup, and the two cannot disagree.
 
 Three rules are not preferences:
 
@@ -14,25 +15,22 @@ Three rules are not preferences:
 - the gateway token is generated only when there is none, and never returned
   in a printable form. `with_token` says whether it generated one; no caller
   ever receives the value.
+
+`merged_document` is the document the file should end up as, and the steps after
+the write read it: the effective `agents.defaults.models` and the agents still
+declared are what they ask about, not the proposal. `patch_document` turns it
+into the change OpenClaw receives.
 """
 from __future__ import annotations
 
 import json
-import os
 import secrets
-import shutil
-import tempfile
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
-from nexgen_core.files import atomic_write_text
 from nexgen_core.openclaw import agent_pairs
 from nexgen_core.openclaw.acp import SVILUPPO_ID
 from nexgen_core.openclaw.profile import PENDING_TOKEN
-
-#: The suffix a backup carries, so the file it protects is still recognisable.
-BACKUP_MARKER = ".pre-nexgen-"
 
 #: Values an earlier engine wrote and this one no longer proposes, by path. A key
 #: is removed only when it still holds exactly that value: anything the person
@@ -246,6 +244,32 @@ def merged_document(current: dict[str, Any] | None, proposed: dict[str, Any]) ->
     return merged
 
 
+def patch_document(
+    current: dict[str, Any] | None, document: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """The change OpenClaw is asked to apply, and the paths it must replace.
+
+    Only a section whose value differs goes in: OpenClaw merges objects key by key,
+    so sending the whole document would re-assert every key the person wrote and
+    hide what this run actually decided. Each section that does differ is sent as a
+    `--replace-path`, because the merge here has already decided what belongs
+    inside it: a key this run retires (`tools.exec.security`, `models.entries`, the
+    ignored `runtime` block) is gone from `document`, and a merge into the file
+    would leave it there. Sending the whole section is safe for the person's keys —
+    `merged_document` kept every one of them — and it is what makes a retirement
+    land.
+
+    A top-level section is never dropped: `merged_document` starts from the
+    configuration in force, so the file can only lose keys *inside* a section.
+    """
+    base = current if isinstance(current, dict) else {}
+    sections = [
+        str(key) for key, value in document.items()
+        if key not in base or base[key] != value
+    ]
+    return {str(key): document[key] for key in sections}, sections
+
+
 def _retire_replaced(document: dict[str, Any], proposed: dict[str, Any]) -> None:
     """Drops the legacy keys of an owned section when the proposal writes their replacement.
 
@@ -426,71 +450,10 @@ def with_token(
 
 
 def render(document: dict[str, Any]) -> str:
-    """The bytes `openclaw.json` receives: JSON, one key per line, trailing LF."""
+    """The bytes a JSON document receives: one key per line, trailing LF.
+
+    Used for the patch OpenClaw is handed, and by the tests that write a
+    configuration the engine then reads.
+    """
     return json.dumps(document, indent=2, ensure_ascii=False) + "\n"
 
-
-def backup_path(path: Path, stamp: str) -> Path:
-    """Where the copy of the previous file lives: beside it, with the stamp."""
-    return path.with_name(f"{path.name}{BACKUP_MARKER}{stamp}")
-
-
-def _copy_private(source: Path, target: Path) -> None:
-    """Copy complete bytes beside the target, then publish them in one rename.
-
-    `shutil.copy2` writes into the destination as it reads: a crash during the
-    emergency restore left `openclaw.json` half written. The temp file is
-    fsynced and published with `os.replace`, so the destination is either the
-    old file or the new one, never a prefix of either.
-    """
-    fd, name = tempfile.mkstemp(prefix=f"{target.name}.", suffix=".tmp", dir=target.parent)
-    tmp = Path(name)
-    try:
-        with os.fdopen(fd, "wb") as out, source.open("rb") as src:
-            shutil.copyfileobj(src, out)
-            out.flush()
-            os.fsync(out.fileno())
-        _private_mode(tmp)
-        os.replace(tmp, target)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-
-
-def backup_file(path: Path, stamp: str) -> Path | None:
-    """Copy the file in force aside; None when there is nothing to protect."""
-    if not path.is_file():
-        return None
-    target = backup_path(path, stamp)
-    _copy_private(path, target)
-    return target
-
-
-def _private_mode(path: Path) -> None:
-    """0600 on POSIX: the file holds the gateway token, and so does its backup.
-
-    `copy2` gives the backup the source's mode, which is 0644 when
-    `openclaw onboard` created it; on POSIX that is every local user reading
-    the token. Windows has no POSIX mode to set here.
-    """
-    if os.name != "nt":
-        os.chmod(path, 0o600)
-
-
-def restore_file(path: Path, backup: Path | None) -> None:
-    """Put the previous file back, or remove the one this run created."""
-    if backup is not None and backup.is_file():
-        _copy_private(backup, path)
-        return
-    path.unlink(missing_ok=True)
-
-
-def write_document(path: Path, text: str) -> None:
-    """Publish the document in one atomic step, private from the first byte.
-
-    `preserve_mode=False`: the temporary file comes from `mkstemp` at 0600,
-    and the previous file's bits are never carried across, so a 0644 left by
-    `openclaw onboard` cannot reappear on a file that now holds the token.
-    """
-    atomic_write_text(path, text, preserve_mode=False)
-    _private_mode(path)

@@ -1,7 +1,9 @@
 """Tests for OpenClaw gateway service and pairing management.
 
-Black-box verification with injected runners, process listers, and port probes.
-No real system processes, ports, or files under ~ are touched.
+The service is OpenClaw's own (`openclaw gateway install/start/stop/restart/
+status/uninstall`); these tests pin the engine's half of it with injected
+runners, process listers and port probes. No real system process, port or file
+under ~ is touched.
 """
 from __future__ import annotations
 
@@ -20,6 +22,7 @@ from nexgen_core.openclaw_service import (  # noqa: E402
     ProcessInfo,
     RunResult,
     is_gateway_process,
+    removal_commands,
     install as service_install,
     restart as service_restart,
     start as service_start,
@@ -35,6 +38,14 @@ from nexgen_core.openclaw_pairing import (  # noqa: E402
     qr as pairing_qr,
 )
 
+STATUS_ARGV = ["openclaw", "gateway", "status", "--json"]
+DEEP_STATUS_ARGV = ["openclaw", "gateway", "status", "--deep", "--json"]
+INSTALL_ARGV = ["openclaw", "gateway", "install", "--json"]
+START_ARGV = ["openclaw", "gateway", "start", "--json"]
+STOP_ARGV = ["openclaw", "gateway", "stop", "--json", "--force"]
+RESTART_ARGV = ["openclaw", "gateway", "restart", "--json"]
+UNINSTALL_ARGV = ["openclaw", "gateway", "uninstall", "--json"]
+
 
 class RecordingRunner:
     """Fake command runner that records invocations and returns canned responses."""
@@ -49,20 +60,15 @@ class RecordingRunner:
     def set_canned(self, argv: list[str], code: int = 0, stdout: str = "", stderr: str = "") -> None:
         self.canned[tuple(argv)] = RunResult(code, stdout, stderr)
 
+    def answer(self, argv: list[str], payload: dict, code: int = 0) -> None:
+        self.set_canned(argv, code=code, stdout=json.dumps(payload))
+
     def __call__(self, argv: list[str]) -> RunResult:
         self.calls.append(list(argv))
         key = tuple(argv)
         if key in self.canned:
             return self.canned[key]
         return RunResult(self.default_code, self.default_stdout, self.default_stderr)
-
-
-def killable(procs: list[ProcessInfo], runner: RecordingRunner):
-    """A process list that loses a process once `taskkill` has been sent for it."""
-    def lister() -> list[ProcessInfo]:
-        killed = {call[2] for call in runner.calls if call[:2] == ["taskkill.exe", "/PID"]}
-        return [p for p in procs if str(p.pid) not in killed]
-    return lister
 
 
 class FakeClock:
@@ -92,8 +98,6 @@ def fake_env(tmp_path: Path):
     localappdata = tmp_path / "appdata" / "Local"
     packages = localappdata / "Packages"
     packages.mkdir(parents=True)
-    systemd_user = home / ".config" / "systemd" / "user"
-    systemd_user.mkdir(parents=True)
 
     return {
         "home": home,
@@ -102,125 +106,126 @@ def fake_env(tmp_path: Path):
         "startup": startup,
         "localappdata": localappdata,
         "packages": packages,
-        "systemd_user": systemd_user,
     }
 
 
-def test_status_windows_vbs_installed(fake_env) -> None:
-    vbs_file = fake_env["startup"] / "OpenClaw Gateway.vbs"
-    vbs_file.write_text("' OpenClaw Gateway launcher", encoding="utf-8")
+def service_for(fake_env, runner: RecordingRunner, platform: str = "win32", **kwargs) -> OpenClawService:
+    """A service controller over the isolated paths, with the runner given."""
+    return OpenClawService(
+        platform=platform,
+        home=fake_env["home"],
+        appdata=fake_env["appdata"],
+        localappdata=fake_env["localappdata"],
+        runner=runner,
+        **kwargs,
+    )
 
+
+def registered_service(label: str = "Scheduled Task", loaded: bool = True) -> dict:
+    """The `service` block `openclaw gateway status --json` prints (2026.11.2)."""
+    return {
+        "service": {
+            "label": label,
+            "loaded": loaded,
+            "loadState": {"status": "loaded" if loaded else "not-loaded"},
+            "loadedText": "registered",
+            "notLoadedText": "missing",
+            "runtime": {"status": "running" if loaded else "stopped", "missingUnit": not loaded},
+        }
+    }
+
+
+# --------------------------------------------------------------------------- status
+
+
+def test_status_reads_the_service_openclaw_registers(fake_env) -> None:
+    """`installed` is OpenClaw's own answer, and its label is the mechanism."""
     runner = RecordingRunner()
+    runner.answer(STATUS_ARGV, registered_service("Scheduled Task"))
     processes = [
         ProcessInfo(101, "node.exe", r"node.exe C:\tools\openclaw\dist\index.js gateway --port 18789"),
     ]
 
-    service = OpenClawService(
-        platform="win32",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        appdata=fake_env["appdata"],
-        localappdata=fake_env["localappdata"],
-        runner=runner,
+    service = service_for(
+        fake_env, runner,
         process_lister=lambda: processes,
         port_probe=lambda port, host="127.0.0.1": True,
     )
 
     st = service.status()
+
     assert st["installed"] is True
-    assert st["mechanism"] == "vbs"
+    assert st["mechanism"] == "scheduled task"
     assert st["process_count"] == 1
     assert st["port_listening"] is True
     assert st["companion_present"] is False
     assert st["dual_gateway"] is False
 
 
-def test_status_windows_schtasks_installed(fake_env) -> None:
+def test_status_reports_the_systemd_unit_label_openclaw_prints(fake_env) -> None:
     runner = RecordingRunner()
-    runner.set_canned(["schtasks.exe", "/Query", "/TN", "OpenClaw Gateway"], code=0, stdout="SUCCESS")
+    runner.answer(STATUS_ARGV, registered_service("systemd user"))
 
-    service = OpenClawService(
-        platform="win32",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        appdata=fake_env["appdata"],
-        localappdata=fake_env["localappdata"],
-        runner=runner,
-        process_lister=lambda: [],
-        port_probe=lambda port, host="127.0.0.1": False,
-    )
+    st = service_for(fake_env, runner, platform="linux", process_lister=lambda: []).status()
 
-    st = service.status()
     assert st["installed"] is True
-    assert st["mechanism"] == "schtasks"
-    assert st["process_count"] == 0
-    assert st["port_listening"] is False
+    assert st["mechanism"] == "systemd user"
 
 
-def test_status_linux_systemd_installed(fake_env) -> None:
-    unit_file = fake_env["systemd_user"] / "openclaw-gateway.service"
-    unit_file.write_text("[Unit]\nDescription=OpenClaw Gateway\n", encoding="utf-8")
-
+def test_status_reports_nothing_installed_when_no_service_is_registered(fake_env) -> None:
+    """A missing unit is `loaded: false`, which is not the same as a stopped one."""
     runner = RecordingRunner()
-    processes = [
-        ProcessInfo(202, "node", "node /usr/lib/node_modules/openclaw/dist/index.js gateway"),
-    ]
+    runner.answer(STATUS_ARGV, registered_service(loaded=False))
 
-    service = OpenClawService(
-        platform="linux",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        systemd_user_dir=fake_env["systemd_user"],
-        runner=runner,
-        process_lister=lambda: processes,
-        port_probe=lambda port, host="127.0.0.1": True,
-    )
+    st = service_for(fake_env, runner, process_lister=lambda: []).status()
 
-    st = service.status()
-    assert st["installed"] is True
-    assert st["mechanism"] == "systemd"
-    assert st["process_count"] == 1
-    assert st["port_listening"] is True
-
-
-def test_status_not_installed(fake_env) -> None:
-    runner = RecordingRunner(default_code=1)
-    service = OpenClawService(
-        platform="win32",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        appdata=fake_env["appdata"],
-        localappdata=fake_env["localappdata"],
-        runner=runner,
-        process_lister=lambda: [],
-        port_probe=lambda port, host="127.0.0.1": False,
-    )
-
-    st = service.status()
     assert st["installed"] is False
     assert st["mechanism"] is None
     assert st["process_count"] == 0
 
 
-def test_status_dual_gateway_processes(fake_env) -> None:
+def test_status_asks_openclaw_and_never_a_service_manager_of_its_own(fake_env) -> None:
+    """The engine used to read the Startup folder, `schtasks` and unit files itself."""
+    runner = RecordingRunner()
+    runner.answer(STATUS_ARGV, registered_service())
+
+    service_for(fake_env, runner, process_lister=lambda: []).status()
+
+    assert runner.calls == [STATUS_ARGV]
+    assert not any(call[0] in {"schtasks.exe", "systemctl"} for call in runner.calls)
+
+
+def test_status_of_a_cli_that_printed_no_json_says_nothing_is_installed(fake_env) -> None:
+    """An older CLI, or an error before the service is read, is not a crash."""
     runner = RecordingRunner(default_code=1)
+
+    st = service_for(fake_env, runner, process_lister=lambda: []).status()
+
+    assert st["installed"] is False
+    assert st["mechanism"] is None
+
+
+def test_status_dry_run_runs_nothing(fake_env) -> None:
+    runner = RecordingRunner()
+
+    st = service_for(fake_env, runner, process_lister=lambda: []).status(dry_run=True)
+
+    assert runner.calls == []
+    assert st["installed"] is False
+    assert st["dry_run"] is True
+
+
+def test_status_dual_gateway_processes(fake_env) -> None:
+    runner = RecordingRunner()
+    runner.answer(STATUS_ARGV, registered_service())
     processes = [
         ProcessInfo(301, "node.exe", r"node C:\openclaw\dist\index.js gateway"),
         ProcessInfo(302, "node.exe", r"node C:\openclaw\dist\index.js gateway"),
     ]
 
-    service = OpenClawService(
-        platform="win32",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        appdata=fake_env["appdata"],
-        localappdata=fake_env["localappdata"],
-        runner=runner,
-        process_lister=lambda: processes,
-        port_probe=lambda port, host="127.0.0.1": True,
-    )
+    st = service_for(fake_env, runner, process_lister=lambda: processes,
+                     port_probe=lambda port, host="127.0.0.1": True).status()
 
-    st = service.status()
     assert st["process_count"] == 2
     assert st["dual_gateway"] is True
 
@@ -230,301 +235,117 @@ def test_status_detects_microsoft_store_companion(fake_env) -> None:
     comp_pkg.mkdir()
     comp_lnk = fake_env["startup"] / "OpenClaw Companion.lnk"
     comp_lnk.write_text("fake shortcut", encoding="utf-8")
+    runner = RecordingRunner()
+    runner.answer(STATUS_ARGV, registered_service())
 
-    runner = RecordingRunner(default_code=1)
-    service = OpenClawService(
-        platform="win32",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        appdata=fake_env["appdata"],
-        localappdata=fake_env["localappdata"],
-        runner=runner,
-        process_lister=lambda: [],
-        port_probe=lambda port, host="127.0.0.1": False,
-    )
+    st = service_for(fake_env, runner, process_lister=lambda: []).status()
 
-    st = service.status()
     assert st["companion_present"] is True
     assert "Remove-AppxPackage" in (st["companion_removal_command"] or "")
 
 
-def test_install_invokes_openclaw_gateway_install(fake_env) -> None:
-    runner = RecordingRunner(default_code=0)
-    service = OpenClawService(
-        platform="linux",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        systemd_user_dir=fake_env["systemd_user"],
-        runner=runner,
-        process_lister=lambda: [],
-        port_probe=lambda port, host="127.0.0.1": False,
-    )
-
-    res = service.install()
-    assert res["ok"] is True
-    assert ["openclaw", "gateway", "install"] in runner.calls
+# ----------------------------------------------------------------- lifecycle verbs
 
 
-def test_stop_windows_kills_node_and_cmd_processes(fake_env) -> None:
-    runner = RecordingRunner(default_code=0)
-    procs = [
-        ProcessInfo(401, "node.exe", r"node C:\openclaw\dist\index.js gateway --port 18789"),
-        ProcessInfo(402, "cmd.exe", r"cmd.exe /c C:\openclaw\gateway.cmd"),
-        ProcessInfo(403, "other.exe", "some other process"),
-    ]
-
-    service = OpenClawService(
-        platform="win32",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        appdata=fake_env["appdata"],
-        localappdata=fake_env["localappdata"],
-        runner=runner,
-        process_lister=killable(procs, runner),
-        port_probe=lambda port, host="127.0.0.1": False,
-    )
-
-    res = service.stop()
-    assert res["ok"] is True
-    assert res["remaining_pids"] == []
-    assert 401 in res["stopped_pids"]
-    assert 402 in res["stopped_pids"]
-    assert 403 not in res["stopped_pids"]
-    assert ["taskkill.exe", "/PID", "401", "/T", "/F"] in runner.calls
-    assert ["taskkill.exe", "/PID", "402", "/T", "/F"] in runner.calls
-
-
-def test_a_batch_named_gateway_cmd_that_is_not_openclaw_is_not_our_gateway() -> None:
-    """Any `cmd.exe /c ...\\gateway.cmd` used to pass, and `stop()` force-killed its tree."""
-    assert is_gateway_process(ProcessInfo(901, "cmd.exe", r"cmd.exe /c C:\build\gateway.cmd")) is False
-    assert is_gateway_process(
-        ProcessInfo(902, "cmd.exe", r"cmd.exe /c C:\openclaw\gateway.cmd")
-    ) is True
-
-
-def test_stop_linux_waits_for_the_process_and_the_port_like_windows(fake_env) -> None:
-    """`systemctl stop` returns before the unit is gone: restarting at once raced the port."""
-    runner = RecordingRunner(default_code=0)
-    clock = FakeClock()
-    gone_at = 2.0
-    procs = [ProcessInfo(902, "node", "node /usr/lib/node_modules/openclaw/dist/index.js gateway")]
-    terminated: list[int] = []
-
-    service = OpenClawService(
-        platform="linux",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        systemd_user_dir=fake_env["systemd_user"],
-        runner=runner,
-        terminator=terminated.append,
-        process_lister=lambda: procs if clock.time() < gone_at else [],
-        port_probe=lambda port, host="127.0.0.1": clock.time() < gone_at,
-        time_provider=clock.time,
-        sleeper=clock.sleep,
-    )
-
-    res = service.stop()
-
-    assert res["ok"] is True
-    assert res["remaining_pids"] == []
-    assert clock.time() >= gone_at, "stop returned while the old gateway still held the port"
-
-
-def test_stop_linux_asks_an_orphan_gateway_to_exit_with_sigterm(fake_env) -> None:
-    """A gateway started by hand outside systemd is not stopped by the unit."""
-    runner = RecordingRunner(default_code=0)
-    procs = [ProcessInfo(904, "node", "node /usr/lib/node_modules/openclaw/dist/index.js gateway")]
-    terminated: list[int] = []
-    clock = FakeClock()
-
-    def lister():
-        return procs if 904 not in terminated else []
-
-    service = OpenClawService(
-        platform="linux",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        systemd_user_dir=fake_env["systemd_user"],
-        runner=runner,
-        terminator=lambda pid: terminated.append(pid),
-        process_lister=lister,
-        port_probe=lambda port, host="127.0.0.1": False,
-        time_provider=clock.time,
-        sleeper=clock.sleep,
-    )
-
-    res = service.stop()
-
-    assert terminated == [904]
-    assert ["kill", "-TERM", "904"] in res["commands"]
-    assert res["ok"] is True
-    assert res["remaining_pids"] == []
-
-
-def test_stop_linux_reports_a_gateway_that_ignores_sigterm(fake_env) -> None:
-    """No SIGKILL: after the grace window the pids are reported, not forced."""
-    runner = RecordingRunner(default_code=0)
-    clock = FakeClock()
-    procs = [ProcessInfo(903, "node", "node /usr/lib/node_modules/openclaw/dist/index.js gateway")]
-    terminated: list[int] = []
-
-    service = OpenClawService(
-        platform="linux",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        systemd_user_dir=fake_env["systemd_user"],
-        runner=runner,
-        terminator=lambda pid: terminated.append(pid),
-        process_lister=lambda: procs,
-        port_probe=lambda port, host="127.0.0.1": False,
-        time_provider=clock.time,
-        sleeper=clock.sleep,
-    )
-
-    res = service.stop()
-
-    assert terminated == [903]
-    assert res["ok"] is False
-    assert res["remaining_pids"] == [903]
-
-
-def test_stop_linux_uses_systemctl(fake_env) -> None:
-    runner = RecordingRunner(default_code=0)
-    service = OpenClawService(
-        platform="linux",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        systemd_user_dir=fake_env["systemd_user"],
-        runner=runner,
-        process_lister=lambda: [],
-        port_probe=lambda port, host="127.0.0.1": False,
-    )
-
-    res = service.stop()
-    assert res["ok"] is True
-    assert ["systemctl", "--user", "stop", "openclaw-gateway.service"] in runner.calls
-
-
-def test_start_windows_with_vbs(fake_env) -> None:
-    vbs_file = fake_env["startup"] / "OpenClaw Gateway.vbs"
-    vbs_file.write_text("wscript code", encoding="utf-8")
-
-    runner = RecordingRunner(default_code=1)  # schtasks fails, falls back to vbs
-    spawned: list[list[str]] = []
-    service = OpenClawService(
-        platform="win32",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        appdata=fake_env["appdata"],
-        localappdata=fake_env["localappdata"],
-        runner=runner,
-        spawner=lambda argv: spawned.append(list(argv)) or 4242,
-        process_lister=lambda: [],
-        port_probe=lambda port, host="127.0.0.1": False,
-    )
-
-    res = service.start()
-    assert res["ok"] is True
-    assert spawned == [["wscript.exe", str(vbs_file)]]
-    assert ["wscript.exe", str(vbs_file)] not in runner.calls, "the runner waits; the gateway must not"
-
-
-def test_start_windows_without_a_vbs_file_uses_the_openclaw_command(fake_env) -> None:
-    """The Startup folder always exists, so a VBS path was always truthy.
-
-    On a machine where neither the scheduled task nor the launcher file is
-    there, `start()` used to run `wscript.exe` on a file that does not exist:
-    Windows showed an error and the gateway never started.
-    """
-    runner = RecordingRunner(default_code=1)  # schtasks does not know the task either
-    spawned: list[list[str]] = []
-    service = OpenClawService(
-        platform="win32",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        appdata=fake_env["appdata"],
-        localappdata=fake_env["localappdata"],
-        runner=runner,
-        spawner=lambda argv: spawned.append(list(argv)) or 4242,
-        process_lister=lambda: [],
-        port_probe=lambda port, host="127.0.0.1": False,
-    )
-
-    res = service.start()
-
-    assert res["ok"] is True
-    assert spawned == [["openclaw", "gateway", "start"]]
-    assert not any(call and call[0] == "wscript.exe" for call in runner.calls + spawned)
-
-
-def test_start_windows_spawns_the_gateway_instead_of_waiting_for_it(fake_env) -> None:
-    """The .vbs runs gateway.cmd with shell.Run(..., 0, True): waiting on it hung setup."""
-    vbs_file = fake_env["startup"] / "OpenClaw Gateway.vbs"
-    vbs_file.write_text("wscript code", encoding="utf-8")
-
-    def a_runner_that_never_returns(argv):
-        raise AssertionError(f"the gateway launcher was waited on: {argv}")
-
-    spawned: list[list[str]] = []
-    service = OpenClawService(
-        platform="win32",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        appdata=fake_env["appdata"],
-        localappdata=fake_env["localappdata"],
-        runner=a_runner_that_never_returns,
-        spawner=lambda argv: spawned.append(list(argv)) or 4242,
-        process_lister=lambda: [],
-        port_probe=lambda port, host="127.0.0.1": False,
-    )
-
-    res = service.start()
-
-    assert res["ok"] is True
-    assert spawned == [["wscript.exe", str(vbs_file)]]
-
-
-def test_start_windows_with_schtasks(fake_env) -> None:
+def test_install_runs_the_openclaw_install_and_reads_the_service_back(fake_env) -> None:
     runner = RecordingRunner()
-    runner.set_canned(["schtasks.exe", "/Query", "/TN", "OpenClaw Gateway"], code=0)
-    spawned: list[list[str]] = []
+    runner.answer(INSTALL_ARGV, {"ok": True, "action": "install", "result": "installed", "message": "ok"})
+    runner.answer(STATUS_ARGV, registered_service())
 
-    service = OpenClawService(
-        platform="win32",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        appdata=fake_env["appdata"],
-        localappdata=fake_env["localappdata"],
-        runner=runner,
-        spawner=lambda argv: spawned.append(list(argv)) or 4242,
-        process_lister=lambda: [],
-        port_probe=lambda port, host="127.0.0.1": False,
-    )
+    res = service_for(fake_env, runner, process_lister=lambda: []).install()
 
-    res = service.start()
     assert res["ok"] is True
-    assert spawned == [["schtasks.exe", "/Run", "/TN", "OpenClaw Gateway"]]
+    assert res["commands"] == [INSTALL_ARGV]
+    assert res["status"]["installed"] is True
+    assert runner.calls == [INSTALL_ARGV, STATUS_ARGV]
 
 
-def test_start_linux_with_systemctl(fake_env) -> None:
-    runner = RecordingRunner(default_code=0)
-    service = OpenClawService(
-        platform="linux",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        systemd_user_dir=fake_env["systemd_user"],
-        runner=runner,
-        process_lister=lambda: [],
-        port_probe=lambda port, host="127.0.0.1": False,
-    )
+def test_install_reports_the_failure_openclaw_printed(fake_env) -> None:
+    runner = RecordingRunner()
+    runner.answer(INSTALL_ARGV, {"ok": False, "action": "install", "error": "Gateway install failed: access denied"},
+                  code=1)
+    runner.answer(STATUS_ARGV, registered_service(loaded=False))
 
-    res = service.start()
+    res = service_for(fake_env, runner, process_lister=lambda: []).install()
+
+    assert res["ok"] is False
+    assert res["error"] == "Gateway install failed: access denied"
+
+
+def test_start_runs_the_service_start_and_reports_success(fake_env) -> None:
+    runner = RecordingRunner()
+    runner.answer(START_ARGV, {"ok": True, "action": "start", "result": "started", "message": "started"})
+
+    res = service_for(fake_env, runner, process_lister=lambda: []).start()
+
     assert res["ok"] is True
-    assert ["systemctl", "--user", "start", "openclaw-gateway.service"] in runner.calls
+    assert res["commands"] == [START_ARGV]
+    assert runner.calls == [START_ARGV]
 
 
-def test_restart_waits_for_port_and_succeeds(fake_env) -> None:
-    runner = RecordingRunner(default_code=0)
+def test_start_treats_still_starting_as_a_service_that_is_up(fake_env) -> None:
+    """Exit code 2 is `still-starting`: the service runs and the port is warming up."""
+    runner = RecordingRunner()
+    runner.answer(START_ARGV, {"ok": False, "action": "start", "error": "Gateway start timed out",
+                               "result": "still-starting"}, code=2)
+
+    res = service_for(fake_env, runner, process_lister=lambda: []).start()
+
+    assert res["ok"] is True
+    assert res["error"] == "Gateway start timed out"
+
+
+def test_start_reports_a_refusal_as_a_failure(fake_env) -> None:
+    runner = RecordingRunner()
+    runner.answer(START_ARGV, {"ok": False, "action": "start", "error": "Gateway start blocked: config is invalid"},
+                  code=1)
+
+    res = service_for(fake_env, runner, process_lister=lambda: []).start()
+
+    assert res["ok"] is False
+    assert res["error"] == "Gateway start blocked: config is invalid"
+
+
+def test_stop_asks_openclaw_with_the_consent_a_non_interactive_shell_needs(fake_env) -> None:
+    runner = RecordingRunner()
+    runner.answer(STOP_ARGV, {"ok": True, "action": "stop", "result": "stopped"})
+
+    res = service_for(fake_env, runner, process_lister=lambda: []).stop()
+
+    assert res["ok"] is True
+    assert res["commands"] == [STOP_ARGV]
+    assert res["remaining_pids"] == []
+    assert runner.calls == [STOP_ARGV]
+
+
+def test_stop_names_the_pids_still_alive_when_openclaw_could_not_stop_it(fake_env) -> None:
+    """`nexgen openclaw stop` prints those pids, so they have to be the live ones."""
+    runner = RecordingRunner()
+    runner.answer(STOP_ARGV, {"ok": False, "action": "stop", "error": "Gateway stop failed: task did not exit"},
+                  code=1)
+    procs = [ProcessInfo(401, "node.exe", r"node C:\openclaw\dist\index.js gateway --port 18789")]
+
+    res = service_for(fake_env, runner, process_lister=lambda: procs).stop()
+
+    assert res["ok"] is False
+    assert res["remaining_pids"] == [401]
+    assert res["error"] == "Gateway stop failed: task did not exit"
+
+
+def test_stop_never_kills_a_process_itself(fake_env) -> None:
+    """`taskkill` and `kill` are OpenClaw's, with its PID and start-time check."""
+    runner = RecordingRunner()
+    runner.answer(STOP_ARGV, {"ok": True, "action": "stop", "result": "stopped"})
+    procs = [ProcessInfo(402, "node.exe", r"node C:\openclaw\dist\index.js gateway")]
+
+    service_for(fake_env, runner, process_lister=lambda: procs).stop()
+
+    assert not any(call[0] in {"taskkill.exe", "kill", "wscript.exe"} for call in runner.calls)
+
+
+def test_restart_runs_the_service_restart_and_waits_for_the_port(fake_env) -> None:
+    runner = RecordingRunner()
+    runner.answer(RESTART_ARGV, {"ok": True, "action": "restart", "result": "restarted", "message": "restarted"})
     clock = FakeClock()
     probes = [False, False, True]
 
@@ -533,157 +354,201 @@ def test_restart_waits_for_port_and_succeeds(fake_env) -> None:
             return probes.pop(0)
         return True
 
-    service = OpenClawService(
-        platform="linux",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        systemd_user_dir=fake_env["systemd_user"],
-        runner=runner,
-        process_lister=lambda: [],
-        port_probe=probe_port,
-        time_provider=clock.time,
-        sleeper=clock.sleep,
-    )
+    res = service_for(fake_env, runner, platform="linux", process_lister=lambda: [],
+                      port_probe=probe_port, time_provider=clock.time, sleeper=clock.sleep).restart(
+        wait=True, timeout_s=600.0)
 
-    res = service.restart(wait=True, timeout_s=600.0)
     assert res["ok"] is True
+    assert res["commands"] == [RESTART_ARGV]
     assert res["port_listening"] is True
     assert res["elapsed_s"] >= 2.0
     assert len(clock.sleeps) >= 2
 
 
 def test_restart_times_out(fake_env) -> None:
-    runner = RecordingRunner(default_code=0)
+    runner = RecordingRunner()
+    runner.answer(RESTART_ARGV, {"ok": True, "action": "restart", "result": "restarted"})
     clock = FakeClock()
 
-    service = OpenClawService(
-        platform="linux",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        systemd_user_dir=fake_env["systemd_user"],
-        runner=runner,
-        process_lister=lambda: [],
-        port_probe=lambda port, host="127.0.0.1": False,
-        time_provider=clock.time,
-        sleeper=clock.sleep,
-    )
+    res = service_for(fake_env, runner, platform="linux", process_lister=lambda: [],
+                      port_probe=lambda port, host="127.0.0.1": False,
+                      time_provider=clock.time, sleeper=clock.sleep).restart(wait=True, timeout_s=10.0)
 
-    res = service.restart(wait=True, timeout_s=10.0)
     assert res["ok"] is False
     assert "Timed out" in res["error"]
     assert res["elapsed_s"] >= 10.0
 
 
+def test_a_refused_restart_is_reported_and_nothing_is_waited_for(fake_env) -> None:
+    """A refusal never activated anything: the old engine then started a second gateway."""
+    runner = RecordingRunner()
+    runner.answer(RESTART_ARGV, {"ok": False, "action": "restart",
+                                 "error": "Gateway restart failed: multiple gateway processes are listening"},
+                  code=1)
+    clock = FakeClock()
+
+    res = service_for(fake_env, runner, process_lister=lambda: [],
+                      port_probe=lambda port, host="127.0.0.1": False,
+                      time_provider=clock.time, sleeper=clock.sleep).restart()
+
+    assert res["ok"] is False
+    assert "multiple gateway processes" in res["error"]
+    assert clock.sleeps == []
+    assert runner.calls == [RESTART_ARGV]
+
+
+def test_a_restart_that_missed_its_own_health_check_is_still_waited_for(fake_env) -> None:
+    """OpenClaw's own health budget can be shorter than this engine's cold start."""
+    runner = RecordingRunner()
+    runner.answer(RESTART_ARGV, {"ok": False, "action": "restart", "result": "restart-health-failed",
+                                 "error": "Gateway restart timed out after 45s waiting for health checks."},
+                  code=1)
+    clock = FakeClock()
+
+    res = service_for(fake_env, runner, process_lister=lambda: [],
+                      port_probe=lambda port, host="127.0.0.1": clock.time() >= 2.0,
+                      time_provider=clock.time, sleeper=clock.sleep).restart(wait=True, timeout_s=600.0)
+
+    assert res["ok"] is True
+    assert res["elapsed_s"] >= 2.0
+
+
 def test_stopped_context_manager_restarts_even_after_exception(fake_env) -> None:
-    vbs_file = fake_env["startup"] / "OpenClaw Gateway.vbs"
-    vbs_file.write_text("vbs", encoding="utf-8")
+    runner = RecordingRunner()
+    runner.answer(STOP_ARGV, {"ok": True, "action": "stop", "result": "stopped"})
+    runner.answer(START_ARGV, {"ok": True, "action": "start", "result": "started"})
 
-    runner = RecordingRunner(default_code=1)
-    procs = [ProcessInfo(501, "node.exe", r"node C:\openclaw\dist\index.js gateway")]
-    started = []
-    spawned: list[list[str]] = []
-
-    def probe(port, host="127.0.0.1"):
-        # The port is held until the kill, free while stopped, open again once restarted.
-        if spawned:
-            started.append(True)
-            return True
-        return not any(call[:1] == ["taskkill.exe"] for call in runner.calls)
-
-    service = OpenClawService(
-        platform="win32",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        appdata=fake_env["appdata"],
-        localappdata=fake_env["localappdata"],
-        runner=runner,
-        spawner=lambda argv: spawned.append(list(argv)) or 4242,
-        process_lister=killable(procs, runner),
-        port_probe=probe,
-    )
+    service = service_for(fake_env, runner, process_lister=lambda: [],
+                          port_probe=lambda port, host="127.0.0.1": True)
 
     with pytest.raises(ValueError, match="simulated failure"):
         with service.stopped(wait=False):
-            assert ["taskkill.exe", "/PID", "501", "/T", "/F"] in runner.calls
+            assert runner.calls == [STOP_ARGV]
             raise ValueError("simulated failure")
 
-    assert spawned == [["wscript.exe", str(vbs_file)]]
+    assert runner.calls == [STOP_ARGV, START_ARGV]
 
 
-def test_dry_run_executes_no_processes(fake_env) -> None:
-    runner = RecordingRunner(default_code=0)
-    procs = [ProcessInfo(601, "node.exe", r"node C:\openclaw\dist\index.js gateway")]
-
-    service = OpenClawService(
-        platform="win32",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        appdata=fake_env["appdata"],
-        localappdata=fake_env["localappdata"],
-        runner=runner,
-        process_lister=lambda: procs,
-        port_probe=lambda port, host="127.0.0.1": True,
-    )
-
-    res_inst = service.install(dry_run=True)
-    assert res_inst["dry_run"] is True
-    res_stop = service.stop(dry_run=True)
-    assert res_stop["dry_run"] is True
-    res_start = service.start(dry_run=True)
-    assert res_start["dry_run"] is True
-    res_restart = service.restart(dry_run=True)
-    assert res_restart["dry_run"] is True
-    res_uninst = service.uninstall(dry_run=True)
-    assert res_uninst["dry_run"] is True
-
-    # Absolutely zero runner calls executed
-    assert len(runner.calls) == 0
-
-
-def test_uninstall_windows_cleans_service_without_touching_config(fake_env) -> None:
+def test_uninstall_asks_openclaw_and_touches_no_file_of_its_own(fake_env) -> None:
+    """The engine removed the Startup VBS and the unit itself; OpenClaw owns both now."""
     vbs_file = fake_env["startup"] / "OpenClaw Gateway.vbs"
     vbs_file.write_text("vbs", encoding="utf-8")
     cfg_file = fake_env["state_dir"] / "openclaw.json"
     cfg_file.write_text('{"gateway": {"port": 18789}}', encoding="utf-8")
+    runner = RecordingRunner()
+    runner.answer(UNINSTALL_ARGV, {"ok": True, "action": "uninstall", "result": "uninstalled"})
 
-    runner = RecordingRunner(default_code=0)
-    service = OpenClawService(
-        platform="win32",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        appdata=fake_env["appdata"],
-        localappdata=fake_env["localappdata"],
-        runner=runner,
-        process_lister=lambda: [],
-        port_probe=lambda port, host="127.0.0.1": False,
-    )
+    res = service_for(fake_env, runner, process_lister=lambda: []).uninstall()
 
-    res = service.uninstall()
     assert res["ok"] is True
-    assert not vbs_file.exists()
+    assert res["commands"] == [UNINSTALL_ARGV]
+    assert vbs_file.exists(), "a launcher the engine did not create is never deleted by the engine"
     assert cfg_file.exists(), "openclaw.json must never be touched by uninstall"
     assert fake_env["state_dir"].exists(), "state_dir must never be touched by uninstall"
+    assert runner.calls == [UNINSTALL_ARGV]
 
 
-def test_uninstall_linux_removes_systemd_unit(fake_env) -> None:
-    unit_file = fake_env["systemd_user"] / "openclaw-gateway.service"
-    unit_file.write_text("[Unit]\nDescription=Gateway\n", encoding="utf-8")
+def test_dry_run_executes_no_processes(fake_env) -> None:
+    runner = RecordingRunner()
+    procs = [ProcessInfo(601, "node.exe", r"node C:\openclaw\dist\index.js gateway")]
+    service = service_for(fake_env, runner, process_lister=lambda: procs,
+                          port_probe=lambda port, host="127.0.0.1": True)
 
+    assert service.install(dry_run=True)["dry_run"] is True
+    assert service.stop(dry_run=True)["dry_run"] is True
+    assert service.start(dry_run=True)["dry_run"] is True
+    assert service.restart(dry_run=True)["dry_run"] is True
+    assert service.uninstall(dry_run=True)["dry_run"] is True
+    assert service.status(dry_run=True)["dry_run"] is True
+
+    assert runner.calls == [], "a dry run runs nothing at all"
+
+
+def test_module_level_shortcuts(fake_env) -> None:
     runner = RecordingRunner(default_code=0)
-    service = OpenClawService(
-        platform="linux",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        systemd_user_dir=fake_env["systemd_user"],
-        runner=runner,
-        process_lister=lambda: [],
-        port_probe=lambda port, host="127.0.0.1": False,
-    )
+    st = service_status(platform="linux", home=fake_env["home"], runner=runner,
+                        process_lister=lambda: [], port_probe=lambda p, h="127.0.0.1": False, dry_run=True)
+    assert st["dry_run"] is True
 
-    res = service.uninstall()
-    assert res["ok"] is True
-    assert not unit_file.exists()
-    assert ["systemctl", "--user", "daemon-reload"] in runner.calls
+    inst = service_install(platform="linux", home=fake_env["home"], runner=runner, dry_run=True)
+    assert inst["dry_run"] is True
+
+    stp = service_stop(platform="linux", home=fake_env["home"], runner=runner, dry_run=True)
+    assert stp["dry_run"] is True
+
+    strt = service_start(platform="linux", home=fake_env["home"], runner=runner, dry_run=True)
+    assert strt["dry_run"] is True
+
+    rst = service_restart(wait=False, platform="linux", home=fake_env["home"], runner=runner, dry_run=True)
+    assert rst["dry_run"] is True
+
+    with service_stopped(wait=False, platform="linux", home=fake_env["home"], runner=runner, dry_run=True):
+        pass
+
+    uninst = service_uninstall(platform="linux", home=fake_env["home"], runner=runner, dry_run=True)
+    assert uninst["dry_run"] is True
+
+    assert runner.calls == [], "not one of those shortcuts ran a command"
+
+
+# ------------------------------------------------ the registration somebody else made
+
+
+def test_the_second_registration_is_not_the_node_host() -> None:
+    """A node connects out and opens no port here: it is not a second gateway."""
+    runner = RecordingRunner()
+    runner.answer(DEEP_STATUS_ARGV, {
+        "extraServices": [
+            {"platform": "win32", "label": "\\OpenClaw Node",
+             "detail": "task: \\OpenClaw Node, run: C:\\Users\\me\\.openclaw\\node.vbs",
+             "scope": "system", "marker": "openclaw", "legacy": False},
+            {"platform": "win32", "label": "OpenClaw Gateway",
+             "detail": "startup: C:\\Users\\me\\Startup\\OpenClaw Gateway.vbs",
+             "scope": "user", "marker": "openclaw", "legacy": False},
+        ]
+    })
+
+    found = OpenClawService(platform="win32", runner=runner).extra_services()
+
+    assert [item["label"] for item in found] == ["OpenClaw Gateway"]
+    assert runner.calls == [DEEP_STATUS_ARGV]
+
+
+def test_a_deep_inventory_that_did_not_answer_reports_no_registration() -> None:
+    runner = RecordingRunner(default_code=1)
+
+    assert OpenClawService(platform="win32", runner=runner).extra_services() == []
+
+
+def test_the_removal_step_is_the_command_that_fits_the_shape_openclaw_reported() -> None:
+    """Printed, never run: the engine did not create that registration."""
+    startup = {"platform": "win32", "label": "OpenClaw Gateway",
+               "detail": r"startup: C:\Users\user\Startup\OpenClaw Gateway.vbs", "scope": "user"}
+    task = {"platform": "win32", "label": r"\OpenClaw Gateway",
+            "detail": r"task: \OpenClaw Gateway, run: C:\Users\user\.openclaw\gateway.cmd", "scope": "system"}
+    unit = {"platform": "linux", "label": "openclaw-gateway-extra.service",
+            "detail": "unit: /home/user/.config/systemd/user/openclaw-gateway-extra.service", "scope": "user"}
+    backup = {"platform": "linux", "label": "clawdbot-gateway.service",
+              "detail": "unit backup: /home/user/.config/systemd/user/clawdbot-gateway.service.bak", "scope": "user"}
+    plist = {"platform": "darwin", "label": "ai.openclaw.gateway.second",
+             "detail": "plist: /Users/me/Library/LaunchAgents/ai.openclaw.gateway.second.plist", "scope": "user"}
+
+    assert removal_commands(startup) == [r"Remove-Item -LiteralPath 'C:\Users\user\Startup\OpenClaw Gateway.vbs'"]
+    assert removal_commands(task) == [r'schtasks.exe /Delete /TN "\OpenClaw Gateway" /F']
+    assert removal_commands(unit) == [
+        "systemctl --user disable --now openclaw-gateway-extra.service",
+        "rm '/home/user/.config/systemd/user/openclaw-gateway-extra.service'",
+        "systemctl --user daemon-reload",
+    ]
+    assert removal_commands(backup) == ["rm '/home/user/.config/systemd/user/clawdbot-gateway.service.bak'"]
+    assert removal_commands(plist) == [
+        "launchctl bootout gui/$UID/ai.openclaw.gateway.second",
+        "rm '/Users/me/Library/LaunchAgents/ai.openclaw.gateway.second.plist'",
+    ]
+    assert removal_commands({"platform": "win32", "label": "x", "detail": "???"}) == []
+
+
+# ---------------------------------------------------------------------------- pairing
 
 
 def test_pairing_qr_returns_terminal_command() -> None:
@@ -762,81 +627,12 @@ def test_pairing_dry_run_executes_nothing() -> None:
     assert len(runner.calls) == 0
 
 
-def test_module_level_shortcuts(fake_env) -> None:
-    runner = RecordingRunner(default_code=0)
-    st = service_status(platform="linux", home=fake_env["home"], runner=runner, process_lister=lambda: [], port_probe=lambda p, h="127.0.0.1": False, dry_run=True)
-    assert st["dry_run"] is True
-
-    inst = service_install(platform="linux", home=fake_env["home"], runner=runner, dry_run=True)
-    assert inst["dry_run"] is True
-
-    stp = service_stop(platform="linux", home=fake_env["home"], runner=runner, dry_run=True)
-    assert stp["dry_run"] is True
-
-    strt = service_start(platform="linux", home=fake_env["home"], runner=runner, dry_run=True)
-    assert strt["dry_run"] is True
-
-    rst = service_restart(wait=False, platform="linux", home=fake_env["home"], runner=runner, dry_run=True)
-    assert rst["dry_run"] is True
-
-    with service_stopped(wait=False, platform="linux", home=fake_env["home"], runner=runner, dry_run=True):
-        pass
-
-    uninst = service_uninstall(platform="linux", home=fake_env["home"], runner=runner, dry_run=True)
-    assert uninst["dry_run"] is True
-
-
-def test_stop_waits_until_the_old_gateway_lets_go_of_the_port(fake_env) -> None:
-    """taskkill returns before Windows frees the port: starting at once raced the old gateway."""
-    runner = RecordingRunner(default_code=0)
-    clock = FakeClock()
-    procs = [ProcessInfo(701, "node.exe", r"node C:\openclaw\dist\index.js gateway --port 18789")]
-    port_free_at = 3.0
-
-    service = OpenClawService(
-        platform="win32",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        appdata=fake_env["appdata"],
-        localappdata=fake_env["localappdata"],
-        runner=runner,
-        process_lister=killable(procs, runner),
-        port_probe=lambda port, host="127.0.0.1": clock.time() < port_free_at,
-        time_provider=clock.time,
-        sleeper=clock.sleep,
-    )
-
-    res = service.stop()
-    assert res["ok"] is True
-    assert clock.time() >= port_free_at
-
-
-def test_a_gateway_that_survives_the_kill_stops_the_restart(fake_env) -> None:
-    runner = RecordingRunner(default_code=0)
-    clock = FakeClock()
-    vbs_file = fake_env["startup"] / "OpenClaw Gateway.vbs"
-    vbs_file.write_text("vbs", encoding="utf-8")
-    stubborn = [ProcessInfo(801, "node.exe", r"node C:\openclaw\dist\index.js gateway")]
-    spawned: list[list[str]] = []
-
-    service = OpenClawService(
-        platform="win32",
-        home=fake_env["home"],
-        state_dir=fake_env["state_dir"],
-        appdata=fake_env["appdata"],
-        localappdata=fake_env["localappdata"],
-        runner=runner,
-        spawner=lambda argv: spawned.append(list(argv)) or 4242,
-        process_lister=lambda: stubborn,
-        port_probe=lambda port, host="127.0.0.1": True,
-        time_provider=clock.time,
-        sleeper=clock.sleep,
-    )
-
-    res = service.restart()
-    assert res["ok"] is False
-    assert "801" in res["error"]
-    assert spawned == [], "never start a second gateway beside a live one"
+def test_a_batch_named_gateway_cmd_that_is_not_openclaw_is_not_our_gateway() -> None:
+    """Any `cmd.exe /c ...\\gateway.cmd` used to pass, and `stop()` force-killed its tree."""
+    assert is_gateway_process(ProcessInfo(901, "cmd.exe", r"cmd.exe /c C:\build\gateway.cmd")) is False
+    assert is_gateway_process(
+        ProcessInfo(902, "cmd.exe", r"cmd.exe /c C:\openclaw\gateway.cmd")
+    ) is True
 
 
 # The shape `openclaw devices list --json` prints in 2026.10.6
@@ -893,4 +689,3 @@ def test_pairing_pending_failure_reports_error_without_tokens() -> None:
     assert "requires credentials before opening a websocket" in res["error"]
     assert "secret123" not in res["error"]
     assert "[redacted]" in res["error"]
-

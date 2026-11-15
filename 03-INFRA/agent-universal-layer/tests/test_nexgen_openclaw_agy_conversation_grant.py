@@ -60,3 +60,25 @@ def test_the_engine_plugin_keeps_its_grant_and_enablement_when_deposited():
     assert PLUGIN_ID in plugins["allow"]
     assert plugins["entries"][PLUGIN_ID] == {"enabled": True, "hooks": {"allowConversationAccess": True}}
     assert LOCAL_AGY_BACKEND not in plugins["entries"]
+
+
+def test_the_engine_switches_are_written_where_the_host_hands_them_over():
+    """`plugins.entries.nexgen.config` is what OpenClaw passes as `api.pluginConfig`."""
+    switches = {"briefing": {"enabled": True}, "engine": {"command": "/venv/python", "entry": "/cli.py"}}
+
+    out = with_engine_plugin({"plugins": {}}, deposited=True, switches=switches)
+
+    entry = out["plugins"]["entries"][PLUGIN_ID]
+    assert entry["config"] == switches
+    assert entry["enabled"] is True
+    assert entry["hooks"] == {"allowConversationAccess": True}
+
+
+def test_a_switch_the_person_already_wrote_is_kept_beside_the_engine_ones():
+    config = {"plugins": {"entries": {PLUGIN_ID: {"config": {"posture": "ask"}}}}}
+
+    out = with_engine_plugin(config, deposited=True, switches={"briefing": {"enabled": True}})
+
+    assert out["plugins"]["entries"][PLUGIN_ID]["config"] == {
+        "posture": "ask", "briefing": {"enabled": True},
+    }

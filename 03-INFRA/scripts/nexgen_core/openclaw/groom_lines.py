@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from nexgen_core import alerts
 from nexgen_core.i18n import t
 
 if TYPE_CHECKING:
@@ -84,17 +85,18 @@ def leftover_message(count: int) -> str:
 
 
 def alert_stalled(count: int, phone: Megaphone) -> bool:
-    """Tell the person that the groom left chats waiting and compacted none of them.
+    """Tell the person that the tidy-up left chats waiting and closed none of them.
 
     The hourly job runs with `--no-deliver`, so nothing a run prints reaches a person:
     a queue that stopped moving would otherwise be silent until somebody looked. The
     megaphone debounces the key, so a gateway refusing every compaction says so once
     per window instead of once per hour.
     """
+    title, message, action = alerts.CHATS_PILING_UP.say(count=count)
     return phone.send_alert(
-        title=t("The context guard is not compacting"),
-        message=t("The last run compacted none of the chats waiting for it. Waiting now: {count}.", count=count),
-        action=t("Run 'nexgen openclaw groom' and read the reason it prints."),
+        title=title,
+        message=message,
+        action=action,
         alert_key=STALLED_ALERT_KEY,
     )
 

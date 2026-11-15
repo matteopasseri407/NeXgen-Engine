@@ -12,7 +12,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.openclaw.groom_lines import Decision, line  # noqa: E402
-from nexgen_core.openclaw.sessions_groom import plan_groom  # noqa: E402
+from nexgen_core.openclaw.groom_policy import plan_groom  # noqa: E402
 
 NOW = 1_800_000_000_000
 

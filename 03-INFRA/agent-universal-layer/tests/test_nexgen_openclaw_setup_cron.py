@@ -57,7 +57,6 @@ def a_setup(tmp_path: Path, jobs, calls: list[list[str]], squad: str | None = No
         which=lambda name: f"/usr/bin/{name}",
         run=fake_run,
         service=MagicMock(),
-        stamp="123",
     )
 
 
@@ -81,7 +80,6 @@ def test_groom_job_step_declares_no_deliver(tmp_path: Path) -> None:
         which=lambda name: f"/usr/bin/{name}",
         run=fake_run,
         service=MagicMock(),
-        stamp="123",
     )
 
     groom_job_step(setup)
@@ -122,7 +120,6 @@ def test_groom_job_step_declares_the_key_that_converges_the_job(tmp_path: Path) 
         which=lambda name: f"/usr/bin/{name}",
         run=fake_gateway_run,
         service=MagicMock(),
-        stamp="123",
     )
 
     groom_job_step(setup)
@@ -151,7 +148,6 @@ def test_groom_job_step_says_so_when_the_gateway_refuses(tmp_path: Path) -> None
         which=lambda name: f"/usr/bin/{name}",
         run=lambda argv, env=None: RunResult(1, "", "Error: the gateway is not reachable"),
         service=MagicMock(),
-        stamp="123",
     )
 
     groom_job_step(setup)

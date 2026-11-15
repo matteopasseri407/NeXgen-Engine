@@ -20,6 +20,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.openclaw.detect import Detection, Installation, LocalModelInfo, LocalModels, Login  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.org_block import openclaw_instruction_block  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.profile import Choices, build_config, denied_tools  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.templates import render_workspace  # noqa: E402 - sys.path shim for cloned checkout
 
@@ -682,3 +683,32 @@ def test_a_reset_policy_the_person_wrote_survives():
     config = build_config(machine(go=True), current=current)
 
     assert "session" not in config
+
+
+def test_the_documented_prompt_limits_are_written_out():
+    """The cost of a session is a number in the file, not a default OpenClaw may move."""
+    config = build_config(machine(go=True))
+
+    assert config["agents"]["defaults"]["bootstrapMaxChars"] == 20_000
+    assert config["agents"]["defaults"]["bootstrapTotalMaxChars"] == 60_000
+    assert config["skills"]["limits"]["maxSkillsPromptChars"] == 18_000
+
+
+def test_a_prompt_limit_the_file_already_sets_is_the_persons_and_stays():
+    current = {
+        "agents": {"defaults": {"bootstrapMaxChars": 12_000, "bootstrapTotalMaxChars": 40_000}},
+        "skills": {"limits": {"maxSkillsPromptChars": 5_000}, "entries": {"x": {"enabled": True}}},
+    }
+
+    config = build_config(machine(go=True), current=current)
+
+    assert "bootstrapMaxChars" not in config["agents"]["defaults"]
+    assert "bootstrapTotalMaxChars" not in config["agents"]["defaults"]
+    assert "limits" not in config.get("skills", {})
+
+
+def test_the_pointer_block_is_far_under_the_per_file_limit():
+    """`org_block` writes a pointer, and the limit it is written under is 20,000."""
+    canon = Path("/home/user/KnowledgeVault/03-INFRA/agent-universal-layer/instructions/AGENTS.md")
+
+    assert len(openclaw_instruction_block(canon)) < 1_000

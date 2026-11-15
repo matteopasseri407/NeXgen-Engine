@@ -4,6 +4,11 @@ It answers the failure a node gives when nothing there can approve a command:
 `exec denied: request-failed`. The node query is the read-only one OpenClaw
 documents, and no test runs `openclaw`: the reader is a fake, so each case is a
 document and an answer, not a machine.
+
+The document each case feeds is the shape `openclaw approvals get --node --json`
+prints: the node's own policy, and the `effectivePolicy` scopes where OpenClaw
+has already merged it with what the agent asks for. The merge is a literal in
+every case here, because that is what makes the engine's judgement readable.
 """
 from __future__ import annotations
 
@@ -54,14 +59,38 @@ def on_node(**extra: object) -> dict:
     return {"host": "node", "node": "win-pc", **extra}
 
 
-def document(defaults: dict | None = None, agents: dict | None = None) -> dict:
-    """The approvals document a headless node answers with, in the documented shape."""
-    file: dict = {"version": 1}
-    if defaults is not None:
-        file["defaults"] = defaults
-    if agents is not None:
-        file["agents"] = agents
-    return {"path": "C:\\Users\\someone\\.openclaw\\state\\openclaw.sqlite", "exists": True, "file": file}
+def merged(
+    agent_id: str = "capo",
+    security: tuple[str, str] = ("full", "full"),
+    ask: tuple[str, str] = ("off", "off"),
+    fallback: str = "full",
+) -> dict:
+    """One agent scope of the merged view, as the command prints it.
+
+    Each pair is `(asked, effective)`: what the agent requests, and what OpenClaw
+    computed once the node's own policy was intersected with it.
+    """
+    return {
+        "path": "C:\\Users\\someone\\.openclaw\\state\\openclaw.sqlite#exec_approvals_config",
+        "exists": True,
+        "file": {"version": 1},
+        "effectivePolicy": {
+            "scopes": [{
+                "scopeLabel": f"agent:{agent_id}",
+                "configPath": f"agents.entries.{agent_id}.tools.exec",
+                "agentId": agent_id,
+                "security": {"requested": security[0], "effective": security[1]},
+                "ask": {"requested": ask[0], "effective": ask[1]},
+                "askFallback": {"effective": fallback},
+            }],
+        },
+    }
+
+
+def also_on(document: dict, agent_id: str, **policy: object) -> dict:
+    """The same answer with a second agent's scope: one node, several agents."""
+    document["effectivePolicy"]["scopes"].append(merged(agent_id, **policy)["effectivePolicy"]["scopes"][0])
+    return document
 
 
 def by_id(outcomes) -> dict:
@@ -78,17 +107,17 @@ def answer(payload: dict) -> node_approvals.Reader:
 def test_a_node_as_loose_as_the_agent_asks_for_is_not_a_warning():
     outcomes = check_agents(
         config_with(on_node(security="full", ask="off")),
-        answer(document(defaults={"security": "full", "ask": "off", "askFallback": "full"})),
+        answer(merged(security=("full", "full"), ask=("off", "off"))),
     )
 
     assert by_id(outcomes)["openclaw.nodes.exec.capo"].severity == Severity.OK
 
 
-def test_a_looser_node_is_not_a_warning_either():
-    """An approvals document can only tighten what the agent asks for."""
+def test_a_node_that_does_not_tighten_is_not_a_warning_either():
+    """A host policy looser than the request leaves `effective` equal to the request."""
     outcomes = check_agents(
-        config_with(on_node(security="allowlist", ask="off")),
-        answer(document(defaults={"security": "full", "ask": "off", "askFallback": "full"})),
+        config_with(on_node(security="allowlist", ask="on-miss")),
+        answer(merged(security=("allowlist", "allowlist"), ask=("on-miss", "on-miss"))),
     )
 
     assert by_id(outcomes)["openclaw.nodes.exec.capo"].severity == Severity.OK
@@ -97,7 +126,7 @@ def test_a_looser_node_is_not_a_warning_either():
 def test_a_node_whose_allowlist_stops_the_agent_is_a_warning_with_the_documented_body():
     outcomes = check_agents(
         config_with(on_node(security="full", ask="off")),
-        answer(document(defaults={"security": "allowlist", "ask": "on-miss", "askFallback": "deny"})),
+        answer(merged(security=("full", "allowlist"), ask=("off", "on-miss"), fallback="deny")),
     )
 
     outcome = by_id(outcomes)["openclaw.nodes.exec.capo"]
@@ -117,7 +146,7 @@ def test_a_prompt_nobody_can_answer_is_named_even_when_the_agent_asks_for_one():
     """`on-miss` plus a `deny` fallback is the live case: the agent asks, nobody answers."""
     outcomes = check_agents(
         config_with(on_node(security="allowlist", ask="on-miss")),
-        answer(document(defaults={})),
+        answer(merged(security=("allowlist", "allowlist"), ask=("on-miss", "on-miss"), fallback="deny")),
     )
 
     outcome = by_id(outcomes)["openclaw.nodes.exec.capo"]
@@ -129,21 +158,22 @@ def test_a_prompt_nobody_can_answer_is_named_even_when_the_agent_asks_for_one():
 def test_a_fallback_that_allows_the_run_raises_no_warning():
     outcomes = check_agents(
         config_with(on_node(security="allowlist", ask="on-miss")),
-        answer(document(defaults={"askFallback": "full"})),
+        answer(merged(security=("allowlist", "allowlist"), ask=("on-miss", "on-miss"), fallback="full")),
     )
 
     assert by_id(outcomes)["openclaw.nodes.exec.capo"].severity == Severity.OK
 
 
-def test_an_agent_override_on_the_node_wins_over_its_defaults():
-    """OpenClaw resolves `agents.<id>` over `agents."*"` over `defaults`; so does this check."""
-    outcomes = check_agents(
-        config_with(on_node(security="full", ask="off")),
-        answer(document(
-            defaults={"security": "deny", "ask": "always", "askFallback": "deny"},
-            agents={"capo": {"security": "full", "ask": "off", "askFallback": "full"}},
-        )),
+def test_an_agent_is_judged_by_its_own_scope_and_not_by_another_agents():
+    """One node answers for every agent that runs on it: the scopes are per agent."""
+    document = also_on(
+        merged(security=("full", "full"), ask=("off", "off")),
+        "automazioni",
+        security=("full", "deny"),
+        ask=("off", "always"),
     )
+
+    outcomes = check_agents(config_with(on_node(security="full", ask="off")), answer(document))
 
     assert by_id(outcomes)["openclaw.nodes.exec.capo"].severity == Severity.OK
 
@@ -152,18 +182,18 @@ def test_the_shared_exec_block_names_the_node_when_the_agent_does_not():
     config = config_with()
     config["tools"]["exec"] = {"host": "node", "node": "win-pc", "security": "full", "ask": "off"}
 
-    outcomes = check_agents(config, answer(document(defaults={"security": "allowlist"})))
+    outcomes = check_agents(config, answer(merged(security=("full", "allowlist"))))
 
     assert by_id(outcomes)["openclaw.nodes.exec.capo"].severity == Severity.WARN
 
 
-def test_a_policy_written_as_a_mode_is_not_judged():
-    """The engine never writes `tools.exec.mode`, and guessing what it means would invent a verdict."""
+def test_a_merge_the_node_did_not_compute_is_not_judged():
+    """An older node reports the effective policy as unavailable instead of assuming the gateway's."""
     config = config_with(on_node())
-    config["tools"]["exec"] = {"host": "node", "node": "win-pc", "mode": "cautious"}
     names: list[str] = []
+    unmerged = {"path": "C:\\...\\openclaw.sqlite", "exists": True, "file": {"version": 1}}
 
-    outcomes = check_agents(config, lambda node: names.append(node) or Reading(document=document()))
+    outcomes = check_agents(config, lambda node: names.append(node) or Reading(document=unmerged))
 
     assert outcomes == []
     assert names == ["win-pc"]
@@ -177,7 +207,7 @@ def test_an_agent_that_runs_on_the_gateway_is_never_asked_about():
 
     outcomes = check_agents(
         config_with({"host": "gateway", "node": "win-pc"}),
-        lambda node: names.append(node) or Reading(document=document()),
+        lambda node: names.append(node) or Reading(document=merged()),
     )
 
     assert outcomes == []
@@ -190,7 +220,7 @@ def test_an_agent_that_names_no_node_is_not_asked():
 
     outcomes = check_agents(
         config_with({"host": "node"}),
-        lambda node: names.append(node) or Reading(document=document()),
+        lambda node: names.append(node) or Reading(document=merged()),
     )
 
     assert outcomes == []
@@ -207,7 +237,7 @@ def test_two_agents_on_the_same_node_cost_one_query():
     config["agents"]["entries"]["automazioni"] = {"tools": {"exec": {"host": "node", "node": "win-pc"}}}
 
     names: list[str] = []
-    check_agents(config, lambda node: names.append(node) or Reading(document=document()))
+    check_agents(config, lambda node: names.append(node) or Reading(document=merged()))
 
     assert names == ["win-pc"]
 
@@ -263,7 +293,7 @@ def test_a_host_native_node_with_its_policy_disabled_says_it_cannot_be_configure
 def test_a_value_openclaw_would_refuse_is_never_read_as_a_policy():
     outcomes = check_agents(
         config_with(on_node(security="full", ask="off")),
-        answer(document(defaults={"security": "sometimes", "ask": "maybe"})),
+        answer(merged(security=("full", "sometimes"), ask=("off", "maybe"))),
     )
 
     assert by_id(outcomes)["openclaw.nodes.exec.capo"].severity == Severity.OK
@@ -308,7 +338,7 @@ def test_the_doctor_carries_the_line_when_it_was_asked_for(tmp_path):
     outcomes = by_id(run_doctor(
         tmp_path,
         config_with({"host": "node", "node": "win-pc", "security": "full", "ask": "off"}),
-        lambda node: Reading(document=document(defaults={"security": "allowlist", "ask": "on-miss"})),
+        lambda node: Reading(document=merged(security=("full", "allowlist"), ask=("off", "on-miss"))),
     ))
 
     assert outcomes["openclaw.nodes.exec.capo"].severity == Severity.WARN

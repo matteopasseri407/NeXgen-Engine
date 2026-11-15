@@ -444,3 +444,99 @@ def test_the_body_is_run_by_node_even_when_the_host_is_not_node(tmp_path):
         "]));\n", encoding="utf-8")
     out = json.loads(subprocess.run([NODE, str(driver)], capture_output=True, text=True, timeout=60, check=True).stdout)
     assert out == ["node", "/usr/bin/node", "C:\\Program Files\\nodejs\\node.exe", "node", "node"]
+
+
+# ------------------------------------------------------------------ Codex
+#
+# Codex's PreToolUse input already has the shape the body speaks, so this adapter translates only the
+# answer. Two documented facts decide it (developers.openai.com/codex/hooks, "PreToolUse"): Codex has no
+# `ask` at this event -- it is parsed, the hook run is reported as failed and the tool runs anyway -- and
+# a hook that errors, times out or answers with something unusable lets the tool run.
+
+CODEX_INPUT = json.dumps({"session_id": "thread-1", "cwd": "/work", "hook_event_name": "PreToolUse",
+                          "tool_name": "Bash", "tool_input": {"command": "rm -rf /"},
+                          "turn_id": "turn-1", "permission_mode": "bypassPermissions"})
+
+
+def codex_decision(result: subprocess.CompletedProcess[str]) -> str:
+    """What Codex would do with this hook's output: exit 2 blocks it, silence lets the tool run."""
+    if result.returncode == 2:
+        return "deny"
+    assert result.returncode == 0, f"exit {result.returncode} would let the tool run: {result.stderr}"
+    if not result.stdout.strip():
+        return "allow"
+    return json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"]
+
+
+@pytest.mark.parametrize(("body", "expected"), [("allow.mjs", "allow"), ("deny.mjs", "deny")])
+def test_codex_adapter_passes_the_bodys_decision_through(tmp_path, body, expected):
+    result = run(deploy(tmp_path, "codex-guardrail-adapter.mjs", body), CODEX_INPUT)
+    assert codex_decision(result) == expected
+    if expected == "deny":
+        assert "rm -rf is not allowed" in result.stdout
+
+
+def test_codex_adapter_turns_a_question_into_a_refusal_that_says_why(tmp_path):
+    result = run(deploy(tmp_path, "codex-guardrail-adapter.mjs", "ask.mjs"), CODEX_INPUT)
+
+    assert codex_decision(result) == "deny"
+    assert "looks risky" in result.stdout and "Codex cannot ask" in result.stdout
+
+
+@pytest.mark.parametrize("body", ["crash.mjs", "garbage.mjs", "undecided.mjs"])
+def test_codex_a_broken_body_is_a_refusal_never_a_pass(tmp_path, body):
+    assert codex_decision(run(deploy(tmp_path, "codex-guardrail-adapter.mjs", body), CODEX_INPUT)) == "deny"
+
+
+def test_codex_a_hook_without_its_sidecar_is_a_broken_install_not_an_absence(tmp_path):
+    """The adapter is registered only together with its sidecar: one without the other is half an install."""
+    adapter = deploy(tmp_path, "codex-guardrail-adapter.mjs", "allow.mjs")
+    (adapter.parent / "nexgen-guardrail.config.json").unlink()
+
+    assert codex_decision(run(adapter, CODEX_INPUT)) == "deny"
+
+
+def test_codex_a_sidecar_with_no_hooks_stays_a_legitimate_allow(tmp_path):
+    assert codex_decision(run(deploy(tmp_path, "codex-guardrail-adapter.mjs", None), CODEX_INPUT)) == "allow"
+
+
+@pytest.mark.parametrize("sidecar_text", ["{not json", '{"hooks": "nope"}', ""])
+def test_codex_a_corrupt_sidecar_refuses(tmp_path, sidecar_text):
+    adapter = deploy(tmp_path, "codex-guardrail-adapter.mjs", "allow.mjs")
+    (adapter.parent / "nexgen-guardrail.config.json").write_text(sidecar_text, encoding="utf-8")
+
+    assert codex_decision(run(adapter, CODEX_INPUT)) == "deny"
+
+
+def test_codex_unparseable_input_is_not_waved_through(tmp_path):
+    adapter = deploy(tmp_path, "codex-guardrail-adapter.mjs", "allow.mjs")
+
+    assert codex_decision(run(adapter, "not json")) == "deny"
+    assert codex_decision(run(adapter, "")) == "deny"
+
+
+def test_codex_a_missing_or_truncated_core_blocks_instead_of_exiting_one(tmp_path):
+    adapter = deploy(tmp_path, "codex-guardrail-adapter.mjs", "allow.mjs")
+    core = adapter.parent / "nexgen-guardrail-core.mjs"
+
+    core.unlink()
+    assert run(adapter, CODEX_INPUT).returncode == 2
+    core.write_text("export function loadSidecar( {", encoding="utf-8")  # a write cut short
+    assert run(adapter, CODEX_INPUT).returncode == 2
+
+
+def test_codex_hands_the_body_its_own_input_untouched(tmp_path):
+    echo = tmp_path / "echoed.json"
+
+    run(deploy(tmp_path, "codex-guardrail-adapter.mjs", "echo.mjs"), CODEX_INPUT, GUARDRAIL_ECHO=str(echo))
+
+    assert echo.read_text(encoding="utf-8") == CODEX_INPUT
+
+
+def test_codex_every_command_is_recorded_as_a_consultation(tmp_path):
+    audit = tmp_path / "state" / "codex.json"
+
+    run(deploy(tmp_path, "codex-guardrail-adapter.mjs", "deny.mjs", auditFile=str(audit)), CODEX_INPUT)
+
+    record = json.loads(audit.read_text(encoding="utf-8"))
+    assert record["cli"] == "codex" and record["count"] == 1 and record["last"] == "deny"

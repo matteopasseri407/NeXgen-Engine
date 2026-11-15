@@ -3,9 +3,10 @@
 
 One job: do the work of one step and say what it did. The order, the plan and
 the decision to continue live in `setup.py`; here is only "install the pin",
-"let OpenClaw onboard", "merge and validate", "prepare the workspaces", "make
-sure the service answers". The Windows app's two steps live next door, in
-`setup_app.py`, because they grew past the room this file has.
+"let OpenClaw onboard", "hand OpenClaw the patch and report its verdict",
+"prepare the workspaces", "make sure the service answers". The Windows app's two
+steps live next door, in `setup_app.py`, because they grew past the room this
+file has.
 
 Every external program arrives through `Setup.run` and every service action
 through `Setup.service`, so a test drives the whole machine with fakes and
@@ -19,12 +20,11 @@ import subprocess
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from datetime import datetime
 from pathlib import Path
 
 from nexgen_core.i18n import t
 from nexgen_core.modules import current_host, write_state_file
-from nexgen_core.openclaw import host_preflight, npm_prefix, setup_commands, setup_write
+from nexgen_core.openclaw import config_write, host_preflight, npm_prefix, setup_commands, setup_write
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.governor import admitted, sidecar_section
 from nexgen_core.openclaw.node_agents import node_agents
@@ -79,7 +79,6 @@ class Setup:
     which: Which
     run: Run
     service: OpenClawService
-    stamp: str
     platform: str | None = None
 
     @property
@@ -243,8 +242,7 @@ def install_pinned_release(
         out=out,
         which=which or shutil.which,
         run=run or default_run,
-        service=OpenClawService(home=home, state_dir=config_path.parent, platform=platform),
-        stamp=datetime.now().strftime("%Y%m%d-%H%M%S"),
+        service=OpenClawService(home=home, platform=platform),
         platform=platform,
     )
     snapshot = detect(
@@ -292,79 +290,69 @@ def planned_commands(setup: Setup, snapshot: Detection, plan) -> list[str]:
         lines.append(command_line_text(setup_commands.onboard_argv(openclaw_bin(setup))))
     lines.append("# " + t("the gateway service, only if it is not installed yet"))
     lines.append("openclaw gateway install")
-    lines.append(command_line_text(setup_commands.validate_argv(openclaw_bin(setup))))
+    lines.append(command_line_text(setup_commands.patch_argv(
+        openclaw_bin(setup), config_write.patch_path(plan.path), dry_run=True,
+    )))
+    lines.append(command_line_text(setup_commands.patch_argv(
+        openclaw_bin(setup), config_write.patch_path(plan.path),
+    )))
     return lines
 
 
-def transient_read_failure(result: RunResult) -> bool:
-    """Whether OpenClaw failed to *read* the file, not to accept it.
-
-    Its own wording is `read failed at <path>: ... SQLite read-only worker ...`:
-    the validator opens the state database through a worker process, and when
-    that worker cannot start the whole file is reported unreadable. Nothing has
-    been decided about the configuration in that case, so a retry is honest and
-    restoring the previous file would be wrong.
-    """
-    text = f"{result.stdout or ''}\n{result.stderr or ''}"
-    return "read failed at" in text and "SQLite read-only worker" in text
-
-
 def write_step(setup: Setup, plan) -> str:
-    """Step 4: the merge, the backup, the atomic write, and OpenClaw's verdict.
+    """Step 4: hand OpenClaw the patch, report its verdict, keep the token private.
 
     Returns `written`, `unchanged` or `failed`. The gateway is stopped for the
     whole write and restarted when the block exits, on the way out of an error
-    too: a half-written file must never be left behind, and a stopped gateway
-    must never stay stopped. It is started without waiting here, because step 6
-    is where the wait is shown to the person.
+    too: a stopped gateway must never stay stopped. It is started without waiting
+    here, because step 6 is where the wait is shown to the person.
+
+    Nothing is merged into the file here. The change is a patch document
+    (`setup_write.patch_document`), and `openclaw config patch` does the write:
+    it validates the whole result, keeps the previous file in a rotating backup
+    beside it, and publishes in one atomic step. A patch it refuses leaves the
+    file exactly as it was, so there is nothing to restore. The dry run before the
+    stop is the gate: a configuration OpenClaw would not take never costs the
+    person their running gateway.
     """
     document, generated = setup_write.with_token(setup_write.merged_document(plan.current, plan.config))
-    text = setup_write.render(document)
+    patch, replace_paths = setup_write.patch_document(plan.current, document)
     if plan.current_error:
-        setup.out(t("The file in force cannot be read ({error}); it is backed up before it is replaced.",
-                    error=plan.current_error))
-    if plan.current_error is None and plan.current == document:
+        setup.out(t("The configuration at {path} cannot be read ({error}), and OpenClaw refuses to patch a file "
+                    "it cannot parse. Run 'openclaw doctor --fix', then run the setup again.",
+                    path=setup.config_path, error=plan.current_error))
+        return "failed"
+    if not patch:
         setup.out(t("The configuration is already what the engine would write: nothing to write."))
         return "unchanged"
-    with setup.service.stopped(wait=False) as stop:
-        if not stop.get("ok", True):
-            setup.out(t("The gateway did not stop ({pids}); its file was left alone.",
-                        pids=stop.get("remaining_pids")))
+    openclaw = openclaw_bin(setup)
+    config_write.write_patch(setup.config_path, setup_write.render(patch))
+    try:
+        gate = config_write.dry_run(setup.run, openclaw, setup.config_path, setup.env, replace_paths)
+        if not gate.ok:
+            setup.out(t("OpenClaw would refuse this configuration, so nothing was written and the gateway "
+                        "was not stopped:"))
+            setup.out("    " + gate.detail.replace("\n", "\n    "))
             return "failed"
-        backup = setup_write.backup_file(setup.config_path, setup.stamp)
-        if backup is not None:
-            setup.out(t("The previous configuration is saved as {name}.", name=backup.name))
-        setup_write.write_document(setup.config_path, text)
-        setup.out(t("Configuration written to {path}.", path=setup.config_path))
-        if generated:
-            setup.out(t("The gateway token was generated for this machine and is not shown."))
-        result = setup.run(
-            setup_commands.validate_argv(openclaw_bin(setup)),
-            setup_commands.config_env(setup.env, setup.config_path),
-        )
-        if result.returncode != 0 and transient_read_failure(result):
-            # OpenClaw judges a file and, on the way, reads its own state
-            # database through a worker process. On a busy or just-stopped
-            # gateway that read fails on its own and reports the whole file as
-            # unreadable, which says nothing about the bytes this run wrote: one
-            # retry, and only for that, because restoring a good file over a
-            # broken reader would leave the machine on the old configuration.
-            setup.out(t("OpenClaw could not read the file it was given (its own state reader failed); "
-                        "asking once more."))
-            setup.service.sleeper(2.0)
-            result = setup.run(
-                setup_commands.validate_argv(openclaw_bin(setup)),
-                setup_commands.config_env(setup.env, setup.config_path),
-            )
-        if result.returncode == 0:
-            setup.out(t("OpenClaw accepts the configuration."))
+        with setup.service.stopped(wait=False) as stop:
+            if not stop.get("ok", True):
+                setup.out(t("The gateway did not stop ({pids}); its file was left alone.",
+                            pids=stop.get("remaining_pids")))
+                return "failed"
+            outcome = config_write.apply(setup.run, openclaw, setup.config_path, setup.env, replace_paths)
+            if not outcome.ok:
+                setup.out(t("OpenClaw refused the configuration and left the file as it was:"))
+                for line in outcome.detail.splitlines():
+                    setup.out("    " + line)
+                return "failed"
+            setup.out(t("Configuration written to {path}; the previous one is kept beside it as {backup}.",
+                        path=setup.config_path, backup=config_write.backup_path(setup.config_path).name))
+            if generated:
+                setup.out(t("The gateway token was generated for this machine and is not shown."))
             setup.out(t("The gateway starts again now, so it reads the new configuration."))
             return "written"
-        setup_write.restore_file(setup.config_path, backup)
-        setup.out(t("OpenClaw rejected the configuration (exit {code}): the previous file was put back.",
-                    code=result.returncode))
-        print_output(setup.out, result)
-        return "failed"
+    finally:
+        config_write.clear_patch(setup.config_path)
 
 
 def render_mcp_step(setup: Setup) -> bool:
@@ -497,10 +485,14 @@ def service_step(setup: Setup, restarted: bool) -> bool:
     """Step 6: a service that is installed, and a port that answers."""
     fix_state_permissions(setup)
     status = setup.service.status()
+    was_installed = bool(status.get("installed"))
     installed_now = False
-    if status.get("installed"):
+    if was_installed:
         setup.out(t("The gateway is already installed as a service ({mechanism}).",
                     mechanism=status.get("mechanism") or "?"))
+        from nexgen_core.openclaw.second_service import setup_step as second_service_step
+
+        second_service_step(setup.service, setup.out)
     else:
         result = setup.service.install()
         setup.out(t("Gateway service install: {state}", state=t("done") if result.get("ok") else t("failed")))
@@ -519,6 +511,9 @@ def service_step(setup: Setup, restarted: bool) -> bool:
         started = setup.service.start()
         for argv in started.get("commands") or []:
             setup.out("$ " + command_line_text(argv))
+        if not started.get("ok"):
+            setup.out(t("The gateway service did not start: {error}",
+                        error=started.get("error") or t("no answer from OpenClaw")))
     ready, elapsed = wait_for_port(setup.service, START_TIMEOUT_SECONDS, setup.out)
     if ready:
         setup.out(t("The gateway answers on 127.0.0.1:{port} after {seconds} seconds.",

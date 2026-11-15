@@ -229,7 +229,6 @@ def test_register_model_keys(tmp_path: Path) -> None:
         which=lambda cmd: "/bin/" + cmd,
         run=MagicMock(),
         service=MagicMock(),
-        stamp="test",
     )
 
     config = {

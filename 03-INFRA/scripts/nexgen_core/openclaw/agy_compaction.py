@@ -67,6 +67,19 @@ def patched(state_dir: Path, backend: str = LOCAL_AGY_BACKEND) -> bool:
         return False
 
 
+def reapply(state_dir: Path, backend: str = LOCAL_AGY_BACKEND) -> bool:
+    """Put the manual compaction back when a plugin update removed it, and say whether it did.
+
+    The hourly groom asks this before it decides. The marker lives in a file the
+    plugin's next release overwrites, `agent-sync` only aligns the OpenClaw release,
+    and until now only a person running `nexgen openclaw setup` brought it back:
+    between the two, every `agy` chat was silently skipped as unconfirmable.
+    """
+    if patched(state_dir, backend):
+        return False
+    return apply(state_dir, backend).state == plugin_patch.PATCHED
+
+
 def apply(state_dir: Path, backend: str = LOCAL_AGY_BACKEND, *, dry_run: bool = False) -> plugin_patch.Patch:
     """Add the manual compaction when it is absent, and say what happened.
 

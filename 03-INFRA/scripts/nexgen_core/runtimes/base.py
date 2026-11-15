@@ -26,6 +26,34 @@ GUARDRAIL_CORE_NAME = "nexgen-guardrail-core.mjs"
 GUARDRAIL_SIDECAR_NAME = "nexgen-guardrail.config.json"
 
 
+def sidecar_content(
+    existing: dict,
+    *,
+    body: Path,
+    audit_file: Path,
+    timeout: int,
+    strict: bool | None = None,
+    auto_allow: bool | None = None,
+) -> str:
+    """The JSON an adapter reads beside itself: which body, its deadline, and its two flags.
+
+    One definition for every adapter and for the native Claude Code plugin, whose copy of
+    the same adapter reads the same file: two spellings of this shape would diverge in
+    silence, and the sidecar is what decides whether a command is checked at all. A flag
+    that is not passed keeps the value the file already carries, because an adapter may
+    set it in a later step (OpenCode's mediated shell rule does).
+    """
+    return json.dumps(
+        {
+            "hooks": [{"file": str(body), "timeout": timeout}],
+            "strict": bool(existing.get("strict")) if strict is None else strict,
+            "autoAllow": bool(existing.get("autoAllow")) if auto_allow is None else auto_allow,
+            "auditFile": str(audit_file),
+        },
+        indent=2,
+    ) + "\n"
+
+
 class GuardrailError(NexgenError):
     """An anomaly that prevents writing safely: malformed user config, a
     path that escapes the permitted folder, an unexpected shape in a key
@@ -153,15 +181,14 @@ class Runtime(ABC):
         strict: bool | None,
         auto_allow: bool | None,
     ) -> str:
-        return json.dumps(
-            {
-                "hooks": [{"file": str(body), "timeout": timeout}],
-                "strict": bool(existing.get("strict")) if strict is None else strict,
-                "autoAllow": bool(existing.get("autoAllow")) if auto_allow is None else auto_allow,
-                "auditFile": str(self.guardrail_audit_file(home, self.name)),
-            },
-            indent=2,
-        ) + "\n"
+        return sidecar_content(
+            existing,
+            body=body,
+            audit_file=self.guardrail_audit_file(home, self.name),
+            timeout=timeout,
+            strict=strict,
+            auto_allow=auto_allow,
+        )
 
     def write_guardrail_sidecar(
         self,

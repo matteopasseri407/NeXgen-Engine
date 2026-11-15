@@ -26,6 +26,11 @@ The posture is not written either. It used to travel into the engine-owned
 `nexgen.config.json` beside the plugin, in the neutral vocabulary the private manifest speaks;
 the plugin still reads that key when a person sets it there, and otherwise behaves as
 `bypass`.
+
+The engine's switches have two homes for one release: `nexgen.config.json` beside the plugin,
+written here on every guard deposit, and `plugins.entries.nexgen.config`, which the setup writes
+through `conversation_grant.with_engine_plugin` because OpenClaw hands it to the plugin as
+`api.pluginConfig`. `plugin_switches` is the one derivation both read.
 """
 from __future__ import annotations
 
@@ -206,19 +211,11 @@ class OpenClawRuntime(Runtime):
         #    session Claude does not brief, which is exactly the divergence to avoid. The
         #    `engine` section is how `/quota` reaches this very interpreter without a shell.
         #    The `evidence` section names the local models whose answers are checked: derived
-        #    from the configuration in force, so a cloud model is never in it.
+        #    from the configuration in force, so a cloud model is never in it. `plugin_switches`
+        #    is the one derivation: the setup writes the same dict into
+        #    `plugins.entries.nexgen.config`, which is where the host hands it to the plugin.
         config_in_force, _ = read_config(openclaw_config(home))
-        state_dir = resolve_state_dir(home) / "nexgen"
-        changed |= self._write_plugin_config(
-            home,
-            briefing={"enabled": self._briefing_installed(home)},
-            checkpoint={
-                "enabled": self._checkpoint_installed(home),
-                "state_dir": str(state_dir),
-            },
-            engine=engine_deposit(),
-            evidence=evidence_section(config_in_force),
-        )
+        changed |= self._write_plugin_config(home, **self.plugin_switches(home, config_in_force))
 
         if not changed and not migrated:
             return None
@@ -270,6 +267,34 @@ class OpenClawRuntime(Runtime):
         both follow the same fact, the text being deposited beside the plugin.
         """
         return self._briefing_installed(home)
+
+    def plugin_switches(
+        self, home: Path, config: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """The switches the plugin obeys, derived once for its two homes.
+
+        OpenClaw hands `plugins.entries.nexgen.config` to the plugin as `api.pluginConfig`, and
+        `nexgen.config.json` beside the plugin is what this release still writes and reads: the
+        same dict feeds both, here and in `conversation_grant.with_engine_plugin`, so the setup
+        and a sync can never leave the plugin obeying two different sets of switches. The
+        `governor` section is not here: it is replaced whole from the policy on every sync and
+        stays in the file.
+
+        `config` is the configuration the file will hold, not the one being replaced: the evidence
+        list is derived from the models the proposal writes, so a second setup on the same machine
+        derives the same section and writes nothing. Given the old file it would name the models
+        of the machine before this run, and every run would move it once more.
+        """
+        briefing = self._briefing_installed(home)
+        return {
+            "briefing": {"enabled": briefing},
+            "checkpoint": {
+                "enabled": self._checkpoint_installed(home),
+                "state_dir": str(resolve_state_dir(home) / "nexgen"),
+            },
+            "engine": engine_deposit(),
+            "evidence": evidence_section(config),
+        }
 
     # ---- plugin deposit and its config ----------------------------------
 

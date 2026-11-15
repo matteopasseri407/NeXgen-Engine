@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from conftest import REAL_UL
 from nexgen_core.checks.guardrail_checks import check_openclaw_guardrail_plugin
+from nexgen_core.openclaw.doctor_runtime import check_switch_home
 from nexgen_core.paths import openclaw_config
 from nexgen_core.report import Severity
 from nexgen_core.runtimes import apply_all
@@ -181,6 +182,37 @@ def test_the_doctor_says_nothing_about_a_cli_that_is_not_installed(tmp_path, mon
     assert check_openclaw_guardrail_plugin(home) is None
 
 
+def test_the_doctor_says_the_switches_live_in_the_plugin_entry(tmp_path):
+    """`plugins.entries.nexgen.config` is what OpenClaw hands over as `api.pluginConfig`."""
+    config = {
+        **OPENCLAW_JSON,
+        "plugins": {
+            "allow": [PLUGIN_ID],
+            "entries": {PLUGIN_ID: {"enabled": True, "config": {"briefing": {"enabled": True}}}},
+        },
+    }
+    home = a_home(tmp_path, config)
+    OpenClawRuntime().install_guardrail(home, a_body(tmp_path), HOOKS)
+
+    outcome = check_switch_home(config, plugin_dir(home))
+
+    assert outcome is not None and outcome.severity is Severity.OK
+    assert "plugins.entries.nexgen.config" in outcome.message
+
+
+def test_the_doctor_warns_while_the_switches_are_only_in_the_old_file(tmp_path):
+    """A machine that synced but did not set up again keeps working, and is told why."""
+    config = {**OPENCLAW_JSON, "plugins": {"allow": [PLUGIN_ID], "entries": {PLUGIN_ID: {"enabled": True}}}}
+    home = a_home(tmp_path, config)
+    OpenClawRuntime().install_guardrail(home, a_body(tmp_path), HOOKS)
+
+    outcome = check_switch_home(config, plugin_dir(home))
+
+    assert outcome is not None and outcome.severity is Severity.WARN
+    assert "nexgen.config.json" in outcome.message
+    assert "nexgen openclaw setup" in (outcome.action or "")
+
+
 # ----------------------------------------------------------- the shipped files
 
 
@@ -191,7 +223,14 @@ def test_the_shipped_manifest_declares_a_startup_hook_plugin():
     assert package["openclaw"]["extensions"] == ["./index.mjs"]
     assert manifest["id"] == PLUGIN_ID
     assert manifest["activation"]["onStartup"] is True
-    assert manifest["configSchema"] == {"type": "object", "additionalProperties": False}
+    assert manifest["configSchema"]["type"] == "object"
+    assert manifest["configSchema"]["additionalProperties"] is False
+    # OpenClaw validates `plugins.entries.nexgen.config` against exactly this, so a switch the
+    # engine writes and the schema does not declare makes the whole plugin fail to load:
+    # `openclaw config patch --dry-run` answers "must not have additional properties".
+    assert set(manifest["configSchema"]["properties"]) == {
+        "briefing", "checkpoint", "engine", "evidence", "governor", "posture",
+    }
 
 
 # ------------------------------------------------------------- the plugin, run
@@ -231,13 +270,19 @@ def deploy(tmp_path: Path, body: str, **sidecar) -> Path:
     return target
 
 
-def fire(target: Path, tool_name: str = "exec", params: dict | None = None, ctx: dict | None = None) -> dict:
-    """Loads the plugin the way OpenClaw does, fires one tool call, returns what the hook answered."""
+def fire(target: Path, tool_name: str = "exec", params: dict | None = None, ctx: dict | None = None,
+         api_js: str = "{}") -> dict:
+    """Loads the plugin the way OpenClaw does, fires one tool call, returns what the hook answered.
+
+    `api_js` is the rest of the api object, as JavaScript: OpenClaw hands the plugin its own
+    `rootDir`, `resolvePath` and `pluginConfig`, and a fake api is how a test says which ones.
+    """
     driver = target / "driver.mjs"
     driver.write_text(
         f"import plugin from {json.dumps((target / 'index.mjs').as_uri())};\n"
+        'import { join } from "node:path";\n'
         "const handlers = [];\n"
-        "plugin.register({ on: (name, fn) => { handlers.push([name, fn]); } });\n"
+        f"plugin.register({{ on: (name, fn) => {{ handlers.push([name, fn]); }}, ...({api_js}) }});\n"
         "const [name, handler] = handlers[0];\n"
         f"const event = {json.dumps({'toolName': tool_name, 'params': params if params is not None else {'command': 'ls'}})};\n"
         f"const decision = await handler(event, {json.dumps(ctx or {'sessionId': 's1'})});\n"
@@ -475,3 +520,54 @@ def test_the_build_copy_reads_the_governor_state_the_engine_deposited(tmp_path):
     answer = fire_governor(build_copy(home), now=1000)
 
     assert answer == {"providerOverride": "openai", "modelOverride": "gpt-5"}
+
+
+# ------------------------------------------------------- the api the host hands over
+#
+# OpenClaw parses `plugins.entries.nexgen.config` and passes it to `register(api)` as
+# `api.pluginConfig`, and it says where it loaded the plugin from in `api.rootDir` /
+# `api.resolvePath` (openclaw 2026.11.2). These fire the plugin with those members
+# present, which is what the gateway does and what the bare `{ on }` driver never did.
+
+
+def test_the_host_config_carries_the_switches_when_the_old_file_is_gone(tmp_path):
+    """A setup deposits the plugin and writes no `nexgen.config.json`: the host's copy is enough."""
+    target = deploy(tmp_path, "allow.mjs")
+
+    decision = fire(target, api_js='{ pluginConfig: { posture: "ask" } }')["decision"]
+
+    assert "requireApproval" in decision
+
+
+def test_the_old_file_still_outranks_the_host_while_it_exists(tmp_path):
+    """`nexgen sync` rewrites the file between two setups, so the file is the fresher copy."""
+    target = deploy(tmp_path, "allow.mjs")
+    (target / "nexgen.config.json").write_text(json.dumps({"posture": "bypass"}), encoding="utf-8")
+
+    decision = fire(target, api_js='{ pluginConfig: { posture: "ask" } }')["decision"]
+
+    assert decision is None
+
+
+def test_the_sidecar_is_found_through_the_root_dir_the_host_reports(tmp_path):
+    """No ancestor holds `openclaw.json` here: only `api.resolvePath` can point at the deposit."""
+    deposit = tmp_path / "deposit"
+    deposit.mkdir()
+    body = deposit / "body.mjs"
+    body.write_text(BODIES["deny.mjs"], encoding="utf-8")
+    (deposit / "nexgen-guardrail.config.json").write_text(
+        json.dumps({"hooks": [{"file": str(body), "timeout": 5}]}), encoding="utf-8",
+    )
+    copy = tmp_path / "elsewhere" / PLUGIN_ID
+    copy.mkdir(parents=True)
+    for source in sorted(PLUGIN_SOURCE.iterdir()):
+        if source.is_file():
+            shutil.copy2(source, copy / source.name)
+    shutil.copy2(HOOKS / "nexgen-guardrail-core.mjs", copy / "nexgen-guardrail-core.mjs")
+    assert not (copy / "nexgen-guardrail.config.json").exists()
+    api_js = f'{{ rootDir: {json.dumps(str(deposit))}, resolvePath: (name) => join({json.dumps(str(deposit))}, name) }}'
+
+    decision = fire(copy, api_js=api_js)["decision"]
+
+    assert decision["block"] is True
+    assert "rm -rf is not allowed" in decision["blockReason"]

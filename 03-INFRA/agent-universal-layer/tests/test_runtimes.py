@@ -120,9 +120,23 @@ foo = "bar"
 '''
 
 
-def test_codex_no_guardrail_ever(tmp_path: Path):
+def test_codex_registers_the_guardrail_and_names_the_acceptance_the_person_owes(tmp_path: Path):
+    """Codex documents a `PreToolUse` hook with a per-hash review in `/hooks`.
+
+    The hook is written, and the engine says what has to be accepted instead of writing the trust
+    hash itself: that record is consent only a person can give, and a hook written and never
+    accepted is the silent gap this adapter used to avoid by writing nothing at all.
+    """
     home = tmp_path / "home"
-    assert CodexRuntime().install_guardrail(home, tmp_path / "x.mjs", tmp_path) is None
+    hooks_dir = _engine_root_with_real_hooks(tmp_path) / "agent-universal-layer" / "hooks"
+
+    action = CodexRuntime().install_guardrail(home, _policy_body(tmp_path), hooks_dir)
+
+    hooks = json.loads((home / ".codex" / "hooks.json").read_text(encoding="utf-8"))
+    assert hooks["hooks"]["PreToolUse"][0]["matcher"] == "Bash"
+    assert "/hooks" in action and "trust" in action
+    # Codex's own config.toml holds the hash a person accepts there: the engine never writes it.
+    assert not (home / ".codex" / "config.toml").exists()
 
 
 def test_codex_is_installed_regression_config_written_by_own_renderer(tmp_path: Path):

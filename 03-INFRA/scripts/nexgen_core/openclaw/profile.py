@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import detect_language
-from nexgen_core.openclaw import agy_backend, background, model_policy, observation, utility_model
+from nexgen_core.openclaw import agy_backend, background, model_policy, observation, prompt_budget, utility_model
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
 from nexgen_core.openclaw.acp import acp_block, acpx_entry, sviluppo_enabled
 from nexgen_core.openclaw.channel_bindings import missing_bindings
@@ -468,6 +468,7 @@ def build_config(
     if providers:
         config["models"] = {"providers": providers}
     _add_machine_rules(config, detected, agents, current, home, platform)
+    prompt_budget.apply(config, current)
     bindings = missing_bindings(current, config["agents"]["entries"])
     if bindings:
         config["bindings"] = bindings

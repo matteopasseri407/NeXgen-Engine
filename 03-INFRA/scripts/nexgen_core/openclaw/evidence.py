@@ -5,9 +5,10 @@ section back, and answer the doctor with a single sentence. The list of provider
 and nowhere else, for the same reason the cage is derived in one place: the plugin must never
 decide for itself what "local" means, and a cloud model must never be checked by accident.
 
-The switch is deposited, not hand-written. `nexgen.config.json` beside the plugin is the one file
-the engine owns that OpenClaw does not read at startup, so a change of models takes effect on the
-next call without touching `openclaw.json` under a running gateway.
+The switch is both deposited and configured. `plugins.entries.nexgen.config` is where OpenClaw
+reads it and hands it to the plugin as `api.pluginConfig`; `nexgen.config.json` beside the plugin
+is this release's second copy, written by every guard deposit so a machine that has not run the
+setup since the change keeps working, and read by the plugin until the file is retired.
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import t
+from nexgen_core.openclaw.config_file import plugin_entry
 from nexgen_core.openclaw.local_models import LOCAL_PROVIDERS
 from nexgen_core.report import CheckOutcome, Severity
 
@@ -100,12 +102,20 @@ def plugin_evidence(plugin_dir: Path) -> dict[str, Any] | None:
     return section if isinstance(section, dict) else None
 
 
-def _plugin_entry(config: dict[str, Any], plugin_id: str) -> dict[str, Any]:
-    """The engine plugin's entry in `plugins.entries`, or an empty one."""
-    plugins = config.get("plugins") if isinstance(config.get("plugins"), dict) else {}
-    entries = plugins.get("entries") if isinstance(plugins.get("entries"), dict) else {}
-    entry = entries.get(plugin_id)
-    return entry if isinstance(entry, dict) else {}
+def section_in_force(config: dict[str, Any], plugin_dir: Path) -> dict[str, Any] | None:
+    """The section the plugin obeys: the host's `plugins.entries.<id>.config`, else the file.
+
+    OpenClaw hands that entry to the plugin as `api.pluginConfig`, and the plugin prefers its own
+    file while the file exists, so the doctor reads the entry first only when there is no file to
+    read: what it says about this machine must be what the plugin will do with it.
+    """
+    from nexgen_core.runtimes.openclaw import PLUGIN_ID  # lazy: the adapter imports this module
+
+    handed = plugin_entry(config, PLUGIN_ID).get("config")
+    section = handed.get(SECTION) if isinstance(handed, dict) else None
+    if isinstance(section, dict) and not (plugin_dir / PLUGIN_CONFIG_NAME).is_file():
+        return section
+    return plugin_evidence(plugin_dir)
 
 
 def conversation_access(entry: dict[str, Any]) -> bool:
@@ -122,19 +132,20 @@ def conversation_access(entry: dict[str, Any]) -> bool:
 def check_evidence(config: dict[str, Any], config_path: Path) -> CheckOutcome:
     """One line: is the check on, and for which local models.
 
-    The section lives beside the plugin, not in `openclaw.json`: the engine writes it and the plugin
-    reads it on every call. A plugin that is not enabled has no check, and saying so is the truth
+    The section lives in `plugins.entries.nexgen.config`, which OpenClaw hands to the plugin as
+    `api.pluginConfig`, and still beside the plugin in `nexgen.config.json` for one release
+    (`section_in_force`). A plugin that is not enabled has no check, and saying so is the truth
     about that machine rather than a failure of it.
     """
     from nexgen_core.runtimes.openclaw import PLUGIN_ID  # lazy: the adapter imports this module
 
-    if _plugin_entry(config, PLUGIN_ID).get("enabled") is not True:
+    if plugin_entry(config, PLUGIN_ID).get("enabled") is not True:
         return CheckOutcome(
             id="openclaw.evidence",
             severity=Severity.OK,
             message=t("The engine plugin is not enabled here, so the evidence check is not installed."),
         )
-    section = plugin_evidence(config_path.parent / "extensions" / PLUGIN_ID)
+    section = section_in_force(config, config_path.parent / "extensions" / PLUGIN_ID)
     if section is None:
         return CheckOutcome(
             id="openclaw.evidence",
@@ -149,7 +160,7 @@ def check_evidence(config: dict[str, Any], config_path: Path) -> CheckOutcome:
             severity=Severity.OK,
             message=t("The evidence check is off: this machine names no local model whose answers it could check."),
         )
-    if not conversation_access(_plugin_entry(config, PLUGIN_ID)):
+    if not conversation_access(plugin_entry(config, PLUGIN_ID)):
         return CheckOutcome(
             id="openclaw.evidence",
             severity=Severity.WARN,

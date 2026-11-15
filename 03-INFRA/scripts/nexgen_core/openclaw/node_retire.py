@@ -25,21 +25,27 @@ rather than removed.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import t
+from nexgen_core.megaphone import OPENCLAW_COMMAND
+from nexgen_core.openclaw import config_write, node_cli, setup_write
 from nexgen_core.openclaw.browser_profile import plan_node_browser, shared_chrome_ready
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.node_cli import Run
 from nexgen_core.openclaw.node_transition import stop_local_gateway_safe
-from nexgen_core.openclaw.setup_write import backup_file, render, write_document
+from nexgen_core.openclaw_service import RunResult
 from nexgen_core.paths import openclaw_config, resolve_home
+
+#: `(argv, env) -> RunResult`: the executor `config_patch` calls, injectable for a test.
+PatchRun = Callable[[list[str], Mapping[str, str]], RunResult]
 
 #: The unit the local gateway left behind, and the drop-in directory beside it.
 GATEWAY_DROP_IN = "openclaw-gateway.service.d"
@@ -105,44 +111,43 @@ def archive_drop_in(
     return target
 
 
-def _strip_gateway_auth(document: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """The document without the gateway's own token: a node has its pairing token instead."""
+def _without_gateway_auth(document: dict[str, Any]) -> dict[str, Any] | None:
+    """The patch that takes the gateway's own token out, or None when it carries none.
+
+    `gateway.auth: null` is how a patch deletes a path: a node has its pairing
+    token instead, and a leftover local one makes it send that instead.
+    """
     gateway = document.get("gateway")
     if not isinstance(gateway, dict) or "auth" not in gateway:
-        return document, False
-    stripped = {key: value for key, value in gateway.items() if key != "auth"}
-    return {**document, "gateway": stripped}, True
+        return None
+    return {"auth": None}
 
 
-def _switch_channels_off(document: dict[str, Any]) -> tuple[dict[str, Any], tuple[str, ...]]:
-    """Every enabled channel off: a channel lives on one gateway at a time, the central one."""
+def _channels_off(document: dict[str, Any]) -> tuple[dict[str, Any], tuple[str, ...]]:
+    """The patch that switches every enabled channel off, and their names.
+
+    Merge semantics keep the rest of each channel's settings: only `enabled` is
+    said, so nothing else the person configured is rewritten.
+    """
     channels = document.get("channels")
     if not isinstance(channels, dict):
-        return document, ()
-    updated: dict[str, Any] = {}
-    disabled: list[str] = []
-    for name, entry in channels.items():
-        if isinstance(entry, dict) and entry.get("enabled") is True:
-            updated[name] = {**entry, "enabled": False}
-            disabled.append(str(name))
-        else:
-            updated[name] = entry
+        return {}, ()
+    disabled = [
+        str(name) for name, entry in channels.items()
+        if isinstance(entry, dict) and entry.get("enabled") is True
+    ]
     if not disabled:
-        return document, ()
-    return {**document, "channels": updated}, tuple(disabled)
+        return {}, ()
+    return {name: {"enabled": False} for name in disabled}, tuple(disabled)
 
 
-def _enable_session_hosting(document: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """`nodeHost.workerRuns.enabled: true`, because a node that hosts no sessions is half a node."""
+def _session_hosting(document: dict[str, Any]) -> dict[str, Any] | None:
+    """The patch that lets this node host sessions, or None when it already can."""
     node_host = document.get("nodeHost")
-    node_host = dict(node_host) if isinstance(node_host, dict) else {}
-    worker_runs = node_host.get("workerRuns")
-    worker_runs = dict(worker_runs) if isinstance(worker_runs, dict) else {}
-    if worker_runs.get("enabled") is True:
-        return document, False
-    worker_runs["enabled"] = True
-    node_host["workerRuns"] = worker_runs
-    return {**document, "nodeHost": node_host}, True
+    worker_runs = node_host.get("workerRuns") if isinstance(node_host, dict) else None
+    if isinstance(worker_runs, dict) and worker_runs.get("enabled") is True:
+        return None
+    return {"workerRuns": {"enabled": True}}
 
 
 def _home_of(path: Path, home: Path | None) -> Path:
@@ -156,40 +161,77 @@ def _say(notes: tuple[str, ...], out: Callable[[str], None]) -> None:
         out(note)
 
 
+def _default_run(argv: list[str], env: Mapping[str, str]) -> RunResult:
+    """Run one OpenClaw command on this platform, with the node's own deadline."""
+    return node_cli.run_command(argv, config_write.PATCH_TIMEOUT_S, env=env)
+
+
 def prepare_config(
     path: Path,
     out: Callable[[str], None] = print,
     *,
     home: Path | None = None,
+    run: PatchRun | None = None,
 ) -> ConfigChange:
-    """Put the configuration in node state with one read, one backup and one write."""
+    """Put the configuration in node state with one read and one validated patch.
+
+    The node's state is expressed as a patch and handed to `openclaw config patch`:
+    it merges the change into the file, validates the result, keeps the previous
+    file as `openclaw.json.bak` beside it and refuses without touching anything
+    when it does not like the result. Deleting `gateway.auth` is `null` at that
+    path; `browser` is replaced whole, because the profile this node needs is the
+    section the engine decided, not a merge into one it does not own.
+    """
     document, reason = read_config(path)
     if document is None:
         if reason:
             out(t("Configuration not readable, left as it is: {reason}", reason=reason))
         return ConfigChange(False, (), False, None)
 
-    document, auth_removed = _strip_gateway_auth(document)
-    document, disabled = _switch_channels_off(document)
-    document, hosting = _enable_session_hosting(document)
+    auth = _without_gateway_auth(document)
+    channels, disabled = _channels_off(document)
+    hosting = _session_hosting(document)
     browser = plan_node_browser(document, ready=shared_chrome_ready(_home_of(path, home)))
+    patch: dict[str, Any] = {}
+    if auth is not None:
+        patch["gateway"] = auth
+    if channels:
+        patch["channels"] = channels
+    if hosting is not None:
+        patch["nodeHost"] = hosting
     if browser.section is not None:
-        document = {**document, "browser": browser.section}
-    if not (auth_removed or disabled or hosting or browser.section is not None):
+        patch["browser"] = browser.section
+    if not patch:
         _say(browser.notes, out)
         return ConfigChange(False, (), False, None)
 
-    backup = backup_file(path, _stamp())
-    write_document(path, render(document))
-    if auth_removed:
+    verdict = _apply_patch(path, patch, run)
+    if not verdict.ok:
+        out(t("OpenClaw refused the node configuration and left the file as it was: {reason}",
+              reason=verdict.detail))
+        return ConfigChange(False, (), False, None)
+    if auth is not None:
         out(t("Gateway auth block removed from {path}: the node uses its pairing token.", path=path))
     if disabled:
         out(t("Channels switched off on this PC, they answer from the central gateway: {names}.",
               names=", ".join(disabled)))
-    if hosting:
+    if hosting is not None:
         out(t("Session hosting enabled: this node can run agent sessions, not only commands."))
     _say(browser.notes, out)
-    return ConfigChange(auth_removed, disabled, hosting, backup, browser.section is not None)
+    return ConfigChange(
+        auth is not None, disabled, hosting is not None, config_write.backup_path(path),
+        browser.section is not None,
+    )
+
+
+def _apply_patch(path: Path, patch: dict[str, Any], run: PatchRun | None) -> config_write.Verdict:
+    """Write the patch beside the file, have OpenClaw apply it, and clean up after."""
+    replace_paths = ["browser"] if "browser" in patch else []
+    config_write.write_patch(path, setup_write.render(patch))
+    try:
+        return config_write.apply(run or _default_run, OPENCLAW_COMMAND, path, os.environ, replace_paths)
+    finally:
+        config_write.clear_patch(path)
 
 
 def retire_local_gateway(
@@ -242,16 +284,16 @@ def describe_config_change(path: Path, home: Path | None = None) -> list[str]:
     document, _reason = read_config(path)
     if document is None:
         return []
-    document_after, auth_removed = _strip_gateway_auth(document)
-    _document_after, disabled = _switch_channels_off(document_after)
-    _document_after, hosting = _enable_session_hosting(document_after)
-    browser = plan_node_browser(document_after, ready=shared_chrome_ready(_home_of(path, home)))
+    auth = _without_gateway_auth(document)
+    _channels, disabled = _channels_off(document)
+    hosting = _session_hosting(document)
+    browser = plan_node_browser(document, ready=shared_chrome_ready(_home_of(path, home)))
     lines: list[str] = []
-    if auth_removed:
+    if auth is not None:
         lines.append(t("- gateway auth block: removed, the node uses its pairing token"))
     if disabled:
         lines.append(t("- channels switched off here: {names}", names=", ".join(disabled)))
-    if hosting:
+    if hosting is not None:
         lines.append(t("- session hosting: switched on, so this node can run agent sessions"))
     lines.extend(f"- {note}" for note in browser.notes)
     return lines
