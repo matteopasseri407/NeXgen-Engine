@@ -245,10 +245,16 @@ def _lane_line(result: LaneResult) -> str:
     if result.verdict in (NOT_APPLICABLE, SKIPPED):
         named = f"{result.agent} " if result.agent else ""
         return f"SKIP  {result.lane:<24} {named}{result.reason}"
-    overhead = result.overhead or 0
-    return (f"{result.verdict.upper():<5} {result.lane:<24} {result.agent} "
-            f"native {result.native_input:,}  openclaw {result.openclaw_input:,}  "
-            f"overhead {overhead:+,}")
+    line = (f"{result.verdict.upper():<5} {result.lane:<24} {result.agent} "
+            f"native {_tokens(result.native_input)}  openclaw {_tokens(result.openclaw_input)}")
+    if result.overhead is not None:
+        line += f"  overhead {result.overhead:+,}"
+    return f"{line}  {result.reason}" if result.reason else line
+
+
+def _tokens(count: int | None) -> str:
+    """One side's total, or a dash for the side that answered with no number."""
+    return "-" if count is None else f"{count:,}"
 
 
 def as_dict(record: Record, kept: Kept) -> dict[str, Any]:

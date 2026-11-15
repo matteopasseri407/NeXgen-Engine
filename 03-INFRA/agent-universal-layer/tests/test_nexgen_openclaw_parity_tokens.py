@@ -571,3 +571,34 @@ def test_the_json_output_carries_the_same_rows_and_the_record_path(tmp_path, cap
     assert answer["record_destination"] == "vault"
     assert answer["record_path"] == str(tmp_path / "vault" / "99-INDEX" / "OPENCLAW-PARITY.json")
     assert answer["overhead_limit"] == 10000
+
+
+# ------------------------------------------------- what the gateway taught us
+
+
+def test_claude_runs_natively_on_the_login_openclaw_gives_it_never_on_an_api_key():
+    environ = {"PATH": "/usr/bin", "HOME": "/home/user", "ANTHROPIC_API_KEY": "placeholder",
+               "ANTHROPIC_BASE_URL": "http://127.0.0.1:1", "CLAUDE_CODE_OAUTH_TOKEN": "placeholder"}
+
+    child = probe.child_env(("claude", "-p", "x"), environ)
+
+    assert child == {"PATH": "/usr/bin", "HOME": "/home/user"}
+
+
+def test_the_other_commands_keep_the_environment_they_were_given():
+    environ = {"PATH": "/usr/bin", "ANTHROPIC_API_KEY": "placeholder"}
+
+    assert probe.child_env(("agy", "-p", "x"), environ) == environ
+    assert probe.child_env(("openclaw", "agent"), environ) == environ
+
+
+def test_a_lane_whose_native_side_failed_prints_without_a_number(tmp_path):
+    broken = parity_record.LaneResult(probe.CLAUDE, "capo", CLAUDE_MODEL, None, 66784, parity_record.FAIL,
+                                      "The claude-cli command exited with code 1.")
+    record = parity_record.Record(measured_at="2026-11-15T22:15:00+00:00", lanes=(broken,))
+
+    printed = parity.render(record, parity_record.Kept(parity_record.STATE, tmp_path / "r.json"))
+
+    assert "FAIL  claude-cli" in printed
+    assert "native -" in printed
+    assert "exited with code 1" in printed

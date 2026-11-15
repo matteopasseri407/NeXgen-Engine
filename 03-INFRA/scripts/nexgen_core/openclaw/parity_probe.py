@@ -23,8 +23,9 @@ prints its number somewhere in the first line.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,21 @@ LANES: tuple[str, ...] = (AGY, CLAUDE, CODEX)
 
 #: The executable each lane runs natively.
 BINARIES: dict[str, str] = {AGY: "agy", CLAUDE: "claude", CODEX: "codex"}
+
+#: What OpenClaw removes before it starts `claude` (`CLAUDE_CLI_CLEAR_ENV` in OpenClaw
+#: 2026.11.2): every variable that chooses the account, the endpoint or the token.
+#: The native call has to run on the same login the agent's turn runs on, the flat
+#: plan's, or the two sides bill different accounts; on the gateway an
+#: `ANTHROPIC_API_KEY` sits in the service's environment, and a native `claude` that
+#: inherited it would call the paid API instead of the plan.
+CLAUDE_CLEARED_ENV: frozenset[str] = frozenset({
+    "ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY_OLD", "ANTHROPIC_API_TOKEN", "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS", "ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_UNIX_SOCKET",
+    "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR", "CLAUDE_CODE_OAUTH_REFRESH_TOKEN", "CLAUDE_CODE_OAUTH_SCOPES",
+    "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_VERTEX",
+})
+
 
 #: The words a run that produced no answer carries instead of an exit code.
 MISSING = "missing"
@@ -85,6 +101,18 @@ class Ran:
 Runner = Callable[[Sequence[str], Path, float], Ran]
 
 
+def child_env(argv: Sequence[str], environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The environment one probe command starts with: this one's, minus what OpenClaw clears.
+
+    Only `claude` is narrowed, by `CLAUDE_CLEARED_ENV`: the other harnesses read their
+    login from their own files, and `openclaw agent` must see what the gateway sees.
+    """
+    source = dict(os.environ if environ is None else environ)
+    if argv and Path(str(argv[0])).stem.lower() == BINARIES[CLAUDE]:
+        return {key: value for key, value in source.items() if key not in CLAUDE_CLEARED_ENV}
+    return source
+
+
 def default_runner(argv: Sequence[str], cwd: Path, timeout: float) -> Ran:
     """Run one probe command, windowless, with a deadline and no inherited stdin.
 
@@ -102,7 +130,7 @@ def default_runner(argv: Sequence[str], cwd: Path, timeout: float) -> Ran:
         proc = subprocess.Popen(
             processes.windows_command_argv(list(argv)), stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8",
-            errors="replace", cwd=str(cwd), **processes.no_window_kwargs(),
+            errors="replace", cwd=str(cwd), env=child_env(argv), **processes.no_window_kwargs(),
         )
     except (OSError, processes.ShimEntryError):  # nexgen: allow reason="a binary that cannot be started is the missing one as far as a probe is concerned, and the lane reports it in one line"
         return Ran(tuple(argv), error=MISSING, detail=str(argv[0]))
