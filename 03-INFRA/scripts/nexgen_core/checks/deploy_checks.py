@@ -46,9 +46,12 @@ def check_deploy_alignment(
             action=t("Nothing to do if the server is meant to be down. Otherwise check that the stack runs and the tunnel is open."),
         )
     if state.deployed is None:
+        # An image built before images carried their commit: every server that updates
+        # to this release from an older updater has one, and that updater does not
+        # rebuild it. A failure here rolled the whole update back; it is a step to take.
         return CheckOutcome(
             id=CHECK_ID,
-            severity=Severity.BROKEN,
+            severity=Severity.WARN,
             message=t("The deployed vault-mcp does not say which engine commit it was built from, so this installation "
                       "cannot prove the server half is current."),
             action=t("On the server run '{command}': it rebuilds the service and stamps the commit it built.",

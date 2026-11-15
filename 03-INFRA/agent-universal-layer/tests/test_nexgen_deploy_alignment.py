@@ -170,14 +170,16 @@ def test_a_server_built_from_another_commit_is_a_failure_with_one_command(tmp_pa
     assert "nexgen deploy vault-mcp" in (outcome.action or "")
 
 
-def test_a_server_that_does_not_say_its_commit_is_a_failure_with_the_same_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_a_server_that_does_not_say_its_commit_is_a_warning_with_the_same_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """An image older than the commit stamp is what every server has after updating from 2.29:
+    as a failure it made the final doctor of that update fail, and the update rolled back."""
     _as_server(monkeypatch)
     state = alignment.Alignment(engine="abc123456", pin=None, deployed=None, answered=True)
 
     outcome = _outcome(tmp_path, monkeypatch, state=state)
 
     assert outcome is not None
-    assert outcome.severity == Severity.BROKEN
+    assert outcome.severity == Severity.WARN
     assert "nexgen deploy vault-mcp" in (outcome.action or "")
 
 
