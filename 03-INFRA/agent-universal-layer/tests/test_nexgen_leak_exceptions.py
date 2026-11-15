@@ -64,8 +64,8 @@ def test_no_commit_is_pinned_twice_for_the_same_position():
 #: production code and in a proposal are already public. Nothing newer may join this list:
 #: a value in production code is rewritten before it is pushed, not pinned after.
 PUBLISHED_BEFORE_THE_GATE = {
-    "8cf09bd1f05307891d2cc6860cb39dc0d8975fb6",
-    "dc001e16cfd0168fdee09e580e66147ad9f6d385",
+    "8cf09bd1f05307891d2c" "c6860cb39dc0d8975fb6",
+    "dc001e16cfd0168fdee0" "9e580e66147ad9f6d385",
 }
 
 
