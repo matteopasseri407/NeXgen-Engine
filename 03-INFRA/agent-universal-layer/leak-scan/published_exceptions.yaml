@@ -92,3 +92,81 @@ exceptions:
     kind: pattern:h5
     match: "71…50 (7 chars)"
     reason: a token count used as a test value for the stale counter line, not an identifier; the next commit uses a shorter number
+  - rev: "8cf09bd1f05307891d2cc6860cb39dc0d8975fb6"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_openclaw_context_budget.py
+    line: 168
+    kind: pattern:h1
+    match: "/h…te (11 chars)"
+    reason: an example home folder path in a test, not a secret, published on developer 2026-11-15
+  - rev: "8cf09bd1f05307891d2cc6860cb39dc0d8975fb6"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_openclaw_context_cap.py
+    line: 57
+    kind: pattern:h5
+    match: "10…00 (7 chars)"
+    reason: a plain number (a one-million-token window, four MiB, a tolerance), not an identifier, published on developer 2026-11-15
+  - rev: "8cf09bd1f05307891d2cc6860cb39dc0d8975fb6"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_openclaw_context_cap.py
+    line: 64
+    kind: pattern:h5
+    match: "10…00 (7 chars)"
+    reason: a plain number (a one-million-token window, four MiB, a tolerance), not an identifier, published on developer 2026-11-15
+  - rev: "8cf09bd1f05307891d2cc6860cb39dc0d8975fb6"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_openclaw_turn_budget.py
+    line: 171
+    kind: pattern:h1
+    match: "/h…aw (14 chars)"
+    reason: an example home folder path in a test, not a secret, published on developer 2026-11-15
+  - rev: "8cf09bd1f05307891d2cc6860cb39dc0d8975fb6"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_openclaw_turn_budget.py
+    line: 175
+    kind: pattern:h1
+    match: "/h…te (11 chars)"
+    reason: an example home folder path in a test, not a secret, published on developer 2026-11-15
+  - rev: "8cf09bd1f05307891d2cc6860cb39dc0d8975fb6"
+    path: 03-INFRA/scripts/nexgen_core/openclaw/context_budget.py
+    line: 44
+    kind: pattern:h5
+    match: "00…04 (7 chars)"
+    reason: a plain number (a one-million-token window, four MiB, a tolerance), not an identifier, published on developer 2026-11-15
+  - rev: "8cf09bd1f05307891d2cc6860cb39dc0d8975fb6"
+    path: docs/proposals/daru-burn.md
+    line: 329
+    kind: pattern:h5
+    match: "10…00 (7 chars)"
+    reason: a plain number (a one-million-token window, four MiB, a tolerance), not an identifier, published on developer 2026-11-15
+  - rev: "dc001e16cfd0168fdee09e580e66147ad9f6d385"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_guardrail_adapters.py
+    line: 89
+    kind: pattern:h2
+    match: "C:…ce (14 chars)"
+    reason: a made-up Windows user folder in a guardrail test, published on developer 2026-11-15
+  - rev: "dc001e16cfd0168fdee09e580e66147ad9f6d385"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_instruction_limits.py
+    line: 195
+    kind: pattern:h5
+    match: "41…05 (7 chars)"
+    reason: a plain number (a one-million-token window, four MiB, a tolerance), not an identifier, published on developer 2026-11-15
+  - rev: "dc001e16cfd0168fdee09e580e66147ad9f6d385"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_instruction_limits.py
+    line: 195
+    kind: pattern:h5
+    match: "41…04 (7 chars)"
+    reason: a plain number (a one-million-token window, four MiB, a tolerance), not an identifier, published on developer 2026-11-15
+  - rev: "dc001e16cfd0168fdee09e580e66147ad9f6d385"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_instruction_limits.py
+    line: 206
+    kind: pattern:h5
+    match: "41…05 (7 chars)"
+    reason: a plain number (a one-million-token window, four MiB, a tolerance), not an identifier, published on developer 2026-11-15
+  - rev: "dc001e16cfd0168fdee09e580e66147ad9f6d385"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_instruction_limits.py
+    line: 206
+    kind: pattern:h5
+    match: "41…04 (7 chars)"
+    reason: a plain number (a one-million-token window, four MiB, a tolerance), not an identifier, published on developer 2026-11-15
+  - rev: "dc001e16cfd0168fdee09e580e66147ad9f6d385"
+    path: 03-INFRA/scripts/nexgen_core/checks/instruction_limits_checks.py
+    line: 84
+    kind: pattern:h5
+    match: "41…04 (7 chars)"
+    reason: a plain number (a one-million-token window, four MiB, a tolerance), not an identifier, published on developer 2026-11-15

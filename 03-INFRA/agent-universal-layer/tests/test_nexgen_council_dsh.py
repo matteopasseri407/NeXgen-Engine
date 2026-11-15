@@ -207,12 +207,16 @@ def test_a_completed_turn_with_no_text_is_an_empty_response():
     assert error.value.kind == "empty_response"
 
 
-def test_the_launcher_is_found_on_path_or_in_the_windows_install(monkeypatch, tmp_path):
+def test_the_launcher_is_found_on_path(monkeypatch):
     monkeypatch.setattr(seat_dsh.shutil, "which", lambda name: r"C:\npm\dsh.cmd")
     assert seat_dsh.dsh_executable() == r"C:\npm\dsh.cmd"
 
+
+# `os.name` is the process-wide module: faking "nt" on Linux makes pathlib build a WindowsPath
+# for every later path in the worker, and pytest itself crashes. The install road is Windows-only.
+@pytest.mark.skipif(seat_dsh.os.name != "nt", reason="the per-user install folder exists only on Windows")
+def test_the_launcher_is_found_in_the_windows_install(monkeypatch, tmp_path):
     monkeypatch.setattr(seat_dsh.shutil, "which", lambda name: None)
-    monkeypatch.setattr(seat_dsh.os, "name", "nt")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     assert seat_dsh.dsh_executable() is None
     installed = tmp_path / seat_dsh.WINDOWS_LAUNCHER
