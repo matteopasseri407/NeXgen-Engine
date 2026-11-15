@@ -135,6 +135,12 @@ def _missing() -> CheckOutcome:
     )
 
 
+def _registered_within_its_window(job: Mapping[str, Any], now_ms: float) -> bool:
+    """Whether the scheduler created the job less than one promised window ago."""
+    created = job.get("createdAtMs")
+    return isinstance(created, (int, float)) and 0 <= now_ms - float(created) <= STALE_SECONDS * 1000
+
+
 def _stopped(job: Mapping[str, Any], now_ms: float) -> CheckOutcome | None:
     """The job as the scheduler holds it, or None while it is serving the chats as declared.
 
@@ -155,6 +161,10 @@ def _stopped(job: Mapping[str, Any], now_ms: float) -> CheckOutcome | None:
             action=t("Run 'openclaw automations enable {job}' or 'nexgen openclaw setup'.", job=job_id(job)),
         )
     last_ms = _last_run_ms(job)
+    if last_ms is None and _registered_within_its_window(job, now_ms):
+        # A job registered by an install a few minutes ago has not had its first hour
+        # yet: that is the cadence it promises, not a guard that stopped serving.
+        return None
     if last_ms is None:
         return CheckOutcome(
             id=CHECK_ID,

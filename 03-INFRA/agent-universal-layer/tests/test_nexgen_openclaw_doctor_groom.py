@@ -296,3 +296,23 @@ def test_a_job_that_carries_only_the_iso_date_is_still_dated(tmp_path: Path):
 
     assert outcome.severity == Severity.OK
     assert outcome.message == "Last run 1h ago, 0 chats waiting."
+
+
+def test_a_job_an_install_just_registered_is_not_a_failure_before_its_first_hour(tmp_path: Path):
+    """A fresh install's doctor ran minutes after setup and failed the guard nobody had let run yet."""
+    job = guard_job(createdAtMs=NOW - 10 * 60 * 1000)
+    del job["lastRunAtMs"]
+
+    outcome = check_groom([job], tmp_path, NOW)
+
+    assert outcome is None or outcome.severity != Severity.BROKEN
+
+
+def test_a_job_registered_long_ago_that_never_ran_is_still_a_failure(tmp_path: Path):
+    job = guard_job(createdAtMs=NOW - 5 * HOUR_MS)
+    del job["lastRunAtMs"]
+
+    outcome = check_groom([job], tmp_path, NOW)
+
+    assert outcome.severity == Severity.BROKEN
+    assert "never finished a run" in outcome.message
