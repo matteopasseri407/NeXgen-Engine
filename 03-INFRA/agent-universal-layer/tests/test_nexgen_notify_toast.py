@@ -129,6 +129,11 @@ def test_a_click_opens_the_report_and_nothing_else(monkeypatch, tmp_path):
 
     empty = tmp_path / "senza-launcher"
     empty.mkdir()
+    system_root = tmp_path / "Windows"
+    powershell = system_root / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    powershell.parent.mkdir(parents=True)
+    powershell.write_text("", encoding="utf-8")
+    monkeypatch.setenv("SystemRoot", str(system_root))
     target, arguments = windows_toast._shortcut_target(empty)
     assert target.lower().endswith("powershell.exe")
     assert arguments == "-NoProfile -Command nexgen doctor"
