@@ -367,13 +367,30 @@ MESSAGES: dict[str, str] = {
     "The {count} agent(s) that read their connectors from their own CLI keep every connector off the loopback server, and that CLI's configuration carries them.": "I {count} agenti che leggono i connettori dalla propria CLI li tengono tutti fuori dal server di loopback, e la configurazione di quella CLI li porta.",
     "Model providers covered: {providers}.": "Provider di modelli coperti: {providers}.",
     "first prompt is within context budget": "il primo prompt rispetta il budget di contesto",
-    "first prompt context budget: not measured (agent does not run on Claude Code)": "budget di contesto del primo prompt: non misurato (l'agente non gira su Claude Code)",
+    "first prompt context budget: not measured ({reason})": "budget di contesto del primo prompt: non misurato ({reason})",
+    "no transcript for this turn": "nessuna trascrizione per questo turno",
+    "agent {agent} does not run on Claude Code": "l'agente {agent} non gira su Claude Code",
+    "first prompt is over the context budget, which is not a verdict on the release":
+        "il primo prompt supera il budget di contesto, il che non è un verdetto sul rilascio",
     "first prompt context budget: not measured (no tokens recorded)": "budget di contesto del primo prompt: non misurato (nessun token registrato)",
     "No OpenClaw session transcript measured in the look-back window.": "Nessuna trascrizione di sessione OpenClaw misurata nella finestra di osservazione.",
     "agy is not measured in tokens; no Claude Code or Codex transcript from OpenClaw found.": "agy non è misurato in token; nessuna trascrizione Claude Code o Codex da OpenClaw trovata.",
     "OpenClaw session in '{slug}' started over context budget: {tokens:,} tokens (budget: {budget:,}).": "La sessione OpenClaw in '{slug}' è partita oltre il budget di contesto: {tokens:,} token (budget: {budget:,}).",
     "Run 'nexgen openclaw setup', then 'nexgen openclaw doctor'.": "Lancia 'nexgen openclaw setup', poi 'nexgen openclaw doctor'.",
     "First prompt context budget OK (largest seen: {tokens:,} tokens, budget: {budget:,}).": "Budget di contesto del primo prompt OK (massimo osservato: {tokens:,} token, budget: {budget:,}).",
+    "Agent '{agent}' spent {tokens:,} tokens in one turn over the per-turn budget ({budget:,}): {calls} model calls in session {session}.": "L'agente '{agent}' ha speso {tokens:,} token in un solo turno, oltre il budget per turno ({budget:,}): {calls} chiamate al modello nella sessione {session}.",
+    "Lower the cost of one call before the next turn (see docs/proposals/daru-burn.md): shrink the loopback tool catalogue with a tools.byProvider deny, cap contextTokens, or move this agent to a harness lane so the turn carries its own context.": "Abbassa il costo di una chiamata prima del turno successivo (vedi docs/proposals/daru-burn.md): riduci il catalogo di tool del loopback con un deny in tools.byProvider, metti un tetto a contextTokens, oppure sposta questo agente su una corsia harness così il turno porta il proprio contesto.",
+    "Per-turn token budget OK (heaviest turn: {tokens:,} tokens in {calls} model calls, agent '{agent}', budget: {budget:,}).": "Budget di token per turno OK (turno più pesante: {tokens:,} token in {calls} chiamate al modello, agente '{agent}', budget: {budget:,}).",
+    "These agents answer through a provider, so every model call pays OpenClaw's own prompt on that plan: {names}. Lanes: {lanes}.": "Questi agenti rispondono tramite un provider, quindi ogni chiamata al modello paga il prompt di OpenClaw su quel piano: {names}. Corsie: {lanes}.",
+    "Give the agent that does the work its own harness in the squad (`harness: claude`, `codex` or `opencode`), or leave it knowingly on the provider lane with `harness: none`. The three lanes are in docs/squad.md.": "Dai all'agente che fa il lavoro il suo harness nella squad (`harness: claude`, `codex` o `opencode`), oppure lascialo consapevolmente sulla corsia provider con `harness: none`. Le tre corsie sono in docs/squad.md.",
+    "Agent lanes: {lanes}.": "Corsie degli agenti: {lanes}.",
+    "These agents declare an ACP runtime but no ACP binding routes a conversation to them, so a direct chat answers with the default model instead of the harness: {names}.": "Questi agenti dichiarano un runtime ACP ma nessun binding ACP porta loro una conversazione, quindi una chat diretta risponde con il modello predefinito invece che con l'harness: {names}.",
+    "Declare the harness in the squad and run 'nexgen openclaw setup': it writes the runtime block and the binding together.": "Dichiara l'harness nella squad e lancia 'nexgen openclaw setup': scrive insieme il blocco runtime e il binding.",
+    "Every ACP runtime has its binding: {names}.": "Ogni runtime ACP ha il suo binding: {names}.",
+    "Agent {agent}: `harness: {harness}` is not claude, codex, opencode, agy or none, so the setup wrote nothing for it.": "Agente {agent}: `harness: {harness}` non è claude, codex, opencode, agy o none, quindi il setup non ha scritto nulla per lui.",
+    "Agent {agent}: harness {harness} is not installed on this machine, so the setup wrote nothing for it.": "Agente {agent}: l'harness {harness} non è installato su questa macchina, quindi il setup non ha scritto nulla per lui.",
+    "Agent {agent}: no channel binding routes a conversation to it, so the setup wrote no harness lane; add a `bindings` entry naming that agent in squad.yaml.": "Agente {agent}: nessun binding di canale gli porta una conversazione, quindi il setup non ha scritto la corsia harness; aggiungi in squad.yaml una voce `bindings` che nomini quell'agente.",
+    "Agent {agent}: it has no workspace folder for the harness to run in, so the setup wrote nothing for it.": "Agente {agent}: non ha una cartella di lavoro in cui far girare l'harness, quindi il setup non ha scritto nulla per lui.",
     "Took {key} out of {path}: no agent reads it, and the apps cannot update the models while it is there. The value stays in the engine's secret store.": "Ho tolto {key} da {path}: nessun agente la legge, e finché resta le app non riescono ad aggiornare i modelli. Il valore resta nell'archivio segreti del motore.",
     "The apps that read the gateway (Android included) say they cannot update the models, because Anthropic's catalogue discovery fails: ANTHROPIC_API_KEY is in {paths}, and no agent reads it.": "Le app che leggono il gateway (Android compresa) dicono che non riescono ad aggiornare i modelli, perché la scoperta del catalogo Anthropic fallisce: ANTHROPIC_API_KEY è in {paths} e nessun agente la legge.",
     "Run 'nexgen openclaw setup', then 'nexgen openclaw restart', as the gateway's user: the setup rewrites {env} without the key, and the gateway reads that file when it starts. Never reinstall the service to refresh it: a reinstall erases the service's other environment variables.": "Lancia 'nexgen openclaw setup', poi 'nexgen openclaw restart', come utente del gateway: il setup riscrive {env} senza la chiave, e il gateway rilegge quel file quando parte. Non reinstallare il servizio per aggiornarlo: una reinstallazione cancella le altre variabili d'ambiente del servizio.",
@@ -407,6 +424,7 @@ MESSAGES: dict[str, str] = {
     "OpenClaw's guardrail plugin is deposited but not enabled ({reason}).": "Il plugin del guardrail di OpenClaw e' depositato ma non abilitato ({reason}).",
     "Run 'nexgen openclaw setup' to enable it with the gateway stopped: a plugins.* change on a running gateway breaks it. Until then OpenClaw's shell commands are not checked.": "Lancia 'nexgen openclaw setup' per abilitarlo con il gateway fermo: cambiare plugins.* a gateway acceso lo rompe. Fino ad allora i comandi shell di OpenClaw non vengono controllati.",
     "OpenClaw's guardrail plugin is deposited and enabled": "Il plugin del guardrail di OpenClaw e' depositato e abilitato",
+    "posture is no longer applied: each app's own setting decides": "la postura non viene piu' applicata: decide l'impostazione di ogni app",
     'it is in plugins.deny': 'sta in plugins.deny',
     'plugins.entries.{id}.enabled is false': 'plugins.entries.{id}.enabled e\' false',
     'plugins.allow names other plugins only': 'plugins.allow elenca solo altri plugin',
@@ -530,12 +548,12 @@ MESSAGES: dict[str, str] = {
     "The canonical instructions file does not exist ({canon}).": "Il file di istruzioni canonico non esiste ({canon}).",
     "Restore 03-INFRA/agent-universal-layer/instructions/AGENTS.md from the Vault.": "Ripristina 03-INFRA/agent-universal-layer/instructions/AGENTS.md dal Vault.",
     "Canonical instructions file AGENTS.md present": "File di istruzioni canonico AGENTS.md presente",
-    "~/CLAUDE.md must be a plain-text pointer file, not missing or a symlink ({claude_file}).": "~/CLAUDE.md deve essere un file di testo puntatore, non assente o un symlink ({claude_file}).",
+    "~/.claude/CLAUDE.md must be a plain-text pointer file, not missing or a symlink ({claude_file}).": "~/.claude/CLAUDE.md deve essere un file di testo puntatore, non assente o un symlink ({claude_file}).",
     "Write a short pointer referencing {canon} into {claude_file}.": "Scrivi in {claude_file} un breve puntatore che rimanda a {canon}.",
-    "Could not read ~/CLAUDE.md: {error}": "Non riesco a leggere ~/CLAUDE.md: {error}",
-    "~/CLAUDE.md correctly points to the canonical AGENTS.md file": "~/CLAUDE.md punta correttamente al file canonico AGENTS.md",
-    "~/CLAUDE.md does not reference the canonical AGENTS.md file's path (risk of a duplicate copy silently diverging).": "~/CLAUDE.md non fa riferimento al percorso del file canonico AGENTS.md (rischio di una copia duplicata che diverge in silenzio).",
-    "Replace ~/CLAUDE.md with a pointer referencing {canon}.": "Sostituisci ~/CLAUDE.md con un puntatore che rimanda a {canon}.",
+    "Could not read ~/.claude/CLAUDE.md: {error}": "Non riesco a leggere ~/.claude/CLAUDE.md: {error}",
+    "~/.claude/CLAUDE.md correctly points to the canonical AGENTS.md file": "~/.claude/CLAUDE.md punta correttamente al file canonico AGENTS.md",
+    "~/.claude/CLAUDE.md does not reference the canonical AGENTS.md file's path (risk of a duplicate copy silently diverging).": "~/.claude/CLAUDE.md non fa riferimento al percorso del file canonico AGENTS.md (rischio di una copia duplicata che diverge in silenzio).",
+    "Replace ~/.claude/CLAUDE.md with a pointer referencing {canon}.": "Sostituisci ~/.claude/CLAUDE.md con un puntatore che rimanda a {canon}.",
     "{cli_name} points to the canonical AGENTS.md file": "{cli_name} punta al file canonico AGENTS.md",
     "{cli_name}'s instructions ({pointer_file}) do not point to the canonical AGENTS.md file.": "Le istruzioni di {cli_name} ({pointer_file}) non puntano al file canonico AGENTS.md.",
     "Run 'agent-sync apply' to recreate the pointer.": "Esegui 'agent-sync apply' per ricreare il puntatore.",
@@ -558,6 +576,36 @@ MESSAGES: dict[str, str] = {
     "Load-on-demand pointer(s) in the bootstrap that don't resolve to an existing file: {pointers}.": "Puntatore/i load-on-demand nel bootstrap che non risolvono a un file esistente: {pointers}.",
     "Fix or remove the references to renamed/removed notes in AGENTS.md.": "Correggi o rimuovi i riferimenti alle note rinominate o rimosse in AGENTS.md.",
     "All {checked} load-on-demand pointers in the bootstrap resolve correctly": "Tutti i {checked} puntatori load-on-demand del bootstrap risolvono correttamente",
+
+    # --- checks/instruction_limits_checks.py: il limite di lettura di ogni harness ---
+    "Verified read limits: {limits}":
+        "Limiti di lettura verificati: {limits}",
+    "AGENTS.md fits every installed harness ({size}/{limit} bytes at the tightest limit, {name})":
+        "AGENTS.md sta dentro ogni harness installato ({size}/{limit} byte al limite più stretto, {name})",
+    "The AGENTS.md bootstrap is over the read limit of {readers}: everything past it is dropped silently, so those rules never reach that runtime.":
+        "Il bootstrap AGENTS.md supera il limite di lettura di {readers}: tutto quello che sta dopo viene scartato in silenzio, quindi quelle regole non arrivano mai a quel runtime.",
+    "The AGENTS.md bootstrap is within {percent}% of the read limit of {readers}.":
+        "Il bootstrap AGENTS.md è al {percent}% del limite di lettura di {readers}.",
+    "Move task-specific content into a load-on-demand note before the next addition.":
+        "Sposta il contenuto specifico di un compito in una nota caricata on-demand prima della prossima aggiunta.",
+
+    # --- guard_instructions.py: il puntatore di Claude e quello vecchio ---
+    'instruction pointer {path} left untouched: it cannot be read ({error})':
+        "Puntatore istruzioni {path} lasciato com'è: non si riesce a leggerlo ({error})",
+    'instruction pointer {path} could not be removed ({error})':
+        "Non sono riuscito a rimuovere il puntatore istruzioni {path} ({error})",
+    'Removed the old instruction pointer {path}: Claude reads ~/.claude/CLAUDE.md':
+        "Rimosso il vecchio puntatore istruzioni {path}: Claude legge ~/.claude/CLAUDE.md",
+    '{path} holds your own instructions: left untouched':
+        "{path} contiene tue istruzioni: lasciato com'è",
+    '{path} holds your own instructions: left untouched, Claude reads {target}':
+        "{path} contiene tue istruzioni: lasciato com'è, Claude legge {target}",
+    '{path} is a symlink: left untouched, Claude reads {target}':
+        "{path} è un symlink: lasciato com'è, Claude legge {target}",
+    '{path} kept: {target} is a symlink to it, removing it would leave the link dangling':
+        "{path} tenuto: {target} è un symlink che punta lì, rimuoverlo lascerebbe il link a vuoto",
+    '{path} still holds the old pointer: kept, because {target} holds your own instructions':
+        "{path} contiene ancora il vecchio puntatore: tenuto, perché {target} contiene tue istruzioni",
 
     # --- checks/mcp_checks.py ---
     "The MCP manifest '{manifest_path}' does not exist.": "Il manifest MCP '{manifest_path}' non esiste.",
@@ -2378,10 +2426,12 @@ MESSAGES: dict[str, str] = {
         "Nessun messaggio di Claude Code negli ultimi {days} giorni.",
     "{provider}: not measured":
         "{provider}: non misurato",
-    "{provider}: the {window} reading is {age} old, older than the window itself":
-        "{provider}: la lettura della finestra {window} ha {age}, più della finestra stessa",
+    "{provider}: the {window} reading is {age} old, too old to say what is left":
+        "{provider}: la lettura della finestra {window} ha {age}, troppo vecchia per dire cosa resta",
     "{provider}: {percent} of the {window} window used ({age})":
         "{provider}: {percent} della finestra {window} usato ({age})",
+    "{provider}: {percent} of the {window} window in the last reading ({age}), and it was not refreshed":
+        "{provider}: {percent} della finestra {window} nell'ultima lettura ({age}), e non è stata aggiornata",
     "read {age} ago":
         "letto {age} fa",
     "resets in {age}":
@@ -2414,6 +2464,37 @@ MESSAGES: dict[str, str] = {
         "Su questa macchina non è leggibile la percentuale di nessun fornitore.",
     "Known quotas: {known}":
         "Quote note: {known}",
+    "tokscale is not installed on this machine: the optional quota backend is skipped.":
+        "tokscale non è installato su questa macchina: il backend opzionale delle quote viene saltato.",
+    "tokscale did not answer within {seconds} seconds: its numbers are not shown.":
+        "tokscale non ha risposto entro {seconds} secondi: i suoi numeri non vengono mostrati.",
+    "tokscale exited with code {code}: its numbers are not shown.":
+        "tokscale è uscito con codice {code}: i suoi numeri non vengono mostrati.",
+    "tokscale output format not understood ({detail}): its numbers are not shown.":
+        "il formato di output di tokscale non è riconosciuto ({detail}): i suoi numeri non vengono mostrati.",
+    "tokscale could not refresh {providers}: showing the reading from {age} ago for it.":
+        "tokscale non ha potuto aggiornare {providers}: mostra la lettura di {age} fa per quel piano.",
+    "tokscale could not refresh {providers}, and is rate-limited until {when} ({wait} from now): showing the reading from {age} ago for it.":
+        "tokscale non ha potuto aggiornare {providers}, ed è limitato fino alle {when} (fra {wait}): mostra la lettura di {age} fa per quel piano.",
+    "{provider}: tokscale is rate-limited until {when} ({wait} from now), so the plan's own windows are not shown.":
+        "{provider}: tokscale è limitato fino alle {when} (fra {wait}), quindi le finestre del piano non vengono mostrate.",
+    "tokscale is rate-limited until {when} ({wait} from now): these readings are from {age} ago.":
+        "tokscale è limitato fino alle {when} (fra {wait}): queste letture sono di {age} fa.",
+    "not measured":
+        "non misurato",
+    "{percent} of the {window} window used":
+        "{percent} della finestra {window} usato",
+    "the {window} reading is {age} old, too old to say what is left":
+        "la lettura della finestra {window} ha {age}, troppo vecchia per dire cosa resta",
+    # --- quota_line.py: la riga che una sessione legge appena parte ---
+    "Quota: {readings}":
+        "Quote: {readings}",
+    "{provider} {window} {percent}":
+        "{provider}, finestra {window}, {percent} usato",
+    "{provider} stale":
+        "{provider} non aggiornato",
+    "reset {clock}":
+        "si azzera alle {clock}",
     # L'adozione: ciò che nasce in OpenClaw diventa canonico
     "Adopt what OpenClaw created into the canonical library":
         "Adotta nella libreria canonica ciò che ha creato OpenClaw",
@@ -2573,6 +2654,8 @@ MESSAGES: dict[str, str] = {
         "Il plugin del motore non è depositato: le sue catene di ripiego non sono state scritte.",
     "The fallback chains reach {count} agents; the plugin reads them on every turn.":
         "Le catene di ripiego arrivano a {count} agenti; il plugin le legge a ogni turno.",
+    "A spent plan stops these ACP lanes before the harness starts: {agents}":
+        "Un piano esaurito ferma queste corsie ACP prima che parta l'harness: {agents}",
     "OpenClaw MCP server enabled for other harnesses.":
         "Server MCP di OpenClaw abilitato per gli altri harness.",
     "Could not enable OpenClaw MCP server: {error}":
@@ -2787,6 +2870,90 @@ MESSAGES: dict[str, str] = {
         '  Guardia del contesto: job orario registrato.',
     '  Context guard: the job was not registered, the gateway refused it.':
         '  Guardia del contesto: il job non è stato registrato, il gateway lo ha rifiutato.',
+    '  Proactive check: skipped in dry-run.':
+        '  Controllo proattivo: saltato in prova a vuoto.',
+    "  Proactive check: the scheduler did not answer, so no job was changed. Check it with 'openclaw automations list --all'.":
+        "  Controllo proattivo: lo scheduler non ha risposto, quindi nessun job è stato cambiato. Controlla con 'openclaw automations list --all'.",
+    '  Proactive check: no enabled job runs it.':
+        '  Controllo proattivo: nessun job attivo lo esegue.',
+    "  Proactive check: no automation job matches it, so there was nothing to converge.":
+        "  Controllo proattivo: nessun job di automazione corrisponde, quindi non c'era nulla da convergere.",
+    "  Proactive check: '{name}' could not be edited.":
+        "  Controllo proattivo: non è stato possibile modificare '{name}'.",
+    "  Proactive check: '{name}' runs as OpenClaw provisioned it, every {every}.":
+        "  Controllo proattivo: '{name}' gira come lo prepara OpenClaw, ogni {every}.",
+    "  Proactive check: '{name}' could not be made light.":
+        "  Controllo proattivo: non è stato possibile alleggerire '{name}'.",
+    "  Proactive check: '{name}' runs every {every} in its own context, without tools.":
+        "  Controllo proattivo: '{name}' gira ogni {every} in un contesto proprio, senza strumenti.",
+    "  Proactive check: '{name}' could not be switched off.":
+        "  Controllo proattivo: non è stato possibile spegnere '{name}'.",
+    "  Proactive check: '{name}' is off (it ran every {every}).":
+        "  Controllo proattivo: '{name}' è spento (girava ogni {every}).",
+    "  Proactive check: '{name}' was made light but could not be switched on.":
+        "  Controllo proattivo: '{name}' è stato alleggerito ma non si è potuto accendere.",
+    "  Proactive check: '{name}' could not be switched on.":
+        "  Controllo proattivo: non è stato possibile accendere '{name}'.",
+    "An automation job runs the proactive check over the agent's own conversation: {jobs}. A run like that is one model call over everything that conversation holds, 78,717 tokens measured on this squad, at {count} runs a day.":
+        "Un job di automazione esegue il controllo proattivo sulla conversazione dell'agente: {jobs}. Una esecuzione così è una chiamata al modello su tutto quello che quella conversazione contiene, 78.717 token misurati su questa squadra, per {count} esecuzioni al giorno.",
+    "Run 'nexgen openclaw setup': it converges the job to its own session, without the bootstrap files and without tools, every 6 hours. A full check stays an opt-in in squad.yaml (heartbeat: mode: full).":
+        "Esegui 'nexgen openclaw setup': porta il job in una sessione propria, senza i file di avvio e senza strumenti, ogni 6 ore. Un controllo completo resta una scelta in squad.yaml (heartbeat: mode: full).",
+    "an unknown number of":
+        "un numero non calcolabile di",
+    "Engine plugin not deposited: depositing now...":
+        "Plugin del motore non depositato: lo deposito adesso...",
+    "First deposit attempt unverified; retrying once...":
+        "Primo tentativo di deposito non verificato; riprovo una volta...",
+    "Error: engine plugin {plugin} could not be deposited or verified.":
+        "Errore: il plugin del motore {plugin} non si è potuto depositare o verificare.",
+    "Plugin deposit exception: {error}":
+        "Eccezione nel deposito del plugin: {error}",
+    "OpenClaw could not read the file it was given (its own state reader failed); asking once more.":
+        "OpenClaw non ha potuto leggere il file che gli è stato dato (il suo lettore di stato ha fallito); chiedo una volta ancora.",
+    "OpenClaw state permissions corrected (removed group/world-writable).":
+        "Permessi della cartella di stato di OpenClaw corretti (tolto group/world-writable).",
+    "The MCP connectors were not rendered: {error}":
+        "I connettori MCP non sono stati resi: {error}",
+    "Warning: could not inspect state directory permissions: {error}":
+        "Avviso: non ho potuto ispezionare i permessi della cartella di stato: {error}",
+    'The retired heartbeat settings are still in this file ({paths}): OpenClaw schedules heartbeats as automation jobs and its doctor converts these keys into them.':
+        'Le impostazioni del battito ritirate sono ancora in questo file ({paths}): OpenClaw programma i battiti come job di automazione e il suo doctor converte queste chiavi in job.',
+    "Run 'openclaw doctor --fix' to convert them, then 'nexgen openclaw setup' to converge the migrated job.":
+        "Esegui 'openclaw doctor --fix' per convertirle, poi 'nexgen openclaw setup' per convergere il job migrato.",
+    'Unknown: nothing here asked the scheduler, so whether a proactive check runs is unread.':
+        'Sconosciuto: qui nessuno ha interrogato lo scheduler, quindi non si sa se un controllo proattivo gira.',
+    "Run 'nexgen openclaw doctor' (which asks the scheduler) or 'openclaw automations list --all'.":
+        "Esegui 'nexgen openclaw doctor' (che interroga lo scheduler) oppure 'openclaw automations list --all'.",
+    "The proactive check is light, but it fires more often than four times a day: {jobs}. Every run is still a model call.":
+        "Il controllo proattivo è leggero, ma parte più di quattro volte al giorno: {jobs}. Ogni esecuzione resta una chiamata al modello.",
+    "Run 'nexgen openclaw setup' to converge it to every 6 hours, or set 'heartbeat: every:' in squad.yaml to the cadence you want.":
+        "Esegui 'nexgen openclaw setup' per portarlo ogni 6 ore, oppure imposta 'heartbeat: every:' in squad.yaml alla cadenza che vuoi.",
+    "The proactive check runs light: {jobs}, in its own session, without the bootstrap files and without tools.":
+        "Il controllo proattivo gira leggero: {jobs}, in una sessione propria, senza i file di avvio e senza strumenti.",
+    'No enabled automation job runs a proactive check{detail}.':
+        'Nessun job di automazione attivo esegue un controllo proattivo{detail}.',
+    "No automation job carries the engine's context guard declaration ({key}): no chat is compacted by it.":
+        "Nessun job di automazione porta la dichiarazione della guardia del contesto ({key}): nessuna chat viene compattata.",
+    "Run 'nexgen openclaw setup' with the gateway up. A person who wants no compaction at all switches it off with NEXGEN_OPENCLAW_MAX_COMPACTIONS=0.":
+        "Esegui 'nexgen openclaw setup' con il gateway acceso. Chi non vuole nessuna compattazione la spegne con NEXGEN_OPENCLAW_MAX_COMPACTIONS=0.",
+    'The context guard job is not as the engine declares it: {faults}.':
+        'Il job della guardia del contesto non è come il motore lo dichiara: {faults}.',
+    "Run 'nexgen openclaw setup' with the gateway up: it re-declares the job with --no-deliver, and OpenClaw patches the one the same declaration key names.":
+        "Esegui 'nexgen openclaw setup' con il gateway acceso: ridichiara il job con --no-deliver, e OpenClaw aggiorna quello che porta la stessa chiave di dichiarazione.",
+    "'{name}' is switched off":
+        "'{name}' è spento",
+    "'{name}' delivers every run ({mode})":
+        "'{name}' consegna ogni esecuzione ({mode})",
+    'unspecified':
+        'non specificata',
+    'The hourly context guard job is registered and records no delivery.':
+        'Il job orario della guardia del contesto è registrato e non registra consegne.',
+    ' ({count} disabled job matches)':
+        ' ({count} job disattivati corrispondono)',
+    '(unnamed job)':
+        '(job senza nome)',
+    '(no schedule)':
+        '(nessuna pianificazione)',
     'skipped: the {runtime} backend cannot confirm a native compaction':
         'saltata: il backend {runtime} non può confermare una compattazione nativa',
     'timed out after {seconds}s':
@@ -2795,6 +2962,16 @@ MESSAGES: dict[str, str] = {
         '1 sessione idonea lasciata per dopo',
     '{count} eligible sessions left for later':
         '{count} sessioni idonee lasciate per dopo',
+    'A real run compacts at most {limit} of these, largest first.':
+        "Un'esecuzione reale ne compatta al massimo {limit}, dalla più grande.",
+    'Grooming is switched off ({variable}=0): {count} chats were left alone.':
+        'La compattazione è spenta ({variable}=0): {count} chat sono state lasciate stare.',
+    'The context guard is not compacting':
+        'La guardia del contesto non compatta',
+    'The last run compacted none of the chats waiting for it. Waiting now: {count}.':
+        "L'ultima esecuzione non ha compattato nessuna delle chat in attesa. In attesa ora: {count}.",
+    "Run 'nexgen openclaw groom' and read the reason it prints.":
+        "Esegui 'nexgen openclaw groom' e leggi il motivo che stampa.",
     # --- I ruoli della macchina: il piano di --check ------------------------
     'Plan only: --check writes nothing.':
         'Solo piano: --check non scrive niente.',

@@ -7,8 +7,8 @@ be configured, and a version skew or a stray copy must be visible.
 from __future__ import annotations
 
 import json
-import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -23,7 +23,19 @@ from nexgen_core.checks import desktop_checks, mcp_checks  # noqa: E402
 from nexgen_core.paths import canonical_instructions  # noqa: E402
 from nexgen_core.report import Severity  # noqa: E402
 
-requires_symlinks = pytest.mark.skipif(os.name == "nt", reason="symlinks require privileges")
+def _symlinks_supported() -> bool:
+    """Whether this machine may create a symlink at all: Windows denies it without a privilege."""
+    with tempfile.TemporaryDirectory() as folder:
+        target = Path(folder) / "target"
+        target.write_text("x", encoding="utf-8")
+        try:
+            (Path(folder) / "link").symlink_to(target)
+        except OSError:
+            return False
+        return True
+
+
+requires_symlinks = pytest.mark.skipif(not _symlinks_supported(), reason="this machine may not create symlinks")
 
 
 @pytest.fixture(autouse=True)
@@ -188,11 +200,15 @@ def _mcp_setup(tmp_path):
     }}))
     home = tmp_path / "home"
     gemini = home / ".gemini"
-    canonical = gemini / "antigravity" / "mcp_config.json"
+    # The officially read path (Google's MCP doc) holds the real file.
+    canonical = gemini / "config" / "mcp_config.json"
     canonical.parent.mkdir(parents=True)
     body = {"mcpServers": {"alpha": {"command": "python", "args": ["-V"], "env": {}}}}
     canonical.write_text(json.dumps(body), encoding="utf-8")
     return vault, home, canonical, body
+
+
+CONSUMER_DIRS = ("antigravity", "antigravity-cli", "antigravity-ide")
 
 
 def _consumer(home: Path, name: str) -> Path:
@@ -204,15 +220,32 @@ def _consumer(home: Path, name: str) -> Path:
 @requires_symlinks
 def test_fanout_is_ok_when_every_consumer_links_to_the_canonical(tmp_path):
     vault, home, canonical, _ = _mcp_setup(tmp_path)
-    for name in ("antigravity-cli", "antigravity-ide", "config"):
+    for name in CONSUMER_DIRS:
         _consumer(home, name).symlink_to(canonical)
     assert mcp_checks.check_antigravity_fanout(vault, home).severity == Severity.OK
 
 
 def test_fanout_is_ok_for_an_identical_real_copy(tmp_path):
     vault, home, canonical, _ = _mcp_setup(tmp_path)
-    for name in ("antigravity-cli", "antigravity-ide", "config"):
+    for name in CONSUMER_DIRS:
         _consumer(home, name).write_bytes(canonical.read_bytes())
+    assert mcp_checks.check_antigravity_fanout(vault, home).severity == Severity.OK
+
+
+@requires_symlinks
+def test_fanout_is_ok_on_a_machine_still_in_the_old_layout(tmp_path):
+    """Older releases put the real file in `antigravity/` and linked `config/` to it.
+
+    Nothing has drifted there, so the check must stay quiet until the next render
+    migrates the layout: a BROKEN on every existing machine would be noise.
+    """
+    vault, home, canonical, body = _mcp_setup(tmp_path)
+    legacy = _consumer(home, "antigravity")
+    legacy.write_text(json.dumps(body), encoding="utf-8")
+    canonical.unlink()
+    canonical.symlink_to(legacy)
+    for name in ("antigravity-cli", "antigravity-ide"):
+        _consumer(home, name).symlink_to(legacy)
     assert mcp_checks.check_antigravity_fanout(vault, home).severity == Severity.OK
 
 

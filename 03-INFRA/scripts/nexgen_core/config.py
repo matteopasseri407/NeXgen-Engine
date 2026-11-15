@@ -20,10 +20,12 @@ from nexgen_core.errors import NexgenError
 
 logger = logging.getLogger("nexgen.config")
 
-#: The runtimes the layer knows how to configure. Applies to both the MCP
-#: connectors and the skill views: it's the same list, and keeping it in
-#: two separate constants is how the two lists end up drifting apart.
-RUNTIME_TARGETS = frozenset({"claude", "codex", "antigravity", "opencode", "openclaw"})
+#: The runtimes the layer knows how to configure, in the order reports and
+#: command-line choices list them. This ordered tuple is the only copy of the
+#: list: the MCP connectors, the skill views and the placement rule all derive
+#: from it, because two hand-kept constants are how the lists drift apart.
+RUNTIMES: tuple[str, ...] = ("claude", "codex", "antigravity", "opencode", "openclaw")
+RUNTIME_TARGETS = frozenset(RUNTIMES)
 SKILL_TARGETS = RUNTIME_TARGETS
 SKILL_ORIGINS = frozenset({"vault", "engine", "github", "installer", "upstream"})
 SKILL_EXPOSURES = frozenset({"lazy", "eager", "manual", "core"})
@@ -303,6 +305,11 @@ def load_skills_manifest(path: Path, *, strict: bool = False) -> dict[str, Any]:
 #: to so that the data never leaves the machine: anything but loopback would break that.
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
+#: The CLIs a Council seat can actually be launched with. `seat_process.SUPPORTED_CLIS` is
+#: this tuple, so a seat whose `cli` is a typo is refused while the file is being read instead
+#: of failing after the person has already picked it from the seat menu.
+COUNCIL_CLIS = ("opencode", "agy", "codex", "claude", "ollama", "dsh")
+
 
 def _validate_local_seat(name: str, seat: dict[str, Any]) -> None:
     """A local seat: OpenCode as the harness, a loopback OpenAI-compatible server as the inference.
@@ -340,6 +347,10 @@ def load_council_config(path: Path) -> dict[str, Any]:
         for field in ("cli", "model", "vendor"):
             if not isinstance(seat.get(field), str) or not seat[field].strip():
                 raise ConfigError(f"Council seat {name} needs a non-empty {field}")
+        if seat["cli"] not in COUNCIL_CLIS:
+            raise ConfigError(
+                f"Council seat {name}: cli must be one of {', '.join(COUNCIL_CLIS)}, got {seat['cli']!r}"
+            )
         if "zero_retention" in seat and not isinstance(seat["zero_retention"], bool):
             raise ConfigError(f"Council seat {name}: zero_retention must be boolean")
         if "host" in seat and (not isinstance(seat["host"], str) or not seat["host"].strip()):

@@ -9,9 +9,12 @@
 // (shorter than the one Claude enforces on this adapter), every abnormal outcome becomes
 // an explicit decision, and an uncaught error in this file itself exits 2, which blocks.
 //
-// Registered as the `command` of the PreToolUse hook (matcher "Bash") in
-// ~/.claude/settings.json. The body and its timeout come from the sidecar
-// `nexgen-guardrail.config.json` next to this file, read fresh on every call.
+// Registered as the `command` of the PreToolUse hook in ~/.claude/settings.json, under the
+// matcher `Bash|PowerShell`: on Windows Claude runs shell commands through the PowerShell tool,
+// and a `Bash` matcher never matches it. Both tools carry the command in `tool_input.command`,
+// which is what the body reads, so nothing here has to tell them apart. The body and its
+// timeout come from the sidecar `nexgen-guardrail.config.json` next to this file, read fresh
+// on every call.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";

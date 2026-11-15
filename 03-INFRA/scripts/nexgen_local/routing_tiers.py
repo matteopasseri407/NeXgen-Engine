@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import time
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Callable
 
@@ -302,14 +303,19 @@ def probe_cli_inventory(harness: str) -> set[str]:
 
 def is_in_inventory(model: str, harness: str, *, inventory: set[str] | None = None,
                     probe_fn: Callable[[str], set[str]] | None = None) -> bool:
-    """Whether model is detected in machine inventory for harness."""
+    """Whether the machine's own catalogue carries this model, exactly or as a family.
+
+    A family matches the catalogue's `<family>-<effort>` id and nothing looser: a bare
+    prefix used to pass here and then reach the CLI unchanged, so the run happened on a
+    model the journal was told about and the CLI never accepted.
+    """
     inv = inventory if inventory is not None else (probe_fn or probe_cli_inventory)(harness)
     if not inv:
         return True
     m_lower = model.casefold()
     for item in inv:
         i_lower = item.casefold()
-        if m_lower == i_lower or i_lower.startswith(m_lower) or m_lower.startswith(i_lower):
+        if m_lower == i_lower or i_lower.startswith(f"{m_lower}-") or m_lower.startswith(f"{i_lower}-"):
             return True
     return False
 
@@ -351,8 +357,15 @@ def _match_candidate(c: Any, data: dict, min_vol: int, st: dict,
 
 
 def pick(tier: str = "worker", *, allow_limited: bool = False, path: Path | None = None,
-         state_file: Path | None = None, inventory_probe: Any = None) -> dict[str, Any]:
-    """Select the first non-exhausted candidate with sufficient volume and present in inventory."""
+         state_file: Path | None = None, inventory_probe: Any = None,
+         exclude: Iterable[str] = ()) -> dict[str, Any]:
+    """Select the first non-exhausted candidate with sufficient volume and present in inventory.
+
+    `exclude` names the models this caller must not receive back: a plan already at
+    its ceiling is spent for the work that asks, without being written into the
+    six-hour exhaustion state, which belongs to a failure that really happened.
+    """
+    skip = set(exclude)
     data = load_tiers(path)
     if not data:
         raise RoutingTiersError("nessuna configurazione routing-tiers.yaml trovata")
@@ -363,9 +376,11 @@ def pick(tier: str = "worker", *, allow_limited: bool = False, path: Path | None
     if allow_limited and tier == "worker":
         for c in tiers.get("limited", []):
             m, h = _candidate_model(c), _candidate_harness(c)
+            if m in skip:
+                continue
             if not is_exhausted(m, state=st) and is_in_inventory(m, h, probe_fn=inventory_probe):
                 return {"model": m, "harness": h, "tier": "limited", "requests_5h": 0}
-    candidates = tiers.get(tier, [])
+    candidates = [c for c in tiers.get(tier, []) if _candidate_model(c) not in skip]
     if tier == "worker":
         min_vol = int(data.get("volume_min_5h", DEFAULT_VOLUME_MIN_5H))
         candidates = _order_candidates(candidates, st.get("promoted_order", []), data=data)

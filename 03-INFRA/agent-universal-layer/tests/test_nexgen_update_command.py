@@ -762,6 +762,24 @@ def test_command_launch_failure_is_an_update_error(tmp_path, monkeypatch):
     assert "synthetic private payload" not in str(error.value)
 
 
+def test_every_update_command_is_spawned_without_a_console_window(tmp_path, monkeypatch):
+    """Il battito orario non ha console: senza i flag ogni `git` ne aprirebbe una."""
+    updater = _load_updater()
+    seen: list[dict] = []
+    real_popen = updater.subprocess.Popen
+
+    def observed(argv, **kwargs):
+        seen.append(kwargs)
+        return real_popen([sys.executable, "-c", "pass"], cwd=str(tmp_path), text=True)
+
+    monkeypatch.setattr(updater.subprocess, "Popen", observed)
+    monkeypatch.setattr(updater, "no_window_kwargs", lambda: {"creationflags": 0x08000000})
+
+    updater._run(["git", "--version"], cwd=tmp_path)
+
+    assert seen[0]["creationflags"] == 0x08000000
+
+
 def test_merge_failure_after_ref_moved_is_rolled_back(tmp_path, capsys, monkeypatch):
     updater = _load_updater()
     _, engine = _upgrade_fixture(tmp_path)

@@ -10,6 +10,7 @@ from urllib.parse import urlencode, urlparse
 
 import uvicorn
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from starlette.applications import Starlette
@@ -135,6 +136,20 @@ def _call_semantic(settings: Settings, query: str, limit: int) -> dict[str, Any]
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _note_ref_for_tool(**given: str | None) -> str:
+    """The reference the caller meant, or a `ToolError` the model can read and act on.
+
+    `resolve_note_ref` raises `ValueError` so it stays testable without the
+    MCP runtime, but the SDK answers any other exception with a bare
+    "Error executing tool <name>": the diagnostic reaches the model only as
+    the SDK's `ToolError`.
+    """
+    try:
+        return resolve_note_ref(**given)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+
+
 def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
     vault = VaultService(settings)
     server_name = "markdown-vault-git-backed" if settings.write_enabled else "markdown-vault-readonly"
@@ -198,10 +213,11 @@ def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
     ) -> dict[str, Any]:
         """Read a note by relative path, filename, or unique stem.
 
-        Provide `note_ref` or exactly one of its aliases (`path`, `note_path`, `relative_path`).
+        Provide `note_ref`, or one or more aliases carrying the same value
+        (`path`, `note_path`, `relative_path`).
         """
         return vault.read_note(
-            resolve_note_ref(note_ref=note_ref, path=path, note_path=note_path, relative_path=relative_path)
+            _note_ref_for_tool(note_ref=note_ref, path=path, note_path=note_path, relative_path=relative_path)
         )
 
     @mcp.tool(annotations=READ_ONLY)
@@ -211,10 +227,19 @@ def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
         return vault.search_notes(query=query, limit=limit)
 
     @mcp.tool(annotations=READ_ONLY)
-    def list_related(note_ref: str, limit: int = 10) -> dict[str, Any]:
-        """List outgoing links, backlinks, and tag-based related notes."""
+    def list_related(
+        note_ref: str | None = None,
+        path: str | None = None,
+        note_path: str | None = None,
+        relative_path: str | None = None,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """List outgoing links, backlinks, and tag-based related notes. Takes the same reference names as read_note."""
 
-        return vault.list_related(note_ref=note_ref, limit=limit)
+        return vault.list_related(
+            note_ref=_note_ref_for_tool(note_ref=note_ref, path=path, note_path=note_path, relative_path=relative_path),
+            limit=limit,
+        )
 
     @mcp.tool(annotations=READ_ONLY)
     def map_overview() -> dict[str, Any]:
@@ -262,11 +287,21 @@ def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
             return vault.append_note(note_path=note_path, content=content, message=message)
 
         @mcp.tool(annotations=MUTATING)
-        def update_note(note_ref: str, content: str, expected_hash: str, message: str = "") -> dict[str, Any]:
-            """Replace an existing note only when expected_hash matches the current full content hash."""
+        def update_note(
+            content: str,
+            expected_hash: str,
+            note_ref: str | None = None,
+            path: str | None = None,
+            note_path: str | None = None,
+            relative_path: str | None = None,
+            message: str = "",
+        ) -> dict[str, Any]:
+            """Replace an existing note only when expected_hash matches the current full content hash. Takes the same reference names as read_note."""
 
             return vault.update_note(
-                note_ref=note_ref,
+                note_ref=_note_ref_for_tool(
+                    note_ref=note_ref, path=path, note_path=note_path, relative_path=relative_path
+                ),
                 content=content,
                 expected_hash=expected_hash,
                 message=message,
@@ -274,16 +309,21 @@ def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
 
         @mcp.tool(annotations=MUTATING)
         def update_section(
-            note_ref: str,
             section_heading: str,
             content: str,
             expected_hash: str,
+            note_ref: str | None = None,
+            path: str | None = None,
+            note_path: str | None = None,
+            relative_path: str | None = None,
             message: str = "",
         ) -> dict[str, Any]:
-            """Replace ONE section of a note (its ATX heading plus body and subsections) when expected_hash matches that section's current hash from read_note's `sections`. Prefer this over update_note for surgical edits: smaller diffs, and concurrent edits to other sections stay valid."""
+            """Replace ONE section of a note (its ATX heading plus body and subsections) when expected_hash matches that section's current hash from read_note's `sections`. Prefer this over update_note for surgical edits: smaller diffs, and concurrent edits to other sections stay valid. Takes the same reference names as read_note."""
 
             return vault.update_section(
-                note_ref=note_ref,
+                note_ref=_note_ref_for_tool(
+                    note_ref=note_ref, path=path, note_path=note_path, relative_path=relative_path
+                ),
                 section_heading=section_heading,
                 content=content,
                 expected_hash=expected_hash,

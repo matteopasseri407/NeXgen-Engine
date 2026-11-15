@@ -8,14 +8,41 @@ from typing import Any
 
 from nexgen_core.files import atomic_write_text, backup_file, publish_symlink
 from nexgen_core.i18n import t
-from nexgen_core.mcp_render import IS_WINDOWS, MCP_REMOTE_PACKAGE, load_json_object, write_json_config
+from nexgen_core.mcp_render import (
+    http_bridge_entry,
+    load_json_object,
+    merge_entry,
+    write_json_config,
+)
 from nexgen_core.paths import ANTIGRAVITY_CONSUMER_DIRS, antigravity_config
+
+#: The per-server keys this renderer writes. Every other key of an entry is Antigravity's
+#: own state, documented in its MCP page: `disabled`, `enabledTools`, `disabledTools`,
+#: `tools.<tool>.eager`/`background`, `timeoutSeconds`, `oauth`, `authProviderType`.
+_OWNED_KEYS = frozenset({"command", "args", "env", "serverUrl", "url", "headers"})
 
 
 def _consumer_paths(renderer, canonical: Path) -> list[Path]:
     """Every path besides the canonical file that Antigravity reads its servers from."""
     paths = [renderer.home / ".gemini" / directory / "mcp_config.json" for directory in ANTIGRAVITY_CONSUMER_DIRS]
     return [path for path in paths if path != canonical]
+
+
+def _link_or_copy(target: Path, canonical: Path) -> None:
+    """Points `target` at `canonical`, or copies it where links are not allowed.
+
+    Windows denies symlink creation without a privilege, and a copy holding the
+    canonical bytes is what Antigravity reads there: what matters is that no
+    variant is left behind. A copy that fails too is not raised from here: the
+    fan-out check reads the copies back on the next doctor run and reports the
+    one that did not land.
+    """
+    try:
+        publish_symlink(target, canonical)
+    except OSError:
+        with contextlib.suppress(OSError):  # nexgen: allow reason="last resort after a refused link; the fan-out check reports a copy that did not land"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(target, canonical.read_text(encoding="utf-8"))
 
 
 def _servers_kept_in_copies(renderer, canonical: Path) -> dict[str, Any]:
@@ -89,9 +116,78 @@ def _expected_servers(renderer) -> dict[str, Any]:
     return servers
 
 
+def _legacy_repeats_the_canonical_servers(legacy: Path, canonical: Path) -> bool:
+    """True when every server the legacy file mounts is also in the canonical file.
+
+    That is the engine's own stale output: the fan-out copies the canonical bytes
+    where links cannot be created, and the app saving the canonical file then
+    leaves that copy behind. A legacy file holding a server of its own is a second
+    source of truth instead, and choosing between the two is a person's call.
+    """
+    try:
+        legacy_servers = load_json_object(legacy).get("mcpServers")
+        canonical_servers = load_json_object(canonical).get("mcpServers")
+    except (OSError, ValueError):  # nexgen: allow reason="a file that is not JSON cannot be proven redundant, so the render stops and names both paths as it did"
+        return False
+    if not isinstance(legacy_servers, dict) or not isinstance(canonical_servers, dict):
+        return False
+    return set(legacy_servers) <= set(canonical_servers)
+
+
+def _settle_legacy_layout(renderer, canonical: Path, *, write: bool) -> None:
+    """Moves the real file to the officially read path when an older release left a link there.
+
+    Releases before this one wrote `.gemini/antigravity/mcp_config.json` and
+    fanned links out from it, `.gemini/config/mcp_config.json` among them.
+    Google reads that last one, so the real file has to be there: left as a
+    link, an app that saves the file replaces the link with a copy of its own
+    and the two diverge with nothing noticing.
+
+    The old content is backed up, published at the canonical path, and the old
+    location becomes one more copy pointing back at it. Two real files that
+    disagree stop the render with both paths named: picking one would drop
+    whatever only the other held, so that is a person's call. The exception is a
+    stale copy that holds no server of its own (what the fan-out leaves on a
+    machine where links cannot be created): it is backed up and re-published from
+    the canonical file, because refusing would stop every render until a human
+    moved a file aside.
+    """
+    legacy = renderer.home / ".gemini" / "antigravity" / canonical.name
+    if canonical.is_symlink():
+        if legacy.is_symlink():
+            return  # not the layout this migration knows: leave it to a person
+        try:
+            points_at_legacy = canonical.resolve() == legacy.resolve()
+        except OSError:  # nexgen: allow reason="an unresolvable link is not the legacy layout, so there is nothing to migrate"
+            return
+        if not points_at_legacy:
+            return
+        # A target an uninstall removed is the same layout with nothing in it:
+        # the render writes the content, and the link is rebuilt from here.
+        text = legacy.read_text(encoding="utf-8") if legacy.is_file() else ""
+        if write:
+            if legacy.is_file():
+                backup_file(legacy, keep=3)
+            atomic_write_text(canonical, text)
+            _link_or_copy(legacy, canonical)
+        return
+    if not legacy.is_file() or legacy.is_symlink():
+        return
+    if canonical.is_file() and canonical.read_bytes() != legacy.read_bytes():
+        if not _legacy_repeats_the_canonical_servers(legacy, canonical):
+            raise ValueError(
+                f"Refusing to render {canonical}: it and {legacy} are both real files with different content. "
+                "Move one of them aside, then render again."
+            )
+        if write:
+            backup_file(legacy, keep=3)
+            _link_or_copy(legacy, canonical)
+
+
 def _render_impl(renderer, write: bool = False) -> tuple[bool, str]:
     servers = _expected_servers(renderer)
     cfg_file = antigravity_config(renderer.home)
+    _settle_legacy_layout(renderer, cfg_file, write=write and not renderer.previewing)
     existing = load_json_object(cfg_file)
     before = copy.deepcopy(existing)
 
@@ -103,27 +199,33 @@ def _render_impl(renderer, write: bool = False) -> tuple[bool, str]:
     for retired in renderer.retired_server_names():
         mcp_servers.pop(retired, None)
     renderer._drop_unmounted(mcp_servers, servers, cli_target="antigravity")
-    bridge_script = renderer.engine_root / "agent-universal-layer" / "mcp" / "mcp-http-bridge.mjs"
 
     for name, srv in servers.items():
         if srv.get("transport") == "http" or srv.get("url"):
-            auth_env = srv.get("auth", {}).get("env") if isinstance(srv.get("auth"), dict) else ""
-            node_cmd = "node.exe" if IS_WINDOWS else "node"
-            mcp_servers[name] = {
-                "command": node_cmd,
-                "args": [str(bridge_script), srv["url"], auth_env, MCP_REMOTE_PACKAGE],
-                "env": srv.get("env", {}),
-            }
+            entry = http_bridge_entry(renderer, srv)
         else:
-            mcp_servers[name] = {
+            entry = {
                 "command": srv.get("command", ""),
                 "args": srv.get("args", []),
                 "env": srv.get("env", {}),
             }
+        mcp_servers[name] = merge_entry(mcp_servers.get(name), entry, _OWNED_KEYS)
 
     existing["mcpServers"] = mcp_servers
     if write:
-        write_json_config(renderer, cfg_file, before, existing)
+        if cfg_file.is_file() and not renderer.previewing:
+            # The app's own MCP screen saves into this same file, and one of those
+            # saves can land between the read above and this write: rebase on the
+            # file as it is now and re-apply only `mcpServers`, the table this
+            # render owns, so nothing the app wrote in between is lost. The re-read
+            # sits after the table is computed on purpose: any earlier and the save
+            # it protects against still has the whole write to land in.
+            fresh = load_json_object(cfg_file)
+            freshly_read = copy.deepcopy(fresh)
+            fresh["mcpServers"] = mcp_servers
+            write_json_config(renderer, cfg_file, freshly_read, fresh)
+        else:
+            write_json_config(renderer, cfg_file, before, existing)
         if not renderer.previewing:
             _fan_out_antigravity(renderer, cfg_file)
     return True, t("Antigravity configuration updated")
@@ -137,22 +239,17 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
 def _fan_out_antigravity(renderer, canonical: Path) -> None:
     """Points every path Antigravity reads from at the canonical file.
 
-    Where links can't be created (Windows without privileges) it copies
-    instead: what matters is that no variant is left behind. A real file
-    that already holds the canonical bytes is left alone (the copy from the
-    last cycle: replacing it again every half hour was churn), and one that
-    differs is backed up before it is replaced, never just deleted.
+    A real file that already holds the canonical bytes is left alone (the copy
+    from the last cycle: replacing it again every half hour was churn), and one
+    that differs is backed up before it is replaced, never just deleted. Where
+    links can't be created (Windows without privileges) `_link_or_copy` copies
+    instead: what matters is that no variant is left behind.
     """
     for target in _consumer_paths(renderer, canonical):
-        try:
-            if target.is_symlink() and target.resolve() == canonical.resolve():
-                continue
-            if not target.is_symlink() and target.is_file() and target.read_bytes() == canonical.read_bytes():
-                continue
-            if not target.is_symlink() and target.is_file():
-                backup_file(target, keep=3)
-            publish_symlink(target, canonical)
-        except OSError:
-            with contextlib.suppress(OSError):
-                target.parent.mkdir(parents=True, exist_ok=True)
-                atomic_write_text(target, canonical.read_text(encoding="utf-8"))
+        if target.is_symlink() and target.resolve() == canonical.resolve():
+            continue
+        if not target.is_symlink() and target.is_file() and target.read_bytes() == canonical.read_bytes():
+            continue
+        if not target.is_symlink() and target.is_file():
+            backup_file(target, keep=3)
+        _link_or_copy(target, canonical)

@@ -308,14 +308,15 @@ def test_shell_hook_installation_keeps_a_dotfiles_symlink(tmp_path):
 
 
 def test_a_symlinked_instruction_pointer_never_overwrites_the_canonical_file(sandbox):
-    """Guard rail on the fix above: ~/CLAUDE.md is a derivative the engine
+    """Guard rail on the fix above: the Claude pointer is a derivative the engine
     regenerates. If the user made it a symlink to the canonical bootstrap,
     regenerating it must replace the link, never write through it."""
     from nexgen_core.guard import GuardRunner
 
     canon = sandbox.ul / "instructions" / "AGENTS.md"
     original = canon.read_text(encoding="utf-8")
-    claude_md = sandbox.home / "CLAUDE.md"
+    claude_md = sandbox.home / ".claude" / "CLAUDE.md"
+    claude_md.parent.mkdir(parents=True, exist_ok=True)
     claude_md.symlink_to(canon)
 
     GuardRunner(vault_data=sandbox.vault, home=sandbox.home).align_instructions()

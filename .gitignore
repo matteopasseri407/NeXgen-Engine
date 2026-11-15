@@ -51,6 +51,10 @@ id_ed25519
 .claude/
 .agents/
 .playwright-mcp/
+# The optional quota backend's binary keeps its own settings in the directory it
+# is started from; the engine starts it in the state dir, so this only catches a
+# run someone typed by hand here.
+.tokscale/
 
 # Generated Windows runtime wrapper. It contains machine-specific absolute
 # paths and belongs in per-user state, never in the public source checkout.

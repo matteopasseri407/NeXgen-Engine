@@ -106,7 +106,16 @@ def _read_text(path: Path, max_bytes: int) -> tuple[str, bool]:
 
 
 def _hash_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    """The compare-and-swap token for a note, or for one section of it.
+
+    Hashed with CRLF folded to LF, the canonical form the engine's own
+    `hash_bytes` uses (`nexgen_core/vault/gate.py`; this container cannot import
+    it). The index hashes a note as it sits on disk, where Windows keeps CRLF,
+    while `update_note`/`update_section` read the same file through Python's
+    newline translation, so hashing the raw text refused every read-then-update
+    on a multi-line note. A note that already uses LF hashes as it did before.
+    """
+    return hashlib.sha256(text.replace("\r\n", "\n").encode("utf-8")).hexdigest()
 
 
 def _strip_frontmatter(text: str) -> tuple[str, str]:

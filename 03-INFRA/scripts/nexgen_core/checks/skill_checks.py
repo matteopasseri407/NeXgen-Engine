@@ -70,7 +70,10 @@ def check_skill_library_and_index(vault_data: Path, home: Path) -> CheckOutcome:
 _TARGET_VIEW_ATTRS: dict[str, tuple[str, ...]] = {
     "claude": ("claude_dir",),
     "antigravity": ("gemini_dir", "gemini_config_dir", "gemini_legacy_dir"),
-    "codex": ("codex_dir",),
+    # Codex reads user skills in `~/.codex/skills` (`codex debug prompt-input` lists it
+    # as its root in codex-cli 0.155.1) and the shared `~/.agents/skills` for the app:
+    # both hold its view, so both are checked.
+    "codex": ("active_dir", "codex_dir"),
     "opencode": ("active_dir", "opencode_dir", "opencode_native_dir"),
     # OpenClaw discovers `~/.agents/skills` on its own ("agents-skills-personal"):
     # the shared catalog is its native view, with no folder of its own.

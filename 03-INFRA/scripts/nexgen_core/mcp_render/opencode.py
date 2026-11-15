@@ -7,7 +7,12 @@ from typing import Any
 
 from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc, remove_jsonc_top_level_value, set_jsonc_top_level_value
+from nexgen_core.mcp_render import merge_entry
 from nexgen_core.opencode_compat import supports_v2
+
+#: The per-server keys this renderer writes. Anything else in an existing entry is the
+#: user's, or OpenCode's own state (`enabled`, `disabled`), and survives a render.
+_OWNED_KEYS = frozenset({"type", "command", "environment", "url", "headers", "oauth", "timeout"})
 
 
 def _opencode_timeouts(timeouts: Any) -> dict[str, int]:
@@ -134,7 +139,7 @@ def _apply_servers(
 ) -> None:
     """Mounts every resolved server and records its tool-deny rules."""
     for name, srv in servers.items():
-        mcp_servers[name] = _build_entry(srv)
+        mcp_servers[name] = merge_entry(mcp_servers.get(name), _build_entry(srv), _OWNED_KEYS)
         # V2 denies tools through permissions, including Code Mode tools.
         deny = srv.get("tools_deny")
         if isinstance(deny, list) and deny:

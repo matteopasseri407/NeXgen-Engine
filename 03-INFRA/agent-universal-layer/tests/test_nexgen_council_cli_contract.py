@@ -52,6 +52,11 @@ def test_the_flags_come_from_the_command_a_seat_really_runs(cli):
         # OpenCode 2 has no effort flag (the effort rides in the model name); what its contract must
         # hold is the mode that keeps the seat off the person's own OpenCode
         assert "--standalone" in flags and "--variant" not in flags
+    elif cli == "dsh":
+        # The harness has no effort flag either (it rides in the per-call patch) and no --model at
+        # all: what its contract must hold is the headless JSON run with the patch overlay.
+        assert {"--profile", "--patch", "--json", "--permission-mode"} <= set(flags)
+        assert not any(flag in flags for flag in ("--effort", "-c", "--think", "-m"))
     else:
         # the effort flag is part of what a seat is started with, so it is part of the contract
         assert any(flag in flags for flag in ("--effort", "-c", "--think"))

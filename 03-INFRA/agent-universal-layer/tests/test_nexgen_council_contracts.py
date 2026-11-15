@@ -89,6 +89,36 @@ def test_free_candidate_cannot_authorize_paid_seat():
     assert _seat_cost(plan, "paid", seats["paid"]) is None
 
 
+def test_a_governor_go_row_reaches_a_dsh_seat_on_the_same_pool():
+    """Il canale viene dalla rotta: la CLI che il Governor nomina e' la preferenza, non un filtro."""
+    plan = parse_routing_plan(_block([("deepseek-v4.1-flash", "go", "flat", "quota")]))
+    seats = {"esempio-dsh": {"cli": "dsh", "model": "opencode-go/deepseek-v4.1-flash",
+                             "routing_label": "deepseek-v4.1-flash"}}
+    caps = {"esempio-dsh": SeatCapability(True, "synthetic")}
+    assert resolve_role_candidates(plan, seats, caps, "L-Code")[0] == ["esempio-dsh"]
+
+
+def test_a_seat_on_the_governors_own_cli_still_takes_the_row():
+    """Un secondo harness sullo stesso pool non deve rubare il lavoro a quello che gia' funziona."""
+    plan = parse_routing_plan(_block([("deepseek-v4.1-flash", "go", "flat", "quota")]))
+    seats = {
+        "oc": {"cli": "opencode", "model": "opencode-go/deepseek-v4.1-flash",
+               "routing_label": "deepseek-v4.1-flash"},
+        "dsh": {"cli": "dsh", "model": "opencode-go/deepseek-v4.1-flash",
+                "routing_label": "deepseek-v4.1-flash"},
+    }
+    caps = {name: SeatCapability(True, "synthetic") for name in seats}
+    assert resolve_role_candidates(plan, seats, caps, "L-Code")[0] == ["oc"]
+
+
+def test_a_dsh_seat_on_another_route_does_not_answer_a_go_row():
+    plan = parse_routing_plan(_block([("qwen3-coder-free", "go", "flat", "quota")]))
+    seats = {"zen": {"cli": "dsh", "model": "opencode/qwen3-coder-free",
+                     "routing_label": "qwen3-coder-free"}}
+    caps = {"zen": SeatCapability(True, "synthetic")}
+    assert resolve_role_candidates(plan, seats, caps, "L-Code")[0] == []
+
+
 @pytest.mark.parametrize("count", [1, 2])
 def test_privacy_keeps_one_or_two_local_candidates(count):
     rows = [(f"local-{i}:latest", "local", "$0", "private") for i in range(count)]

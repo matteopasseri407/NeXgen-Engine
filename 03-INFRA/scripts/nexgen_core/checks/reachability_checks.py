@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlparse
 
-from nexgen_core.config import load_mcp_manifest
+from nexgen_core.config import RUNTIMES, load_mcp_manifest
 from nexgen_core.i18n import t
 from nexgen_core.renderer import McpRenderer
 from nexgen_core.report import CheckOutcome, Severity
@@ -141,7 +141,7 @@ def check_mcp_reachability(
 
     renderer = McpRenderer(vault_data=vault_data, home=home)
     resolved: dict[str, dict] = {}
-    for cli in ("claude", "codex", "antigravity", "opencode", "openclaw"):
+    for cli in RUNTIMES:
         try:
             for name, entry in renderer.load_resolved_servers(cli).items():
                 resolved.setdefault(name, entry)

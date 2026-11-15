@@ -1,4 +1,4 @@
-"""Unit test per nexgen_core.runtimes: adattatori CLI (postura + guardrail hook).
+"""Unit test per nexgen_core.runtimes: adattatori CLI (hook del guardrail).
 
 Ogni test punta `home`/`vault` su tmp_path -- MAI sulla home reale. La
 macchina di sviluppo ha claude/codex/opencode/agy realmente sul PATH, quindi
@@ -47,61 +47,6 @@ def _no_ambient_binaries(monkeypatch):
 
 # ── Claude ───────────────────────────────────────────────────────────────
 
-def test_claude_apply_posture_merges_and_preserves_foreign_keys(tmp_path: Path):
-    home = tmp_path / "home"
-    settings = home / ".claude" / "settings.json"
-    settings.parent.mkdir(parents=True)
-    original = {
-        "statusLine": {"type": "command", "command": "echo hi"},
-        "permissions": {"allow": ["Bash(ls:*)"]},
-    }
-    settings.write_text(json.dumps(original, indent=2), encoding="utf-8")
-
-    rt = ClaudeRuntime()
-    assert rt.is_installed(home) is True  # settings.json e' l'impronta propria di Claude
-
-    action = rt.apply_posture(home, "bypass")
-    assert action is not None
-
-    data = json.loads(settings.read_text(encoding="utf-8"))
-    assert data["permissions"]["defaultMode"] == "bypassPermissions"
-    assert data["permissions"]["allow"] == ["Bash(ls:*)"]  # chiave dell'utente sopravvive
-    assert data["statusLine"] == original["statusLine"]  # chiave estranea sopravvive
-    assert data["skipDangerousModePermissionPrompt"] is True
-
-
-def test_claude_apply_posture_backs_up_before_writing(tmp_path: Path):
-    home = tmp_path / "home"
-    settings = home / ".claude" / "settings.json"
-    settings.parent.mkdir(parents=True)
-    original_text = json.dumps({"permissions": {"defaultMode": "default"}})
-    settings.write_text(original_text, encoding="utf-8")
-
-    ClaudeRuntime().apply_posture(home, "bypass")
-
-    backups = list(home.joinpath(".claude").glob("settings.json.pre-permissions-*.bak"))
-    assert len(backups) == 1
-    assert backups[0].read_text(encoding="utf-8") == original_text
-
-
-def test_claude_apply_posture_is_idempotent(tmp_path: Path):
-    home = tmp_path / "home"
-    settings = home / ".claude" / "settings.json"
-    settings.parent.mkdir(parents=True)
-    settings.write_text(json.dumps({"permissions": {}}), encoding="utf-8")
-
-    rt = ClaudeRuntime()
-    first = rt.apply_posture(home, "bypass")
-    assert first is not None
-    after_first = settings.read_text(encoding="utf-8")
-
-    second = rt.apply_posture(home, "bypass")
-    assert second is None  # nulla da fare la seconda volta
-    assert settings.read_text(encoding="utf-8") == after_first
-    backups = list(home.joinpath(".claude").glob("settings.json.pre-permissions-*.bak"))
-    assert len(backups) == 1  # nessun secondo backup per una scrittura che non e' avvenuta
-
-
 def test_claude_install_guardrail_registers_hook_and_preserves_other_events(tmp_path: Path):
     home = tmp_path / "home"
     claude_dir = home / ".claude"
@@ -124,7 +69,7 @@ def test_claude_install_guardrail_registers_hook_and_preserves_other_events(tmp_
     data = json.loads(settings.read_text(encoding="utf-8"))
     assert data["hooks"]["SessionStart"]  # evento estraneo sopravvive intatto
     pretool = data["hooks"]["PreToolUse"]
-    assert pretool[0]["matcher"] == "Bash"
+    assert pretool[0]["matcher"] == "Bash|PowerShell"
     # The hook is the adapter, which fails closed; the body is what the adapter runs.
     assert pretool[0]["hooks"][0]["command"] == f'node "{claude_dir / "claude-guardrail-adapter.mjs"}"'
     assert pretool[0]["hooks"][0]["timeout"] == 10
@@ -167,55 +112,12 @@ def test_claude_is_installed_regression_directory_footprint(tmp_path: Path):
 
 CODEX_TOML = '''# commento dell'utente
 model = "o4"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
 
 [profile.dev]
 foo = "bar"
 '''
-
-
-def test_codex_apply_posture_surgical_edit_preserves_sections_and_comments(tmp_path: Path):
-    home = tmp_path / "home"
-    config = home / ".codex" / "config.toml"
-    config.parent.mkdir(parents=True)
-    config.write_text(CODEX_TOML, encoding="utf-8")
-
-    rt = CodexRuntime()
-    action = rt.apply_posture(home, "bypass")
-    assert action is not None
-
-    text = config.read_text(encoding="utf-8")
-    assert "# commento dell'utente" in text
-    assert 'model = "o4"' in text
-    assert "[profile.dev]" in text
-    assert 'foo = "bar"' in text
-    assert 'approval_policy = "never"' in text
-    assert 'sandbox_mode = "danger-full-access"' in text
-
-    backups = list(home.joinpath(".codex").glob("config.toml.pre-permissions-*.bak"))
-    assert len(backups) == 1
-    assert backups[0].read_text(encoding="utf-8") == CODEX_TOML
-
-
-def test_codex_apply_posture_idempotent(tmp_path: Path):
-    home = tmp_path / "home"
-    config = home / ".codex" / "config.toml"
-    config.parent.mkdir(parents=True)
-    config.write_text(CODEX_TOML, encoding="utf-8")
-
-    rt = CodexRuntime()
-    rt.apply_posture(home, "bypass")
-    after_first = config.read_text(encoding="utf-8")
-    assert rt.apply_posture(home, "bypass") is None
-    assert config.read_text(encoding="utf-8") == after_first
-
-
-def test_codex_unsupported_posture_skipped_silently(tmp_path: Path):
-    home = tmp_path / "home"
-    config = home / ".codex" / "config.toml"
-    config.parent.mkdir(parents=True)
-    config.write_text(CODEX_TOML, encoding="utf-8")
-    assert CodexRuntime().apply_posture(home, "ask") is None
-    assert config.read_text(encoding="utf-8") == CODEX_TOML
 
 
 def test_codex_no_guardrail_ever(tmp_path: Path):
@@ -245,34 +147,43 @@ def _write_opencode_config(home: Path) -> Path:
     return path
 
 
-def test_opencode_apply_posture_migrates_legacy_object_to_v2_rules(tmp_path: Path, opencode_dialect):
-    """V2 native posture: the legacy `permission` object migrates once into
-    ordered `permissions` rules, then disappears. Foreign dimensions
-    survive as equivalent rules, the user's plugins are untouched."""
+def _policy_body(tmp_path: Path) -> Path:
+    """Stand-in for the private guardrail body the manifest declares."""
+    body = tmp_path / "guardrail-catastrophic.mjs"
+    body.write_text("// policy\n", encoding="utf-8")
+    return body
+
+
+def test_opencode_the_guardrail_sets_the_mediated_shell_rule(tmp_path: Path, opencode_dialect):
+    """V2 native shape: the legacy `permission` object migrates once into ordered
+    `permissions` rules, the shell rule says `ask` so the plugin is consulted, and the
+    person's own plugins are untouched."""
     opencode_dialect("2.2.0")
     home = tmp_path / "home"
     config = _write_opencode_config(home)
+    engine_hooks = _engine_hooks(tmp_path)
 
-    action = OpenCodeRuntime().apply_posture(home, "bypass")
+    action = OpenCodeRuntime().install_guardrail(home, _policy_body(tmp_path), engine_hooks)
     assert action is not None
 
     data = json.loads(config.read_text(encoding="utf-8"))
     assert "permission" not in data  # migrated, not duplicated
     rules = {(r["action"], r["resource"]): r["effect"] for r in data["permissions"]}
-    assert rules[("edit", "*")] == "allow"
-    assert rules[("shell", "*")] == "allow"  # V1 `bash` is V2 `shell`
+    assert rules[("shell", "*")] == "ask"  # V1 `bash` is V2 `shell`
     assert rules[("webfetch", "*")] == "ask"  # dimensione estranea sopravvive
+    assert ("edit", "*") not in rules  # the edit mode is the app's own setting
     assert data["plugin"] == ["some-other-plugin"]  # plugin dell'utente intatti
-    assert OpenCodeRuntime().read_posture(home) == "bypass"
+
+    sidecar = OpenCodeRuntime().read_guardrail_sidecar(OpenCodeRuntime().guardrail_sidecar(home))
+    assert sidecar["autoAllow"] is True and sidecar["strict"] is True
 
     # Idempotenza: la seconda corsa non riscrive niente.
-    assert OpenCodeRuntime().apply_posture(home, "bypass") is None
+    assert OpenCodeRuntime().install_guardrail(home, _policy_body(tmp_path), engine_hooks) is None
 
 
-def test_opencode_apply_posture_never_overrides_an_explicit_user_deny(tmp_path: Path, opencode_dialect):
-    """Ordered rules: a user deny on the same (action, resource) pair wins
-    over the engine posture. Appending an allow after it would punch a hole
-    in a fence the user built on purpose."""
+def test_opencode_the_shell_rule_never_overrides_an_explicit_user_deny(tmp_path: Path, opencode_dialect):
+    """Ordered rules: a user deny on the same pair wins. Upgrading it to the engine's `ask`
+    would punch a hole in a fence the user built on purpose."""
     opencode_dialect("2.2.0")
     home = tmp_path / "home"
     config = home / ".config" / "opencode" / "opencode.jsonc"
@@ -281,23 +192,21 @@ def test_opencode_apply_posture_never_overrides_an_explicit_user_deny(tmp_path: 
         "permissions": [{"action": "shell", "resource": "*", "effect": "deny"}],
     }, indent=2), encoding="utf-8")
 
-    action = OpenCodeRuntime().apply_posture(home, "bypass")
-    assert action is not None  # edit allow is still added
+    OpenCodeRuntime().install_guardrail(home, _policy_body(tmp_path), _engine_hooks(tmp_path))
 
     data = json.loads(config.read_text(encoding="utf-8"))
     shell_rules = [r for r in data["permissions"] if r["action"] == "shell"]
     assert shell_rules == [{"action": "shell", "resource": "*", "effect": "deny"}]
-    assert {"action": "edit", "resource": "*", "effect": "allow"} in data["permissions"]
 
 
-def test_opencode_apply_posture_writes_nothing_a_v1_binary_would_refuse(tmp_path: Path, opencode_dialect):
+def test_opencode_writes_no_rules_a_v1_binary_would_refuse(tmp_path: Path, opencode_dialect):
     """V1 refuses the whole config on ordered `permissions`, so the writer stays off."""
     opencode_dialect("1.19.3")
     home = tmp_path / "home"
     config = _write_opencode_config(home)
     before = config.read_text(encoding="utf-8")
 
-    assert OpenCodeRuntime().apply_posture(home, "bypass") is None
+    OpenCodeRuntime().install_guardrail(home, _policy_body(tmp_path), _engine_hooks(tmp_path))
 
     assert config.read_text(encoding="utf-8") == before
 
@@ -396,17 +305,6 @@ def _write_antigravity_settings(home: Path) -> Path:
     return path
 
 
-def test_antigravity_apply_posture_writes_both_keys_and_preserves_others(tmp_path: Path):
-    home = tmp_path / "home"
-    settings = _write_antigravity_settings(home)
-    action = AntigravityRuntime().apply_posture(home, "bypass")
-    assert action is not None
-    data = json.loads(settings.read_text(encoding="utf-8"))
-    assert data["toolPermission"] == "always-proceed"
-    assert data["artifactReviewPolicy"] == "always-proceed"
-    assert data["someOtherKey"] == "keep-me"
-
-
 def test_antigravity_install_guardrail_preserves_foreign_hooks_json_keys(tmp_path: Path):
     home = tmp_path / "home"
     _write_antigravity_settings(home)
@@ -456,6 +354,33 @@ def test_antigravity_is_installed_from_the_cli_own_files_without_settings_json(
     assert AntigravityRuntime().is_installed(home) is True
 
 
+@pytest.mark.parametrize("app_dir", ["antigravity", "antigravity-ide"])
+@pytest.mark.parametrize("footprint", ["installation_id", "brain"])
+def test_antigravity_is_installed_from_the_app_or_ide_own_state_without_agy(
+    tmp_path: Path, app_dir: str, footprint: str,
+):
+    """L'app e l'IDE leggono lo stesso `~/.gemini/config/hooks.json` della CLI.
+
+    Su una macchina con l'app ma senza `agy` il guardrail non veniva installato e il
+    doctor non riportava niente: verde su un file che nessuno sorvegliava.
+    """
+    home = tmp_path / "home"
+    state = home / ".gemini" / app_dir
+    state.mkdir(parents=True)
+    (state / footprint).touch()
+    assert AntigravityRuntime().is_installed(home) is True
+
+
+def test_antigravity_mcp_config_the_engine_fans_out_is_not_an_install(tmp_path: Path):
+    """Il renderer scrive `mcp_config.json` in tutte e tre le cartelle: non prova niente."""
+    home = tmp_path / "home"
+    for directory in ("antigravity", "antigravity-cli", "antigravity-ide"):
+        state = home / ".gemini" / directory
+        state.mkdir(parents=True)
+        (state / "mcp_config.json").write_text("{}", encoding="utf-8")
+    assert AntigravityRuntime().is_installed(home) is False
+
+
 # ── apply_all: l'integrazione ────────────────────────────────────────────
 
 def test_apply_all_skips_every_cli_when_none_installed(tmp_path: Path):
@@ -464,14 +389,13 @@ def test_apply_all_skips_every_cli_when_none_installed(tmp_path: Path):
     actions = apply_all(
         home=home,
         engine_hooks_dir=tmp_path / "engine-hooks",
-        posture={"claude": "bypass", "codex": "bypass", "opencode": "bypass", "antigravity": "bypass"},
         guardrail_source=tmp_path / "does-not-matter.mjs",
     )
     assert actions == []
     assert not any(home.iterdir())  # nessun file creato per CLI assenti
 
 
-def test_apply_all_blocks_posture_when_guardrail_install_fails(tmp_path: Path):
+def test_apply_all_warns_and_writes_nothing_when_the_guardrail_cannot_install(tmp_path: Path):
     home = tmp_path / "home"
     settings = home / ".claude" / "settings.json"
     settings.parent.mkdir(parents=True)
@@ -484,16 +408,41 @@ def test_apply_all_blocks_posture_when_guardrail_install_fails(tmp_path: Path):
     actions = apply_all(
         home=home,
         engine_hooks_dir=tmp_path / "engine-hooks",
-        posture={"claude": "bypass"},
         guardrail_source=hook_source,
     )
     assert any("[WARN]" in a and "claude" in a for a in actions)
-    # La postura non deve MAI raggiungere il disco senza il suo guardrail.
+    # A hook that could not be registered leaves the file exactly as it was.
     assert settings.read_text(encoding="utf-8") == original
 
 
 def test_registry_has_one_adapter_per_supported_cli():
     assert set(REGISTRY) == {"claude", "codex", "opencode", "antigravity", "openclaw"}
+
+
+def test_apply_all_reports_a_missing_node_even_when_no_action_says_hook(tmp_path: Path, opencode_dialect):
+    """OpenCode answers "the plugin answers it, in opencode.json", and that is a node-spawned hook.
+
+    The warning used to fire only when an action line contained the word "hook", so on a machine
+    with OpenCode or OpenClaw and no `node` on PATH every registration was dead and nothing said
+    so. This suite patches `shutil.which` to None, so `node` is missing here too.
+    """
+    opencode_dialect("2.2.0")
+    home = tmp_path / "home"
+    config = home / ".config" / "opencode" / "opencode.json"
+    config.parent.mkdir(parents=True)
+    config.write_text("{}", encoding="utf-8")
+    binary = home / ".opencode" / "bin" / "opencode"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("", encoding="utf-8")
+
+    actions = apply_all(
+        home=home,
+        engine_hooks_dir=_real_hooks(tmp_path),
+        guardrail_source=_policy_body(tmp_path),
+    )
+
+    assert any("shell rule set to 'ask'" in action for action in actions)
+    assert any("`node` is not on PATH" in action for action in actions)
 
 
 # ── GuardRunner.apply_runtime_permissions: il punto di integrazione ───────
@@ -503,32 +452,121 @@ def test_guard_apply_runtime_permissions_noop_without_manifest(tmp_path: Path):
     assert runner.apply_runtime_permissions() == []
 
 
-def test_guard_apply_runtime_permissions_end_to_end(tmp_path: Path):
+def _permissions_vault(tmp_path: Path, posture_block: str = "posture:\n  claude: bypass\n") -> Path:
+    """A vault whose private permissions manifest declares one guardrail body."""
     vault = tmp_path / "vault"
     permissions_dir = vault / "03-INFRA" / "agent-universal-layer" / "permissions"
     (permissions_dir / "hooks").mkdir(parents=True)
     (permissions_dir / "hooks" / "guardrail-catastrophic.mjs").write_text("// policy\n", encoding="utf-8")
     (permissions_dir / "manifest.yaml").write_text(
-        "posture:\n  claude: bypass\nhooks:\n  - name: guardrail-catastrophic\n"
-        "    file: hooks/guardrail-catastrophic.mjs\n    targets: [claude]\n",
+        posture_block
+        + "hooks:\n  - name: guardrail-catastrophic\n"
+          "    file: hooks/guardrail-catastrophic.mjs\n    targets: [claude]\n",
         encoding="utf-8",
     )
+    return vault
 
+
+def _engine_root_with_real_hooks(tmp_path: Path) -> Path:
+    """An engine root whose hooks folder is a copy of the adapters that ship."""
+    engine_root = tmp_path / "engine" / "03-INFRA"
+    shutil.copytree(REAL_HOOKS, engine_root / "agent-universal-layer" / "hooks")
+    return engine_root
+
+
+def test_a_guard_cycle_does_not_touch_the_permission_mode_claude_chose(tmp_path: Path):
+    """`permissions.defaultMode` is Claude's own setting: a cycle registers the hook and
+    leaves the mode the person picked, including after a second cycle."""
+    vault = _permissions_vault(tmp_path)
     home = tmp_path / "home"
     settings = home / ".claude" / "settings.json"
     settings.parent.mkdir(parents=True)
-    settings.write_text(json.dumps({"permissions": {}}), encoding="utf-8")
+    settings.write_text(json.dumps({
+        "permissions": {"defaultMode": "acceptEdits", "allow": ["Bash(ls:*)"]},
+    }, indent=2), encoding="utf-8")
 
-    engine_root = tmp_path / "engine" / "03-INFRA"
-    shutil.copytree(REAL_HOOKS, engine_root / "agent-universal-layer" / "hooks")  # the adapters that ship
-
-    runner = GuardRunner(vault_data=vault, engine_root=engine_root, home=home)
-    actions = runner.apply_runtime_permissions()
-    assert actions  # qualcosa e' successo
+    runner = GuardRunner(vault_data=vault, engine_root=_engine_root_with_real_hooks(tmp_path), home=home)
+    assert runner.apply_runtime_permissions()
 
     data = json.loads(settings.read_text(encoding="utf-8"))
-    assert data["permissions"]["defaultMode"] == "bypassPermissions"
-    assert data["hooks"]["PreToolUse"][0]["matcher"] == "Bash"
+    assert data["permissions"]["defaultMode"] == "acceptEdits"
+    assert data["permissions"]["allow"] == ["Bash(ls:*)"]
+    assert "skipDangerousModePermissionPrompt" not in data
+    assert data["hooks"]["PreToolUse"][0]["matcher"] == "Bash|PowerShell"
+
+    runner.apply_runtime_permissions()
+    again = json.loads(settings.read_text(encoding="utf-8"))
+    assert again["permissions"] == data["permissions"]
+
+
+def test_a_guard_cycle_does_not_touch_the_codex_keys_the_app_wrote(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("nexgen_core.runtimes.codex.shutil.which", lambda name: "codex")
+    vault = _permissions_vault(tmp_path, "posture:\n  codex: bypass\n")
+    home = tmp_path / "home"
+    config = home / ".codex" / "config.toml"
+    config.parent.mkdir(parents=True)
+    original = CODEX_TOML
+    config.write_text(original, encoding="utf-8")
+
+    runner = GuardRunner(vault_data=vault, engine_root=_engine_root_with_real_hooks(tmp_path), home=home)
+    runner.apply_runtime_permissions()
+
+    assert config.read_text(encoding="utf-8") == original
+
+
+def test_a_guard_cycle_does_not_touch_the_antigravity_keys_the_app_wrote(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("nexgen_core.runtimes.antigravity.shutil.which", lambda name: "agy")
+    vault = _permissions_vault(tmp_path, "posture:\n  antigravity: bypass\n")
+    home = tmp_path / "home"
+    settings = home / ".gemini" / "antigravity-cli" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    original = json.dumps({"toolPermission": "ask", "artifactReviewPolicy": "ask"}, indent=2)
+    settings.write_text(original, encoding="utf-8")
+
+    runner = GuardRunner(vault_data=vault, engine_root=_engine_root_with_real_hooks(tmp_path), home=home)
+    runner.apply_runtime_permissions()
+
+    assert settings.read_text(encoding="utf-8") == original
+    hooks = json.loads((home / ".gemini" / "config" / "hooks.json").read_text(encoding="utf-8"))
+    assert hooks["nexgen-guardrail"]["PreToolUse"][0]["matcher"] == "run_command"
+
+
+def test_a_guard_cycle_registers_the_guardrail_in_every_runtime(tmp_path: Path, monkeypatch, opencode_dialect):
+    """The brake is what stays: each adapter that writes a hook writes it, and OpenCode keeps
+    the `shell: ask` rule plus `autoAllow` that make its plugin reachable."""
+    opencode_dialect("2.2.0")
+    for module, binary in (("claude", "claude"), ("codex", "codex"), ("opencode", "opencode"), ("antigravity", "agy")):
+        monkeypatch.setattr(f"nexgen_core.runtimes.{module}.shutil.which", lambda name, _b=binary: _b)
+    vault = _permissions_vault(tmp_path, "")
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+    (home / ".gemini" / "antigravity-cli").mkdir(parents=True)
+    (home / ".gemini" / "antigravity-cli" / "settings.json").write_text("{}", encoding="utf-8")
+    (home / ".config" / "opencode").mkdir(parents=True)
+    (home / ".config" / "opencode" / "opencode.json").write_text("{}", encoding="utf-8")
+    (home / ".openclaw").mkdir()
+    (home / ".openclaw" / "openclaw.json").write_text('{"mcp": {"servers": {}}}', encoding="utf-8")
+
+    runner = GuardRunner(vault_data=vault, engine_root=_engine_root_with_real_hooks(tmp_path), home=home)
+    actions = runner.apply_runtime_permissions()
+    assert actions
+
+    claude_hooks = json.loads((home / ".claude" / "settings.json").read_text(encoding="utf-8"))["hooks"]["PreToolUse"]
+    assert any("claude-guardrail-adapter.mjs" in item["command"] for group in claude_hooks for item in group["hooks"])
+    assert (home / ".gemini" / "config" / "hooks.json").is_file()
+    opencode_plugin = home / ".config" / "opencode" / "plugins" / "nexgen-guardrail"
+    assert (opencode_plugin / "index.mjs").is_file()
+    opencode = json.loads((home / ".config" / "opencode" / "opencode.json").read_text(encoding="utf-8"))
+    assert {"action": "shell", "resource": "*", "effect": "ask"} in opencode["permissions"]
+    opencode_sidecar = json.loads((opencode_plugin / "nexgen-guardrail.config.json").read_text(encoding="utf-8"))
+    assert opencode_sidecar["autoAllow"] is True and opencode_sidecar["strict"] is True
+    openclaw_plugin = home / ".openclaw" / "extensions" / "nexgen"
+    assert (openclaw_plugin / "guardrail.mjs").is_file() and (openclaw_plugin / "index.mjs").is_file()
+    assert (openclaw_plugin / "nexgen-guardrail.config.json").is_file()
+    # No permission mode is written anywhere: the apps own those keys now.
+    assert "posture" not in (openclaw_plugin / "nexgen.config.json").read_text(encoding="utf-8")
+    assert "defaultMode" not in (home / ".claude" / "settings.json").read_text(encoding="utf-8")
 
 
 def test_guard_apply_runtime_permissions_rejects_path_traversal(tmp_path: Path):
@@ -551,59 +589,3 @@ def test_guard_apply_runtime_permissions_rejects_path_traversal(tmp_path: Path):
     actions = runner.apply_runtime_permissions()
     assert any("WARN" in a for a in actions)
     assert settings.read_text(encoding="utf-8") == original
-
-
-# ── Event Sink Cleanup Tests ───────────────────────────────────────────
-
-def test_apply_all_isolates_event_sink_failure_per_cli(tmp_path: Path, monkeypatch) -> None:
-    """A GuardrailError from one CLI's event sink removal must warn for that CLI,
-    never abort the remaining ones."""
-    import nexgen_core.runtimes as runtimes
-    from nexgen_core.runtimes.base import GuardrailError
-
-    calls: list[str] = []
-
-    class BrokenSink:
-        name = "broken"
-        def is_installed(self, home): return True
-        def install_guardrail(self, home, source, hooks_dir): return None
-        def remove_event_sink(self, home):
-            raise GuardrailError("broken: settings corrupted")
-        def apply_posture(self, home, posture): return None
-
-    class WorkingSink:
-        name = "working"
-        def is_installed(self, home): return True
-        def install_guardrail(self, home, source, hooks_dir): return None
-        def remove_event_sink(self, home):
-            calls.append("working-sink")
-            return "working sink removed"
-        def apply_posture(self, home, posture): return None
-
-    monkeypatch.setattr(runtimes, "REGISTRY", {"broken": BrokenSink(), "working": WorkingSink()})
-    actions = runtimes.apply_all(
-        home=tmp_path / "home",
-        engine_hooks_dir=tmp_path / "hooks",
-    )
-    assert any("[WARN]" in a and "broken" in a for a in actions)
-    assert calls == ["working-sink"]
-
-
-def test_unverified_posture_warns_instead_of_silence(tmp_path: Path) -> None:
-    """Asking Codex for 'ask' (no verified rendering) must warn, not pass silent."""
-    import nexgen_core.runtimes as runtimes
-
-    home = tmp_path / "home"
-    home.mkdir()
-    import nexgen_core.runtimes.codex as codex_mod
-    _real = codex_mod.CodexRuntime.is_installed
-    codex_mod.CodexRuntime.is_installed = lambda self, home: True
-    try:
-        actions = runtimes.apply_all(
-            home=home,
-            engine_hooks_dir=tmp_path / "hooks",
-            posture={"codex": "ask"},
-        )
-    finally:
-        codex_mod.CodexRuntime.is_installed = _real
-    assert any("[WARN]" in a and "codex" in a and "ask" in a for a in actions)

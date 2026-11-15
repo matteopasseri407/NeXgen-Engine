@@ -125,10 +125,10 @@ Usa il comando appropriato al profilo:
 **Se MINIMAL**: non c'è uno script di provisioning da lanciare. Monta manualmente MCP e skill nella CLI scelta, usando come riferimento i file canonici `03-INFRA/agent-universal-layer/mcp/manifest.yaml` (elenco server MCP) e `03-INFRA/agent-universal-layer/skills/skills.manifest.yaml` (elenco skill). L'agente (questo LLM) svolge l'installazione interattivamente: legge il manifest, installa i server MCP, copia le skill di base.
 
 File di destinazione per ogni CLI (corrispondono a quelli che il sync MULTI scriverebbe):
-- **Claude Code**: bootstrap in `~/CLAUDE.md` con un puntatore a questo `AGENTS.md`; server MCP nel campo `mcpServers` di `~/.claude.json`; può ricevere una vista native-lazy in `~/.claude/skills/`.
-- **Codex**: bootstrap in `~/.codex/AGENTS.md`; server MCP nel file di configurazione di Codex; riceve una vista nativa per-skill in `~/.codex/skills/` (la sua unica radice di skill) per ogni voce che lo elenca nei propri `targets`, a prescindere da `exposure`.
+- **Claude Code**: bootstrap in `~/.claude/CLAUDE.md` con un puntatore a questo `AGENTS.md`; server MCP nel campo `mcpServers` di `~/.claude.json`; può ricevere una vista native-lazy in `~/.claude/skills/`.
+- **Codex**: bootstrap in `~/.codex/AGENTS.md`; server MCP nel file di configurazione di Codex; riceve una vista nativa per-skill sia in `~/.codex/skills/` (la radice che `codex debug prompt-input` elenca, verificata su codex-cli 0.155.1) sia nel catalogo condiviso `~/.agents/skills/` letto dall'app Codex/ChatGPT, per ogni voce che lo elenca nei propri `targets`, a prescindere da `exposure`.
 - **OpenCode**: bootstrap nel campo `instructions` della configurazione attiva, che può essere `opencode.jsonc`, `opencode.json` o `config.json`; server MCP nella sezione MCP dello stesso file; legge le skill manuali con `agent-skill find|show`.
-- **Antigravity**: bootstrap in `~/.gemini/config/AGENTS.md`; server MCP in `~/.gemini/antigravity/mcp_config.json`; legge le skill manuali con `agent-skill find|show`.
+- **Antigravity**: bootstrap in `~/.gemini/config/AGENTS.md`; server MCP in `~/.gemini/config/mcp_config.json`; legge le skill manuali con `agent-skill find|show`.
 
 Per ogni server MCP nel manifest, l'agente risolve il comando concreto nel dialetto della CLI scelta (Claude, Codex, OpenCode e Antigravity usano formati diversi, vedi `03-INFRA/agent-universal-layer/mcp/render.py` come riferimento per i dialetti).
 
@@ -311,10 +311,10 @@ Use the command appropriate to the profile:
 **If MINIMAL**: there is no provisioning script to run. Mount MCP and skills manually in the chosen CLI, using the canonical files `03-INFRA/agent-universal-layer/mcp/manifest.yaml` (MCP server list) and `03-INFRA/agent-universal-layer/skills/skills.manifest.yaml` (skill list) as reference. The agent (this LLM) performs the install interactively: reads the manifest, installs MCP servers, copies the base skills.
 
 Destination file for each CLI (these match what the MULTI sync would write):
-- **Claude Code**: bootstrap in `~/CLAUDE.md` with a pointer to this `AGENTS.md`; MCP servers in the `mcpServers` field of `~/.claude.json`; it may receive a native-lazy view in `~/.claude/skills/`.
-- **Codex**: bootstrap in `~/.codex/AGENTS.md`; MCP servers in Codex's config file; it receives a native per-skill view in `~/.codex/skills/` (its only skill root) for every entry that lists it in its own `targets`, regardless of `exposure`.
+- **Claude Code**: bootstrap in `~/.claude/CLAUDE.md` with a pointer to this `AGENTS.md`; MCP servers in the `mcpServers` field of `~/.claude.json`; it may receive a native-lazy view in `~/.claude/skills/`.
+- **Codex**: bootstrap in `~/.codex/AGENTS.md`; MCP servers in Codex's config file; it receives a native per-skill view both in `~/.codex/skills/` (the root `codex debug prompt-input` lists, verified on codex-cli 0.155.1) and in the shared `~/.agents/skills/` catalog the Codex/ChatGPT app reads, for every entry that lists it in its own `targets`, regardless of `exposure`.
 - **OpenCode**: bootstrap in the `instructions` field of the active config, which may be `opencode.jsonc`, `opencode.json`, or `config.json`; MCP servers in the MCP section of the same file; it opens manual skills through `agent-skill find|show`.
-- **Antigravity**: bootstrap in `~/.gemini/config/AGENTS.md`; MCP servers in `~/.gemini/antigravity/mcp_config.json`; it opens manual skills through `agent-skill find|show`.
+- **Antigravity**: bootstrap in `~/.gemini/config/AGENTS.md`; MCP servers in `~/.gemini/config/mcp_config.json`; it opens manual skills through `agent-skill find|show`.
 
 For each MCP server in the manifest, the agent resolves the concrete command in the chosen CLI's dialect (Claude, Codex, OpenCode, and Antigravity use different formats, see `03-INFRA/agent-universal-layer/mcp/render.py` as a reference for the dialects).
 

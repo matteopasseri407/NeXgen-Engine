@@ -181,6 +181,7 @@ def cmd_setup(args) -> int:
 
 def cmd_doctor(args) -> int:
     from nexgen_core.openclaw import node_approvals, node_checks
+    from nexgen_core.openclaw.automations import read_jobs_with_detail
     from nexgen_core.openclaw.doctor import collect, exit_code, render
     from nexgen_core.openclaw_pairing import listed as gateway_devices
 
@@ -189,6 +190,13 @@ def cmd_doctor(args) -> int:
         node_lister=node_checks.default_node_lister if asked else None,
         node_approvals_reader=node_approvals.default_reader if asked else None,
         pending=gateway_devices,
+        # The heartbeat line is only true if somebody asked the scheduler: this is
+        # the command a person runs, so it asks, and it reads each monitor's payload
+        # as well as its name, because "light or not" is a fact about the payload.
+        automations_reader=read_jobs_with_detail,
+        # What the recent turns cost, from local transcripts: the gateway machine is
+        # where this command is read, and the scheduled doctor reports its own copy.
+        spend=True,
     )
     if getattr(args, "json", False):
         print(json.dumps([outcome.to_dict() for outcome in outcomes], indent=2, ensure_ascii=False))
@@ -232,10 +240,13 @@ def cmd_stop(args) -> int:
 def cmd_groom(args) -> int:
     import sys
 
+    from nexgen_core.megaphone import Megaphone
     from nexgen_core.openclaw.sessions_groom import groom
 
     try:
-        report = groom(dry_run=bool(getattr(args, "dry_run", False)))
+        # The alert channel is handed in here and nowhere else: the hourly job runs with
+        # --no-deliver, so a queue that stopped moving would otherwise reach nobody.
+        report = groom(dry_run=bool(getattr(args, "dry_run", False)), phone=Megaphone())
     except FileNotFoundError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

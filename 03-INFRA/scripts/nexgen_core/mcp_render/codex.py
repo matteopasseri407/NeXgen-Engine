@@ -4,13 +4,47 @@ from __future__ import annotations
 import json
 import re
 import tomllib
+from typing import Any
 
 from nexgen_core.i18n import t
 from nexgen_core.paths import codex_config
 
+#: The per-server keys this renderer writes. Every other key of a managed section is the
+#: Codex app's own state, documented in its config reference: `enabled_tools`,
+#: `disabled_tools`, `default_tools_approval_mode`, `tools.<tool>.approval_mode`.
+_OWNED_KEYS = frozenset({
+    "command", "args", "url", "bearer_token_env_var", "env",
+    "startup_timeout_sec", "tool_timeout_sec",
+})
+
 
 def _toml_key(name: str) -> str:
     return name if re.fullmatch(r"[A-Za-z0-9_-]+", name) else json.dumps(name)
+
+
+def _toml_value(value: Any) -> str:
+    """One TOML literal for a key the app owns, in the shapes its own file uses."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+    raise ValueError(f"Cannot write {value!r} back into the Codex configuration")
+
+
+def _toml_table(path: str, values: dict[str, Any]) -> list[str]:
+    """A TOML table header, its scalar keys, then a sub-table for every nested object."""
+    lines = [f"[{path}]"]
+    lines.extend(f"{_toml_key(key)} = {_toml_value(value)}"
+                 for key, value in values.items() if not isinstance(value, dict))
+    for key, table in values.items():
+        if isinstance(table, dict):
+            lines.append("")
+            lines.extend(_toml_table(f"{path}.{_toml_key(key)}", table))
+    return lines
 
 
 def _managed_sets(renderer, servers, retired) -> tuple[set, set]:
@@ -69,7 +103,7 @@ def _load_previous(cfg_file, managed, unmounted):
     return existing_lines, preserved, previous
 
 
-def _build_content(renderer, servers, existing_lines, preserved):
+def _build_content(renderer, servers, existing_lines, preserved, previous):
     header = "# NeXgen Engine - Codex MCP configuration, auto-generated"
     lines: list[str] = []
     if existing_lines:
@@ -97,9 +131,18 @@ def _build_content(renderer, servers, existing_lines, preserved):
             lines.append("\n".join(block).strip())
             lines.append("")
     by_safe_name = {name.replace("-", "_"): (name, srv) for name, srv in servers.items()}
+    # Codex writes `-` as `_`, so a section rendered under the other spelling still
+    # carries the state the app set on it. A `mcp_servers` that is not a table is
+    # refused further down, by `_validate_unchanged`.
+    on_disk = previous.get("mcp_servers")
+    previous_by_safe = {
+        str(key).replace("-", "_"): entry
+        for key, entry in (on_disk if isinstance(on_disk, dict) else {}).items()
+        if isinstance(entry, dict)
+    }
     for safe_name in manifest_order + [n for n in by_safe_name if n not in manifest_order]:
         if safe_name in by_safe_name:
-            lines.extend(_render_server(*by_safe_name[safe_name]))
+            lines.extend(_render_server(*by_safe_name[safe_name], previous_by_safe.get(safe_name)))
         elif safe_name in preserved:
             lines.append("\n".join(preserved[safe_name]).strip())
             lines.append("")
@@ -140,15 +183,20 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
     retired = renderer.retired_server_names()
     unmounted, managed = _managed_sets(renderer, servers, retired)
     existing_lines, preserved, previous = _load_previous(cfg_file, managed, unmounted)
-    content, generated = _build_content(renderer, servers, existing_lines, preserved)
+    content, generated = _build_content(renderer, servers, existing_lines, preserved, previous)
     _validate_unchanged(generated, previous, managed, unmounted)
     if write:
         renderer._backup_and_write(cfg_file, content)
     return True, t("Codex configuration updated")
 
 
-def _render_server(name: str, srv: dict) -> list[str]:
-    """One manifest server as its TOML section(s), freshly rendered."""
+def _render_server(name: str, srv: dict, previous: dict | None = None) -> list[str]:
+    """One manifest server as its TOML section(s), freshly rendered.
+
+    A managed section is re-emitted, but the keys the app owns and this renderer does
+    not write are carried over from `previous`: dropping them would switch back on a
+    server the Codex app disabled, and lose the tool allow and deny lists set there.
+    """
     lines: list[str] = []
     safe_name = name.replace("-", "_")
     section = _toml_key(safe_name)
@@ -173,11 +221,20 @@ def _render_server(name: str, srv: dict) -> list[str]:
             lines.append(f'startup_timeout_sec = {float(timeouts["startup"])}')
         if "tool" in timeouts:
             lines.append(f'tool_timeout_sec = {float(timeouts["tool"])}')
+    # The app's own keys of this section, re-emitted before the env sub-table: a key
+    # written after a `[table]` header belongs to that table.
+    kept = {key: value for key, value in (previous or {}).items() if key not in _OWNED_KEYS}
+    lines.extend(f"{_toml_key(key)} = {_toml_value(value)}"
+                 for key, value in kept.items() if not isinstance(value, dict))
     if not (srv.get("transport") == "http" or srv.get("url")):
         env = srv.get("env", {})
         if env:
             lines.append(f"[mcp_servers.{section}.env]")
             for k, v in env.items():
                 lines.append(f'{_toml_key(k)} = {json.dumps(str(v))}')
+    for key, table in kept.items():
+        if isinstance(table, dict):
+            lines.append("")
+            lines.extend(_toml_table(f"mcp_servers.{section}.{_toml_key(key)}", table))
     lines.append("")
     return lines

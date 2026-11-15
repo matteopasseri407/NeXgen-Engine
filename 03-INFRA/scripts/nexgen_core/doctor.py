@@ -38,6 +38,7 @@ from nexgen_core.checks.identity_checks import (  # noqa: E402 - sys.path shim f
     check_agent_self_metadata,
     check_native_memory_boundary,
 )
+from nexgen_core.checks.instruction_limits_checks import check_bootstrap_reader_limits  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.instructions_checks import (  # noqa: E402 - sys.path shim for cloned checkout
     check_bootstrap_notes_size,
     check_bootstrap_pointer_integrity,
@@ -88,7 +89,11 @@ from nexgen_core.checks.skill_checks import (  # noqa: E402 - sys.path shim for 
     check_skills_out_of_manifest,
     check_skills_pin_freshness,
 )
-from nexgen_core.checks.guardrail_checks import check_guardrail_consulted, check_openclaw_guardrail_plugin  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.checks.guardrail_checks import (  # noqa: E402 - sys.path shim for cloned checkout
+    check_guardrail_consulted,
+    check_openclaw_guardrail_plugin,
+    check_permission_posture,
+)
 from nexgen_core.marks import safe_mark, safe_text  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.host_checks import (  # noqa: E402 - sys.path shim for cloned checkout
     check_launchers,
@@ -100,6 +105,7 @@ from nexgen_core.checks.takeover_checks import (  # noqa: E402 - sys.path shim f
     check_engine_version_recorded,
     check_last_cycle_phases,
 )
+from nexgen_core.checks.turn_budget_checks import check_turn_budget  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import t  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.lock import LockTimeoutError, host_mutation  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.paths import (  # noqa: E402 - sys.path shim for cloned checkout
@@ -210,6 +216,9 @@ def _environment_checks(run, doc: Doctor) -> None:
     run("opencode.config_dialect", lambda: check_opencode_config_dialect(home))
     run("guardrail.consulted", lambda: check_guardrail_consulted(home))
     run("guardrail.openclaw_plugin", lambda: check_openclaw_guardrail_plugin(home))
+    # A `posture:` block in the private manifest is no longer applied: one line says so
+    # instead of failing, because the value left in the manifest is the owner's to remove.
+    run("permissions.posture", lambda: check_permission_posture(vault))
     run("host.timers", check_timers_armed)
     run("host.unit_engine_root", lambda: check_unit_engine_root(home))
     run("host.launchers", lambda: check_launchers(home))
@@ -308,6 +317,8 @@ def _run_harness_checks(run, home: Path, engine_root: Path, vault: Path) -> None
     run("openclaw.claude_loopback", lambda: check_claude_loopback(home, vault, engine_root))
     # Measured token cost of recent OpenClaw harness first prompts.
     run("openclaw.context_budget", lambda: check_context_budget(home))
+    # What one turn of the same session spent: the seed is paid on every model call.
+    run("openclaw.turn_budget", lambda: check_turn_budget(home))
     # The Anthropic key no `claude-cli` agent reads, which breaks the model catalogue.
     run("openclaw.anthropic_catalog", lambda: check_anthropic_catalog(home))
     # What is left of each plan, as far as a few kilobytes can say.
@@ -326,6 +337,9 @@ def _run_instruction_checks(run, vault: Path, home: Path) -> None:
     run("instructions.opencode", lambda: check_opencode_instructions(vault, home))
     run("instructions.openclaw", lambda: check_openclaw_instructions(vault, home))
     run("instructions.bootstrap_size_budget", lambda: check_bootstrap_size_budget(vault))
+    # What each installed harness will truncate the bootstrap at, so the rules
+    # keep reaching all of them instead of stopping at a byte count.
+    run("instructions.reader_limits", lambda: check_bootstrap_reader_limits(vault, home))
     run("instructions.bootstrap_notes_size", lambda: check_bootstrap_notes_size(vault))
     run("instructions.bootstrap_pointer_integrity", lambda: check_bootstrap_pointer_integrity(vault))
 

@@ -118,6 +118,22 @@ def no_ollama_probe(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_external_quota_backend(request, monkeypatch):
+    """The optional tokscale backend reads the logins of the machine it runs on: never from a test.
+
+    One run of that binary costs seconds, asks the network, and answers about
+    whoever's accounts are logged in here, so a report built in a test would
+    change with the machine instead of with its fixture. A test that is about
+    that backend replaces `quota_tokscale._invoke` itself.
+    """
+    if request.module.__name__.endswith("test_nexgen_quota_tokscale"):
+        return
+    from nexgen_core import quota_tokscale
+
+    monkeypatch.setattr(quota_tokscale, "_invoke", lambda home=None: ((), "", ""))
+
+
+@pytest.fixture(autouse=True)
 def isolated_runtime_overrides(monkeypatch, tmp_path_factory):
     """No inherited override may redirect a fixture's writes to the host."""
     for key in (
@@ -149,6 +165,11 @@ def isolated_runtime_overrides(monkeypatch, tmp_path_factory):
     # that really wants host mutations has to ask for them.
     monkeypatch.setenv("NEXGEN_DISABLE_HOST_MUTATIONS", "1")
     monkeypatch.setenv("ROUTING_TIERS_PATH", str(tmp_path_factory.getbasetemp() / "no-routing-tiers.yaml"))
+    # The optional quota backend asks each provider's endpoint about whoever is
+    # logged in on this machine and leaves a `.tokscale/` folder behind it. No
+    # test may spawn it or touch the network: a test that is about that backend
+    # replaces its own seams, and the switch here is the same one a person uses.
+    monkeypatch.setenv("NEXGEN_QUOTA_TOKSCALE", "off")
 
 
 @pytest.fixture(autouse=True)
@@ -243,6 +264,10 @@ class Sandbox:
         # running pytest, especially when the test runs on real Windows
         # rather than a simulated environment.
         e["NEXGEN_DISABLE_HOST_MUTATIONS"] = "1"
+        # The optional quota backend reads the logins of whoever is logged in
+        # here and asks the provider's own endpoint: no environment redirect
+        # hides those, so a sandbox silences it the way a person would.
+        e["NEXGEN_QUOTA_TOKSCALE"] = "off"
         # Manual apply now performs a strict readiness classification. Keep
         # sandbox smoke tests deterministic and prevent a real host CLI from
         # being invoked through an inherited PATH.

@@ -1,9 +1,12 @@
-"""Whether each CLI really calls the guardrail that is registered for it."""
+"""Whether each CLI really calls the guardrail that is registered for it, and what the
+private permission manifest no longer decides."""
 from __future__ import annotations
 
 import json
 import time
 from pathlib import Path
+
+import yaml
 
 from nexgen_core.i18n import t
 from nexgen_core.report import CheckOutcome, Severity
@@ -68,6 +71,37 @@ def check_guardrail_consulted(home: Path) -> list[CheckOutcome]:
             ),
         ))
     return outcomes
+
+
+def check_permission_posture(vault_data: Path) -> CheckOutcome | None:
+    """A leftover `posture:` block in the private permission manifest, said once.
+
+    The engine used to translate that block into each app's own mode keys on every cycle,
+    which reverted a choice made in the app's settings screen. It reads nothing from the key
+    now: each app's own setting decides. A block left in the manifest is not an error and is
+    never rewritten -- removing it is the owner's call -- but the doctor says what it no longer
+    does, so a manifest that still declares `bypass` is not read as a machine that bypasses
+    prompts. OpenClaw is the exception the line names: it has no app-side approval setting of
+    its own, so its plugin reads `posture` from the engine-owned `nexgen.config.json` and
+    behaves as `bypass` when the key is absent.
+    """
+    manifest = vault_data / "03-INFRA" / "agent-universal-layer" / "permissions" / "manifest.yaml"
+    if not manifest.is_file():
+        return None
+    try:
+        raw = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):  # nexgen: allow reason="an unreadable manifest is already reported by the permissions phase and its own warnings; this line only says what is not applied"
+        return None
+    if not isinstance(raw, dict) or "posture" not in raw:
+        return None
+    return CheckOutcome(
+        id="permissions.posture",
+        severity=Severity.OK,
+        message=t(
+            "posture is no longer applied: each app's own setting decides, except OpenClaw, whose "
+            "plugin reads 'posture' in its own nexgen.config.json and behaves as bypass without it"
+        ),
+    )
 
 
 def check_openclaw_guardrail_plugin(home: Path) -> CheckOutcome | None:

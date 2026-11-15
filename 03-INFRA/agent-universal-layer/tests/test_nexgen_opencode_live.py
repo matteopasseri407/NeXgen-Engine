@@ -43,7 +43,6 @@ def test_the_real_opencode_loads_the_guardrail_plugin_directory_by_itself(tmp_pa
 
     rt = OpenCodeRuntime()
     assert rt.install_guardrail(home, body, HOOKS) is not None
-    rt.apply_posture(home, "bypass")
     config = json.loads((config_dir / "opencode.jsonc").read_text(encoding="utf-8"))
     assert not config.get("plugins") and not config.get("plugin"), "nothing is registered: OpenCode loads the directory itself"
 

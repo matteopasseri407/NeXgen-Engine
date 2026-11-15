@@ -25,7 +25,7 @@ NeXgen Engine is one Git repository that configures Claude Code, Codex, OpenCode
 
 ## What you get
 
-- More out of the flat plans. `nexgen quota` reads what the harnesses on this machine already wrote about their own usage: what each plan has used, the percentage where the provider publishes one, the reset time when it is known, and how old the reading is. A window it cannot measure from here says so instead of showing a guess. If you declare a fallback chain in `quota.yaml`, `nexgen openclaw setup` writes it into the OpenClaw agents the engine creates: once the last reading is past the line, 95% by default, the next turn starts on the next model instead of running into a spent plan. See [quota.md](docs/quota.md).
+- More out of the flat plans. `nexgen quota` reads what the harnesses on this machine already wrote about their own usage: what each plan has used, the percentage where the provider publishes one, the reset time when it is known, and how old the reading is. A window it cannot measure from here says so instead of showing a guess. If you install the optional [tokscale](https://github.com/junhoyeo/tokscale) binary, its live per-provider quotas are shown too, from one line of `quota.yaml` and off by a single word. If you declare a fallback chain in `quota.yaml`, `nexgen openclaw setup` writes it into the OpenClaw agents the engine creates: once the last reading is past the line, 95% by default, the next turn starts on the next model instead of running into a spent plan. See [quota.md](docs/quota.md).
 
 - Models from different vendors on the same job. `council` convenes the CLIs you already have as seats, each on its own model, to brainstorm, attack a plan or review code written by another vendor. It is opt-in: with no `seats.yaml` there is no Council. See [council.md](docs/council.md). A supervised task goes further: a frontier model writes the brief, an executor carries it out in a window of its own harness, and the engine keeps the files, the cost register and the gates that run before anyone reviews a diff. That part is a preview, and the docs say what the gates do not guarantee. See [supervision.md](docs/supervision.md).
 
@@ -35,7 +35,7 @@ NeXgen Engine is one Git repository that configures Claude Code, Codex, OpenCode
 
 - Memory you can read and diff. The KnowledgeVault is Markdown in Git: notes, decisions and project state. Writes go through the Vault MCP, which checks the note or section hash first and refuses a stale replacement. See [architecture-contract.md](docs/architecture-contract.md).
 
-- One harness for everything, if you want it. OpenClaw is the engine's official harness: a web panel and a phone app over the subscriptions you already pay for, an agent squad declared in `squad.yaml`, one node per PC and channel bindings that route a chat to the right agent. See [openclaw.md](docs/openclaw.md) and [squad.md](docs/squad.md).
+- The bot that answers while your PCs are off. OpenClaw runs on the machine that stays on and is the one you reach from the chat channels you already use, Telegram among them: an agent squad declared in `squad.yaml`, one node per PC and channel bindings that route a chat to the right agent. It sits beside the apps you work in, which `nexgen sync` configures, and its web panel and phone app use the subscriptions you already pay for. See [openclaw.md](docs/openclaw.md) and [squad.md](docs/squad.md).
 
 ## Demo
 

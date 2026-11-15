@@ -158,7 +158,7 @@ modules:
     depends_on: [memory]
 
   openclaw:
-    label: "OpenClaw: the harness with the interface (web panel, phone app)"
+    label: "OpenClaw: the always-on channel bot and agent squad, alongside the GUI apps"
     kind: feature
     states: [absent, local]
     # Bound to one machine: the gateway listens on that host's loopback, and

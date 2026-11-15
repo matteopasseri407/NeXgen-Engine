@@ -1,4 +1,4 @@
-"""OpenCode adapter: posture in opencode.jsonc + native guardrail plugin.
+"""OpenCode adapter: the guardrail plugin + the mediated shell rule.
 
 OpenCode doesn't speak Claude's JSON: its guardrail hooks are JS callbacks loaded in-process,
 not commands launched in a separate process. The static adapter at
@@ -13,10 +13,13 @@ loads by itself -- nothing is registered in the config. Registering a plugin FIL
 a directory"), and the V1 hooks (`permission.ask`, `tool.execute.before`) are never called:
 the guardrail sat on disk, registered, and was never consulted. The hooks are now
 `ctx.shell.hook("create.before")` (a veto that runs whatever the rules say) and
-`ctx.permission.hook("evaluate")` (the answer to what the person would be asked).
-Posture is ordered `permissions` rules with `action`/`resource`/`effect` (the V1 `permission`
-object is migrated once, then dropped), and instructions load from the global `AGENTS.md`
-scope file, never from the `instructions` array (accepted but unresolved).
+`ctx.permission.hook("evaluate")` (the answer to what the person would be asked), and an `ask`
+rule on `shell` is what makes the second one reachable. Instructions load from the global
+`AGENTS.md` scope file, never from the `instructions` array (accepted but unresolved).
+
+The engine writes that one `shell` rule and the sidecar flags that let the plugin answer it,
+and nothing else: the permission mode (what `edit` and the other actions do) is the app's own
+setting, written by OpenCode.
 """
 from __future__ import annotations
 
@@ -29,46 +32,31 @@ from typing import Any
 from nexgen_core.jsonc import parse_jsonc, set_jsonc_top_level_value
 from nexgen_core.opencode_compat import supports_v2
 from nexgen_core.paths import opencode_config_path
-from nexgen_core.runtimes.base import EVENT_SINK_NAME, GUARDRAIL_CORE_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
+from nexgen_core.runtimes.base import GUARDRAIL_CORE_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
 
 _IS_WINDOWS = sys.platform == "win32"
 
-#: Neutral vocabulary -> V2 `permissions` rules (verified against the V2
-#: config docs and the installed 2.0.12 binary's `debug config` output,
-#: which normalizes the legacy `permission` object into this shape).
-#: Ordered rules: to never override an explicit user rule, the engine only
-#: adds a rule for an (action, resource) pair the user hasn't ruled on.
-#: The legacy `bash` dimension is `shell` in V2.
-_POSTURE_RENDER = {
-    "bypass": [
-        {"action": "edit", "resource": "*", "effect": "allow"},
-        {"action": "shell", "resource": "*", "effect": "allow"},
-    ],
-    "accept-edits": [
-        {"action": "edit", "resource": "*", "effect": "allow"},
-        {"action": "shell", "resource": "*", "effect": "ask"},
-    ],
-}
+#: The one V2 `permissions` rule the engine writes (shape verified against the V2 config docs
+#: and the installed binary's `debug config` output). The shell rule says `ask` so that
+#: `ctx.permission.hook("evaluate")` is reached on every command -- OpenCode only consults the
+#: permission hook for an action it is about to ask about -- and the plugin then answers it
+#: (`allow` for what the guardrail body permits, `deny` for the rest). Every other rule is the
+#: person's, including whatever `edit` does: that is the app's own setting now.
+_MEDIATED_SHELL_RULE = {"action": "shell", "resource": "*", "effect": "ask"}
 
-#: Bypass as the engine renders it when the guardrail plugin is installed. The shell rule says
-#: `ask` and the plugin answers it: `allow` for what the guardrail body permits (no prompt, as
-#: bypass means), `deny` for the rest. The plugin also vetoes a denied command on its own
-#: (`shell.hook create.before`), so this is not what makes it safe; it is what makes a plugin
-#: that OpenCode stops calling visible: every command prompts, instead of nothing being checked
-#: while the rule says `allow`.
-_MEDIATED_BYPASS = [
-    {"action": "edit", "resource": "*", "effect": "allow"},
-    {"action": "shell", "resource": "*", "effect": "ask"},
-]
 
-#: Every effect a posture renders. A rule whose effect is one of these was written by the
-#: engine in an earlier cycle (the person's own choices are `deny`, or anything else): only
-#: those rules may have their effect updated when the posture changes.
-_RENDERED_EFFECTS = {
-    rule["effect"]
-    for rendered in (*_POSTURE_RENDER.values(), _MEDIATED_BYPASS)
-    for rule in rendered
-}
+def _person_asks_to_be_prompted(existing: dict[str, Any] | None, sidecar: dict) -> bool:
+    """True when the `ask` shell rule on disk is the person's own, not this engine's.
+
+    The engine writes exactly the same rule to make the plugin reachable, so the text cannot
+    say who wrote it; the sidecar can, because only a mediated install -- one that answers the
+    prompt itself -- ever sets `autoAllow`. A person who wants to approve each command keeps it.
+    """
+    return (
+        existing is not None
+        and existing.get("effect") == "ask"
+        and sidecar.get("autoAllow") is not True
+    )
 
 #: Legacy V1 dimensions and their V2 action names. Only these dimensions
 #: are migrated: every other `permission.*` key (webfetch, doom_loop, ...)
@@ -129,86 +117,63 @@ class OpenCodeRuntime(Runtime):
             raise GuardrailError(f"opencode: the root of {path.name} is not an object")
         return data
 
-    def read_posture(self, home: Path) -> str | None:
-        try:
-            data = self._load(self._config_path(home))
-        except GuardrailError:
-            return None
-        if not data:
-            return None
-        rules = data.get("permissions")
-        if not isinstance(rules, list):
-            return None
-        have = {(r.get("action"), r.get("resource"), r.get("effect")) for r in rules if isinstance(r, dict)}
-        # A mediated bypass writes shell as `ask` and lets the plugin answer (see
-        # _mediated); on disk the rules are those of accept-edits, and only the sidecar
-        # says the plugin answers for the person.
-        if self.read_guardrail_sidecar(self.guardrail_sidecar(home)).get("autoAllow") and all(
-            (r["action"], r["resource"], r["effect"]) in have for r in _MEDIATED_BYPASS
-        ):
-            return "bypass"
-        for posture, desired in _POSTURE_RENDER.items():
-            if all((r["action"], r["resource"], r["effect"]) in have for r in desired):
-                return posture
-        return None
+    def _apply_mediated_rules(self, home: Path) -> bool:
+        """Puts the `shell: ask` rule and the sidecar flags the plugin needs to answer it.
 
-    def apply_posture(self, home: Path, posture: str) -> str | None:
-        return self._apply_posture_impl(home, posture)
+        The guardrail plugin is only consulted for an action OpenCode is about to ask about:
+        with a `shell: allow` rule it sat on disk, registered, and answered nothing, so no
+        command was ever checked. `ask` makes every command reach the plugin, `autoAllow` lets
+        it answer `allow` for what the body permits (so nothing prompts, which is how a host
+        running without prompts behaves) and `strict` makes a broken guardrail block instead
+        of asking. The legacy V1 `permission` object is folded into equivalent rules first, so
+        the same pair never has two sources of truth.
 
-    def _apply_posture_impl(self, home: Path, posture: str) -> str | None:
-        desired = _POSTURE_RENDER.get(posture)
-        if desired is None:
-            return None
+        A person who chose `ask` keeps being asked: `autoAllow` is then left off, so the plugin
+        only vetoes a denied command and the prompt still reaches them.
+
+        Returns True when it changed the config or the sidecar.
+        """
         if not supports_v2():
             # A V1 CLI cannot read ordered `permissions` rules and refuses the whole
             # config, so writing them would stop OpenCode from starting at all. The
             # guardrail still runs from the plugin and its sidecar.
-            return None
+            return False
         path = self._config_path(home)
         data = self._load(path)
         if data is None:
-            return None  # OpenCode never launched here: no posture to apply
+            return False  # OpenCode never launched here: no config to write into
         changed = self._migrate_legacy_permission(data)
         rules = data.get("permissions", [])
         if rules is not None and not isinstance(rules, list):
             raise GuardrailError(f"opencode: {path.name}: 'permissions' is not an array")
         rules = list(rules or [])
-        mediated = posture == "bypass" and self._mediated(home)
-        if mediated:
-            desired = [dict(rule) for rule in _MEDIATED_BYPASS]
-            for rule in rules:
-                # The `allow` an earlier cycle wrote for this pair would keep the plugin unreachable.
-                if isinstance(rule, dict) and (rule.get("action"), rule.get("resource"), rule.get("effect")) == (
-                    "shell", "*", "allow",
-                ):
-                    rule["effect"] = "ask"
-                    changed = True
-        # The plugin answers for the person only under a mediated bypass; elsewhere the person
-        # asked to be asked. Under bypass a broken guardrail must block rather than ask.
-        self.set_guardrail_flags(self.guardrail_sidecar(home), autoAllow=mediated, strict=posture == "bypass")
-        claimed = {(r.get("action"), r.get("resource")): r for r in rules if isinstance(r, dict)}
-        for rule in desired:
-            existing = claimed.get((rule["action"], rule["resource"]))
-            if existing is None:
-                rules.append(dict(rule))
-                claimed[(rule["action"], rule["resource"])] = rules[-1]
-                changed = True
-            elif existing.get("effect") in _RENDERED_EFFECTS and existing.get("effect") != rule["effect"]:
-                # A pair carrying an effect a posture renders is the engine's own,
-                # from an earlier cycle: skipping it left the previous posture's
-                # effect in place forever (shell stayed `allow` while the person
-                # had asked to be asked). Any other effect is the person's ruling.
-                existing["effect"] = rule["effect"]
-                changed = True
-        if not changed:
-            return None
-        self._write_key(path, "permissions", rules)
-        # The legacy object has been migrated above: leaving it next to the
-        # native rules would mean two sources of truth for the same posture.
-        # A second surgical write drops it so JSONC comments survive both.
-        if self._raw_has_key(path, "permission"):
-            self._delete_key(path, "permission")
-        return f"opencode: posture '{posture}' applied in {path}"
+        pair = (_MEDIATED_SHELL_RULE["action"], _MEDIATED_SHELL_RULE["resource"])
+        existing = next(
+            (r for r in rules if isinstance(r, dict) and (r.get("action"), r.get("resource")) == pair),
+            None,
+        )
+        person_asks = _person_asks_to_be_prompted(
+            existing, self.read_guardrail_sidecar(self.guardrail_sidecar(home)),
+        )
+        if existing is None:
+            rules.append(dict(_MEDIATED_SHELL_RULE))
+            changed = True
+        elif existing.get("effect") == "allow":
+            # An `allow` left by an earlier engine keeps the plugin unreachable. Only that
+            # value is upgraded: a person's `deny` on the same pair stays exactly as it is.
+            existing["effect"] = "ask"
+            changed = True
+        if changed:
+            self._write_key(path, "permissions", rules)
+            # The legacy object has been migrated above: leaving it next to the native rules
+            # would mean two sources of truth for the same command. A second surgical write
+            # drops it so JSONC comments survive both.
+            if self._raw_has_key(path, "permission"):
+                self._delete_key(path, "permission")
+        flags_changed = self.set_guardrail_flags(
+            self.guardrail_sidecar(home), autoAllow=not person_asks, strict=True,
+        )
+        return changed or flags_changed
 
     @staticmethod
     def _migrate_legacy_permission(data: dict[str, Any]) -> bool:
@@ -279,16 +244,6 @@ class OpenCodeRuntime(Runtime):
     def guardrail_sidecar(self, home: Path) -> Path | None:
         return self._plugin_dir(home) / GUARDRAIL_SIDECAR_NAME
 
-    def _mediated(self, home: Path) -> bool:
-        """The guardrail plugin is deployed with everything it needs, so it can answer for the person."""
-        plugin_dir = self._plugin_dir(home)
-        sidecar = self.read_guardrail_sidecar(plugin_dir / GUARDRAIL_SIDECAR_NAME)
-        return (
-            bool(sidecar.get("hooks"))
-            and (plugin_dir / "index.mjs").is_file()
-            and (plugin_dir / GUARDRAIL_CORE_NAME).is_file()
-        )
-
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
         return self._install_guardrail_impl(home, hook_source, engine_hooks_dir)
 
@@ -321,12 +276,19 @@ class OpenCodeRuntime(Runtime):
             plugin_dir / GUARDRAIL_SIDECAR_NAME, body=body_dst, home=home,
         )
 
-        # 4) Nothing is registered: OpenCode loads the directory by itself. What an earlier engine
+        # 4) The `shell: ask` rule and the flags that let the plugin answer it, written only
+        #    after the body, the adapter and the sidecar all landed: a rule that removes a
+        #    prompt must never reach disk without the guardrail that has to answer it.
+        mediated_changed = self._apply_mediated_rules(home)
+
+        # 5) Nothing is registered: OpenCode loads the directory by itself. What an earlier engine
         #    registered by file path (never loaded) and deployed into the config directory goes.
         retired = self._retire_legacy(config_path)
 
         if retired:
             return f"opencode: guardrail moved to the plugin directory {plugin_dir} (the old file registration never loaded)"
+        if mediated_changed:
+            return f"opencode: shell rule set to 'ask' and the plugin answers it, in {config_path}"
         if body_changed or adapter_changed or sidecar_changed:
             return f"opencode: guardrail body/adapter updated in {plugin_dir}"
         return None
@@ -356,70 +318,3 @@ class OpenCodeRuntime(Runtime):
             shutil.rmtree(legacy_hooks, ignore_errors=True)
             changed = True
         return changed
-
-    def _register_plugin(self, config_path: Path, adapter_dst: Path) -> bool:
-        # Still used by the event sink only (a V1-shaped plugin that OpenCode 2.0.24 does not load either; see CHANGELOG).
-        # V2 native key is `plugins`; the V1 `plugin` key is still honored
-        # at runtime but no longer written. A machine carrying the legacy
-        # key is migrated once: both lists merge, dedupe, land in `plugins`,
-        # and the legacy key is dropped -- one registration, one place.
-        config = self._load(config_path)
-        if config is None:
-            return False
-        try:
-            entry = adapter_dst.resolve().as_uri()
-        except (OSError, ValueError) as exc:
-            raise GuardrailError(f"opencode: could not resolve {adapter_dst} ({exc})") from exc
-        merged: list[Any] = []
-        for key in ("plugins", "plugin"):
-            values = config.get(key, [])
-            if values is None:
-                continue
-            if not isinstance(values, list):
-                raise GuardrailError(f"opencode: {config_path.name}: {key!r} is not a list")
-            for plugin in values:
-                if plugin not in merged:
-                    merged.append(plugin)
-        if any(isinstance(p, str) and p.strip() == entry for p in merged):
-            registered = True
-        else:
-            merged.append(entry)
-            registered = False
-        legacy_present = self._raw_has_key(config_path, "plugin")
-        current = config.get("plugins")
-        if registered and not legacy_present and current == merged:
-            return False
-        self._write_key(config_path, "plugins", merged)
-        if legacy_present or self._raw_has_key(config_path, "plugin"):
-            self._delete_key(config_path, "plugin")
-        return True
-
-    def remove_event_sink(self, home: Path) -> str | None:
-        config_path = self._config_path(home)
-        config = self._load(config_path)
-        changed = False
-        if config is not None:
-            import shlex as _shlex
-            from pathlib import Path as _Path
-
-            def _is_sink_plugin(p: object) -> bool:
-                if not isinstance(p, str):
-                    return False
-                try:
-                    parts = _shlex.split(p.strip(), posix=True)
-                except ValueError:
-                    parts = p.split()
-                return any(_Path(part).name == EVENT_SINK_NAME for part in parts if part)
-
-            for key in ("plugins", "plugin"):
-                values = config.get(key)
-                if not isinstance(values, list):
-                    continue
-                kept = [p for p in values if not _is_sink_plugin(p)]
-                if len(kept) != len(values):
-                    self._write_key(config_path, key, kept)
-                    changed = True
-        removed = self.remove_deployed(config_path.parent / EVENT_SINK_NAME)
-        if changed or removed:
-            return f"opencode: event sink removed from {config_path} (no declared module needs it)"
-        return None

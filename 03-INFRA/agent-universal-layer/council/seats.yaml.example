@@ -106,11 +106,37 @@ seats:
     vendor: nome-vendor
     # a differenza di vendor/model (testo libero), cli e' validato contro un
     # insieme fisso -- deve essere una delle CLI locali supportate:
-    # opencode, agy, codex, claude, ollama (vedi config_schema.COUNCIL_CLIS).
+    # opencode, agy, codex, claude, ollama, dsh.
     cli: codex
     model: provider/nome-modello
     quota_pool: nome-cli-provider
     zero_retention: false
+  # Seggio DeepSeek Harness (dsh). E' la CLI che l'app DeepSeek Harness porta con
+  # se': non e' su PATH, Council la trova da sola nell'installazione Windows
+  # (%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd)
+  # oppure su PATH se l'hai installata da npm.
+  #
+  # `model` e' provider/modello come per opencode, perche' l'harness non ha un
+  # flag --model: la rotta viaggia in un file patch scritto per ogni chiamata
+  # (seggio in sola lettura, approvazioni negate). Un seggio dsh su opencode-go
+  # spende la stessa quota Go di un seggio opencode: il canale lo decide il
+  # provider, non la CLI. La chiave del piano arriva all'harness tramite
+  # OPENCODE_GO_API_KEY (o OPENCODE_ZEN_API_KEY per la rotta opencode).
+  #
+  # Il seggio disattiva per costruzione tre default dell'harness che sarebbero
+  # sbagliati qui: l'upload del session-log verso l'API DeepSeek ufficiale
+  # (enabled: false), l'export di telemetria di sessione e l'inventario dei
+  # pacchetti plugin. Nessuno dei tre lascia la macchina. `zero_retention`
+  # resta pero' un fatto del canale che scegli, non una conseguenza di questi
+  # interruttori.
+  #
+  # esempio-dsh:
+  #   vendor: deepseek
+  #   cli: dsh
+  #   model: opencode-go/deepseek-v4.1-flash
+  #   quota_pool: opencode-go
+  #   reasoning_effort: high    # -> agent-default-model.reasoningEffort
+  #   zero_retention: false
   # Seggio locale: OpenCode e' sempre l'harness, l'inferenza gira su questa macchina.
   # Il runtime (llama.cpp, Ollama, ...) e' solo il base_url, che deve essere di loopback:
   # e' il ripiego del ruolo privacy, il dato non deve uscire. `host` lega il seggio alla

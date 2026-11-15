@@ -8,13 +8,19 @@ Tre regole:
    regole del vault vietano;
 3. gli snippet di search sono orientamento, non fedeltà: tutto ciò che ha
    forma di segreto esce mascherato.
+
+E una quarta, sul percorso che vede il modello: ogni tool che prende una nota
+accetta gli stessi nomi (`note_ref` e i suoi alias) e un rifiuto arriva al
+modello con il testo che gli dice cosa mandare, non come "Error executing tool".
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 from importlib.util import find_spec
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -268,6 +274,62 @@ def test_a_real_uncommitted_change_still_blocks_a_write(tmp_path):
         vault.create_note("fresh.md", "# fresh\n")
 
 
+#: `CRLF_NOTE` is the same note as it sits on a Windows checkout. The expected
+#: hash below is taken over `LF_NOTE`, the note's canonical form, as a literal.
+#: The note carries frontmatter so the expected hash also proves the section
+#: offsets survive the frontmatter match on both line endings.
+LF_NOTE = b"---\ntitle: crlf\n---\n\n# Crlf\n\n## Keep\n\nkeep body\n\n## Edit\n\nold body\n"
+CRLF_NOTE = LF_NOTE.replace(b"\n", b"\r\n")
+
+
+def _crlf_vault(tmp_path: Path) -> Settings:
+    """A write-enabled vault with one committed note stored as CRLF bytes.
+
+    A Windows checkout keeps a note exactly as written, and the read index
+    hashes those bytes, while the compare-and-swap used to read the same file
+    through Python's newline translation. Writing the CRLF bytes by hand makes
+    the case real on Linux too.
+    """
+    settings = _write_settings(tmp_path, VAULT_TOKEN="s3cret")
+    (settings.vault_root / "crlf.md").write_bytes(CRLF_NOTE)
+    _git(settings.vault_root, "add", "-A")
+    _git(settings.vault_root, "commit", "-q", "-m", "crlf note")
+    return settings
+
+
+def test_a_crlf_note_read_then_updated_is_not_stale(tmp_path: Path):
+    settings = _crlf_vault(tmp_path)
+    vault = VaultService(settings)
+
+    note = vault.read_note("crlf.md")
+    assert note["content_hash"] == hashlib.sha256(LF_NOTE).hexdigest()
+    with pytest.raises(ValueError, match="expected_hash"):
+        vault.update_note("crlf.md", "# Crlf\n\nagain\n", expected_hash="0" * 64)
+
+    result = vault.update_note("crlf.md", "# Crlf\n\nrewritten\n", expected_hash=note["content_hash"])
+
+    assert result["action"] == "updated"
+    assert result["old_content_hash"] == note["content_hash"]
+    assert result["committed"] is True
+    stored = (settings.vault_root / "crlf.md").read_text(encoding="utf-8")
+    assert stored.replace("\r\n", "\n") == "# Crlf\n\nrewritten\n"
+
+
+def test_a_crlf_note_read_then_one_section_updated_is_not_stale(tmp_path: Path):
+    settings = _crlf_vault(tmp_path)
+    vault = VaultService(settings)
+
+    section_hashes = {s["heading"]: s["content_hash"] for s in vault.read_note("crlf.md")["sections"]}
+    result = vault.update_section(
+        "crlf.md", "## Edit", "## Edit\n\nnew body\n", expected_hash=section_hashes["## Edit"]
+    )
+
+    assert result["action"] == "updated_section"
+    assert result["old_section_hash"] == section_hashes["## Edit"]
+    stored = (settings.vault_root / "crlf.md").read_text(encoding="utf-8").replace("\r\n", "\n")
+    assert stored == "---\ntitle: crlf\n---\n\n# Crlf\n\n## Keep\n\nkeep body\n\n## Edit\n\nnew body\n"
+
+
 def test_read_note_accepts_each_alias():
     from vault_mcp_server.note_ref import ALIASES, resolve_note_ref
 
@@ -296,3 +358,125 @@ def test_read_note_takes_the_same_value_under_two_names():
 
     assert resolve_note_ref(note_ref="sample.md", path=" sample.md ") == "sample.md"
     assert resolve_note_ref(relative_path="dir/sample.md", note_path="") == "dir/sample.md"
+
+
+# --- Il percorso del modello: create_server() e call_tool, non solo la funzione pura ---
+
+#: I nomi che il modello manda davvero; il primo è quello canonico.
+NOTE_NAME_ALIASES = ("note_ref", "path", "note_path", "relative_path")
+
+
+def _mcp_call(settings: Settings, name: str, arguments: dict[str, Any]) -> Any:
+    """Call one tool on the real server, as a model does, and return its result."""
+    import asyncio
+
+    from vault_mcp_server.server import create_server
+
+    mcp, _vault = create_server(settings)
+    return asyncio.run(mcp.call_tool(name, arguments))
+
+
+def _single_line_vault(tmp_path: Path) -> Settings:
+    """A write-enabled vault whose seed note is one line with no newline at all.
+
+    The smallest note the compare-and-swap can be exercised on, so the alias
+    tests below stay about the reference name. The line endings that used to
+    break the round trip have their own tests
+    (`test_a_crlf_note_read_then_updated_is_not_stale` and its section sibling).
+    """
+    settings = _write_settings(tmp_path, VAULT_TOKEN="s3cret")
+    (settings.vault_root / "seed.md").write_text("# seed", encoding="utf-8")
+    _git(settings.vault_root, "add", "-A")
+    _git(settings.vault_root, "commit", "-q", "-m", "single line seed")
+    return settings
+
+
+@pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
+def test_read_note_over_mcp_takes_the_note_under_every_name(tmp_path: Path):
+    settings = _settings(tmp_path)
+    (settings.vault_root / "sample.md").write_text("# Sample\n", encoding="utf-8")
+
+    for name in NOTE_NAME_ALIASES:
+        result = _mcp_call(settings, "read_note", {name: "sample.md"})
+        assert result.structured_content["path"] == "sample.md", name
+        assert result.structured_content["title"] == "Sample", name
+
+
+@pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
+def test_list_related_over_mcp_takes_the_note_under_every_name(tmp_path: Path):
+    settings = _settings(tmp_path)
+    (settings.vault_root / "hub.md").write_text("# Hub\n\nSee [[leaf]].\n", encoding="utf-8")
+    (settings.vault_root / "leaf.md").write_text("# Leaf\n", encoding="utf-8")
+
+    for name in NOTE_NAME_ALIASES:
+        result = _mcp_call(settings, "list_related", {name: "hub.md"})
+        assert result.structured_content["note"] == "hub.md", name
+        assert [(item["path"], item["relationship"]) for item in result.structured_content["related"]] == [
+            ("leaf.md", "outgoing_link")
+        ], name
+
+
+@pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
+def test_update_note_over_mcp_takes_the_note_under_an_alias(tmp_path: Path):
+    settings = _single_line_vault(tmp_path)
+    note = _mcp_call(settings, "read_note", {"note_ref": "seed.md"}).structured_content
+
+    result = _mcp_call(
+        settings,
+        "update_note",
+        {"path": "seed.md", "content": "# replaced\n", "expected_hash": note["content_hash"]},
+    )
+
+    assert result.structured_content["action"] == "updated"
+    assert result.structured_content["committed"] is True
+    assert (settings.vault_root / "seed.md").read_text(encoding="utf-8").replace("\r\n", "\n") == "# replaced\n"
+
+
+@pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
+def test_update_section_over_mcp_takes_the_note_under_an_alias(tmp_path: Path):
+    settings = _single_line_vault(tmp_path)
+    note = _mcp_call(settings, "read_note", {"note_ref": "seed.md"}).structured_content
+
+    result = _mcp_call(
+        settings,
+        "update_section",
+        {
+            "note_path": "seed.md",
+            "section_heading": "# seed",
+            "content": "# seed\n\nbody\n",
+            "expected_hash": note["sections"][0]["content_hash"],
+        },
+    )
+
+    assert result.structured_content["action"] == "updated_section"
+    assert result.structured_content["committed"] is True
+    assert (settings.vault_root / "seed.md").read_text(encoding="utf-8").replace("\r\n", "\n") == "# seed\n\nbody\n"
+
+
+@pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
+def test_a_missing_note_reference_reaches_the_model(tmp_path: Path):
+    from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+
+    settings = _settings(tmp_path)
+    with pytest.raises(ToolError) as raised:
+        _mcp_call(settings, "read_note", {})
+
+    # the SDK answers any other exception with "Error executing tool read_note"
+    # alone, so the diagnostic the model reads proves it travelled as a ToolError
+    assert not isinstance(raised.value, UnexpectedToolError)
+    assert "note_ref" in str(raised.value)
+    assert "path" in str(raised.value)
+
+
+@pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
+def test_conflicting_note_references_reach_the_model(tmp_path: Path):
+    from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+
+    settings = _settings(tmp_path)
+    (settings.vault_root / "sample.md").write_text("# Sample\n", encoding="utf-8")
+    with pytest.raises(ToolError) as raised:
+        _mcp_call(settings, "read_note", {"note_ref": "sample.md", "path": "other.md"})
+
+    assert not isinstance(raised.value, UnexpectedToolError)
+    assert "conflicting" in str(raised.value)
+    assert "other.md" in str(raised.value)

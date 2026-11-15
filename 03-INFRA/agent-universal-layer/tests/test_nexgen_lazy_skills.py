@@ -54,7 +54,7 @@ def test_a_declared_skill_reaches_the_runtimes_it_names_whatever_the_exposure(tm
         mat.materialize(apply=True)
 
         assert (mat.library_dir / "presente").exists(), "deve stare nella libreria"
-        for directory in (mat.claude_dir, mat.codex_dir, mat.active_dir, mat.opencode_native_dir):
+        for directory in (mat.claude_dir, mat.active_dir, mat.opencode_native_dir):
             assert (directory / "presente").exists(), (
                 f"exposure {exposure}: dichiarata ma assente in {directory}"
             )
@@ -73,6 +73,91 @@ def test_eager_reaches_only_the_runtimes_it_names(tmp_path, monkeypatch):
     assert (mat.claude_dir / "subito").exists()
     assert not (mat.codex_dir / "subito").exists()
     assert not (mat.opencode_dir / "subito").exists()
+
+
+def test_a_codex_only_skill_lands_in_both_folders_codex_reads(tmp_path, monkeypatch):
+    """Codex legge `~/.codex/skills` — `codex debug prompt-input` lo elenca come
+    radice su codex-cli 0.155.1 (15/11/2026) — e l'app Codex/ChatGPT legge la
+    cartella condivisa `~/.agents/skills`. La vista va in tutte e due: con la sola
+    cartella condivisa il CLI verificato non vedeva più nessuna skill utente."""
+    vault = _vault_with(
+        tmp_path,
+        "skills:\n  solo-codex:\n    origin: vault\n    exposure: manual\n    targets: [codex]\n",
+    )
+    _own_skill(vault, "solo-codex")
+    mat = _materializer(tmp_path, vault, monkeypatch)
+
+    mat.materialize(apply=True)
+
+    assert (mat.active_dir / "solo-codex" / "SKILL.md").is_file(), (
+        "la cartella condivisa resta una vista di codex"
+    )
+    assert (mat.codex_dir / "solo-codex" / "SKILL.md").is_file(), "la radice che codex legge davvero"
+    assert not (mat.claude_dir / "solo-codex").exists(), "e nemmeno gli altri runtime"
+
+
+def test_an_engine_view_left_where_its_runtime_no_longer_looks_is_taken_back(tmp_path, monkeypatch):
+    """Una vista che il motore stesso ha lasciato in una cartella che nessun
+    runtime dichiarato legge più viene ripresa: la skill ora è solo per claude,
+    quindi la copia in `~/.codex/skills` non serve a nessuno."""
+    vault = _vault_with(
+        tmp_path,
+        "skills:\n  trasloca:\n    origin: vault\n    exposure: manual\n    targets: [claude]\n",
+    )
+    _own_skill(vault, "trasloca")
+    mat = _materializer(tmp_path, vault, monkeypatch)
+    mat.materialize(apply=True)
+
+    # La forma che il sync lasciava lì: gli stessi byte della libreria.
+    legacy = mat.codex_dir / "trasloca"
+    legacy.mkdir(parents=True, exist_ok=True)
+    (legacy / "SKILL.md").write_text("# trasloca\n", encoding="utf-8")
+
+    _changes, actions = mat.materialize(apply=True)
+
+    assert not legacy.exists(), f"vista vecchia rimasta in ~/.codex/skills: {actions}"
+    assert (mat.claude_dir / "trasloca" / "SKILL.md").is_file()
+
+
+def test_something_else_kept_in_the_old_codex_folder_stays(tmp_path, monkeypatch):
+    """La cartella vecchia non è nostra: ciò che il motore non ha creato
+    resta dov'è."""
+    vault = _vault_with(tmp_path, "skills: {}\n")
+    mat = _materializer(tmp_path, vault, monkeypatch)
+    stranger = mat.codex_dir / "scritta-a-mano"
+    stranger.mkdir(parents=True)
+    (stranger / "SKILL.md").write_text("non toccarmi\n", encoding="utf-8")
+
+    mat.materialize(apply=True)
+
+    assert (stranger / "SKILL.md").read_text(encoding="utf-8") == "non toccarmi\n"
+
+
+def test_the_doctor_finds_a_codex_starter_in_the_shared_folder(tmp_path, monkeypatch):
+    """Il doctor cerca la vista di un comando di avvio dove il runtime la
+    legge: per codex è `~/.agents/skills`."""
+    from nexgen_core.checks.skill_checks import check_engine_starter_views
+    from nexgen_core.report import Severity
+
+    vault = _vault_with(
+        tmp_path,
+        "skills:\n  avvio:\n    origin: engine\n    exposure: core\n    targets: [codex]\n",
+    )
+    engine = tmp_path / "engine"
+    source = engine / "agent-universal-layer" / "skills" / "avvio"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("# avvio\n", encoding="utf-8")
+    monkeypatch.setenv("AGENT_STATE_DIR", str(tmp_path / "state"))
+    home = tmp_path / "home"
+    mat = SkillMaterializer(vault_data=vault, home=home, engine_root=engine)
+
+    before = check_engine_starter_views(vault, home)
+    assert before.severity is Severity.BROKEN
+
+    mat.materialize(apply=True)
+
+    after = check_engine_starter_views(vault, home)
+    assert after.severity is Severity.OK, after.message
 
 
 def test_lowering_the_exposure_keeps_the_views(tmp_path, monkeypatch):
@@ -113,10 +198,13 @@ def test_a_non_core_skill_survives_repeated_syncs(tmp_path, monkeypatch):
     mat.materialize(apply=True)
     mat.materialize(apply=True)
 
-    for directory in mat.discovery_dirs:
+    for directory in {view for dirs in mat.dirs_by_target.values() for view in dirs}:
         assert (directory / "humanizer-like").exists(), (
             f"dopo tre sync la vista in {directory} è sparita"
         )
+    assert (mat.codex_dir / "humanizer-like").exists(), (
+        "la cartella che codex legge davvero non deve perdere la vista"
+    )
 
 
 def test_a_skill_dropped_from_the_manifest_loses_its_view(tmp_path, monkeypatch):
@@ -212,7 +300,7 @@ def test_a_third_party_installer_is_run_and_its_copy_is_taken_out_of_sight(tmp_p
     assert dropped.is_symlink() and dropped.resolve() == (mat.library_dir / "impeccable").resolve(), (
         "la copia dell'installer deve diventare vista gestita, non restare directory orfana"
     )
-    for directory in (mat.claude_dir, mat.codex_dir):
+    for directory in (mat.claude_dir, mat.active_dir):
         assert (directory / "impeccable").exists(), (
             f"dichiarata per {directory}, la vista deve esistere a prescindere dall'exposure"
         )
@@ -351,15 +439,19 @@ def _real_dir_view(mat: SkillMaterializer, root, name="demo"):
     return view
 
 
-def test_migrate_legacy_keeps_a_legitimate_codex_view(tmp_path, monkeypatch):
-    """Regression: the v2 port checked "claude" for the codex scope, so a
-    legitimate codex view looked like a stray on every --migrate-legacy run."""
+def test_migrate_legacy_leaves_the_views_codex_reads_alone(tmp_path, monkeypatch):
+    """Codex legge `~/.codex/skills` e la cartella condivisa: una vista in
+    entrambe è legittima, quindi `--migrate-legacy` non mette in quarantena
+    nessuna delle due."""
     mat = _managed_view_setup(tmp_path, monkeypatch)
-    view = _real_dir_view(mat, mat.codex_dir)
+    leftover = _real_dir_view(mat, mat.codex_dir)
 
     actions = mat.migrate_legacy(apply=False)
-    assert any("demo" in a and ("kept" in a or "mantenuta" in a) for a in actions), actions
-    assert view.is_dir()  # dry run touches nothing
+
+    assert any("codex/demo" in a and ("kept" in a or "mantenuta" in a) for a in actions), actions
+    assert not any("quarantin" in a or "quarantena" in a for a in actions), actions
+    assert leftover.is_dir()  # dry run touches nothing
+    assert (mat.active_dir / "demo" / "SKILL.md").is_file()
 
 
 def test_migrate_legacy_quarantines_a_view_for_the_wrong_runtime(tmp_path, monkeypatch):

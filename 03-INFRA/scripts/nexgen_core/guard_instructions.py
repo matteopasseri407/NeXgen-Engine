@@ -1,13 +1,14 @@
 """Instruction pointers: every CLI reads the canonical AGENTS.md, or a pointer to it.
 
 nexgen: one-job reason="every runtime's instruction pointer and every OpenClaw workspace block is one wiring step, written once here so no CLI keeps a stale copy"
-One job: keep the compatibility pointers (`~/CLAUDE.md`, `~/.codex/AGENTS.md`,
-`~/.gemini/config/AGENTS.md`, the OpenCode scope file) aimed at the canonical
-`AGENTS.md`, run the step that keeps the managed blocks of each OpenClaw agent
-workspace's own `AGENTS.md` current, drop the dead OpenCode `instructions`
-entries an older guard added, and relink the Windows-only private local-model
-adapter. Those blocks are written by `openclaw/org_block.py`, their owner: this
-module only calls it, so one place decides what their bytes are.
+One job: keep the compatibility pointers (`~/.claude/CLAUDE.md`,
+`~/.codex/AGENTS.md`, `~/.gemini/config/AGENTS.md`, the OpenCode scope file)
+aimed at the canonical `AGENTS.md`, run the step that keeps the managed blocks
+of each OpenClaw agent workspace's own `AGENTS.md` current, drop the dead
+OpenCode `instructions` entries an older guard added, and relink the
+Windows-only private local-model adapter. Those blocks are written by
+`openclaw/org_block.py`, their owner: this module only calls it, so one place
+decides what their bytes are.
 
 The canonical file is the one source; several runtimes reading their own stale
 copy is the opposite of the invariant this engine exists for. It used to be the
@@ -37,48 +38,60 @@ def _same_file(a: str, b: Path) -> bool:
         return a == str(b)
 
 
-def align_instructions(runner) -> list[str]:
-    """Aligns the instruction compatibility pointers (~/CLAUDE.md etc.)."""
-    canon = runner.vault_data / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
-    if not canon.is_file():
-        return []
+#: First line of the engine's own pointer file. It is how a file on disk is
+#: recognised as ours rather than as the person's own instructions: the
+#: pointers written by earlier engine versions start with the same line.
+CLAUDE_POINTER_HEADER = "# Claude compatibility pointer"
 
-    actions: list[str] = []
-    claude_md = runner.home / "CLAUDE.md"
-    content = (
-        "# Claude compatibility pointer\n\n"
+
+def claude_pointer_path(home: Path) -> Path:
+    """Where Claude Code reads user-scope instructions: `~/.claude/CLAUDE.md`.
+
+    Documented user scope, loaded for every project
+    (https://code.claude.com/docs/en/memory). `~/CLAUDE.md` is only a
+    home-directory project file, so a session started outside the home folder
+    never sees it. One owner for the path: the guard writes it, the doctor
+    validates it, and neither spells it out again.
+    """
+    return home / ".claude" / "CLAUDE.md"
+
+
+def is_engine_pointer(text: str) -> bool:
+    """True when the text is the engine's own pointer, whatever version wrote it.
+
+    The header line is the marker: it is what distinguishes a file the engine
+    may regenerate from a person's own instructions living at the same path.
+    """
+    return text.lstrip().startswith(CLAUDE_POINTER_HEADER)
+
+
+def _claude_pointer_text(canon: Path) -> str:
+    """The pointer body: short, stable, and the only content the engine owns."""
+    return (
+        f"{CLAUDE_POINTER_HEADER}\n\n"
         "Canonical instructions live at:\n"
         f"{canon}\n\n"
         "At session start, read and follow that file when the user-specific agent policy is needed.\n"
         "Do not duplicate the full bootstrap in CLAUDE.md.\n"
     )
 
-    if not claude_md.is_file() or claude_md.read_text(encoding="utf-8") != content:
-        # A dotfiles-managed ~/CLAUDE.md is a symlink: write through it so
-        # the link (and the repository behind it) survives the update. The
-        # exception is a link to the canonical file, which is replaced
-        # instead: writing through it would overwrite the instructions.
-        write_target = symlink_write_target(claude_md, keep=canon)
-        # The file may contain hand-written lines. Regenerating it is
-        # fine; making it disappear without a copy is not: if the
-        # safety copy itself fails, stop instead of destroying the
-        # only copy of those lines.
-        if claude_md.is_file():
-            from nexgen_core.files import backup_file
 
-            try:
-                backup_file(claude_md, tag="instructions")
-            except OSError as exc:
-                actions.append(WARN + t(
-                    "instruction pointer {path} left untouched: safety backup failed ({error})",
-                    path=claude_md, error=exc,
-                ))
-            else:
-                atomic_write_text(write_target, content)
-                actions.append(t("Updated instruction pointer {path}", path=claude_md))
-        else:
-            atomic_write_text(write_target, content)
-            actions.append(t("Updated instruction pointer {path}", path=claude_md))
+def align_instructions(runner) -> list[str]:
+    """Aligns the instruction compatibility pointers (~/.claude/CLAUDE.md etc.)."""
+    canon = runner.vault_data / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
+    if not canon.is_file():
+        return []
+
+    actions: list[str] = []
+    claude_md = claude_pointer_path(runner.home)
+    content = _claude_pointer_text(canon)
+
+    # The new pointer goes in first: the old home file only disappears once home
+    # sessions read the same pointer at the documented path, never before.
+    actions.extend(_write_claude_pointer(claude_md, canon, content))
+    actions.extend(_retire_home_claude_pointer(
+        runner.home / "CLAUDE.md", claude_md, content, may_remove=_pointer_in_place(claude_md, content),
+    ))
 
     # The other three CLIs read the canonical file directly. Aligning
     # only one of them would mean having a canonical source for one
@@ -98,6 +111,129 @@ def align_instructions(runner) -> list[str]:
     actions.extend(runner._align_openclaw_instructions())
 
     return actions
+
+
+def _symlink_points_at(link: Path, expected: Path) -> bool:
+    """True when `link` is a symlink whose final target is `expected`.
+
+    Recognises the layout where the file the guard wants to retire *is* the file
+    Claude reads through a link: deleting it would leave the link dangling.
+    """
+    if not link.is_symlink():
+        return False
+    try:
+        return link.resolve() == expected.resolve()
+    except (OSError, RuntimeError):  # nexgen: allow reason="a link loop or a vanished parent is not this layout, and the step that follows handles it"
+        return False
+
+
+def _pointer_in_place(target: Path, content: str) -> bool:
+    """True when the file Claude reads is the pointer the engine just wrote.
+
+    Read back rather than assumed: the write step skips a file it does not own,
+    and its failure warnings are already in the action list.
+    """
+    try:
+        return target.is_file() and target.read_text(encoding="utf-8") == content
+    except (OSError, UnicodeDecodeError):  # nexgen: allow reason="an unreadable file is not the pointer in place; the write step already reported why"
+        return False
+
+
+def _retire_home_claude_pointer(legacy: Path, target: Path, content: str, *, may_remove: bool) -> list[str]:
+    """Drops the engine's old `~/CLAUDE.md` so home sessions do not load it twice.
+
+    Only an exact copy of the engine's own pointer is deleted, only after the
+    usual safety backup, and only when `may_remove` says the pointer is already
+    at the documented path: removing it earlier would leave a home session with
+    no pointer at all. A symlink is the owner's layout (a dotfiles repository,
+    typically) and any other text is the person's own content: both stay
+    exactly as they are and are reported, because this file is no longer the
+    engine's to write. The same holds when the documented path is a link to
+    this very file: there the home file *is* what Claude reads, so deleting it
+    would leave the link dangling and no instructions anywhere.
+    """
+    if legacy.is_symlink():
+        return [t("{path} is a symlink: left untouched, Claude reads {target}", path=legacy, target=target)]
+    if _symlink_points_at(target, legacy):
+        return [t("{path} kept: {target} is a symlink to it, removing it would leave the link dangling",
+                  path=legacy, target=target)]
+    if not legacy.is_file():
+        return []
+    try:
+        text = legacy.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return [WARN + t(
+            "instruction pointer {path} left untouched: it cannot be read ({error})",
+            path=legacy, error=exc,
+        )]
+    if text != content:
+        return [t("{path} holds your own instructions: left untouched, Claude reads {target}",
+                  path=legacy, target=target)]
+    if not may_remove:
+        return [t("{path} still holds the old pointer: kept, because {target} holds your own instructions",
+                  path=legacy, target=target)]
+    from nexgen_core.files import backup_file
+
+    try:
+        backup_file(legacy, tag="instructions")
+    except OSError as exc:
+        return [WARN + t(
+            "instruction pointer {path} left untouched: safety backup failed ({error})",
+            path=legacy, error=exc,
+        )]
+    try:
+        legacy.unlink()
+    except OSError as exc:
+        return [WARN + t("instruction pointer {path} could not be removed ({error})", path=legacy, error=exc)]
+    return [t("Removed the old instruction pointer {path}: Claude reads ~/.claude/CLAUDE.md", path=legacy)]
+
+
+def _write_claude_pointer(target: Path, canon: Path, content: str) -> list[str]:
+    """Puts the pointer in Claude's user-scope file, and only there.
+
+    `~/.claude/CLAUDE.md` is documented user scope, a place people already
+    keep personal instructions: the bytes there -- read through a symlink when
+    there is one, because that is what Claude loads -- decide whether anything
+    is written at all. A real file that is neither the engine's pointer nor
+    empty is left alone and reported instead of overwritten, because a backup
+    is not consent. A dotfiles-managed symlink keeps the behaviour it had for
+    the home file: the link survives and the file behind it is written, except
+    for a link to the canonical file, which is replaced.
+    """
+    try:
+        existing = target.read_text(encoding="utf-8") if target.is_file() else None
+    except (OSError, UnicodeDecodeError) as exc:
+        return [WARN + t(
+            "instruction pointer {path} left untouched: it cannot be read ({error})",
+            path=target, error=exc,
+        )]
+    if existing == content:
+        return []
+    if not target.is_symlink() and existing is not None and existing.strip() and not is_engine_pointer(existing):
+        return [t("{path} holds your own instructions: left untouched", path=target)]
+
+    # A dotfiles-managed pointer is a symlink: write through it so the link
+    # (and the repository behind it) survives the update. The exception is a
+    # link to the canonical file, which is replaced instead: writing through
+    # it would overwrite the instructions.
+    write_target = symlink_write_target(target, keep=canon)
+    if not target.is_file():
+        atomic_write_text(write_target, content)
+        return [t("Updated instruction pointer {path}", path=target)]
+    # The file may contain hand-written lines. Regenerating it is fine;
+    # making it disappear without a copy is not: if the safety copy itself
+    # fails, stop instead of destroying the only copy of those lines.
+    from nexgen_core.files import backup_file
+
+    try:
+        backup_file(target, tag="instructions")
+    except OSError as exc:
+        return [WARN + t(
+            "instruction pointer {path} left untouched: safety backup failed ({error})",
+            path=target, error=exc,
+        )]
+    atomic_write_text(write_target, content)
+    return [t("Updated instruction pointer {path}", path=target)]
 
 
 def _align_opencode_steps(runner, canon: Path) -> list[str]:

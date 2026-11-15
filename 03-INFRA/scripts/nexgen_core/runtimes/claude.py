@@ -1,9 +1,12 @@
-"""Claude Code adapter: posture in ~/.claude/settings.json + PreToolUse hook.
+"""Claude Code adapter: the PreToolUse guardrail hook in ~/.claude/settings.json.
 
 Claude is the only CLI in this package that already natively speaks the
 same JSON the guardrail body expects on stdin/stdout, so its adapter translates
 nothing. It is there to fail closed: a body registered directly as the hook's command
 fails open (see agent-universal-layer/hooks/claude-guardrail-adapter.mjs).
+
+The permission mode (`permissions.defaultMode`) is Claude's own setting, written by
+Claude when a person picks it: this adapter never writes it.
 """
 from __future__ import annotations
 
@@ -13,23 +16,81 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.paths import claude_settings
-from nexgen_core.runtimes.base import EVENT_SINK_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
+from nexgen_core.runtimes.base import GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
 
 _ADAPTER_NAME = "claude-guardrail-adapter.mjs"
 #: The body gets 5 s; the hook gets 10, so the adapter answers (and says why) before Claude kills it.
 _BODY_TIMEOUT_SECONDS = 5
 _HOOK_TIMEOUT_SECONDS = 10
 
-#: Neutral vocabulary -> value that Claude understands (permissions.defaultMode).
-#: Verified in the field, not invented: the binary's exact spelling.
-_POSTURE_TO_CLAUDE = {"bypass": "bypassPermissions", "accept-edits": "acceptEdits", "ask": "default"}
-_CLAUDE_TO_POSTURE = {v: k for k, v in _POSTURE_TO_CLAUDE.items()}
+#: The tools whose commands the guardrail must see. Claude names a shell call by its tool, and on
+#: Windows the shell is the `PowerShell` tool: a `Bash` matcher never matches it, so the hook stayed
+#: registered, looked healthy to the doctor, and left every PowerShell command unchecked in the one
+#: posture where it is the only brake (https://code.claude.com/docs/en/hooks, Windows tab).
+_GUARDRAIL_MATCHER = "Bash|PowerShell"
+
+#: Matchers that already reach the PowerShell tool: every tool, or both tools by name.
+_GUARDRAIL_MATCHERS_COVERING = (None, "", "*", _GUARDRAIL_MATCHER)
 
 #: The hook that re-grounds a reloaded or compacted session in the vault. This package ships the
 #: script and its briefing text but deploys neither (that wiring is a manual step), so its
 #: registration in Claude's own settings is the observable fact that Claude receives a briefing.
 #: OpenClaw's plugin follows the same fact, so the two hosts brief the same sessions.
 CHECKPOINT_HOOK_NAME = "claude-vault-checkpoint.mjs"
+
+
+def _register_guardrail_hook(entries: list[Any], command: str, legacy_command: str) -> str:
+    """Put the adapter under `PreToolUse`, repairing an older registration in place.
+
+    Returns "added" for a new group, "updated" when an existing handler or matcher was repaired
+    (or a duplicate merged away), and "" when the registration already matched the spec. The
+    matcher belongs to the spec: a group left at `Bash` by an older engine is repaired instead of
+    counted as "already registered" (and never duplicated beside the repaired one). Only one
+    group keeps our command: Claude runs every matching handler once per command, so a second
+    copy runs the body twice, doubles the audit count and spends the hook budget twice.
+    """
+    # Match on the full spec, not the command alone: an entry with our command but a stale timeout
+    # or matcher would otherwise be kept forever, while a mere quoting difference would duplicate
+    # the group and fire the guardrail twice. The timeout is the adapter's, longer than the body's,
+    # so the adapter always answers before Claude would cut it off (a timeout lets the command run).
+    wanted = {"type": "command", "command": command, "timeout": _HOOK_TIMEOUT_SECONDS}
+    kept: list[Any] = []
+    kept_ours = False
+    updated = False
+    for group in entries:
+        hooks = group.get("hooks") if isinstance(group, dict) else None
+        ours = (
+            [h for h in hooks if isinstance(h, dict) and h.get("command") in (command, legacy_command)]
+            if isinstance(hooks, list) else []
+        )
+        if not ours:
+            kept.append(group)
+            continue
+        if kept_ours:
+            # A duplicate of the group we already repaired: drop our handlers, and the group
+            # itself when it held nothing else. Another tool's handler in it stays where it is.
+            group["hooks"] = [h for h in hooks if not any(h is mine for mine in ours)]
+            if group["hooks"]:
+                kept.append(group)
+            updated = True
+            continue
+        kept_ours = True
+        kept.append(group)
+        if all(handler == wanted for handler in ours) and group.get("matcher") in _GUARDRAIL_MATCHERS_COVERING:
+            continue
+        for handler in ours:
+            handler.clear()
+            handler.update(wanted)
+        if group.get("matcher") not in _GUARDRAIL_MATCHERS_COVERING:
+            group["matcher"] = _GUARDRAIL_MATCHER
+        updated = True
+    if updated:
+        entries[:] = kept
+        return "updated"
+    if kept_ours:
+        return ""
+    entries.append({"matcher": _GUARDRAIL_MATCHER, "hooks": [wanted]})
+    return "added"
 
 
 class ClaudeRuntime(Runtime):
@@ -73,39 +134,6 @@ class ClaudeRuntime(Runtime):
                     raise GuardrailError(f"claude: {path}: hooks.{event} contains a non-object entry")
         return data
 
-    def read_posture(self, home: Path) -> str | None:
-        try:
-            data = self._load_settings(home)
-        except GuardrailError:
-            return None
-        if not data:
-            return None
-        perms = data.get("permissions")
-        mode = perms.get("defaultMode") if isinstance(perms, dict) else None
-        return _CLAUDE_TO_POSTURE.get(mode)
-
-    def apply_posture(self, home: Path, posture: str) -> str | None:
-        if posture not in _POSTURE_TO_CLAUDE:
-            return None
-        data = self._load_settings(home)
-        if data is None:
-            return None  # Claude never launched here: no posture to apply
-        before = json.dumps(data, sort_keys=True)
-        perms = data.setdefault("permissions", {})
-        if not isinstance(perms, dict):
-            raise GuardrailError("claude: settings.permissions is not an object")
-        perms["defaultMode"] = _POSTURE_TO_CLAUDE[posture]
-        if posture == "bypass":
-            # Without this Claude blocks on an interactive confirmation
-            # dialog at startup, which a background guard can't answer.
-            data["skipDangerousModePermissionPrompt"] = True
-        if json.dumps(data, sort_keys=True) == before:
-            return None
-        path = self._settings_path(home)
-        self.backup(path)
-        self.atomic_write(path, json.dumps(data, indent=2) + "\n")
-        return f"claude: posture '{posture}' applied in {path}"
-
     def guardrail_sidecar(self, home: Path) -> Path | None:
         return home / ".claude" / GUARDRAIL_SIDECAR_NAME
 
@@ -148,61 +176,16 @@ class ClaudeRuntime(Runtime):
         entries = hooks.setdefault("PreToolUse", [])
         if not isinstance(entries, list):
             raise GuardrailError("claude: settings.hooks.PreToolUse is not a list")
-        # Match on the full spec, not the command alone: an entry with our
-        # command but a stale timeout/matcher would otherwise be kept
-        # forever ("already registered" over a hook that no longer matches),
-        # while a mere quoting difference would duplicate and double-fire.
-        # The timeout is the adapter's: longer than the body's own, so the adapter
-        # always answers before Claude would cut it off (which would let the command run).
-        wanted = {"type": "command", "command": command, "timeout": _HOOK_TIMEOUT_SECONDS}
-        spec_updated = False
-        for matcher in entries:
-            if not isinstance(matcher, dict):
-                continue
-            for h in matcher.get("hooks", []):
-                if isinstance(h, dict) and h.get("command") in (command, legacy_command) and h != wanted:
-                    h.clear()
-                    h.update(wanted)
-                    spec_updated = True
-        already_registered = any(
-            h == wanted
-            for matcher in entries if isinstance(matcher, dict)
-            for h in matcher.get("hooks", [])
-        )
-        if already_registered and not spec_updated:
-            if body_changed or adapter_changed or sidecar_changed:
-                return f"claude: guardrail body/adapter updated in {claude_dir}"
-            return None
-        if spec_updated:
-            # A stale timeout/matcher, or the pre-adapter registration, with our command:
-            # repair the spec and persist it, instead of reporting "already registered" forever.
+        outcome = _register_guardrail_hook(entries, command, legacy_command)
+        if outcome:
             path = self._settings_path(home)
             self.backup(path)
             self.atomic_write(path, json.dumps(data, indent=2) + "\n")
+            if outcome == "added":
+                return f"claude: guardrail hook registered in {path}"
             return f"claude: guardrail hook spec updated in {path}"
-
-        entries.append({
-            "matcher": "Bash",
-            "hooks": [wanted],
-        })
-        path = self._settings_path(home)
-        self.backup(path)
-        self.atomic_write(path, json.dumps(data, indent=2) + "\n")
-        return f"claude: guardrail hook registered in {path}"
-
-    def remove_event_sink(self, home: Path) -> str | None:
-        data = self._load_settings(home)
-        if data is None:
-            return None
-        hooks = data.get("hooks")
-        changed = isinstance(hooks, dict) and self.strip_event_sink_hooks(hooks)
-        if changed:
-            path = self._settings_path(home)
-            self.backup(path)
-            self.atomic_write(path, json.dumps(data, indent=2) + "\n")
-        removed = self.remove_deployed(home / ".claude" / EVENT_SINK_NAME)
-        if changed or removed:
-            return f"claude: event sink removed from {self._settings_path(home)} (no declared module needs it)"
+        if body_changed or adapter_changed or sidecar_changed:
+            return f"claude: guardrail body/adapter updated in {claude_dir}"
         return None
 
 

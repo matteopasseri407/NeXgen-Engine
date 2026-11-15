@@ -115,16 +115,20 @@ def test_claude_pointer_rules(tmp_path: Path):
     assert outcome.severity == Severity.BROKEN
 
     # Symlink invece di un puntatore leggero: BROKEN
-    claude_file = home / "CLAUDE.md"
+    claude_file = home / ".claude" / "CLAUDE.md"
+    claude_file.parent.mkdir(parents=True, exist_ok=True)
     claude_file.symlink_to(canon)
     outcome = instructions_checks.check_claude_pointer(vault, home)
     assert outcome.severity == Severity.BROKEN
     claude_file.unlink()
 
-    # Copia che non referenzia il canonico: BROKEN
+    # Un file dell'utente (nessun header del motore, nessun riferimento): WARN, non BROKEN.
+    # Il guard non lo tocca di proposito, quindi un'azione "sostituiscilo" distruggerebbe
+    # proprio le righe che l'engine ha rifiutato di riscrivere.
     claude_file.write_text("# Solo testo, nessun riferimento\n")
     outcome = instructions_checks.check_claude_pointer(vault, home)
-    assert outcome.severity == Severity.BROKEN
+    assert outcome.severity == Severity.WARN
+    assert "Replace" not in (outcome.action or "")
 
     # Puntatore corretto: OK
     claude_file.write_text(f"Le istruzioni sono in {canon}\n")

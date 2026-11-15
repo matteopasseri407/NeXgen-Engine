@@ -27,11 +27,25 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import t
-from nexgen_core.mcp_render import IS_WINDOWS, MCP_REMOTE_PACKAGE, load_json_object, write_json_config
+from nexgen_core.mcp_render import (
+    IS_WINDOWS,
+    MCP_REMOTE_PACKAGE,
+    load_json_object,
+    merge_entry,
+    write_json_config,
+)
 from nexgen_core.openclaw.loopback_guard import apply_loopback_guard, document_connector_names
 from nexgen_core.paths import openclaw_config
 
 logger = logging.getLogger("nexgen.mcp.openclaw")
+
+#: The per-server keys this renderer writes. Everything else in an entry is OpenClaw's own
+#: state -- the `enabled` switch and the OAuth block its panel writes -- and rebuilding the
+#: entry from scratch brought a connector switched off there back on at the next cycle.
+_OWNED_KEYS = frozenset({
+    "command", "args", "env", "url", "transport", "headers",
+    "connectionTimeoutMs", "requestTimeoutMs", "toolFilter",
+})
 
 #: An interpreter this module must give a UTF-8 environment to: `python`,
 #: `python3`, `python3.12`, `py`, and the same names as a Windows `.exe`,
@@ -336,20 +350,26 @@ def _apply_servers(
             continue
         bridge_spec = (http_servers or {}).get(name) if http_servers else None
         if bridge_spec is not None:
-            servers_table[name] = _bridged_entry(name, srv, bridge_spec)
+            servers_table[name] = merge_entry(
+                servers_table.get(name), _bridged_entry(name, srv, bridge_spec), _OWNED_KEYS,
+            )
             continue
         is_http = srv.get("transport") == "http" or bool(srv.get("url"))
         if is_http:
             bridge_url = _secret_bridge_url(name, srv, manifest_map)
             if bridge_url is not None:
-                servers_table[name] = _bridge_stdio_entry(
-                    renderer, bridge_url, srv, (references or {}).get(name)
+                servers_table[name] = merge_entry(
+                    servers_table.get(name),
+                    _bridge_stdio_entry(renderer, bridge_url, srv, (references or {}).get(name)),
+                    _OWNED_KEYS,
                 )
                 continue
             if _resolved_url(srv) is None:
                 logger.warning("OpenClaw connector %r has a URL this machine cannot resolve, skipped", name)
                 continue
-        servers_table[name] = _build_entry(srv, (references or {}).get(name))
+        servers_table[name] = merge_entry(
+            servers_table.get(name), _build_entry(srv, (references or {}).get(name)), _OWNED_KEYS,
+        )
     _mount_gateway(servers_table, servers, http_servers)
 
 

@@ -7,7 +7,7 @@ the outcome into a single `GuardResult`.
 
 The behaviour lives in the components this module calls: `guard_git.py`
 converges Git, `guard_instructions.py` aligns the CLI instruction pointers,
-`guard_permissions.py` applies the permission posture, and `guard_result.py`
+`guard_permissions.py` installs the guardrail hook, and `guard_result.py`
 holds the two value types. The methods here only name the step and call it,
 so an instance patch still replaces that one step.
 
@@ -17,7 +17,7 @@ Phases of the guard cycle (guard / apply):
 3. Preflight (read-only validation of configs and schemas)
 4. Skill materialization (skills.py)
 5. MCP configuration generation (renderer.py)
-6. Instruction-pointer alignment (AGENTS.md -> CLAUDE.md / .gemini / .codex)
+6. Instruction-pointer alignment (AGENTS.md -> ~/.claude/CLAUDE.md / .gemini / .codex)
 7. Alignment check execution
 8. OpenClaw version alignment (`openclaw/version_align.py`, the pin)
 9. Liveness registration (agent-guard-liveness)
@@ -87,7 +87,7 @@ class GuardRunner:
             return False, t("Preflight failed: {error}", error=exc)
 
     def align_instructions(self) -> list[str]:
-        """Aligns the instruction compatibility pointers (~/CLAUDE.md etc.)."""
+        """Aligns the instruction compatibility pointers (~/.claude/CLAUDE.md etc.)."""
         return guard_instructions.align_instructions(self)
 
     def _link_to_canonical(self, target: Path, canon: Path) -> tuple[bool, str | None]:
@@ -129,7 +129,7 @@ class GuardRunner:
             logger.debug("background update-cache refresh skipped (%s)", type(exc).__name__)
 
     def apply_runtime_permissions(self) -> list[str]:
-        """Permission posture + guardrail hook for every installed CLI."""
+        """Guardrail hook for every installed CLI."""
         return guard_permissions.apply_runtime_permissions(self)
 
     def run(
@@ -267,8 +267,8 @@ class GuardRunner:
         """Runs every write phase, each isolated from the others; returns the names that failed.
 
         They used to run as one chain, so a skill whose GitHub fetch timed out
-        stopped the MCP render, the permission posture and the guardrail hook
-        behind it, every 30 minutes, for as long as the network stayed down.
+        stopped the MCP render and the guardrail hook behind it, every 30 minutes,
+        for as long as the network stayed down.
         None of them reads what another wrote, and each writes its own domain
         atomically, so there was no transaction to protect: only the safety
         controls that went unapplied. The failure is still a failure (the
@@ -354,7 +354,7 @@ class GuardRunner:
         return failed
 
     def _phase_permissions(self, actions: list[str]) -> None:
-        """Permission posture + guardrail hook per CLI."""
+        """Guardrail hook per CLI, from the private permission manifest."""
         # Not wrapped: an unexpected error here means the guardrail may not have
         # been applied, which is a failed phase (run_phases records it), not a
         # warning. Unreadable policy files are reported as warnings by the call.

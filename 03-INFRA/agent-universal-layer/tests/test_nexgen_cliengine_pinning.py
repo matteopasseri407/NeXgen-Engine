@@ -32,7 +32,6 @@ EXPECTED_ENGINE_COMMANDS = [
     "preflight",
     "doctor",
     "info",
-    "shell",
     "update",
     "upgrades",
     "inventory",
@@ -45,9 +44,10 @@ EXPECTED_ENGINE_COMMANDS = [
 EXPECTED_ALIASES = {
     "apply": "sync",
     "status": "info",
-    "interactive": "shell",
-    "repl": "shell",
 }
+
+#: The retired interactive shell and its aliases must not come back by accident.
+RETIRED_ENGINE_COMMANDS = ["shell", "interactive", "repl"]
 
 
 def _engine_choices():
@@ -65,6 +65,8 @@ def test_engine_registers_all_expected_commands():
     for alias, canonical in EXPECTED_ALIASES.items():
         assert alias in choices, f"alias mancante: {alias}"
         assert choices[alias] is choices[canonical]
+    for retired in RETIRED_ENGINE_COMMANDS:
+        assert retired not in choices, f"comando ritirato ancora registrato: {retired}"
 
 
 def test_every_engine_command_has_nonempty_help():

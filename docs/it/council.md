@@ -24,7 +24,7 @@ Senza un `seats.yaml` configurato è del tutto inerte, e nient'altro nel motore 
    Nessuna delle due viene letta se non è impostata, quindi un'installazione a utente singolo non vede differenze.
 2. Lascia `schema_version: 1` alla radice, poi scegli le sedute che hai seguendo i commenti del modello.
    Ogni seduta richiede `vendor`, `cli`, `model` e un `zero_retention: true|false` esplicito.
-   `cli` deve essere uno tra `opencode`, `agy`, `codex`, `claude` e `ollama`, le CLI che `council.py` sa invocare oggi.
+   `cli` deve essere uno tra `opencode`, `agy`, `codex`, `claude`, `ollama` e `dsh`, le CLI che `council.py` sa invocare oggi.
    Metti `zero_retention: true` solo se l'hai verificato su una fonte primaria, non su un riassunto.
    Puoi anche impostare un `timeout_seconds` positivo e facoltativo per una seduta che notoriamente ha bisogno di più o meno tempo.
 3. In un setup MULTI, esegui una volta `agent-sync apply` per installare il launcher `council` su Linux e il wrapper `council.cmd` su Windows, poi lancia uno qualsiasi dei comandi qui sotto.
@@ -174,7 +174,8 @@ Imposta `decision_file` a un percorso relativo dentro la radice dati privata.
 Council capisce le tabelle Markdown per ruolo emesse dal pubblico [LLM Model Routing Governor](https://github.com/matteopasseri407/NeXgen-addon-llm-model-routing-governor), e la vecchia tabella piatta per compatibilità.
 
 Council conserva ogni ripiego della tabella del Governor e risolve l'etichetta del modello insieme al suo canale rispetto alle sedute locali.
-Go, Zen gratuito e Zen a pagamento restano separati anche se tutti e tre usano OpenCode.
+Go, Zen gratuito e Zen a pagamento restano separati anche se possono passare dalla stessa CLI, e una seduta `dsh` riporta comunque il pool che il suo modello nomina (`opencode-go/...` è Go), perché il canale viene dalla rotta e non dalla CLI.
+Una seduta sulla CLI del canale resta la prima scelta, così un secondo harness sullo stesso pool non porta via il lavoro a quello che già funziona; quando nessuna seduta su quella CLI ha il modello, risponde un'altra sullo stesso canale invece di perdere la riga.
 Privacy accetta uno o più candidati locali e ignora le righe escluse esplicitamente.
 Canali sconosciuti e righe candidate malformate fermano la proposta.
 Una vecchia tabella piatta funziona solo quando ogni modello mappa su un solo pool di esecuzione, e le corrispondenze ambigue vengono escluse.
@@ -243,6 +244,7 @@ Una sola mappatura per CLI serve sia il comando reale sia ogni punto che stampa 
 - `opencode`: nessun flag. OpenCode 2 ha eliminato `--variant`, quindi la variante viene aggiunta al modello come `provider/model#<value>`, alla lettera, e un modello che nomina già una variante la mantiene. Il valore dipende dal provider e non esiste un enum fisso da validare in locale.
 - `ollama`: `--think` documenta solo `low`/`medium`/`high`. `xhigh` e `max` vengono abbassati a `--think high`, e l'etichetta stampata lo dice. Ogni altro valore viene scartato senza flag, e l'etichetta lo dice.
 - `agy`: `--effort` accetta `low`/`medium`/`high`/`xhigh`/`max`, inoltrati alla lettera. Ogni altro valore viene scartato senza flag, e l'etichetta lo dice.
+- `dsh`: nessun flag nemmeno qui. DeepSeek Harness non ha né `--model` né una opzione per lo sforzo: la seduta scrive un file patch per ogni chiamata e lo sforzo diventa `agent-default-model.reasoningEffort` dentro quel file, alla lettera. Un valore che la rotta scelta non conosce è la rotta a doverlo rifiutare.
 
 ## Gestione delle sessioni
 
@@ -294,9 +296,22 @@ council clean --all           # removes every kept session now
   L'adattatore chiede un progetto nuovo e rimuove i token applicativi.
   I flag di sandbox non provano che i tool MCP siano disattivati, e i limiti di isolamento della CLI restano specifici del vendor.
   I test di regressione verificano il trasporto e l'inoltro dello sforzo; non certificano la disponibilità dal vivo di ogni modello né l'isolamento su ogni host.
+- **`dsh` (DeepSeek Harness) ha un adattatore Council**, invocato come `dsh --profile headless --patch <patch> --permission-mode read-only --approval-policy never --json -` con il brief su stdin.
+  L'harness viaggia dentro l'app desktop e non è su `PATH`: Council lo trova in `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd` su Windows, oppure su `PATH` dopo un'installazione via npm.
+  Quel percorso Windows contiene uno spazio, che `cmd.exe` tronca quando il motore avvia un file batch, quindi la seduta lo avvia tramite un wrapper di una riga dentro la propria directory privata.
+  Una seduta nomina `provider/modello` (`opencode-go/deepseek-v4.1-flash`), perché l'harness non ha un flag `--model`: Council scrive un file patch per ogni chiamata che dichiara la rotta pi-ai e fissa `agent-default-model`.
+  **Privacy**: l'harness parte con tre caricamenti attivi e quel file patch li spegne tutti e tre. `session-log-deepseek` aggiunge fino a 8 MiB della sessione alle richieste fatte all'API DeepSeek ufficiale, `session-telemetry-otel` esporta la cronologia di sessione verso il collector di DeepSeek, e `plugin-package-inventory-deepseek` manda l'elenco dei plugin attivi.
+  Il brief esce quindi dalla macchina solo verso la rotta che la seduta dichiara.
+  La seduta gira inoltre su un `DSH_HOME` privato, e il patch porta lì anche il session log e lo store delle proiezioni: un diff dell'intero albero di `~/.dsh` attraverso una seduta reale non mostra alcun file nuovo, e la configurazione composta non contiene alcun server MCP.
+  La chiave del piano passa dall'unica variabile che l'harness legge: `OPENCODE_GO_API_KEY` per una rotta `opencode-go`, `OPENCODE_ZEN_API_KEY` per una rotta `opencode`, convertite in `OPENCODE_API_KEY` solo per il processo figlio.
+  Un host che espone solo `OPENCODE_API_KEY`, il nome che l'harness documenta per entrambe le rotte, viene letto da lì, e il deposito dei segreti (`~/.config/nexgen/secrets.env`) è l'ultimo posto in cui la seduta guarda, perché nessun launcher carica quel file in una sessione grafica.
+  Verificata dal vivo il 2026-11-14 con DeepSeek Harness 0.2.2-rc.3 su Windows e `opencode-go/deepseek-v4.1-flash`: uscita 0, risposta letta dall'evento `final`, token riportati per la chiamata e nessun costo dichiarato.
+  Limiti: `read-only` limita le scritture, non le letture, quindi una seduta dsh può ancora leggere file ed eseguire comandi in sola lettura, come una seduta `codex` o `opencode`.
+  L'harness non registra alcun costo da nessuna parte, quindi il riepilogo d'uso stampa solo i token.
+  L'harness è in developer preview, pubblica 2-3 release a settimana e cambia formato del profilo: `nexgen council contract` intercetta un flag sparito, non uno schema di patch cambiato.
 - I test di regressione automatici coprono il flusso di controllo di tutte e quattro le modalità, la pulizia delle sessioni, il ripiego del relay, tutte le CLI di vendor supportate e il launcher Linux.
   Usano sedute finte, quindi non sostituiscono le verifiche dal vivo di ogni CLI.
 - Il launcher Windows ha test di regressione portabili e gira nativamente sotto il core Python unificato.
-- I prompt grandi usano stdin per Codex, Claude, Ollama e Antigravity, e un allegato temporaneo protetto per OpenCode.
+- I prompt grandi usano stdin per Codex, Claude, Ollama, Antigravity e DeepSeek Harness, e un allegato temporaneo protetto per OpenCode.
   L'allegato viene creato dentro l'albero privato della sessione e rimosso quando la seduta esce.
 - Le sedute via CLI sono lente, minuti e non secondi: servono per brainstorming, messa in discussione e revisione, non per una domanda veloce a metà lavoro.

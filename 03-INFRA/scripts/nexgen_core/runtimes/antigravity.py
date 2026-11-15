@@ -1,10 +1,14 @@
-"""Antigravity adapter: posture in settings.json + PreToolUse hook in hooks.json.
+"""Antigravity adapter: the PreToolUse hook in ~/.gemini/config/hooks.json.
 
 Antigravity has a REAL command-line hook (unlike OpenCode's in-process
 callback), but with its own JSON shape: the static adapter at
 agent-universal-layer/hooks/antigravity-guardrail-adapter.mjs translates
 {toolCall, workspacePaths, ...} into the same stdin/stdout the guardrail
 body already speaks for Claude.
+
+`toolPermission` and `artifactReviewPolicy` are Antigravity's own settings, written
+by the app when a person picks how much it may do unattended: this adapter never
+writes them.
 """
 from __future__ import annotations
 
@@ -15,24 +19,36 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.paths import (
+    ANTIGRAVITY_APP_DATA_DIRS,
+    ANTIGRAVITY_APP_FOOTPRINTS,
     ANTIGRAVITY_CLI_FOOTPRINTS,
     antigravity_cli_state,
     antigravity_hooks,
     antigravity_settings,
 )
-from nexgen_core.runtimes.base import EVENT_SINK_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
+from nexgen_core.runtimes.base import GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
 
 _IS_WINDOWS = platform.system() == "Windows"
 
-#: Neutral vocabulary -> Antigravity keys (verified against the reference
-#: documentation shipped inside the installed binary). Only 'bypass' is
-#: verified: there's no clean accept-edits split, because toolPermission
-#: (shell) has no equivalent for files. Writing ONLY toolPermission would
-#: leave file edits still blocked -- a half-bypass that looks applied and
-#: isn't.
-_POSTURE_RENDER = {"bypass": {"toolPermission": "always-proceed", "artifactReviewPolicy": "always-proceed"}}
-
 _ADAPTER_NAME = "antigravity-guardrail-adapter.mjs"
+
+
+def _app_ran_here(home: Path) -> bool:
+    """Whether the Antigravity App or the IDE has left its own state in this home.
+
+    The App and the IDE read the same global `~/.gemini/config/hooks.json` the `agy`
+    CLI does, so on a machine with the app but no CLI this is the only evidence that
+    the guardrail has a reader. The data folder itself is not enough: the MCP renderer
+    fans its own `mcp_config.json` into it, so what counts is a file only the product
+    writes there, namely the install id it records on first launch and the `brain`
+    folder the hooks page names as the transcript root.
+    """
+    gemini = home / ".gemini"
+    return any(
+        (gemini / directory / footprint).exists()
+        for directory in ANTIGRAVITY_APP_DATA_DIRS
+        for footprint in ANTIGRAVITY_APP_FOOTPRINTS
+    )
 
 
 class AntigravityRuntime(Runtime):
@@ -49,6 +65,8 @@ class AntigravityRuntime(Runtime):
             return True
         names = ("agy.exe", "agy.cmd", "agy") if _IS_WINDOWS else ("agy",)
         if any((home / ".local" / "bin" / name).is_file() for name in names):
+            return True
+        if _app_ran_here(home):
             return True
         # settings.json is written only by Antigravity itself on first launch, and so are
         # the CLI's history, its conversation store and its log: any of them is the
@@ -69,42 +87,13 @@ class AntigravityRuntime(Runtime):
             raise GuardrailError(f"antigravity: the root of {label} is not an object")
         return data
 
-    def read_posture(self, home: Path) -> str | None:
-        try:
-            data = self._load_json(self._settings_path(home), label="settings.json")
-        except GuardrailError:
-            return None
-        if not data:
-            return None
-        for posture, desired in _POSTURE_RENDER.items():
-            if all(data.get(k) == v for k, v in desired.items()):
-                return posture
-        return None
-
-    def apply_posture(self, home: Path, posture: str) -> str | None:
-        desired = _POSTURE_RENDER.get(posture)
-        if desired is None:
-            return None
-        path = self._settings_path(home)
-        data = self._load_json(path, label="settings.json")
-        if data is None:
-            return None  # Antigravity never launched here: no posture to apply
-        # Under bypass the guardrail is the only brake, so a guardrail that breaks must block
-        # instead of asking (an ask may be skipped by the very posture that needs it).
-        self.set_guardrail_flags(self.guardrail_sidecar(home), strict=posture == "bypass")
-        if all(data.get(k) == v for k, v in desired.items()):
-            return None
-        data.update(desired)
-        self.backup(path)
-        self.atomic_write(path, json.dumps(data, indent=2) + "\n")
-        return f"antigravity: posture '{posture}' applied in {path}"
-
     def guardrail_sidecar(self, home: Path) -> Path | None:
         return self._hooks_path(home).parent / GUARDRAIL_SIDECAR_NAME
 
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
-        if not self._settings_path(home).is_file():
-            return None  # Antigravity never launched here: no guardrail to install
+        if not self._settings_path(home).is_file() and not _app_ran_here(home):
+            # Neither `agy` nor the App/IDE ever launched here: the hook would have no reader.
+            return None
         hooks_path = self._hooks_path(home)
         adapter_dir = hooks_path.parent
 
@@ -124,7 +113,11 @@ class AntigravityRuntime(Runtime):
         # so the buffer here keeps the external kill from firing before the
         # internal one gets its chance.
         timeout = 5
-        sidecar_changed = self.write_guardrail_sidecar(sidecar_path, body=body_dst, home=home, timeout=timeout)
+        # `strict`: a guardrail that cannot answer must deny, never ask. Nothing here observes a
+        # posture any more, and `always-proceed` skips an ask, so ask is no brake at all.
+        sidecar_changed = self.write_guardrail_sidecar(
+            sidecar_path, body=body_dst, home=home, timeout=timeout, strict=True,
+        )
 
         # Antigravity executes hooks with the hooks.json directory (adapter_dir) as CWD.
         # Running via relative path avoids quotes (which agy on Windows passes literally
@@ -152,18 +145,4 @@ class AntigravityRuntime(Runtime):
             return f"antigravity: guardrail registered in {hooks_path}"
         if body_changed or adapter_changed or sidecar_changed:
             return f"antigravity: guardrail body/adapter updated in {adapter_dir}"
-        return None
-
-    def remove_event_sink(self, home: Path) -> str | None:
-        hooks_path = self._hooks_path(home)
-        current = self._load_json(hooks_path, label="hooks.json")
-        changed = False
-        if current and "nexgen-event-sink" in current:
-            del current["nexgen-event-sink"]
-            self.backup(hooks_path)
-            self.atomic_write(hooks_path, json.dumps(current, indent=2) + "\n")
-            changed = True
-        removed = self.remove_deployed(hooks_path.parent / EVENT_SINK_NAME)
-        if changed or removed:
-            return f"antigravity: event sink removed from {hooks_path} (no declared module needs it)"
         return None

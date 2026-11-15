@@ -441,21 +441,29 @@ def codex_config(home: Path | None = None) -> Path:
 #: Folders Antigravity reads an MCP config from. The renderer owns exactly
 #: one of them (the canonical file below) and fans it out to the rest as
 #: symlinks, because different ways of launching Antigravity have been
-#: observed reading different folders.
-ANTIGRAVITY_CONSUMER_DIRS: tuple[str, ...] = ("antigravity-cli", "antigravity-ide", "config")
+#: observed reading different folders. `antigravity` is in the list because
+#: older releases kept the real file there and it is still a folder the app
+#: opens.
+ANTIGRAVITY_CONSUMER_DIRS: tuple[str, ...] = ("antigravity", "antigravity-cli", "antigravity-ide")
 
 
 def _antigravity_config_impl(home: Path | None = None) -> Path:
     """Implementation behind :func:`antigravity_config`."""
-    return resolve_home(home) / ".gemini" / "antigravity" / "mcp_config.json"
+    return resolve_home(home) / ".gemini" / "config" / "mcp_config.json"
 
 
 def antigravity_config(home: Path | None = None) -> Path:
     """The canonical Antigravity MCP configuration the renderer writes.
 
-    Note this is `antigravity/mcp_config.json`, NOT one of the fan-out
-    copies: revert/reset must operate here, where the backups live. Reads
-    may go through any fan-out (same content), writes never do.
+    Google's documentation (antigravity.google/docs/mcp) names
+    `config/mcp_config.json` as the file both the Antigravity app and the
+    `agy` CLI read, so the real file lives here and every other folder
+    Antigravity looks at holds a link to it. A link at the officially read
+    path was not enough: an app that saves the file replaces the link with a
+    real copy, and the two then drift apart with nothing noticing.
+
+    Revert/reset operate here too, where the backups live. Reads may go
+    through any fan-out (same content), writes never do.
     """
     return _antigravity_config_impl(home)
 
@@ -530,6 +538,18 @@ def antigravity_settings(home: Path | None = None) -> Path:
 #: `skills` is deliberately absent: this layer's own skill materializer creates that
 #: folder, so it says nothing about whether the CLI is installed.
 ANTIGRAVITY_CLI_FOOTPRINTS: tuple[str, ...] = ("settings.json", "history.jsonl", "conversations", "cli.log")
+
+#: Where the Antigravity App and the IDE keep their own state: the `<app_data_dir>` the
+#: hooks page names (antigravity.google/docs/hooks), `~/.gemini/antigravity` for the App
+#: and `~/.gemini/antigravity-ide` for the IDE. Both read the same global
+#: `~/.gemini/config/hooks.json`, so one of them here is a reader for the guardrail on a
+#: machine that never installed `agy`.
+ANTIGRAVITY_APP_DATA_DIRS: tuple[str, ...] = ("antigravity", "antigravity-ide")
+
+#: What only the App or the IDE writes under its data folder, the first time it runs.
+#: `mcp_config.json` and `skills` are absent on purpose: this layer's MCP renderer and
+#: skill materializer create both, so neither says anything about an install.
+ANTIGRAVITY_APP_FOOTPRINTS: tuple[str, ...] = ("installation_id", "brain")
 
 
 def _antigravity_cli_state_impl(home: Path | None = None) -> Path:

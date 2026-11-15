@@ -4,7 +4,8 @@
 server resolution, timeouts plumbing and the `render_all` fan-out. Each
 module here owns exactly one CLI's native schema -- the part that breaks
 every time a vendor ships a v2. Import direction is one-way: these modules
-never import the facade back; shared constants live in this `__init__`.
+never import the facade back; shared constants and the one entry shape two
+dialects need live in this `__init__`.
 """
 from __future__ import annotations
 
@@ -18,6 +19,26 @@ IS_WINDOWS = sys.platform == "win32"
 
 #: Pinned bridge for CLIs without native remote support.
 MCP_REMOTE_PACKAGE = "mcp-remote@0.1.38"
+
+
+def http_bridge_entry(renderer, srv: dict[str, Any]) -> dict[str, Any]:
+    """The stdio entry that reaches an HTTP MCP server through the engine's pinned bridge.
+
+    A CLI can only be handed a child process, so a remote server is mounted as
+    `node mcp-http-bridge.mjs <url> <token variable name> <package>`: the bridge
+    reads the bearer from that variable in the environment of the process that
+    starts it, so no generated config ever holds the value. Antigravity and the
+    Desktop app both write exactly this shape; OpenClaw writes its own variant,
+    which adds its `${VAR}` references for it to substitute at spawn.
+    """
+    bridge_script = renderer.engine_root / "agent-universal-layer" / "mcp" / "mcp-http-bridge.mjs"
+    auth_env = srv.get("auth", {}).get("env") if isinstance(srv.get("auth"), dict) else ""
+    node_cmd = "node.exe" if IS_WINDOWS else "node"
+    return {
+        "command": node_cmd,
+        "args": [str(bridge_script), srv["url"], auth_env, MCP_REMOTE_PACKAGE],
+        "env": srv.get("env", {}),
+    }
 
 
 def load_json_object(path: Path) -> dict[str, Any]:
@@ -42,6 +63,23 @@ def load_json_object(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"Could not parse {path}: expected a JSON object")
     return data
+
+
+def merge_entry(previous: Any, fresh: dict[str, Any], owned: frozenset[str]) -> dict[str, Any]:
+    """`fresh`, plus every key the existing entry holds that this engine does not write.
+
+    Each app keeps per-server state of its own beside the launch fields: the
+    `disabled` toggle, the tool allow and deny lists, the eager flags. Writing the
+    entry from scratch dropped exactly that state on the next guard cycle, so a
+    server switched off in the app's own screen came back on within half an hour,
+    without a word. `owned` names the keys the renderer writes; everything else in
+    `previous` is left where it was, which also preserves the app's own key order.
+    """
+    if not isinstance(previous, dict):
+        return fresh
+    merged = {key: value for key, value in previous.items() if key not in owned}
+    merged.update(fresh)
+    return merged
 
 
 def servers_written_for(renderer, cli: str) -> dict[str, Any]:

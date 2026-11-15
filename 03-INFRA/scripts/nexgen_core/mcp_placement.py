@@ -26,7 +26,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-CLIS: tuple[str, ...] = ("claude", "codex", "antigravity", "opencode", "openclaw")
+from nexgen_core.config import RUNTIMES
+
+#: The CLIs this rule answers for, in order: the engine's one list of runtimes, not a second copy.
+CLIS: tuple[str, ...] = RUNTIMES
 
 #: The server that stands in front of the lazy ones. It must be mounted directly wherever it is needed.
 GATEWAY = "lazy-mcp"

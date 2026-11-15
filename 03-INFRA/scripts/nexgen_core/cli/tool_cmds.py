@@ -113,6 +113,8 @@ def _register_mcp_trials(msub) -> None:
 
 def _register_mcp_inspection(msub) -> None:
     """Read-only views, and the two that start a backend to compare what a CLI serves."""
+    from nexgen_core.mcp_placement import CLIS
+
     a = msub.add_parser("promote", help=t("Keep a trial: write it into the manifest, where it syncs to every machine"))
     a.add_argument("name")
     a.set_defaults(func=cmd_mcp_promote)
@@ -132,7 +134,7 @@ def _register_mcp_inspection(msub) -> None:
     a.set_defaults(func=cmd_mcp_plan)
 
     a = msub.add_parser("check", help=t("Start each CLI's gateway as that CLI would and compare what it serves with the plan (starts the backends)"))
-    a.add_argument("--cli", choices=("claude", "codex", "antigravity", "opencode", "openclaw"), help=t("Only this CLI"))
+    a.add_argument("--cli", choices=CLIS, help=t("Only this CLI"))
     a.add_argument("--timeout", type=float, default=90.0, help=t("Seconds to wait for the gateway's index (backends are started to build it)"))
     a.add_argument("--direct", action="store_true", help=t("Instead: measure the directly mounted servers (tools and weight of what a CLI loads up front)"))
     a.set_defaults(func=cmd_mcp_check)
@@ -180,6 +182,7 @@ def _register_quota(sub) -> None:
     """
     q = sub.add_parser("quota", help=t("What is left of each subscription, and how old the reading is"))
     q.add_argument("--json", action="store_true", help=t("Output in JSON format"))
+    q.add_argument("--line", action="store_true", help=t("One compact line for the start of a session"))
     q.set_defaults(func=cmd_quota)
 
 
@@ -268,8 +271,10 @@ def cmd_council(args) -> int:
 
 
 def cmd_quota(args) -> int:
-    from nexgen_core import quota
+    from nexgen_core import quota, quota_line
 
+    if getattr(args, "line", False):
+        return quota_line.main()
     return quota.main(as_json=getattr(args, "json", False))
 
 

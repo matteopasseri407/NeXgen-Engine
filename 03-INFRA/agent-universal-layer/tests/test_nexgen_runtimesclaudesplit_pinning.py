@@ -49,7 +49,7 @@ def test_install_guardrail_su_config_finta_stabile(tmp_path: Path) -> None:
         {"hooks": [{"type": "command", "command": "node other.mjs"}]}
     ]
     pretool = data["hooks"]["PreToolUse"]
-    assert pretool[0]["matcher"] == "Bash"
+    assert pretool[0]["matcher"] == "Bash|PowerShell"
     assert pretool[0]["hooks"][0]["command"] == f'node "{claude_dir / "claude-guardrail-adapter.mjs"}"'
     assert pretool[0]["hooks"][0]["timeout"] == 10
 
@@ -67,12 +67,6 @@ def test_install_guardrail_su_config_finta_stabile(tmp_path: Path) -> None:
 
 def test_firme_pubbliche_invariate() -> None:
     assert list(inspect.signature(ClaudeRuntime.is_installed).parameters) == ["self", "home"]
-    assert list(inspect.signature(ClaudeRuntime.read_posture).parameters) == ["self", "home"]
-    assert list(inspect.signature(ClaudeRuntime.apply_posture).parameters) == [
-        "self",
-        "home",
-        "posture",
-    ]
     assert list(inspect.signature(ClaudeRuntime.guardrail_sidecar).parameters) == ["self", "home"]
     assert list(inspect.signature(ClaudeRuntime.install_guardrail).parameters) == [
         "self",
@@ -80,7 +74,6 @@ def test_firme_pubbliche_invariate() -> None:
         "hook_source",
         "engine_hooks_dir",
     ]
-    assert list(inspect.signature(ClaudeRuntime.remove_event_sink).parameters) == ["self", "home"]
     public = {
         name
         for name, value in vars(ClaudeRuntime).items()
@@ -88,9 +81,6 @@ def test_firme_pubbliche_invariate() -> None:
     }
     assert public == {
         "is_installed",
-        "read_posture",
-        "apply_posture",
         "guardrail_sidecar",
         "install_guardrail",
-        "remove_event_sink",
     }

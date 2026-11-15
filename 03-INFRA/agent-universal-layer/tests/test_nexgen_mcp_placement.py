@@ -258,6 +258,18 @@ def test_the_shipped_manifest_is_coherent():
     assert mp.problems({**servers, "lazy-mcp": srv(tier="core")}) == []
 
 
+# --- one list of runtimes -----------------------------------------------------------------------------
+
+def test_the_engine_keeps_one_runtime_list_and_the_placement_rule_uses_it():
+    """The ordered tuple in config is the only copy: the target sets and this rule's CLIS derive from it."""
+    from nexgen_core import config
+
+    assert config.RUNTIMES == ("claude", "codex", "antigravity", "opencode", "openclaw")
+    assert config.RUNTIME_TARGETS == frozenset({"claude", "codex", "antigravity", "opencode", "openclaw"})
+    assert config.SKILL_TARGETS == config.RUNTIME_TARGETS
+    assert mp.CLIS is config.RUNTIMES
+
+
 # --- doctor and `mcp add` ------------------------------------------------------------------------------
 
 def test_doctor_flags_a_gateway_that_is_not_where_it_is_needed(tmp_path):

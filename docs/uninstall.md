@@ -40,11 +40,11 @@ writers write `<file>.pre-<reason>-<timestamp>.bak` for the files they rewrite. 
 - `~/.codex/` config, `.bak-<timestamp>`
 - `opencode.json` or `opencode.jsonc` (its `mcp.servers` section, `plugins` and `permissions` entries),
   `.bak-<timestamp>`
-- `~/.gemini/antigravity/mcp_config.json`, `.bak-<timestamp>`
-- `~/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.gemini/config/AGENTS.md`, `~/.config/opencode/AGENTS.md` (the
+- `~/.gemini/config/mcp_config.json`, `.bak-<timestamp>` (and the three copies under
+  `~/.gemini/{antigravity,antigravity-cli,antigravity-ide}/`)
+- `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.gemini/config/AGENTS.md`, `~/.config/opencode/AGENTS.md` (the
   instructions pointer), `.pre-instructions-<timestamp>.bak`
-- `~/.claude/settings.json` (the checkpoint hook, and the permission posture if your vault declared one),
-  `.pre-permissions-<timestamp>.bak`
+- `~/.claude/settings.json` (the checkpoint hook and the guardrail hook), `.pre-permissions-<timestamp>.bak`
 
 MCP and permission backups keep the three newest, so the copy from before this project first ran may already be gone.
 Instruction-pointer backups are not rotated and accumulate.
@@ -59,7 +59,7 @@ These are the per-CLI bootstrap files this project pointed at its instructions. 
 use them for something else: deleting one wipes your own content in the same file, not just this project's pointer.
 
 ```bash
-rm -f ~/CLAUDE.md ~/.codex/AGENTS.md ~/.gemini/config/AGENTS.md
+rm -f ~/.claude/CLAUDE.md ~/.codex/AGENTS.md ~/.gemini/config/AGENTS.md
 ```
 
 ## 4. Remove the skill folders this project copied in
@@ -72,7 +72,7 @@ and remove only what you recognise as coming from your manifest:
 cat ~/.agents/skills/INDEX.md       # managed catalog, not a skill-body root
 ls ~/.agents/skill-library           # managed skill bodies
 rm -rf ~/.agents/skill-library/<skill-name>
-rm -rf ~/.claude/skills/<skill-name> ~/.codex/skills/<skill-name> ~/.gemini/antigravity-cli/skills/<skill-name>
+rm -rf ~/.claude/skills/<skill-name> ~/.agents/skills/<skill-name> ~/.codex/skills/<skill-name> ~/.gemini/antigravity-cli/skills/<skill-name>
 ```
 
 `nexgen skill index` regenerates `~/.agents/skills/INDEX.md` (historical name `skills-sync.py --index`). Do not delete

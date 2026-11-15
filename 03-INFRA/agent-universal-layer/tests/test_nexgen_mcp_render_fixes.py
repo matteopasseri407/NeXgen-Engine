@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -32,6 +33,23 @@ def make_renderer(tmp_path, servers=None):
 
 def backups(path: Path) -> list[Path]:
     return sorted(p for p in path.parent.iterdir() if p.name.startswith(path.name + ".") and p.name.endswith(".bak"))
+
+
+def _symlinks_supported() -> bool:
+    """Whether this machine may create a symlink at all: Windows denies it without a privilege."""
+    with tempfile.TemporaryDirectory() as folder:
+        target = Path(folder) / "target"
+        target.write_text("x", encoding="utf-8")
+        try:
+            (Path(folder) / "link").symlink_to(target)
+        except OSError:
+            return False
+        return True
+
+
+#: Probed once, at import: a machine that may not create a symlink (Windows
+#: without the privilege) skips only the tests that need one.
+SYMLINKS_SUPPORTED = _symlinks_supported()
 
 
 # --- Codex: the manifest's timeouts reach both kinds of server -------------------------
@@ -114,6 +132,34 @@ def test_claude_empty_file_is_treated_as_nothing_to_protect(tmp_path):
     assert set(json.loads(cfg.read_text())["mcpServers"]) == {"alpha"}
 
 
+def test_claude_save_landing_mid_render_is_not_lost(tmp_path, monkeypatch):
+    """Claude Code and the Desktop app save session and trust state into this
+    same file, and the save can land after the render has read the file and
+    computed its `mcpServers`, while the write is still to come. The render
+    re-reads the file at the last moment and re-applies only `mcpServers`, so
+    that save survives.
+
+    The save is injected from inside the table's computation on purpose: that
+    is after every read the old code made and before the write, which is the
+    window a re-read at the top of the render cannot cover.
+    """
+    renderer = make_renderer(tmp_path)
+    cfg = claude_file(tmp_path)
+    write_like_claude_code(cfg, {"mcpServers": {}})
+    real_drop = renderer._drop_unmounted
+
+    def cli_saves_after_the_table_is_computed(mcp_servers, servers, cli_target=""):
+        real_drop(mcp_servers, servers, cli_target=cli_target)
+        write_like_claude_code(cfg, {"projects": {"/home/user/x": {"trusted": True}}})
+
+    monkeypatch.setattr(renderer, "_drop_unmounted", cli_saves_after_the_table_is_computed)
+    renderer.render_claude(write=True)
+
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    assert data["projects"] == {"/home/user/x": {"trusted": True}}
+    assert set(data["mcpServers"]) == {"alpha"}
+
+
 # --- Antigravity: a real file at a consumer path is merged and backed up, never deleted ------
 
 def consumer(tmp_path, directory) -> Path:
@@ -130,7 +176,7 @@ def _render_agy_with_and_without_openclaw(tmp_path, monkeypatch, gateway_targets
     renderer = make_renderer(tmp_path, servers)
     config = tmp_path / "openclaw.json"
     monkeypatch.setenv("OPENCLAW_CONFIG_PATH", str(config))
-    canonical = tmp_path / "home/.gemini/antigravity/mcp_config.json"
+    canonical = tmp_path / "home/.gemini/config/mcp_config.json"
 
     renderer.render_antigravity(write=True)
     before = json.loads(canonical.read_text(encoding="utf-8"))["mcpServers"]
@@ -183,7 +229,7 @@ def test_the_doctor_expects_of_agy_inside_openclaw_what_the_render_writes(tmp_pa
     assert "antigravity: missing" not in outcome.message, outcome.message
 
 
-@pytest.mark.skipif(os.name == "nt", reason="symlinks require privileges")
+@pytest.mark.skipif(not SYMLINKS_SUPPORTED, reason="this machine may not create symlinks")
 def test_antigravity_real_file_is_backed_up_and_its_servers_are_kept(tmp_path):
     renderer = make_renderer(tmp_path)
     variant = consumer(tmp_path, "antigravity-cli")
@@ -191,25 +237,25 @@ def test_antigravity_real_file_is_backed_up_and_its_servers_are_kept(tmp_path):
     own = {"mcpServers": {"hand-added": {"command": "mine", "args": ["--x"], "env": {}}}}
     variant.write_text(json.dumps(own))
     renderer.render_antigravity(write=True)
-    canonical = tmp_path / "home/.gemini/antigravity/mcp_config.json"
+    canonical = tmp_path / "home/.gemini/config/mcp_config.json"
     assert set(json.loads(canonical.read_text())["mcpServers"]) == {"alpha", "hand-added"}
     assert variant.is_symlink() and variant.resolve() == canonical.resolve()
     saved = [json.loads(p.read_text()) for p in backups(variant)]
     assert saved == [own]
 
 
-@pytest.mark.skipif(os.name == "nt", reason="symlinks require privileges")
+@pytest.mark.skipif(not SYMLINKS_SUPPORTED, reason="this machine may not create symlinks")
 def test_antigravity_retired_server_in_a_copy_does_not_come_back(tmp_path):
     renderer = make_renderer(tmp_path)
     renderer.manifest_path.write_text(yaml.safe_dump({
         "servers": {"alpha": {"transport": "stdio", "command": "python", "tier": "core"}},
         "retired_servers": ["old"],
     }))
-    variant = consumer(tmp_path, "config")
+    variant = consumer(tmp_path, "antigravity-ide")
     variant.parent.mkdir(parents=True)
     variant.write_text(json.dumps({"mcpServers": {"old": {"command": "x"}}}))
     renderer.render_antigravity(write=True)
-    canonical = tmp_path / "home/.gemini/antigravity/mcp_config.json"
+    canonical = tmp_path / "home/.gemini/config/mcp_config.json"
     assert "old" not in json.loads(canonical.read_text())["mcpServers"]
 
 
@@ -225,13 +271,139 @@ def test_antigravity_copy_fallback_is_idempotent(tmp_path, monkeypatch):
     renderer.render_antigravity(write=True)
     variant = consumer(tmp_path, "antigravity-ide")
     assert variant.is_file() and not variant.is_symlink()
-    canonical = tmp_path / "home/.gemini/antigravity/mcp_config.json"
+    canonical = tmp_path / "home/.gemini/config/mcp_config.json"
     assert variant.read_bytes() == canonical.read_bytes()
     mtime = variant.stat().st_mtime_ns
     renderer.render_antigravity(write=True)
     renderer.render_antigravity(write=True)
     assert variant.stat().st_mtime_ns == mtime
     assert backups(variant) == []
+
+
+# --- Antigravity: the officially read path holds the real file --------------------------------
+
+def test_a_fresh_machine_gets_the_officially_read_file_as_the_real_one(tmp_path):
+    """Google's MCP doc names `~/.gemini/config/mcp_config.json` for the app and `agy` alike.
+
+    A link there is what silently lost the configuration: an app that saves the
+    file replaces the link with a copy of its own, and the two drift apart.
+    """
+    renderer = make_renderer(tmp_path)
+    renderer.render_antigravity(write=True)
+
+    canonical = tmp_path / "home/.gemini/config/mcp_config.json"
+    assert canonical.is_file() and not canonical.is_symlink()
+    assert set(json.loads(canonical.read_text(encoding="utf-8"))["mcpServers"]) == {"alpha"}
+    for directory in ("antigravity", "antigravity-cli", "antigravity-ide"):
+        copy = consumer(tmp_path, directory)
+        assert copy.read_bytes() == canonical.read_bytes(), directory
+
+
+@pytest.mark.skipif(not SYMLINKS_SUPPORTED, reason="this machine may not create symlinks")
+def test_every_other_folder_antigravity_reads_points_at_that_file(tmp_path):
+    renderer = make_renderer(tmp_path)
+    renderer.render_antigravity(write=True)
+
+    canonical = tmp_path / "home/.gemini/config/mcp_config.json"
+    for directory in ("antigravity", "antigravity-cli", "antigravity-ide"):
+        copy = consumer(tmp_path, directory)
+        assert copy.is_symlink(), directory
+        assert copy.resolve() == canonical.resolve(), directory
+
+
+@pytest.mark.skipif(not SYMLINKS_SUPPORTED, reason="this machine may not create symlinks")
+def test_the_old_layout_is_migrated_without_losing_a_server(tmp_path):
+    """The previous release kept the real file in `antigravity/` and linked `config/` to it."""
+    renderer = make_renderer(tmp_path)
+    old = {"mcpServers": {"hand-added": {"command": "mine", "args": [], "env": {}}}}
+    legacy = consumer(tmp_path, "antigravity")
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(json.dumps(old))
+    canonical = consumer(tmp_path, "config")
+    canonical.parent.mkdir(parents=True)
+    canonical.symlink_to(legacy)
+    cli_copy = consumer(tmp_path, "antigravity-cli")
+    cli_copy.parent.mkdir(parents=True)
+    cli_copy.symlink_to(legacy)
+
+    renderer.render_antigravity(write=False)
+    assert canonical.is_symlink(), "a preview never migrates anything"
+
+    renderer.render_antigravity(write=True)
+
+    assert canonical.is_file() and not canonical.is_symlink()
+    assert set(json.loads(canonical.read_text(encoding="utf-8"))["mcpServers"]) == {"alpha", "hand-added"}
+    assert legacy.is_symlink() and legacy.resolve() == canonical.resolve()
+    assert cli_copy.is_symlink() and cli_copy.resolve() == canonical.resolve()
+    saved = [json.loads(path.read_text(encoding="utf-8")) for path in backups(legacy)]
+    assert saved == [old]
+
+    from nexgen_core.checks import mcp_checks
+    from nexgen_core.report import Severity
+
+    assert mcp_checks.check_antigravity_fanout(tmp_path / "vault", renderer.home).severity == Severity.OK
+
+    renderer.render_antigravity(write=True)
+    assert [json.loads(path.read_text(encoding="utf-8")) for path in backups(legacy)] == [old]
+    assert len(backups(canonical)) == 1, "a second pass changes nothing and takes no new backup"
+
+
+@pytest.mark.skipif(not SYMLINKS_SUPPORTED, reason="this machine may not create symlinks")
+def test_a_link_whose_old_target_was_deleted_does_not_recreate_the_old_layout(tmp_path):
+    """Uninstalling the app can remove `antigravity/` while `config/` still links into it."""
+    renderer = make_renderer(tmp_path)
+    canonical = consumer(tmp_path, "config")
+    canonical.parent.mkdir(parents=True)
+    canonical.symlink_to(consumer(tmp_path, "antigravity"))
+
+    renderer.render_antigravity(write=True)
+
+    assert canonical.is_file() and not canonical.is_symlink()
+    assert set(json.loads(canonical.read_text(encoding="utf-8"))["mcpServers"]) == {"alpha"}
+    legacy = consumer(tmp_path, "antigravity")
+    assert legacy.is_symlink() and legacy.resolve() == canonical.resolve()
+
+
+def test_two_real_files_that_disagree_stop_the_render_and_are_left_alone(tmp_path):
+    """Choosing one of them would drop whatever only the other held: both paths are named instead."""
+    renderer = make_renderer(tmp_path)
+    canonical = consumer(tmp_path, "config")
+    legacy = consumer(tmp_path, "antigravity")
+    canonical.parent.mkdir(parents=True)
+    legacy.parent.mkdir(parents=True)
+    canonical_text = json.dumps({"mcpServers": {"from-config": {"command": "a"}}})
+    legacy_text = json.dumps({"mcpServers": {"from-antigravity": {"command": "b"}}})
+    canonical.write_text(canonical_text)
+    legacy.write_text(legacy_text)
+
+    with pytest.raises(ValueError) as caught:
+        renderer.render_antigravity(write=True)
+
+    assert str(canonical) in str(caught.value) and str(legacy) in str(caught.value)
+    assert canonical.read_text(encoding="utf-8") == canonical_text
+    assert legacy.read_text(encoding="utf-8") == legacy_text
+    assert backups(canonical) == [] and backups(legacy) == []
+
+
+def test_a_stale_copy_that_repeats_the_canonical_servers_is_healed_not_refused(tmp_path):
+    """Where links cannot be created the fan-out leaves a copy, and the app saving the
+    canonical file leaves that copy behind: both real, different bytes, nothing lost by
+    re-publishing it. Refusing stopped every render until a human moved a file aside."""
+    renderer = make_renderer(tmp_path)
+    renderer.render_antigravity(write=True)
+    canonical = consumer(tmp_path, "config")
+    legacy = consumer(tmp_path, "antigravity")
+    if legacy.is_symlink():
+        legacy.unlink()
+    stale = json.dumps({"mcpServers": {"alpha": {"command": "python", "args": ["-V"]}}}, indent=4)
+    legacy.write_text(stale, encoding="utf-8")
+    assert canonical.read_text(encoding="utf-8") != stale
+
+    renderer.render_antigravity(write=True)
+
+    assert legacy.read_bytes() == canonical.read_bytes()
+    assert set(json.loads(legacy.read_text(encoding="utf-8"))["mcpServers"]) == {"alpha"}
+    assert [path.read_text(encoding="utf-8") for path in backups(legacy)] == [stale]
 
 
 @pytest.mark.skipif(os.name == "nt", reason="symlinks require privileges")
@@ -286,6 +458,88 @@ def test_opencode_empty_file_still_gets_plain_json(tmp_path):
     assert "alpha" in json.loads(cfg.read_text())["mcp"]["servers"]
 
 
+# --- A managed server keeps the state the app keeps beside it --------------------------------
+
+#: The per-server state the apps write and the engine never does.
+APP_STATE = {"disabled": True, "enabledTools": ["read"], "tools": {"read": {"eager": True}}}
+
+
+def test_claude_keeps_the_app_state_of_a_server_it_manages(tmp_path):
+    """Turning a server off in the Claude screen survived only until the next guard cycle."""
+    renderer = make_renderer(tmp_path)
+    cfg = claude_file(tmp_path)
+    write_like_claude_code(cfg, {"mcpServers": {"alpha": {
+        "type": "stdio", "command": "old", "args": [], "env": {}, **APP_STATE}}})
+    renderer.render_claude(write=True)
+    entry = json.loads(cfg.read_text(encoding="utf-8"))["mcpServers"]["alpha"]
+    assert entry == {"disabled": True, "enabledTools": ["read"],
+                     "tools": {"read": {"eager": True}},
+                     "type": "stdio", "command": "python", "args": ["-V"], "env": {}}
+
+
+def test_antigravity_keeps_the_app_state_of_a_server_it_manages(tmp_path):
+    renderer = make_renderer(tmp_path)
+    canonical = tmp_path / "home/.gemini/config/mcp_config.json"
+    canonical.parent.mkdir(parents=True)
+    canonical.write_text(json.dumps({"mcpServers": {"alpha": {
+        "command": "old", "args": [], "env": {}, "timeoutSeconds": 600, **APP_STATE}}}))
+    renderer.render_antigravity(write=True)
+    entry = json.loads(canonical.read_text(encoding="utf-8"))["mcpServers"]["alpha"]
+    assert entry == {"disabled": True, "enabledTools": ["read"],
+                     "tools": {"read": {"eager": True}}, "timeoutSeconds": 600,
+                     "command": "python", "args": ["-V"], "env": {}}
+
+
+def test_opencode_keeps_the_app_state_of_a_server_it_manages(tmp_path):
+    renderer = make_renderer(tmp_path)
+    cfg = renderer.opencode_config_path()
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(json.dumps({"mcp": {"servers": {"alpha": {
+        "type": "local", "command": ["old"], "disabled": True}}}}), encoding="utf-8")
+    renderer.render_opencode(write=True)
+    entry = json.loads(cfg.read_text(encoding="utf-8"))["mcp"]["servers"]["alpha"]
+    assert entry == {"disabled": True, "type": "local", "command": ["python", "-V"]}
+
+
+def test_codex_keeps_the_app_state_of_a_server_it_manages(tmp_path):
+    """Codex keeps its per-server state as TOML keys and per-tool sub-tables."""
+    renderer = make_renderer(tmp_path)
+    cfg = tmp_path / "home/.codex/config.toml"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text('[mcp_servers.alpha]\ncommand = "old"\nargs = []\n'
+                   'disabled_tools = ["write_note"]\ndefault_tools_approval_mode = "approve"\n\n'
+                   '[mcp_servers.alpha.tools.read]\napproval_mode = "approve"\n',
+                   encoding="utf-8")
+    renderer.render_codex(write=True)
+    entry = tomllib.loads(cfg.read_text(encoding="utf-8"))["mcp_servers"]["alpha"]
+    assert entry == {"command": "python", "args": ["-V"], "disabled_tools": ["write_note"],
+                     "default_tools_approval_mode": "approve",
+                     "tools": {"read": {"approval_mode": "approve"}}}
+
+
+def test_antigravity_save_landing_mid_render_is_not_lost(tmp_path, monkeypatch):
+    """The app's MCP screen saves into this file too, and the save can land after the
+    render read it and computed `mcpServers`, while the write is still to come. The
+    render re-reads the file at the last moment and re-applies only that one table."""
+    renderer = make_renderer(tmp_path)
+    canonical = tmp_path / "home/.gemini/config/mcp_config.json"
+    canonical.parent.mkdir(parents=True)
+    canonical.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+    real_drop = renderer._drop_unmounted
+
+    def app_saves_after_the_table_is_computed(mcp_servers, servers, cli_target=""):
+        real_drop(mcp_servers, servers, cli_target=cli_target)
+        canonical.write_text(json.dumps({"mcpServers": {}, "appPreference": {"theme": "dark"}}),
+                            encoding="utf-8")
+
+    monkeypatch.setattr(renderer, "_drop_unmounted", app_saves_after_the_table_is_computed)
+    renderer.render_antigravity(write=True)
+
+    data = json.loads(canonical.read_text(encoding="utf-8"))
+    assert data["appPreference"] == {"theme": "dark"}
+    assert set(data["mcpServers"]) == {"alpha"}
+
+
 # --- Every render: a configuration file with a BOM is still that configuration --------------
 
 def test_a_bom_in_a_config_file_does_not_stop_any_render(tmp_path):
@@ -294,7 +548,7 @@ def test_a_bom_in_a_config_file_does_not_stop_any_render(tmp_path):
     until someone guessed why."""
     renderer = make_renderer(tmp_path)
     kept = {"theme": "dark", "mcpServers": {"mine": {"command": "keep-me"}}}
-    for cli, relative in (("claude", ".claude.json"), ("antigravity", ".gemini/antigravity/mcp_config.json")):
+    for cli, relative in (("claude", ".claude.json"), ("antigravity", ".gemini/config/mcp_config.json")):
         path = renderer.home / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(kept), encoding="utf-8-sig")
@@ -308,7 +562,7 @@ def test_a_bom_in_a_config_file_does_not_stop_any_render(tmp_path):
     renderer.render_antigravity(write=True)
     renderer.render_opencode(write=True)
 
-    for relative in (".claude.json", ".gemini/antigravity/mcp_config.json"):
+    for relative in (".claude.json", ".gemini/config/mcp_config.json"):
         data = json.loads((renderer.home / relative).read_text(encoding="utf-8-sig"))
         assert data["mcpServers"]["mine"] == {"command": "keep-me"}, relative
         assert "alpha" in data["mcpServers"], relative

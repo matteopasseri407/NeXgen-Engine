@@ -44,6 +44,20 @@ BODIES["echo.mjs"] = (
     "import { readFileSync, writeFileSync } from 'node:fs';"
     "writeFileSync(process.env.GUARDRAIL_ECHO, readFileSync(0, 'utf8'));"
 )
+# Reads the command the way the private policy reads it, and answers for a PowerShell verb:
+# this is what a policy rule for the PowerShell tool looks like, run through the same adapter.
+BODIES["powershell-policy.mjs"] = (
+    "let raw = '';"
+    "process.stdin.setEncoding('utf8');"
+    "process.stdin.on('data', (c) => (raw += c));"
+    "process.stdin.on('end', () => {"
+    "  const cmd = JSON.parse(raw)?.tool_input?.command ?? '';"
+    "  if (/Remove-Item\\b[^;&|]*-Recurse/i.test(cmd)) {"
+    "    process.stdout.write(JSON.stringify({hookSpecificOutput: {hookEventName: 'PreToolUse',"
+    "      permissionDecision: 'deny', permissionDecisionReason: 'rm ricorsivo sulla home (PowerShell)'}}));"
+    "  }"
+    "});"
+)
 
 
 def deploy(tmp_path: Path, adapter: str, body: str | None, **sidecar) -> Path:
@@ -71,6 +85,13 @@ CLAUDE_INPUT = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
                            "tool_input": {"command": "ls"}, "permission_mode": "default"})
 BYPASS_INPUT = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
                            "tool_input": {"command": "ls"}, "permission_mode": "bypassPermissions"})
+# On Windows the shell is this tool, and it carries the command in the same field.
+POWERSHELL_COMMAND = r"Remove-Item -Recurse -Force C:\Users\alice\KnowledgeVault"
+POWERSHELL_INPUT = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "PowerShell",
+                               "tool_input": {"command": POWERSHELL_COMMAND}, "permission_mode": "default"})
+POWERSHELL_BYPASS_INPUT = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "PowerShell",
+                                      "tool_input": {"command": POWERSHELL_COMMAND},
+                                      "permission_mode": "bypassPermissions"})
 
 
 def claude_decision(result: subprocess.CompletedProcess[str]) -> str:
@@ -107,6 +128,35 @@ def test_a_broken_body_is_a_decision_never_a_pass(tmp_path, body):
     adapter = deploy(tmp_path, "claude-guardrail-adapter.mjs", body)
     assert claude_decision(run(adapter, CLAUDE_INPUT)) == "ask"  # a person is asked
     assert claude_decision(run(adapter, BYPASS_INPUT)) == "deny"  # nothing else would prompt: it blocks
+
+
+def test_a_powershell_command_reaches_the_body_untouched(tmp_path):
+    """The matcher is what decides whether the guardrail ever runs on Windows: when it does, the
+    PowerShell call arrives in the shape the policy already reads."""
+    echo = tmp_path / "echoed.json"
+    adapter = deploy(tmp_path, "claude-guardrail-adapter.mjs", "echo.mjs")
+
+    run(adapter, POWERSHELL_INPUT, GUARDRAIL_ECHO=str(echo))
+
+    assert json.loads(echo.read_text(encoding="utf-8"))["tool_input"]["command"] == POWERSHELL_COMMAND
+
+
+def test_the_same_policy_rules_judge_a_powershell_command(tmp_path):
+    adapter = deploy(tmp_path, "claude-guardrail-adapter.mjs", "powershell-policy.mjs")
+
+    denied = run(adapter, POWERSHELL_INPUT)
+    assert claude_decision(denied) == "deny"
+    assert "rm ricorsivo sulla home (PowerShell)" in denied.stdout
+    benign = json.dumps({"tool_name": "PowerShell", "tool_input": {"command": "git status"}})
+    assert claude_decision(run(adapter, benign)) == "allow"
+
+
+def test_a_broken_body_blocks_a_powershell_command_too(tmp_path):
+    """Widening the matcher must not widen the failure path: a body that crashes still decides."""
+    adapter = deploy(tmp_path, "claude-guardrail-adapter.mjs", "crash.mjs")
+
+    assert claude_decision(run(adapter, POWERSHELL_BYPASS_INPUT)) == "deny"
+    assert claude_decision(run(adapter, POWERSHELL_INPUT)) == "ask"
 
 
 def test_a_missing_body_blocks_under_bypass(tmp_path):

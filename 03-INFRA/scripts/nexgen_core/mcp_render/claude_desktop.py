@@ -15,6 +15,11 @@ tracked in a sidecar file: names the renderer wrote that lose the flag
 are removed again, while entries the renderer never wrote stay additive
 and `check_desktop_allowlist` reports the manifest-known ones instead of
 removing them.
+
+An allowlisted remote server is mounted through the engine's HTTP bridge,
+the same one Antigravity uses, because the app can only start a child
+process: the generated entry holds the URL and the NAME of the bearer
+variable, never its value.
 """
 from __future__ import annotations
 
@@ -28,14 +33,19 @@ from typing import Any
 
 from nexgen_core.i18n import t
 from nexgen_core.mcp_placement import GATEWAY
-from nexgen_core.mcp_render import load_json_object, write_json_config
+from nexgen_core.mcp_render import http_bridge_entry, load_json_object, merge_entry, write_json_config
 from nexgen_core.paths import claude_desktop_config
+from nexgen_core.processes import windows_command_argv
 
 logger = logging.getLogger("nexgen.render.desktop")
 
 #: The manifest flag that opts a server into the Desktop app. Absent or
 #: not exactly True means deny, whatever the server's `targets` say.
 DESKTOP_ALLOW_KEY = "desktop_allow"
+
+#: The per-server keys this renderer writes. Anything else in an entry belongs to
+#: the app (a `disabled` toggle set from its screen, for instance) and is kept.
+_OWNED_KEYS = frozenset({"command", "args", "env", "url", "type", "headers"})
 
 
 def _managed_path(cfg_file: Path) -> Path:
@@ -60,10 +70,11 @@ def allowed_desktop_servers(renderer: Any) -> dict[str, dict]:
     Desktop launches is expanded exactly like what a CLI would launch for
     the same entry. Placement (`targets`, `exposure`) does not apply here:
     the allowlist flag is the only gate, which is why it defaults to deny.
-    Only stdio entries are emitted: no allowlisted server uses HTTP today,
-    and the Desktop HTTP shape stays unverified until one does. The
-    gateway itself is refused even when flagged: behind it sit every lazy
-    server, mutating ones included.
+    A remote entry is emitted too: it is mounted through the engine's
+    `mcp-http-bridge.mjs`, the same way Antigravity mounts one, because the
+    app can only be handed a child process. The gateway itself is refused
+    even when flagged: behind it sit every lazy server, mutating ones
+    included.
     """
     from nexgen_core.config import load_mcp_manifest
 
@@ -83,9 +94,6 @@ def allowed_desktop_servers(renderer: Any) -> dict[str, dict]:
             continue
         entry = renderer._resolve_entry(name, srv, "claude-desktop", raw.get(GATEWAY))
         if entry is None:
-            continue
-        if entry.get("transport") == "http" or entry.get("url"):
-            logger.warning("MCP server %r is allowed on Desktop but uses HTTP: skipped", name)
             continue
         allowed[name] = entry
     return allowed
@@ -107,8 +115,6 @@ def gated_desktop_names(renderer) -> set[str]:
         name for name, srv in raw.items()
         if isinstance(srv, dict) and srv.get("enabled") is not False
         and srv.get(DESKTOP_ALLOW_KEY) is True and name != GATEWAY
-        # Desktop only mounts stdio, so an HTTP entry is never pending.
-        and srv.get("transport") != "http" and not srv.get("url")
         and srv.get("require_env") and not os.environ.get(srv["require_env"])
     } - set(renderer.retired_server_names())
 
@@ -145,6 +151,20 @@ def _absolute_command(command: str, previous: str = "") -> str:
     return found or command
 
 
+def _desktop_argv(command: str, args: list[Any]) -> list[str]:
+    """The argv the app should start for `command`, with the engine's Windows shim rule applied.
+
+    Desktop spawns `command` itself, with no command interpreter of its
+    own: an npm batch shim written as an absolute path under `Program
+    Files` dies at the space in it there, exactly as it did for every
+    other launcher in the engine. `windows_command_argv` is that one rule
+    (and the identity on POSIX), so an npm shim becomes node and its entry
+    here too instead of a second copy of the fix. Non-Windows behaviour is
+    unchanged because the rule itself passes the argv through there.
+    """
+    return windows_command_argv([command, *args])
+
+
 def _render_impl(renderer, write: bool = False) -> tuple[bool, str]:
     servers = allowed_desktop_servers(renderer)
     cfg_file = claude_desktop_config(renderer.home)
@@ -157,11 +177,6 @@ def _render_impl(renderer, write: bool = False) -> tuple[bool, str]:
         # get in the way of first-launch defaults.
         return True, t("Claude Desktop configuration updated")
 
-    if write and not renderer.previewing and cfg_file.is_file():
-        # Rebase onto what the app may have saved while resolving: user
-        # additions survive, managed entries are re-applied below.
-        existing = load_json_object(cfg_file)
-
     mcp_servers = existing.get("mcpServers", {})
     if not isinstance(mcp_servers, dict):
         raise ValueError(f"Could not render {cfg_file}: mcpServers must be an object")
@@ -171,16 +186,28 @@ def _render_impl(renderer, write: bool = False) -> tuple[bool, str]:
     for stale in _read_managed(cfg_file) - set(servers) - gated:
         mcp_servers.pop(stale, None)
     for name, srv in servers.items():
-        raw_command = srv.get("command", "")
+        if srv.get("transport") == "http" or srv.get("url"):
+            # A remote server reaches the app the way it reaches Antigravity:
+            # the shared bridge, the URL, and the NAME of the bearer variable.
+            # The value stays in the app's own environment, never in this file.
+            entry = http_bridge_entry(renderer, srv)
+        else:
+            entry = {
+                "command": srv.get("command", ""),
+                "args": srv.get("args", []),
+                "env": srv.get("env", {}),
+            }
+        raw_command = entry.get("command", "")
         previous = mcp_servers.get(name, {}).get("command", "") if isinstance(mcp_servers.get(name), dict) else ""
         command = _absolute_command(raw_command, previous)
         if command == raw_command and raw_command and "/" not in raw_command and "\\" not in raw_command:
             logger.warning("MCP server %r: command %r not on PATH, writing it bare for Desktop", name, raw_command)
-        mcp_servers[name] = {
-            "command": command,
-            "args": srv.get("args", []),
-            "env": srv.get("env", {}),
-        }
+        launch = _desktop_argv(command, entry.get("args", []))
+        mcp_servers[name] = merge_entry(mcp_servers.get(name), {
+            "command": launch[0],
+            "args": launch[1:],
+            "env": entry.get("env", {}),
+        }, _OWNED_KEYS)
 
     if mcp_servers or "mcpServers" in existing:
         existing["mcpServers"] = mcp_servers
@@ -196,7 +223,21 @@ def _render_impl(renderer, write: bool = False) -> tuple[bool, str]:
         sidecar_before = None
     sidecar_text = json.dumps({"mcpServers": sorted(set(servers) | gated)}, indent=2) + "\n"
     if write:
-        write_json_config(renderer, cfg_file, before, existing)
+        if cfg_file.is_file() and not renderer.previewing:
+            # The app saves preferences and window state into this same file at
+            # any moment, and one of those saves can land between the read above
+            # and this write: read the file as it is now and re-apply only
+            # `mcpServers`, the one table this render owns, so nothing the app
+            # saved in between is lost. The re-read sits after the table is
+            # computed on purpose: any earlier and the save it protects against
+            # still has the whole computation to land in.
+            fresh = load_json_object(cfg_file)
+            freshly_read = copy.deepcopy(fresh)
+            if mcp_servers or "mcpServers" in fresh:
+                fresh["mcpServers"] = mcp_servers
+            write_json_config(renderer, cfg_file, freshly_read, fresh)
+        else:
+            write_json_config(renderer, cfg_file, before, existing)
         if sidecar_text != sidecar_before:
             renderer._backup_and_write(sidecar, sidecar_text)
     return True, t("Claude Desktop configuration updated")

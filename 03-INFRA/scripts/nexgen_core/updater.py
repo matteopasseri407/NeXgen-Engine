@@ -57,7 +57,7 @@ from nexgen_core.files import atomic_write_text  # noqa: E402
 from nexgen_core.i18n import t  # noqa: E402
 from nexgen_core.lock import EXIT_BUSY_MANUAL, LockTimeoutError, host_mutation  # noqa: E402
 from nexgen_core.paths import resolve_home, resolve_state_dir  # noqa: E402
-from nexgen_core.processes import force_stop_process_tree  # noqa: E402
+from nexgen_core.processes import force_stop_process_tree, no_window_kwargs  # noqa: E402
 from nexgen_core.release_trust import BAD, UNTRUSTED, TagVerdict, verify_release_tag  # noqa: E402
 from nexgen_core import update_channel, update_window  # noqa: E402
 
@@ -130,6 +130,9 @@ def _run(
             stderr=subprocess.PIPE if capture else None,
             start_new_session=os.name == "posix",
             env=env,
+            # Without these, a console child of a parent that has no console (the
+            # hourly heartbeat) opens a window on every git call of an update.
+            **no_window_kwargs(),
         )
     except OSError as exc:
         raise UpdateError(f"cannot launch update command ({type(exc).__name__})") from exc

@@ -101,16 +101,12 @@ def _register_doctor(sub) -> None:
 
 
 def _register_info(sub) -> None:
-    """Stato, shell e verbi interni invocati dai timer, non dalle persone."""
+    """Stato e verbi interni invocati dai timer, non dalle persone."""
     p = sub.add_parser("info", aliases=["status"], help=t("Visual system status and architecture dashboard"))
     p.add_argument("--json", action="store_true", help=t("Output in JSON format"))
     p.add_argument("-i", "--interactive", action="store_true", help=t("Launch interactive shell after info"))
     p.add_argument("--all", action="store_true", help=t("List every skill, not only the third-party and the changed ones"))
     p.set_defaults(func=cmd_info)
-
-    notice = t("Notice: shell is retired in favor of OpenClaw TUI")
-    p = sub.add_parser("shell", aliases=["interactive", "repl"], help=notice, description=notice)
-    p.set_defaults(func=cmd_shell)
 
     p = sub.add_parser("update", help=t("Update the engine, with confirmation"))
     p.set_defaults(func=cmd_update)
@@ -405,10 +401,4 @@ def cmd_info(args) -> int:
     print(safe_text(render_info(as_json=as_json, show_all=getattr(args, "all", False))))
     if interactive:
         print(t("The interactive shell has been retired: use 'openclaw tui' or the OpenClaw Dashboard instead."))
-    return 0
-
-
-def cmd_shell(args) -> int:
-    """Guidance for the retired interactive shell, pointing to OpenClaw."""
-    print(t("The interactive shell has been retired: use 'openclaw tui' or the OpenClaw Dashboard instead."))
     return 0

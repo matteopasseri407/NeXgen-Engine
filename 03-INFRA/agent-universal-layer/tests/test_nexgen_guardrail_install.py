@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 from conftest import REAL_VAULT
-from nexgen_core.checks.guardrail_checks import check_guardrail_consulted
+from nexgen_core.checks.guardrail_checks import check_guardrail_consulted, check_permission_posture
 from nexgen_core.report import Severity
 from nexgen_core.runtimes.antigravity import AntigravityRuntime
 from nexgen_core.runtimes.base import GuardrailError
@@ -63,6 +63,50 @@ def _opencode_home(tmp_path: Path, config: dict | None = None) -> tuple[Path, Pa
 # ------------------------------------------------------------------ Claude
 
 
+def _registered_command(home: Path) -> str:
+    return f'node "{home / ".claude" / "claude-guardrail-adapter.mjs"}"'
+
+
+def test_a_hook_registered_matching_only_bash_is_upgraded_to_both_shell_tools(tmp_path):
+    """On Windows Claude runs shell commands through the PowerShell tool, and `Bash` never matches it.
+
+    An install written by an older engine carries the right handler under a matcher that leaves
+    the PowerShell tool unchecked: it is repaired in place, not counted as already registered and
+    not duplicated beside the repaired group.
+    """
+    home, settings = _claude_home(tmp_path)
+    command = _registered_command(home)
+    settings.write_text(json.dumps({"hooks": {"PreToolUse": [
+        {"matcher": "Bash", "hooks": [{"type": "command", "command": command, "timeout": 10}]},
+        {"matcher": "*", "hooks": [{"type": "command", "command": "node someone-elses.mjs"}]},
+    ]}}), encoding="utf-8")
+    rt = ClaudeRuntime()
+
+    action = rt.install_guardrail(home, _body(tmp_path), HOOKS)
+
+    entries = json.loads(settings.read_text(encoding="utf-8"))["hooks"]["PreToolUse"]
+    assert [e["matcher"] for e in entries] == ["Bash|PowerShell", "*"]
+    assert entries[0]["hooks"] == [{"type": "command", "command": command, "timeout": 10}]
+    assert entries[1]["hooks"][0]["command"] == "node someone-elses.mjs"
+    assert "spec updated" in action
+    assert rt.install_guardrail(home, _body(tmp_path), HOOKS) is None  # and it settles
+
+
+def test_a_group_that_already_matches_every_tool_is_not_narrowed(tmp_path):
+    """A match-all group already reaches the PowerShell tool: rewriting it would lose tools."""
+    home, settings = _claude_home(tmp_path)
+    command = _registered_command(home)
+    settings.write_text(json.dumps({"hooks": {"PreToolUse": [
+        {"matcher": "*", "hooks": [{"type": "command", "command": command, "timeout": 10}]},
+    ]}}), encoding="utf-8")
+    rt = ClaudeRuntime()
+    rt.install_guardrail(home, _body(tmp_path), HOOKS)  # deploys the files, leaves the group alone
+
+    assert rt.install_guardrail(home, _body(tmp_path), HOOKS) is None  # nothing left to repair
+
+    assert json.loads(settings.read_text(encoding="utf-8"))["hooks"]["PreToolUse"][0]["matcher"] == "*"
+
+
 def test_a_hook_registered_the_old_way_is_migrated_to_the_adapter_without_duplicating(tmp_path):
     """Before the adapter existed the body itself was the hook's command, and failed open."""
     home, settings = _claude_home(tmp_path)
@@ -81,6 +125,54 @@ def test_a_hook_registered_the_old_way_is_migrated_to_the_adapter_without_duplic
     assert commands == [f'node "{claude_dir / "claude-guardrail-adapter.mjs"}"', "node someone-elses.mjs"]
     assert "spec updated" in action
     assert rt.install_guardrail(home, _body(tmp_path), HOOKS) is None  # and it settles
+
+
+def test_a_hook_registered_twice_is_merged_into_one_group(tmp_path):
+    """Two groups carrying our command run the adapter twice per Bash command.
+
+    That state is what a machine fixed by hand from the docs produces: an older engine's `Bash`
+    group plus a hand-added `Bash|PowerShell` one. The repaired group has to be the only one.
+    """
+    home, settings = _claude_home(tmp_path)
+    command = _registered_command(home)
+    other = {"type": "command", "command": "node someone-elses.mjs"}
+    settings.write_text(json.dumps({"hooks": {"PreToolUse": [
+        {"matcher": "Bash", "hooks": [{"type": "command", "command": command, "timeout": 10}]},
+        {"matcher": "Bash|PowerShell", "hooks": [{"type": "command", "command": command, "timeout": 10}]},
+        {"matcher": "*", "hooks": [other]},
+    ]}}), encoding="utf-8")
+    rt = ClaudeRuntime()
+
+    action = rt.install_guardrail(home, _body(tmp_path), HOOKS)
+
+    entries = json.loads(settings.read_text(encoding="utf-8"))["hooks"]["PreToolUse"]
+    assert sum(1 for e in entries for h in e["hooks"] if h["command"] == command) == 1
+    assert entries[0]["matcher"] == "Bash|PowerShell"
+    assert entries[-1]["hooks"] == [other]
+    assert "spec updated" in action
+    assert rt.install_guardrail(home, _body(tmp_path), HOOKS) is None  # and it settles
+
+
+def test_a_duplicate_group_that_also_held_another_hook_keeps_that_hook(tmp_path):
+    """Another tool's handler in the same group is not ours to remove."""
+    home, settings = _claude_home(tmp_path)
+    command = _registered_command(home)
+    other = {"type": "command", "command": "node someone-elses.mjs"}
+    settings.write_text(json.dumps({"hooks": {"PreToolUse": [
+        {"matcher": "Bash|PowerShell", "hooks": [{"type": "command", "command": command, "timeout": 10}]},
+        {"matcher": "Bash|PowerShell", "hooks": [
+            {"type": "command", "command": command, "timeout": 10},
+            other,
+        ]},
+    ]}}), encoding="utf-8")
+
+    ClaudeRuntime().install_guardrail(home, _body(tmp_path), HOOKS)
+
+    entries = json.loads(settings.read_text(encoding="utf-8"))["hooks"]["PreToolUse"]
+    assert [e["hooks"] for e in entries] == [
+        [{"type": "command", "command": command, "timeout": 10}],
+        [other],
+    ]
 
 
 def test_the_deployed_adapter_is_the_one_that_ships_and_leaves_no_staging_file(tmp_path):
@@ -137,30 +229,23 @@ def test_the_installed_claude_hook_blocks_when_the_installed_body_is_broken(tmp_
 # ------------------------------------------------------------------ OpenCode: the mediated bypass
 
 
-def _install_and_bypass(tmp_path, config=None, *, guardrail=True):
+def _install_and_mediate(tmp_path, config=None):
     home, path = _opencode_home(tmp_path, config)
     rt = OpenCodeRuntime()
-    if guardrail:
-        rt.install_guardrail(home, _body(tmp_path), HOOKS)
-    rt.apply_posture(home, "bypass")
+    rt.install_guardrail(home, _body(tmp_path), HOOKS)
     rules = {(r["action"], r["resource"]): r["effect"] for r in json.loads(path.read_text(encoding="utf-8"))["permissions"]}
     return home, path, rt, rules
 
 
-def test_with_the_plugin_installed_bypass_asks_and_lets_the_plugin_answer(tmp_path):
+def test_with_the_plugin_installed_the_shell_rule_asks_and_the_plugin_answers(tmp_path):
     """permission.ask is only called for actions OpenCode is about to ask about: a shell rule
     saying allow left the plugin registered and unreachable, and nothing said so."""
-    home, _path, rt, rules = _install_and_bypass(tmp_path)
+    home, _path, rt, rules = _install_and_mediate(tmp_path)
 
-    assert rules[("edit", "*")] == "allow" and rules[("shell", "*")] == "ask"
+    assert rules[("shell", "*")] == "ask"
+    assert ("edit", "*") not in rules  # the edit mode is the app's own setting
     sidecar = rt.read_guardrail_sidecar(rt.guardrail_sidecar(home))
     assert sidecar["autoAllow"] is True and sidecar["strict"] is True
-    assert rt.read_posture(home) == "bypass"  # the doctor still sees the posture the manifest declared
-
-
-def test_without_the_plugin_bypass_is_rendered_as_before(tmp_path):
-    _home, _path, _rt, rules = _install_and_bypass(tmp_path, guardrail=False)
-    assert rules[("shell", "*")] == "allow"
 
 
 def test_a_v1_binary_keeps_the_config_it_cannot_parse_untouched(tmp_path, opencode_dialect):
@@ -169,81 +254,69 @@ def test_a_v1_binary_keeps_the_config_it_cannot_parse_untouched(tmp_path, openco
     home, path = _opencode_home(tmp_path)
     before = path.read_text(encoding="utf-8")
 
-    assert OpenCodeRuntime().apply_posture(home, "bypass") is None
+    OpenCodeRuntime().install_guardrail(home, _body(tmp_path), HOOKS)
 
     assert path.read_text(encoding="utf-8") == before
 
 
-def test_an_allow_written_before_the_plugin_existed_is_converted_not_left_unreachable(tmp_path):
-    home, path = _opencode_home(tmp_path)
+def test_an_allow_left_by_an_earlier_engine_is_converted_not_left_unreachable(tmp_path):
+    home, path = _opencode_home(tmp_path, {
+        "permissions": [{"action": "shell", "resource": "*", "effect": "allow"}],
+    })
     rt = OpenCodeRuntime()
-    rt.apply_posture(home, "bypass")  # an earlier cycle: no guardrail yet
-    assert {(r["action"], r["resource"]): r["effect"] for r in json.loads(path.read_text(encoding="utf-8"))["permissions"]}[("shell", "*")] == "allow"
-
     rt.install_guardrail(home, _body(tmp_path), HOOKS)
-    rt.apply_posture(home, "bypass")
 
     rules = {(r["action"], r["resource"]): r["effect"] for r in json.loads(path.read_text(encoding="utf-8"))["permissions"]}
     assert rules[("shell", "*")] == "ask"
-    assert rt.apply_posture(home, "bypass") is None  # and it settles
+    assert rt.install_guardrail(home, _body(tmp_path), HOOKS) is None  # and it settles
 
 
 def test_an_explicit_user_deny_is_never_touched(tmp_path):
-    _home, _path, _rt, rules = _install_and_bypass(
+    _home, _path, _rt, rules = _install_and_mediate(
         tmp_path, {"permissions": [{"action": "shell", "resource": "*", "effect": "deny"}]})
     assert rules[("shell", "*")] == "deny"
 
 
-def test_switching_posture_rewrites_the_effect_of_the_pairs_the_engine_wrote(tmp_path):
-    """accept-edits after bypass must bring shell back to ask.
-
-    The engine only adds a pair the person has not ruled on; a pair it wrote
-    itself is not the person's ruling, and skipping it kept the previous
-    posture's effect forever (shell stayed allow, so nothing was ever asked).
-    """
-    home, path, rt, rules = _install_and_bypass(tmp_path, guardrail=False)
-    assert rules[("shell", "*")] == "allow"
-
-    assert rt.apply_posture(home, "accept-edits") is not None
-
-    rules = {(r["action"], r["resource"]): r["effect"] for r in json.loads(path.read_text(encoding="utf-8"))["permissions"]}
-    assert rules[("shell", "*")] == "ask"
-    assert rt.read_posture(home) == "accept-edits"
-
-
-def test_switching_back_to_bypass_turns_the_shell_rule_to_allow_again(tmp_path):
-    home, path = _opencode_home(tmp_path)
-    rt = OpenCodeRuntime()
-    rt.apply_posture(home, "accept-edits")
-
-    rt.apply_posture(home, "bypass")
-
-    rules = {(r["action"], r["resource"]): r["effect"] for r in json.loads(path.read_text(encoding="utf-8"))["permissions"]}
-    assert rules[("shell", "*")] == "allow"
-    assert rt.read_posture(home) == "bypass"
-
-
-def test_an_ask_posture_keeps_asking_and_the_plugin_does_not_answer_for_the_person(tmp_path):
-    home, _path = _opencode_home(tmp_path)
-    rt = OpenCodeRuntime()
-    rt.install_guardrail(home, _body(tmp_path), HOOKS)
-    rt.apply_posture(home, "bypass")
-    assert rt.read_guardrail_sidecar(rt.guardrail_sidecar(home))["autoAllow"] is True
-
-    rt.apply_posture(home, "accept-edits")
-
-    sidecar = rt.read_guardrail_sidecar(rt.guardrail_sidecar(home))
-    assert sidecar["autoAllow"] is False and sidecar["strict"] is False
-    assert rt.read_posture(home) == "accept-edits"
-
-
-def test_reinstalling_the_guardrail_keeps_the_flags_the_posture_set(tmp_path):
-    """The posture is applied after the guardrail, in another call; the next guardrail install
-    must not undo it."""
-    home, _path, rt, _rules = _install_and_bypass(tmp_path)
+def test_reinstalling_the_guardrail_keeps_the_flags_that_let_the_plugin_answer(tmp_path):
+    """The flags are set after the sidecar is written; the next guardrail install must not
+    undo them, or every command would prompt again."""
+    home, _path, rt, _rules = _install_and_mediate(tmp_path)
     rt.install_guardrail(home, _body(tmp_path, "// a newer policy\n"), HOOKS)
     sidecar = rt.read_guardrail_sidecar(rt.guardrail_sidecar(home))
     assert sidecar["autoAllow"] is True and sidecar["strict"] is True
+
+
+def test_a_shell_rule_the_person_set_to_ask_keeps_prompting(tmp_path):
+    """`ask` is what a person picks when they want to approve each command.
+
+    The engine writes the same `ask` rule so the plugin is reachable, and the plugin answers
+    what the person is asked: with `autoAllow` on it would answer `allow` for every command the
+    body permits, which silently removes the prompt they chose. The rule is left alone and the
+    flag stays off, so the plugin only vetoes a denied command.
+    """
+    home, _path, rt, rules = _install_and_mediate(
+        tmp_path, {"permissions": [{"action": "shell", "resource": "*", "effect": "ask"}]})
+
+    assert rules[("shell", "*")] == "ask"
+    sidecar = rt.read_guardrail_sidecar(rt.guardrail_sidecar(home))
+    assert sidecar["autoAllow"] is False
+    # The guardrail is still the brake: `strict` is what blocks a guardrail that cannot answer.
+    assert sidecar["strict"] is True
+    assert rt.install_guardrail(home, _body(tmp_path), HOOKS) is None  # and it settles
+
+
+def test_a_rule_the_engine_itself_mediated_is_not_read_as_the_persons_ask(tmp_path):
+    """Second cycle: the `ask` rule on disk is the engine's, and the sidecar says so.
+
+    Reading the rule alone would turn every machine that ever installed the guardrail into a
+    prompt-per-command machine on the next cycle thirty minutes later.
+    """
+    home, _path, rt, _rules = _install_and_mediate(tmp_path)
+
+    rt.install_guardrail(home, _body(tmp_path), HOOKS)
+
+    sidecar = rt.read_guardrail_sidecar(rt.guardrail_sidecar(home))
+    assert sidecar["autoAllow"] is True
 
 
 # ------------------------------------------------------------------ Antigravity
@@ -304,21 +377,53 @@ def test_antigravity_registers_relative_commands_without_quotes_or_spaces(tmp_pa
     assert rt.install_guardrail(home, _body(tmp_path), HOOKS) is None
 
 
-def test_antigravity_becomes_strict_under_bypass(tmp_path):
+def test_the_antigravity_app_without_the_cli_still_gets_the_global_hook(tmp_path):
+    """The App reads the same global `~/.gemini/config/hooks.json` as `agy`.
+
+    With only the app installed there is no `~/.gemini/antigravity-cli/settings.json`,
+    and the guardrail used to be skipped: the app's shell commands ran unchecked and
+    `nexgen doctor` said nothing, because it skips CLIs that look uninstalled.
+    """
     home = tmp_path / "home"
-    settings = home / ".gemini" / "antigravity" / "settings.json"
-    from nexgen_core.paths import antigravity_settings
-
-    settings = antigravity_settings(home)
-    settings.parent.mkdir(parents=True)
-    settings.write_text("{}", encoding="utf-8")
+    (home / ".gemini" / "antigravity" / "brain").mkdir(parents=True)
     rt = AntigravityRuntime()
-    rt.install_guardrail(home, _body(tmp_path), HOOKS)
-    assert rt.read_guardrail_sidecar(rt.guardrail_sidecar(home))["strict"] is False
 
-    rt.apply_posture(home, "bypass")
+    action = rt.install_guardrail(home, _body(tmp_path), HOOKS)
+
+    assert action is not None and "registered" in action
+    hooks = json.loads((home / ".gemini" / "config" / "hooks.json").read_text(encoding="utf-8"))
+    assert hooks["nexgen-guardrail"]["PreToolUse"][0]["matcher"] == "run_command"
+    assert rt.guardrail_sidecar(home).is_file()
+
+
+def test_a_fresh_antigravity_install_denies_when_the_guardrail_cannot_answer(tmp_path):
+    """`always-proceed` skips an `ask`, so a broken guardrail that asks brakes nothing.
+
+    Nothing in the adapter observes a mode any more, so the closed answer is the only safe
+    default; it used to come from the deleted posture step and was `false` here.
+    """
+    home = tmp_path / "home"
+    (home / ".gemini" / "antigravity" / "brain").mkdir(parents=True)
+    rt = AntigravityRuntime()
+
+    rt.install_guardrail(home, _body(tmp_path), HOOKS)
 
     assert rt.read_guardrail_sidecar(rt.guardrail_sidecar(home))["strict"] is True
+
+
+def test_the_doctor_reports_the_antigravity_app_guardrail_it_can_now_see(tmp_path):
+    """The check reads `is_installed`: an app-only machine was silently out of its scope."""
+    home = tmp_path / "home"
+    (home / ".gemini" / "antigravity").mkdir(parents=True)
+    (home / ".gemini" / "antigravity" / "installation_id").write_text("x", encoding="utf-8")
+    rt = AntigravityRuntime()
+    rt.install_guardrail(home, _body(tmp_path), HOOKS)
+    _audit(Path(rt.read_guardrail_sidecar(rt.guardrail_sidecar(home))["auditFile"]), count=7)
+
+    (outcome,) = check_guardrail_consulted(home)
+
+    assert outcome.id == "guardrail.consulted.antigravity"
+    assert outcome.severity == Severity.OK and "7" in outcome.message
 
 
 # ------------------------------------------------------------------ the doctor's question
@@ -355,3 +460,51 @@ def test_a_consulted_guardrail_is_green_and_says_how_often(tmp_path):
 def test_a_cli_without_a_guardrail_installed_produces_no_outcome(tmp_path):
     home, _path = _opencode_home(tmp_path)  # configured, but no guardrail was ever installed
     assert check_guardrail_consulted(home) == []
+
+
+# ------------------------------------------------------------------ a retired posture
+
+
+def _permissions_vault(tmp_path: Path, body: str) -> Path:
+    """A vault whose private permission manifest holds exactly `body`."""
+    vault = tmp_path / "vault"
+    permissions = vault / "03-INFRA" / "agent-universal-layer" / "permissions"
+    permissions.mkdir(parents=True)
+    (permissions / "manifest.yaml").write_text(body, encoding="utf-8")
+    return vault
+
+
+def test_a_manifest_that_still_declares_a_posture_gets_one_info_line(tmp_path):
+    """The key is no longer applied: the doctor says so once, and never fails on it."""
+    import nexgen_core.i18n as i18n
+
+    i18n.set_language("en")
+    try:
+        vault = _permissions_vault(tmp_path, "posture:\n  claude: bypass\nhooks: []\n")
+
+        outcome = check_permission_posture(vault)
+    finally:
+        i18n.set_language(None)
+
+    assert outcome is not None
+    assert outcome.id == "permissions.posture" and outcome.severity == Severity.OK
+    assert outcome.message == (
+        "posture is no longer applied: each app's own setting decides, except OpenClaw, whose "
+        "plugin reads 'posture' in its own nexgen.config.json and behaves as bypass without it"
+    )
+    assert outcome.action is None
+
+
+@pytest.mark.parametrize("body", ["posture: bypass\n", "posture: [bypass]\n", "posture: {}\n"])
+def test_a_posture_of_any_shape_is_read_without_failing(tmp_path, body):
+    outcome = check_permission_posture(_permissions_vault(tmp_path, body))
+
+    assert outcome is not None and outcome.severity == Severity.OK
+
+
+def test_a_manifest_without_a_posture_says_nothing(tmp_path):
+    assert check_permission_posture(_permissions_vault(tmp_path, "hooks: []\n")) is None
+
+
+def test_a_machine_without_the_private_manifest_says_nothing(tmp_path):
+    assert check_permission_posture(tmp_path / "vault") is None

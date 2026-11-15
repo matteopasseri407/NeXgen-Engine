@@ -76,7 +76,7 @@ def test_guard_runner_cycle(tmp_path: Path):
     res_apply = runner.run(mode=GuardMode.APPLY, allow_offline=True)
     assert res_apply.success is True
     assert res_apply.exit_code == 0
-    assert (home / "CLAUDE.md").exists()
+    assert (home / ".claude" / "CLAUDE.md").exists()
 
 
 def test_publish_says_nothing_to_publish_when_there_is_nothing(tmp_path: Path):

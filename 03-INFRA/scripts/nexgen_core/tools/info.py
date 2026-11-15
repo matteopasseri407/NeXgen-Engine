@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core import __version__
+from nexgen_core.config import RUNTIMES
 from nexgen_core.i18n import t
 from nexgen_core.modules import modules_state
 from nexgen_core.paths import (
@@ -361,8 +362,12 @@ def render_info(as_json: bool = False, vault_data: Path | None = None, show_all:
 
 
 def _bootstrap_targets(home: Path) -> list[tuple[str, Path, str]]:
+    from nexgen_core.guard_instructions import claude_pointer_path
+
     return [
-        ("claude", home / "CLAUDE.md", "pointer"),
+        # Claude's user-scope file, where the guard writes the pointer now; `~/CLAUDE.md` is
+        # the old home file the guard removes, so reporting it showed "absent" for ever.
+        ("claude", claude_pointer_path(home), "pointer"),
         ("codex", home / ".codex" / "AGENTS.md", "mirror"),
         ("antigravity", home / ".gemini" / "config" / "AGENTS.md", "mirror"),
         ("opencode", home / ".config" / "opencode" / "AGENTS.md", "scope"),
@@ -483,7 +488,7 @@ def inventory_lines(
 
     lines.append(t(">>> MCP connectors per runtime"))
     renderer = McpRenderer(vault_data=effective_vault, engine_root=effective_engine, home=effective_home)
-    for cli_name in ("claude", "codex", "antigravity", "opencode", "openclaw"):
+    for cli_name in RUNTIMES:
         servers = renderer.load_resolved_servers(cli_name)
         names = ", ".join(sorted(servers)) if servers else t("none")
         lazy = renderer.list_lazy_servers(cli_name)
