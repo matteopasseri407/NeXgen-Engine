@@ -281,10 +281,14 @@ class OpenClawService:
             return {"ok": True, "commands": [argv], "remaining_pids": [], "error": None, "dry_run": True}
         result, payload = self._ask(argv)
         ok = result.returncode == 0 and payload.get("ok") is not False
+        alive = [] if ok else self._gateway_pids()
+        # What the caller needs is "no gateway process holds the file". A refusal with
+        # nothing left running is a gateway that was never up: a fresh install, before
+        # the service exists, gets an error from `gateway stop` and has nothing to stop.
         return {
-            "ok": ok,
+            "ok": ok or not alive,
             "commands": [argv],
-            "remaining_pids": [] if ok else self._gateway_pids(),
+            "remaining_pids": alive,
             "error": _failure(result, payload),
             "dry_run": False,
         }

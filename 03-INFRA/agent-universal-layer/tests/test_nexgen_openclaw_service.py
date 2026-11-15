@@ -689,3 +689,15 @@ def test_pairing_pending_failure_reports_error_without_tokens() -> None:
     assert "requires credentials before opening a websocket" in res["error"]
     assert "secret123" not in res["error"]
     assert "[redacted]" in res["error"]
+
+
+def test_a_stop_refused_with_no_gateway_running_counts_as_stopped(fake_env) -> None:
+    """A fresh install has no service yet: `gateway stop` errors, nothing is running, the write may go on."""
+    runner = RecordingRunner()
+    runner.answer(STOP_ARGV, {"ok": False, "action": "stop", "error": "Gateway service not installed"}, code=1)
+
+    res = service_for(fake_env, runner, process_lister=lambda: []).stop()
+
+    assert res["ok"] is True
+    assert res["remaining_pids"] == []
+    assert res["error"] == "Gateway service not installed"
