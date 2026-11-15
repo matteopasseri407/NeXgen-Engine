@@ -593,3 +593,21 @@ def test_without_uv_the_pip_fallback_still_runs_end_to_end(tmp_path):
     assert verify[2].startswith("import importlib.util")  # the verify step, asked of that interpreter
     assert (rt / runtime.STAMP_NAME).is_file()
 
+
+
+def test_the_installer_runs_inside_the_environment_it_fills(tmp_path, monkeypatch):
+    """A pip with a relative cache wrote 28 MB of `pip/` into the engine checkout, and the
+    next update refused the untracked folder: the install runs with the runtime as its cwd."""
+    monkeypatch.setattr(runtime, "uv_executable", lambda: None)
+    seen: list[tuple[list[str], object]] = []
+    fake = FakeRun()
+
+    def run(args, **kwargs):
+        seen.append(([str(a) for a in args], kwargs.get("cwd")))
+        return fake(args, **kwargs)
+
+    rt = tmp_path / "runtime"
+    runtime.ensure_runtime(rt, _checkout(tmp_path), run=run, log=lambda _l: None)
+
+    install_cwd = next(cwd for args, cwd in seen if "install" in args)
+    assert install_cwd == str(rt)

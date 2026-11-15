@@ -251,9 +251,13 @@ def ensure_runtime(
         _bootstrap_pip(python, runtime_dir, run)
 
     log(f"runtime: installing {len(dependencies)} dependencies")
+    # The installer runs inside the environment it fills: a pip that resolves its cache
+    # to a relative path writes it into the working directory, and the caller's directory
+    # is the engine checkout or the Vault, whose next update refuses an untracked folder.
     installed = run(
         _install_dependencies(uv, python, dependencies),
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=PIP_TIMEOUT_SECONDS, check=False,
+        cwd=str(runtime_dir),
     )
     if installed.returncode != 0:
         escape = " Remove uv from PATH to install them with pip instead." if uv else ""
