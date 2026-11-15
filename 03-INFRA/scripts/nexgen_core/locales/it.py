@@ -31,15 +31,78 @@ MESSAGES: dict[str, str] = {
     "({count} checks passed)": "({count} controlli superati)",
 
     # --- Gli avvisi che arrivano a una persona ------------------------------
+    # Il testo sorgente di ogni avviso sta in nexgen_core/alerts.py: qui c'è solo
+    # come si legge. Titolo corto, una frase, e in fondo la sola cosa da fare.
     "Action required:": "Cosa fare:",
-    "The guard did not start": "La guardia non è partita",
-    "There are problems on this machine": "Ci sono problemi su questa macchina",
+    "NeXgen: the alignment stopped": "NeXgen: l'allineamento si è fermato",
+    "{hours} hours without a check, so your notes may be out of date.":
+        "{hours} ore senza un controllo: le tue note potrebbero non essere aggiornate.",
+    "NeXgen: the engine cannot check itself": "NeXgen: il motore non riesce a controllarsi",
+    "Its own record of the last check is unreadable, so nothing is being watched.":
+        "Il suo appunto dell'ultimo controllo non si legge, quindi non sta controllando niente.",
+    "NeXgen: the update was blocked": "NeXgen: l'aggiornamento è stato bloccato",
+    "The new version is not signed by a key this computer trusts, so nothing was installed.":
+        "La nuova versione non è firmata da una chiave di cui questo computer si fida, "
+        "quindi non è stato installato niente.",
+    "NeXgen: the update was undone": "NeXgen: l'aggiornamento è stato annullato",
+    "The version that worked is back. This release will not be installed on its own.":
+        "È tornata la versione che funzionava. Questa versione non verrà installata da sola.",
+    "NeXgen: the update stopped halfway": "NeXgen: l'aggiornamento si è fermato a metà",
+    "The engine may be only partly updated. Read the report before you try again.":
+        "Il motore potrebbe essere aggiornato solo a metà. Leggi il referto prima di riprovare.",
+    "NeXgen: the recurring check did not start": "NeXgen: il controllo periodico non è partito",
+    "Until it runs, this computer stops keeping itself up to date.":
+        "Finché non parte, questo computer smette di aggiornarsi da solo.",
+    "NeXgen: something needs your attention": "NeXgen: c'è qualcosa da vedere",
+    "The engine's own check found problems. The report says what each one is.":
+        "Il controllo del motore ha trovato dei problemi. Il referto dice quali.",
+    "{provider} has used {percent}% of the {window} allowance. It resets in {age}.":
+        "{provider} ha usato il {percent}% della quota {window}. Si azzera fra {age}.",
+    "{provider} has used {percent}% of the {window} allowance.":
+        "{provider} ha usato il {percent}% della quota {window}.",
+    "NeXgen: the chats are piling up": "NeXgen: le chat si stanno accumulando",
+    "The last tidy-up closed none of them. Chats still waiting: {count}.":
+        "L'ultima pulizia non ne ha chiusa nessuna. Chat ancora in attesa: {count}.",
+    "NeXgen: a new model has no known cost": "NeXgen: un modello nuovo non ha un costo noto",
+    "The model {model} turned up, but nobody wrote down how much work it gets.":
+        "Il modello {model} è comparso, ma nessuno ha scritto quanto lavoro riceve.",
+    "channels_volume in routing-tiers.yaml":
+        "compila channels_volume in routing-tiers.yaml",
+    "NeXgen: a new model passed its test": "NeXgen: un modello nuovo ha superato la prova",
+    "The model {model} answered correctly and is ready to be adopted.":
+        "Il modello {model} ha risposto bene ed è pronto per essere adottato.",
+    "NeXgen: a new model failed its test": "NeXgen: un modello nuovo non ha superato la prova",
+    "The model {model} did not answer correctly: {reason}.":
+        "Il modello {model} non ha risposto bene: {reason}.",
+    "NeXgen: a blocked task was restarted": "NeXgen: un compito bloccato è ripartito",
+    "One task hit its limit and is running again on another model.":
+        "Un compito ha finito la sua quota ed è ripartito su un altro modello.",
+    "NeXgen: a task is stuck": "NeXgen: un compito è fermo",
+    "One task hit its limit and no other model was free, so it stays stopped.":
+        "Un compito ha finito la sua quota e non c'era un altro modello libero, quindi resta fermo.",
+    "NeXgen: a model ran out of quota": "NeXgen: un modello ha esaurito la quota",
+    "The model {model} has no allowance left ({reason}). The next one takes over.":
+        "Il modello {model} non ha più quota ({reason}). Subentra il successivo.",
+    "NeXgen: the notification works": "NeXgen: la notifica funziona",
+    "This is how an alert from the engine looks on this screen.":
+        "Ecco come appare un avviso del motore su questo schermo.",
+
+    # --- Chiedere una notifica di prova -------------------------------------
+    "Show me what an alert looks like on this screen":
+        "Mostrami come appare un avviso su questo schermo",
+    "Send one sample notification now": "Manda subito una notifica di prova",
+    "Add --test to show this on the screen now.":
+        "Aggiungi --test per farla comparire adesso sullo schermo.",
+    "This computer has no desktop that can show a notification.":
+        "Questo computer non ha uno schermo su cui mostrare una notifica.",
+    "Sent: the notification should be on your screen now.":
+        "Inviata: la notifica dovrebbe essere sullo schermo adesso.",
     (
-        "{unit} did not start, and until it does this machine stops staying aligned. "
-        "Check it with: systemctl --user status {unit}"
+        "The notification could not be shown. Try again from inside the desktop session, "
+        "then run: nexgen doctor"
     ): (
-        "{unit} non è partita, e finché non parte questa macchina smette di allinearsi. "
-        "Controllala con: systemctl --user status {unit}"
+        "Non sono riuscito a mostrare la notifica. Riprova dalla sessione grafica, "
+        "poi lancia: nexgen doctor"
     ),
 
     # --- Pubblicare il proprio lavoro ---------------------------------------
@@ -424,6 +487,15 @@ MESSAGES: dict[str, str] = {
     "OpenClaw's guardrail plugin is deposited but not enabled ({reason}).": "Il plugin del guardrail di OpenClaw e' depositato ma non abilitato ({reason}).",
     "Run 'nexgen openclaw setup' to enable it with the gateway stopped: a plugins.* change on a running gateway breaks it. Until then OpenClaw's shell commands are not checked.": "Lancia 'nexgen openclaw setup' per abilitarlo con il gateway fermo: cambiare plugins.* a gateway acceso lo rompe. Fino ad allora i comandi shell di OpenClaw non vengono controllati.",
     "OpenClaw's guardrail plugin is deposited and enabled": "Il plugin del guardrail di OpenClaw e' depositato e abilitato",
+    "Codex: its own hook file could not be read, so the guardrail's trust is unknown ({error}).": "Codex: non ho potuto leggere il suo file degli hook, quindi non so se il guardrail e' stato accettato ({error}).",
+    "Fix the JSON in Codex's hooks.json, then run 'nexgen doctor' again.": "Sistema il JSON in hooks.json di Codex, poi rilancia 'nexgen doctor'.",
+    "Codex: the guardrail is deployed but not registered in its own hooks.json.": "Codex: il guardrail e' installato ma non registrato nel suo hooks.json.",
+    "Run 'nexgen sync' to register it. Until then Codex's shell commands are not checked.": "Lancia 'nexgen sync' per registrarlo. Fino ad allora i comandi shell di Codex non vengono controllati.",
+    "Codex has accepted the guardrail hook, so Codex runs it.": "Codex ha accettato l'hook del guardrail, quindi lo esegue.",
+    "Codex: the guardrail hook changed after it was accepted, so Codex skips it until it is reviewed again.": "Codex: l'hook del guardrail e' cambiato dopo essere stato accettato, quindi lo salta finche' non lo rivedi.",
+    "Open Codex, run /hooks and accept the new version of the NeXgen guardrail hook.": "Apri Codex, lancia /hooks e accetta la nuova versione dell'hook del guardrail NeXgen.",
+    "Codex: the guardrail hook is registered but not trusted, so Codex skips it.": "Codex: l'hook del guardrail e' registrato ma non accettato, quindi lo salta.",
+    "Open Codex, run /hooks and accept the NeXgen guardrail hook.": "Apri Codex, lancia /hooks e accetta l'hook del guardrail NeXgen.",
     "posture is no longer applied: each app's own setting decides": "la postura non viene piu' applicata: decide l'impostazione di ogni app",
     'it is in plugins.deny': 'sta in plugins.deny',
     'plugins.entries.{id}.enabled is false': 'plugins.entries.{id}.enabled e\' false',
@@ -660,6 +732,9 @@ MESSAGES: dict[str, str] = {
     "Skill library entry/entries with a broken or self-referential symlink: {entries}.": "Voce/i della libreria skill con symlink rotto o auto-referenziale: {entries}.",
     "Run 'agent-sync apply' (skills-sync) to regenerate the library; remove the entries manually if they stay broken.": "Esegui 'agent-sync apply' (skills-sync) per rigenerare la libreria; se restano rotte, rimuovi le voci a mano.",
     "No broken symlinks in the skill library": "Nessun symlink rotto nella libreria skill",
+    "Skill views that no longer hold the bytes of their library entry: {views}.": "Viste delle skill che non contengono più i byte della loro voce in libreria: {views}.",
+    "Run 'agent-sync apply' (skills-sync): it rewrites the view from the library, and a copy with an edit of yours is set aside with a backup first.": "Esegui 'agent-sync apply' (skills-sync): riscrive la vista dalla libreria, e una copia con una tua modifica viene prima messa da parte con un backup.",
+    "Every skill view holds the bytes of its library entry": "Ogni vista delle skill contiene i byte della sua voce in libreria",
     "Skills materialized but not declared in the manifest: {skills}.": "Skill materializzate ma non dichiarate nel manifest: {skills}.",
     "Adopt the useful skills by adding them to skills.manifest.yaml, or remove them manually from the library (the sync won't delete them on its own).": "Adotta le skill utili aggiungendole a skills.manifest.yaml, oppure rimuovile a mano dalla libreria (il sync non le cancella da solo).",
     "No out-of-manifest skills to reconcile": "Nessuna skill fuori manifest da riconciliare",
@@ -1335,6 +1410,68 @@ MESSAGES: dict[str, str] = {
     "Upstream versions not checked on this machine yet: the hourly watch will, or run nexgen skills bump.":
         "Su questa macchina le versioni a monte non sono ancora state controllate: lo fa il controllo orario, oppure lancia nexgen skills bump.",
     "Third-party pins are current (checked {age} ago).": "Le versioni di terzi sono aggiornate (controllato {age} fa).",
+    # --- nexgen thirdparty status: cosa si aggiorna da solo e cosa aspetta te ---------
+    "nexgen thirdparty status  says, item by item, what updates by itself and what waits for you.":
+        "nexgen thirdparty status  dice, voce per voce, cosa si aggiorna da sola e cosa aspetta te.",
+    "What updates by itself, what waits for you, and what to type":
+        "Cosa si aggiorna da solo, cosa aspetta te e cosa devi digitare",
+    "One line per third-party item: pin, newest, policy and the command that moves it":
+        "Una riga per ogni voce di terzi: versione ferma, più recente, politica e comando che la muove",
+    "moves by itself": "si alza da sola",
+    "waits for your yes": "aspetta il tuo sì",
+    "needs a look first": "da guardare prima",
+    "up to date": "già aggiornata",
+    "floating, no pin": "fluttuante, senza pin",
+    "by hand, where it runs": "a mano, dove gira",
+    "never checked": "mai controllata",
+    "module": "modulo",
+    "Name": "Nome",
+    "Kind": "Tipo",
+    "Pinned": "Ferma a",
+    "Newest": "Più recente",
+    "Policy": "Politica",
+    "What moves it": "Cosa la muove",
+    "How to read this": "Come si legge",
+    "the hourly watch raises it by itself, without asking":
+        "il controllo orario la alza da solo, senza chiedere",
+    "one command for all of them: nexgen skills bump":
+        "un solo comando per tutte: nexgen skills bump",
+    "no command raises it: read what changed, then edit the file named here":
+        "nessun comando la alza: leggi cosa è cambiato, poi modifica il file indicato qui",
+    "nothing here decides what runs: pin a version in the manifest, or let whoever serves it decide":
+        "qui nessuno decide cosa gira: fissa una versione nel manifest, oppure lascia decidere a chi lo serve",
+    "a component of a module: replace it where it runs, after trying it":
+        "un componente di un modulo: si sostituisce dove gira, dopo averlo provato",
+    "no upstream answer yet: the hourly watch does it, or nexgen skills bump now":
+        "nessuna risposta da monte: lo fa il controllo orario, oppure lancia nexgen skills bump adesso",
+    "Upstream last checked {age} ago, by the hourly dependency watch.":
+        "Ultimo controllo a monte {age} fa, dal controllo orario delle dipendenze.",
+    "Upstream was never checked on this machine yet: the hourly watch does it, or run {command}.":
+        "Su questa macchina le versioni a monte non sono mai state controllate: lo fa il controllo orario, oppure lancia {command}.",
+    "{items} third-party items: {ready} ready to move, {looking} need a look, {handed} updated where they run, {floating} with no pin.":
+        "{items} voci di terzi: {ready} pronte da alzare, {looking} da guardare prima, {handed} aggiornate dove girano, {floating} senza pin.",
+    "One command moves them: {command}": "Un solo comando le alza: {command}",
+    "{count} of them move by themselves: the hourly watch raises them without asking.":
+        "{count} si alzano da sole: il controllo orario le alza senza chiedere.",
+    "Why an item is where it is": "Perché una voce sta dove sta",
+    "No third-party skill or MCP server is declared on this machine.":
+        "Su questa macchina non è dichiarata nessuna skill o server MCP di terzi.",
+    "A manifest could not be read: {error}": "Un manifest non si è potuto leggere: {error}",
+    " and {count} more": " e altre {count}",
+    "Third-party updates cleared and waiting for one yes ({count}): {names}.":
+        "Aggiornamenti di terzi già controllati e in attesa di un tuo sì ({count}): {names}.",
+    "Run '{command}' and answer yes: it raises every cleared pin at once.":
+        "Lancia '{command}' e rispondi sì: alza tutte le versioni già controllate in un colpo.",
+    "Third-party updates that need a look first ({count}): {names}.":
+        "Aggiornamenti di terzi da guardare prima ({count}): {names}.",
+    "Run 'nexgen thirdparty status': one line per item, with the exact thing that moves it.":
+        "Lancia 'nexgen thirdparty status': una riga per voce, con la cosa esatta che la muove.",
+    "Upstream versions have not been checked on this machine yet.":
+        "Su questa macchina le versioni a monte non sono ancora state controllate.",
+    "The hourly watch does it, or run '{command}' now.":
+        "Lo fa il controllo orario, oppure lancia '{command}' adesso.",
+    "No third-party update is waiting ({count} items watched).":
+        "Nessun aggiornamento di terzi in attesa ({count} voci sorvegliate).",
     "Trying the new versions before keeping them: {names}": "Provo le versioni nuove prima di tenerle: {names}",
     "could not try {names}: {error}": "non sono riuscito a provare {names}: {error}",
     "could not regenerate the configurations ({error})": "non sono riuscito a rigenerare le configurazioni ({error})",
@@ -1742,6 +1879,46 @@ MESSAGES: dict[str, str] = {
         "Un connettore 'lazy-mcp' personalizzato è configurato in mcp.servers; OpenClaw non usa il gateway del motore.",
     "Verify if this custom connector is needed or rename it to avoid collision with the engine gateway.":
         "Verifica se questo connettore personalizzato serve o rinominalo per evitare collisioni con il gateway del motore.",
+    "OpenClaw keeps its state in {default}, so it reads the shared ~/.agents/skills the engine materialises its views into.":
+        "OpenClaw tiene il suo stato in {default}, quindi legge la cartella condivisa ~/.agents/skills in cui il motore materializza le sue viste.",
+    "OPENCLAW_STATE_DIR is set to the default folder ({configured}), so the shared ~/.agents/skills is still read.":
+        "OPENCLAW_STATE_DIR punta alla cartella predefinita ({configured}), quindi la cartella condivisa ~/.agents/skills viene ancora letta.",
+    "OPENCLAW_STATE_DIR points at {configured}, and OpenClaw then leaves the shared ~/.agents/skills out of its skill indexes: every skill the engine materialises is invisible to the bot, with no error anywhere.":
+        "OPENCLAW_STATE_DIR punta a {configured}, e OpenClaw esclude allora la cartella condivisa ~/.agents/skills dai suoi indici delle skill: ogni skill che il motore materializza è invisibile al bot, senza nessun errore da nessuna parte.",
+    "Unset OPENCLAW_STATE_DIR where the gateway is started, so OpenClaw reads {default} and the shared skills with it. A state directory that must stay where it is needs the skills beside it, under {configured}/skills.":
+        "Togli OPENCLAW_STATE_DIR da dove parte il gateway, così OpenClaw legge {default} e con essa le skill condivise. Se la cartella di stato deve restare dov'è, servono le skill accanto, sotto {configured}/skills.",
+    "The acpx plugin is {version}, it activates on {harnesses}, and it carries the adapter every harness this file allows ({allowed}) needs.":
+        "Il plugin acpx è {version}, si attiva su {harnesses} e porta l'adapter che serve a ogni harness permesso da questo file ({allowed}).",
+    "no declared harness list": "nessun elenco di harness dichiarato",
+    "no harness allowed": "nessun harness permesso",
+    "The acpx plugin's manifest cannot be read ({error}), so the version and the adapters of the lanes this file configures are unknown.":
+        "Il manifest del plugin acpx non è leggibile ({error}), quindi la versione e gli adapter delle corsie configurate in questo file sono sconosciuti.",
+    "Reinstall it: 'openclaw plugins install @openclaw/acpx'.":
+        "Reinstallalo: 'openclaw plugins install @openclaw/acpx'.",
+    "This file configures an ACP lane, but no acpx plugin is installed under {folder}.":
+        "Questo file configura una corsia ACP, ma nessun plugin acpx è installato sotto {folder}.",
+    "Install it: 'openclaw plugins install @openclaw/acpx'.":
+        "Installalo: 'openclaw plugins install @openclaw/acpx'.",
+    "The acpx plugin this file relies on no longer matches it ({version}): {drift}. An ACP lane can stop starting with the configuration unchanged.":
+        "Il plugin acpx su cui questo file conta non gli corrisponde più ({version}): {drift}. Una corsia ACP può smettere di partire con la configurazione invariata.",
+    "Run 'openclaw plugins update {plugin}' to bring it back to this release's catalogue version.":
+        "Esegui 'openclaw plugins update {plugin}' per riportarlo alla versione di catalogo di questa release.",
+    "version {version}": "versione {version}",
+    "The acpx plugin installed here declares no version, so it cannot be held against the {version} the engine's lanes were verified on.":
+        "Il plugin acpx installato qui non dichiara una versione, quindi non è confrontabile con la {version} su cui sono state verificate le corsie del motore.",
+    "it is older than the {version} the engine's lanes were verified against":
+        "è più vecchio della {version} su cui sono state verificate le corsie del motore",
+    "it declares no adapter for '{harness}'": "non dichiara l'adapter per '{harness}'",
+    "agents.defaults.bootstrapMaxChars is {limit} characters, and the pointer block the engine puts at the top of a workspace AGENTS.md alone needs {needed}: OpenClaw truncates the injected file, so the pointer to the canonical rules is cut.":
+        "agents.defaults.bootstrapMaxChars è {limit} caratteri, e il solo blocco puntatore che il motore mette in cima all'AGENTS.md di un workspace ne richiede {needed}: OpenClaw tronca il file iniettato, quindi il puntatore alle regole canoniche viene tagliato.",
+    "Raise it to at least {needed} characters, or remove the key to take the documented {documented}.":
+        "Alzalo ad almeno {needed} caratteri, oppure togli la chiave per prendere il valore documentato di {documented}.",
+    "Prompt size limits: {per_file} characters per injected file, {total} in total, {skills} for the skills catalog ({source}).":
+        "Limiti di dimensione del prompt: {per_file} caratteri per file iniettato, {total} in totale, {skills} per il catalogo delle skill ({source}).",
+    "documented defaults": "valori predefiniti documentati",
+    "as this file sets them": "come li imposta questo file",
+    "{count} set by this file, the rest by the documented defaults":
+        "{count} impostati da questo file, gli altri dai valori predefiniti documentati",
     "MCP server '{servers}' has a literal URL matching a secret declared in the manifest; credentials must not be stored in openclaw.json.":
         "Il server MCP '{servers}' ha un URL letterale che coincide con un segreto dichiarato nel manifest; le credenziali non devono essere salvate in openclaw.json.",
     "Run 'nexgen sync' or 'nexgen mcp render' to rewrite the connector through the bridge.":
@@ -2177,20 +2354,22 @@ MESSAGES: dict[str, str] = {
         "Il plugin del motore {plugin} è depositato e abilitato.",
     "The engine plugin {plugin} is not deposited on this machine: not enabled.":
         "Il plugin del motore {plugin} non è depositato su questa macchina: non lo abilito.",
-    "The file in force cannot be read ({error}); it is backed up before it is replaced.":
-        "Il file in vigore non è leggibile ({error}); ne faccio una copia prima di sostituirlo.",
+    "The configuration at {path} cannot be read ({error}), and OpenClaw refuses to patch a file it cannot parse. Run 'openclaw doctor --fix', then run the setup again.":
+        "La configurazione in {path} non è leggibile ({error}) e OpenClaw non modifica un file che non riesce a leggere. Lancia 'openclaw doctor --fix' e poi rifai il setup.",
     "The configuration is already what the engine would write: nothing to write.":
         "La configurazione è già quella che scriverebbe il motore: non c'è niente da scrivere.",
     "The gateway did not stop ({pids}); its file was left alone.":
         "Il gateway non si è fermato ({pids}); il suo file è rimasto com'era.",
-    "The previous configuration is saved as {name}.":
-        "La configurazione precedente è salvata come {name}.",
-    "Configuration written to {path}.":
-        "Configurazione scritta in {path}.",
+    "OpenClaw would refuse this configuration, so nothing was written and the gateway was not stopped:":
+        "OpenClaw rifiuterebbe questa configurazione: non ho scritto niente e non ho fermato il gateway:",
+    "OpenClaw refused the configuration and left the file as it was:":
+        "OpenClaw ha rifiutato la configurazione e ha lasciato il file com'era:",
+    "Configuration written to {path}; the previous one is kept beside it as {backup}.":
+        "Configurazione scritta in {path}; la precedente resta accanto come {backup}.",
+    "OpenClaw refused the node configuration and left the file as it was: {reason}":
+        "OpenClaw ha rifiutato la configurazione del nodo e ha lasciato il file com'era: {reason}",
     "The gateway token was generated for this machine and is not shown.":
         "Il token del gateway è stato generato per questa macchina e non viene mostrato.",
-    "OpenClaw accepts the configuration.":
-        "OpenClaw accetta la configurazione.",
     "The gateway starts again now, so it reads the new configuration.":
         "Il gateway riparte adesso, così legge la nuova configurazione.",
     "Starting the gateway: a cold start takes about five minutes.":
@@ -2199,8 +2378,6 @@ MESSAGES: dict[str, str] = {
         "Aspetto il gateway riavviato dalla scrittura: un avvio a freddo dura circa cinque minuti.",
     "Waiting for the gateway the install started: a cold start takes about five minutes.":
         "Aspetto il gateway avviato dall'installazione: un avvio a freddo dura circa cinque minuti.",
-    "OpenClaw rejected the configuration (exit {code}): the previous file was put back.":
-        "OpenClaw ha rifiutato la configurazione (uscita {code}): ho rimesso il file precedente.",
     "The gateway is already installed as a service ({mechanism}).":
         "Il gateway è già installato come servizio ({mechanism}).",
     "Gateway service install: {state}":
@@ -2454,10 +2631,6 @@ MESSAGES: dict[str, str] = {
         "Quanto resta di ogni abbonamento, e quanto è vecchia la lettura",
     "Quota at {percent}%: {provider}":
         "Quota al {percent}%: {provider}",
-    "{provider} has used {percent}% of its {window} window; it resets in {age}.":
-        "{provider} ha usato il {percent}% della finestra {window}; si azzera fra {age}.",
-    "{provider} has used {percent}% of its {window} window.":
-        "{provider} ha usato il {percent}% della finestra {window}.",
     "Run 'nexgen quota' to see every window.":
         "Lancia 'nexgen quota' per vedere tutte le finestre.",
     "No provider's percentage is readable on this machine.":
@@ -2480,6 +2653,8 @@ MESSAGES: dict[str, str] = {
         "{provider}: tokscale è limitato fino alle {when} (fra {wait}), quindi le finestre del piano non vengono mostrate.",
     "tokscale is rate-limited until {when} ({wait} from now): these readings are from {age} ago.":
         "tokscale è limitato fino alle {when} (fra {wait}): queste letture sono di {age} fa.",
+    "Claude's stored access token was rejected and its login could not be refreshed: the plan's own windows are not shown.":
+        "Il token di accesso salvato di Claude è stato rifiutato e il suo accesso non è stato rinnovato: le finestre del piano non vengono mostrate.",
     "not measured":
         "non misurato",
     "{percent} of the {window} window used":
@@ -2908,8 +3083,6 @@ MESSAGES: dict[str, str] = {
         "Errore: il plugin del motore {plugin} non si è potuto depositare o verificare.",
     "Plugin deposit exception: {error}":
         "Eccezione nel deposito del plugin: {error}",
-    "OpenClaw could not read the file it was given (its own state reader failed); asking once more.":
-        "OpenClaw non ha potuto leggere il file che gli è stato dato (il suo lettore di stato ha fallito); chiedo una volta ancora.",
     "OpenClaw state permissions corrected (removed group/world-writable).":
         "Permessi della cartella di stato di OpenClaw corretti (tolto group/world-writable).",
     "The MCP connectors were not rendered: {error}":
@@ -2997,4 +3170,228 @@ MESSAGES: dict[str, str] = {
         'Questi job in background girerebbero su un harness CLI che non supporta il completamento isolato ({models}): {jobs}.',
     'Configure a direct cloud model or fallback under agents.entries.main.model that is not a CLI harness.':
         'Configura un modello cloud diretto o un fallback sotto agents.entries.main.model che non sia un harness CLI.',
+    # --- l'esecuzione oraria del contesto: cosa compatta e cosa no -------------
+    'No hourly context guard job is registered: an idle chat grows until its next message re-sends all of it.':
+        "Nessun job orario della guardia del contesto è registrato: una chat inattiva cresce finché il messaggio successivo non la rimanda tutta.",
+    "Run 'nexgen openclaw setup' with the gateway up: it registers the hourly job ('nexgen openclaw groom').":
+        "Esegui 'nexgen openclaw setup' con il gateway acceso: registra il job orario ('nexgen openclaw groom').",
+    "The hourly context guard '{name}' is switched off: nothing compacts an idle chat.":
+        "La guardia del contesto oraria '{name}' è spenta: niente compatta una chat inattiva.",
+    "Run 'openclaw automations enable {job}' or 'nexgen openclaw setup'.":
+        "Esegui 'openclaw automations enable {job}' oppure 'nexgen openclaw setup'.",
+    "The hourly context guard '{name}' has never finished a run: no chat has been compacted by it.":
+        "La guardia del contesto oraria '{name}' non ha mai finito un'esecuzione: nessuna chat è stata compattata da lei.",
+    "Run 'nexgen openclaw groom' once by hand to see why, then 'openclaw automations runs {job}'.":
+        "Esegui una volta 'nexgen openclaw groom' a mano per capire perché, poi 'openclaw automations runs {job}'.",
+    "The last context guard run ended '{status}': at least one chat it was asked to compact was not compacted.":
+        "L'ultima esecuzione della guardia del contesto è finita '{status}': almeno una chat che doveva compattare non è stata compattata.",
+    "Run 'openclaw automations runs {job}' to read the failure, then 'nexgen openclaw groom'.":
+        "Esegui 'openclaw automations runs {job}' per leggere l'errore, poi 'nexgen openclaw groom'.",
+    'The last context guard run was {age} ago, more than the {hours}h the hourly job promises: every idle chat is growing.':
+        "L'ultima esecuzione della guardia del contesto è stata {age} fa, più delle {hours}h che il job orario promette: ogni chat inattiva sta crescendo.",
+    "Run 'openclaw automations list --all' and 'nexgen openclaw groom': the job is registered but its runs are not landing.":
+        "Esegui 'openclaw automations list --all' e 'nexgen openclaw groom': il job è registrato ma le sue esecuzioni non arrivano.",
+    'The context guard has written no run record for {age}: no chat has been compacted since.':
+        'La guardia del contesto non scrive un verbale da {age}: da allora nessuna chat è stata compattata.',
+    "Run 'openclaw automations list --all' to see whether the hourly job still runs, then 'nexgen openclaw groom' by hand.":
+        "Esegui 'openclaw automations list --all' per vedere se il job orario gira ancora, poi 'nexgen openclaw groom' a mano.",
+    'The context guard ran {age} ago and left no record of its queue: what it compacted and what it left behind is unread.':
+        "La guardia del contesto ha girato {age} fa e non ha lasciato traccia della sua coda: cosa ha compattato e cosa ha lasciato indietro non si sa.",
+    "Run 'nexgen openclaw groom' by hand once: it writes the record the doctor reads.":
+        "Esegui una volta 'nexgen openclaw groom' a mano: scrive il verbale che il doctor legge.",
+    'Grooming is switched off ({variable}=0): {count} chats wait and none is compacted.':
+        'La compattazione è spenta ({variable}=0): {count} chat aspettano e nessuna viene compattata.',
+    "Unset NEXGEN_OPENCLAW_MAX_COMPACTIONS in the gateway's environment to resume the hourly compaction.":
+        "Togli NEXGEN_OPENCLAW_MAX_COMPACTIONS dall'ambiente del gateway per riprendere la compattazione oraria.",
+    'The last context guard run left {count} chats waiting and compacted none of them.':
+        "L'ultima esecuzione della guardia del contesto ha lasciato {count} chat in attesa e non ne ha compattata nessuna.",
+    "Run 'nexgen openclaw groom' and read the reason it prints for each chat.":
+        "Esegui 'nexgen openclaw groom' e leggi il motivo che stampa per ogni chat.",
+    'Last run {age} ago, {count} chats waiting.':
+        'Ultima esecuzione {age} fa, {count} chat in attesa.',
+    "{key}: {tokens} tokens, not compacted: lane '{lane}' has no idle compaction":
+        "{key}: {tokens} token, non compattata: la corsia '{lane}' non ha compattazione a inattività",
+    '{key}: {tokens} tokens, OpenClaw answered compacted=false ({runtime})':
+        '{key}: {tokens} token, OpenClaw ha risposto compacted=false ({runtime})',
+    "An 'acp' chat cannot be compacted by this release at all: start a fresh session to shrink it. A chat OpenClaw refused is compacted once it is written to again.":
+        "Una chat 'acp' non è compattabile da questa release: apri una sessione nuova per rimpicciolirla. Una chat che OpenClaw ha rifiutato viene compattata quando ci si scrive di nuovo.",
+    '{count} chat(s) on a lane this release cannot compact: {keys}':
+        'Chat su una corsia che questa release non sa compattare: {count} ({keys})',
+    "The Antigravity plugin had lost the engine's manual compaction: it is applied again, and {count} chat(s) of that backend are offered again.":
+        'Il plugin Antigravity aveva perso la compattazione manuale del motore: viene riapplicata, e {count} chat di quel backend tornano in coda.',
+    "What OpenClaw spent, through the optional ccusage binary":
+        'Quanto ha speso OpenClaw, tramite il binario ccusage opzionale',
+    "Only the days from this date on: 2026-11-14 or 20261114":
+        'Solo i giorni da questa data in poi: 2026-11-14 oppure 20261114',
+    "Cannot read the spend: {error}":
+        'Non riesco a leggere la spesa: {error}',
+    "ccusage reported no OpenClaw spend for this period.":
+        'ccusage non ha riportato nessuna spesa OpenClaw per questo periodo.',
+    "By agent, each session counted on the day it was last active:":
+        'Per agente, ogni sessione contata nel giorno in cui è stata attiva l\'ultima volta:',
+    "(no transcript)":
+        '(nessuna trascrizione)',
+    "ccusage is not installed on this machine: the optional OpenClaw spend backend is skipped.":
+        'ccusage non è installato su questa macchina: il backend opzionale della spesa OpenClaw viene saltato.',
+    "ccusage did not answer within {seconds} seconds: its numbers are not shown.":
+        'ccusage non ha risposto entro {seconds} secondi: i suoi numeri non vengono mostrati.',
+    "ccusage exited with code {code}: its numbers are not shown.":
+        'ccusage è uscito con codice {code}: i suoi numeri non vengono mostrati.',
+    "ccusage output format not understood ({detail}): its numbers are not shown.":
+        'formato di output di ccusage non riconosciuto ({detail}): i suoi numeri non vengono mostrati.',
+    "Yesterday OpenClaw spent {cost} on {tokens} tokens.":
+        'Ieri OpenClaw ha speso {cost} su {tokens} token.',
+    "Yesterday OpenClaw spent {cost} on {tokens} tokens: {agents}.":
+        'Ieri OpenClaw ha speso {cost} su {tokens} token: {agents}.',
+    # --- Strumenti da maintainer: nascosti dove non possono girare -----------------
+    "Not a maintainer machine: the publishing tools are hidden here":
+        'Non è una macchina da maintainer: qui gli strumenti di pubblicazione sono nascosti',
+    "Registered as maintainer, and {reason}":
+        'Registrata come maintainer, e {reason}',
+    "Registered as maintainer but half of it is missing: {reason}":
+        'Registrata come maintainer ma ne manca metà: {reason}',
+    "Run `nexgen maintainer status`: it names the missing half and how to supply it":
+        'Lancia `nexgen maintainer status`: dice quale metà manca e come fornirla',
+    "this is a maintainer tool; this installation is not registered as maintainer: see `nexgen maintainer status`":
+        'questo è uno strumento da maintainer; questa installazione non è registrata come maintainer: '
+        'vedi `nexgen maintainer status`',
+    "maintainer: yes (this installation may run the maintainer tools)":
+        'maintainer: sì (questa installazione può usare gli strumenti del maintainer)',
+    "maintainer: no (this installation is not registered as maintainer)":
+        'maintainer: no (questa installazione non è registrata come maintainer)',
+    "The maintainer tools may run on this installation.":
+        'Gli strumenti del maintainer possono girare su questa installazione.',
+    "Maintainer tools are refused here: the line above says what is missing.":
+        'Qui gli strumenti del maintainer vengono rifiutati: la riga sopra dice cosa manca.',
+    "There is no private config at {path}.":
+        "Non c'è nessuna configurazione privata in {path}.",
+    "Add this line to it, then run this command again:":
+        'Aggiungi questa riga, poi rilancia lo stesso comando:',
+    "Registered in {path}.":
+        'Registrata in {path}.',
+    "Is this installation registered as maintainer ('status', 'register')":
+        "Questa installazione è registrata come maintainer ('status', 'register')",
+    "Say whether this installation may run the maintainer tools":
+        'Dì se questa installazione può usare gli strumenti del maintainer',
+    "Register this installation as maintainer, in its own private config":
+        'Registra questa installazione come maintainer, nella sua configurazione privata',
+    "Another registration can start a gateway on this machine ({registrations}): one gateway per machine is what keeps two of them off one port.":
+        "Un'altra registrazione può avviare un gateway su questa macchina ({registrations}): un gateway per macchina è ciò che tiene due di loro fuori da una sola porta.",
+    "Keep it if it is a second profile you meant. To remove it, run: {commands}":
+        'Tienila se è un secondo profilo che volevi. Per rimuoverla, esegui: {commands}',
+    "Keep it if it is a second profile you meant; otherwise inspect it with 'openclaw doctor', which offers to remove a registration from an older release.":
+        "Tienila se è un secondo profilo che volevi, altrimenti guardala con 'openclaw doctor', che propone di rimuovere una registrazione di una release precedente.",
+    "Another registration for the gateway is still on this machine: the managed service is not the only one.":
+        "C'è ancora un'altra registrazione per il gateway su questa macchina: il servizio gestito non è l'unico.",
+    "The engine leaves it alone: run the lines above if you do not need it.":
+        'Il motore la lascia stare: esegui le righe qui sopra se non ti serve.',
+    "(unnamed)":
+        '(senza nome)',
+    "(not inspected)":
+        '(non ispezionata)',
+    "The gateway service did not start: {error}":
+        'Il servizio gateway non è partito: {error}',
+    "no answer from OpenClaw":
+        'nessuna risposta da OpenClaw',
+    # --- il deploy della metà server: le righe che una persona legge ---
+    "This engine has no commit to compare: the checkout is not a git repository.":
+        'Questo motore non ha un commit da confrontare: il checkout non è un repository git.',
+    "The deployed vault-mcp did not answer on its health route, so its engine commit was not read ({detail}).":
+        'Il vault-mcp distribuito non ha risposto sulla sua rotta di salute, quindi il suo commit del motore non è stato letto ({detail}).',
+    "Nothing to do if the server is meant to be down. Otherwise check that the stack runs and the tunnel is open.":
+        'Niente da fare se il server deve essere spento. Altrimenti controlla che lo stack giri e che il tunnel sia aperto.',
+    "The deployed vault-mcp does not say which engine commit it was built from, so this installation cannot prove the server half is current.":
+        'Il vault-mcp distribuito non dice da quale commit del motore è stato costruito, quindi questa installazione non può dimostrare che la metà server sia aggiornata.',
+    "On the server run '{command}': it rebuilds the service and stamps the commit it built.":
+        "Sul server esegui '{command}': ricostruisce il servizio e ci scrive dentro il commit con cui l'ha costruito.",
+    "Engine and deployed vault-mcp are on {commit}":
+        'Motore e vault-mcp distribuito sono sullo stesso commit {commit}',
+    "The deployed vault-mcp was built from {deployed}, this engine is {engine}: the server half is behind.":
+        'Il vault-mcp distribuito è stato costruito da {deployed}, questo motore è {engine}: la metà server è indietro.',
+    "On the server run '{command}': it rebuilds that one service, probes it, and puts the previous image back if the probe fails. An update on a server now does this by itself.":
+        "Sul server esegui '{command}': ricostruisce quel solo servizio, lo sonda e rimette l'immagine precedente se la sonda fallisce. Un aggiornamento su un server ora lo fa da solo.",
+    "The Vault pins {pin} but this engine is {engine}: the other machines catch up on their next update.":
+        'Il Vault fissa {pin} ma questo motore è {engine}: le altre macchine si allineano al prossimo aggiornamento.',
+    "Nothing to do here: run 'nexgen update' on the machines that are behind.":
+        "Qui non c'è niente da fare: esegui 'nexgen update' sulle macchine che sono indietro.",
+    "'nexgen deploy' rebuilds the stack on the server that runs it; this machine is {role}.":
+        "'nexgen deploy' ricostruisce lo stack sul server che lo esegue; questa macchina è {role}.",
+    "On a machine that runs the connectors itself, use 'nexgen stack up': it does not need a rebuild.":
+        "Su una macchina che esegue i connettori in proprio usa 'nexgen stack up': non serve una ricostruzione.",
+    "not declared":
+        'non dichiarato',
+    "{service} is on engine commit {commit} (previous source kept in {backup})":
+        '{service} è sul commit {commit} del motore (il sorgente precedente è in {backup})',
+    "Deploying {service} from engine commit {commit}":
+        'Distribuisco {service} dal commit {commit} del motore',
+    "  previous source saved in {dir}":
+        '  sorgente precedente salvato in {dir}',
+    "  previous image kept as {tag}":
+        '  immagine precedente tenuta come {tag}',
+    "  source refreshed from the engine tree in {dir}":
+        "  sorgente riaggiornato dall'albero del motore in {dir}",
+    "  building {service}...":
+        '  costruisco {service}...',
+    "  starting {service}...":
+        '  avvio {service}...',
+    "  it answers MCP with {count} tool(s)":
+        '  risponde a MCP con {count} tool',
+    "  the probe failed: {detail}":
+        '  la sonda è fallita: {detail}',
+    "the build failed: {detail}":
+        'la costruzione è fallita: {detail}',
+    "the service did not start: {detail}":
+        'il servizio non è partito: {detail}',
+    "the rebuilt service did not answer the MCP protocol: {service} is back on the code that worked":
+        'il servizio ricostruito non ha risposto al protocollo MCP: {service} è tornato al codice che funzionava',
+    "no VAULT_LIBRARY_TOKEN in {file}: the service would refuse to start. Run bootstrap-vps.sh first":
+        'nessun VAULT_LIBRARY_TOKEN in {file}: il servizio si rifiuterebbe di partire. Esegui prima bootstrap-vps.sh',
+    "{compose} is missing: the compose file that started this service has to sit beside its source (pass --source with the directory that holds both)":
+        '{compose} manca: il file compose che ha avviato questo servizio deve stare accanto al suo sorgente (passa --source con la cartella che li contiene entrambi)',
+    "the engine at {root} is not a git checkout, so nothing says which commit the image is built from":
+        "il motore in {root} non è un checkout git, quindi niente dice da quale commit è costruita l'immagine",
+    "the previous source could not be saved ({error}); nothing was rebuilt":
+        'il sorgente precedente non è stato salvato ({error}); non è stato ricostruito niente',
+    "there was no previous image to go back to: the service is running the new one":
+        "non c'era un'immagine precedente a cui tornare: il servizio sta eseguendo quella nuova",
+    "the previous image is back: {image}":
+        "l'immagine precedente è tornata: {image}",
+    "the previous image could not be restored ({detail})":
+        "l'immagine precedente non è stata ripristinata ({detail})",
+    "the saved source could not be put back ({error})":
+        'il sorgente salvato non è stato rimesso a posto ({error})',
+    "the saved source is back in {dir}":
+        'il sorgente salvato è tornato in {dir}',
+    "\n{stack} changed in this update: redeploying it here.":
+        '\n{stack} è cambiato in questo aggiornamento: lo ridistribuisco qui.',
+    "the update could not tell which stacks moved ({detail})":
+        "l'aggiornamento non ha potuto dire quali stack si sono mossi ({detail})",
+    "The plugin reads its switches from plugins.entries.{plugin}.config.":
+        "Il plugin legge i suoi interruttori da plugins.entries.{plugin}.config.",
+    "The plugin still reads its switches from nexgen.config.json: the file is kept for one release and then removed.":
+        "Il plugin legge ancora i suoi interruttori da nexgen.config.json: il file resta per una release e poi viene rimosso.",
+    "Run 'nexgen openclaw setup' with the gateway stopped: it writes the same switches to plugins.entries.{plugin}.config.":
+        "Lancia 'nexgen openclaw setup' con il gateway fermo: scrive gli stessi interruttori in plugins.entries.{plugin}.config.",
+
+    # --- plugin_claude.py: Claude Code come plugin nativo, spento di default ---
+    "Claude Code plugin rendered in {path} and installed through `claude plugin`":
+        "Plugin di Claude Code generato in {path} e installato con `claude plugin`",
+    "Claude plugin not installed: {detail}":
+        "Plugin di Claude non installato: {detail}",
+    "`claude plugin validate` refused {path}: {output}":
+        "`claude plugin validate` ha rifiutato {path}: {output}",
+    "`claude plugin marketplace add` failed: {output}":
+        "`claude plugin marketplace add` non è riuscito: {output}",
+    "`claude plugin install` failed: {output}":
+        "`claude plugin install` non è riuscito: {output}",
+    "`claude plugin {verb}` could not run ({error})":
+        "non ho potuto eseguire `claude plugin {verb}` ({error})",
+    "{server} needs this value to start. Claude Code keeps it in this system's credential store instead of a configuration file.":
+        "{server} ha bisogno di questo valore per partire. Claude Code lo tiene nel portachiavi di sistema invece che in un file di configurazione.",
+    "claude: guardrail hook moved into the plugin (removed from {path})":
+        "claude: l'hook del guardrail è passato nel plugin (rimosso da {path})",
+    "Claude configuration left to the plugin":
+        "Configurazione Claude lasciata al plugin",
+    "Skill '{name}': the Claude view moved into the plugin":
+        "Skill '{name}': la vista di Claude è passata nel plugin",
 }

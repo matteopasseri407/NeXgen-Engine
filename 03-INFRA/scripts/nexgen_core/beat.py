@@ -26,6 +26,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from nexgen_core import alerts
 from nexgen_core.depwatch import run_depwatch
 from nexgen_core.i18n import t
 from nexgen_core.megaphone import Megaphone
@@ -203,11 +204,11 @@ class Heartbeat:
                         minutes=elapsed / 60,
                     )
                 hours = elapsed / 3600
-                msg = t("The sync cycle has been stalled for {hours:.1f} hours.", hours=hours)
+                title, msg, action = alerts.SYNC_STALLED.say(hours=f"{hours:.1f}")
                 self.megaphone.send_alert(
-                    title=t("Agent sync is not running"),
+                    title=title,
                     message=msg,
-                    action=t("Run 'agent-sync apply' in the terminal to check the status."),
+                    action=action,
                     alert_key="guard_stale"
                 )
                 return False, msg
@@ -223,10 +224,11 @@ class Heartbeat:
             # A corrupt liveness file blinds self-monitoring: alert once
             # (debounced) instead of returning a silent False nobody acts on.
             try:
+                title, message, action = alerts.SYNC_MONITORING_BLIND.say()
                 self.megaphone.send_alert(
-                    title=t("Agent sync self-monitoring is blind"),
-                    message=t("The liveness file cannot be read ({error}); fix or delete it.", error=exc),
-                    action=t("Run 'agent-sync apply' in the terminal to check the status."),
+                    title=title,
+                    message=message,
+                    action=action,
                     alert_key="guard_liveness_corrupt",
                 )
             except Exception:
@@ -329,19 +331,13 @@ class Heartbeat:
         every hour by design and would only train people to ignore the alert.
         """
         if exit_code == UPDATE_EXIT_REFUSED:
-            title = t("An update was refused")
-            message = t("A new release is not signed by a key this install trusts, so nothing was installed.")
-            action = t("Run 'nexgen-update --check' and look at the release before doing anything else.")
+            title, message, action = alerts.UPDATE_REFUSED.say()
             key = "update_refused"
         elif exit_code == UPDATE_EXIT_ROLLED_BACK:
-            title = t("An automatic update failed and was undone")
-            message = t("The machine is back on the version that worked. That release is skipped until you update by hand.")
-            action = t("Run 'nexgen-update' interactively to see why it failed.")
+            title, message, action = alerts.UPDATE_ROLLED_BACK.say()
             key = "update_rolled_back"
         elif exit_code == UPDATE_EXIT_ROLLBACK_FAILED:
-            title = t("An automatic update failed and could not be undone")
-            message = t("The engine may be half-updated. It was left as it is.")
-            action = t("Run 'nexgen doctor --summary' and follow the recovery printed by 'nexgen-update'.")
+            title, message, action = alerts.UPDATE_ROLLBACK_FAILED.say()
             key = "update_rollback_failed"
         else:
             return

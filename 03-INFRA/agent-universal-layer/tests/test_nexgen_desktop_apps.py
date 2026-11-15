@@ -91,6 +91,56 @@ def test_nothing_installed_means_no_desktop_app():
     assert platforms.installed_desktop_apps(platform="linux", exists=lambda p: False) == []
 
 
+def test_the_store_package_family_of_the_codex_app_is_declared_for_windows():
+    """A Store Codex app has no `Programs\\ChatGPT` folder; its package family is the evidence."""
+    declared = {app.name: dict(app.package_families) for app in platforms.DESKTOP_APPS}
+    assert declared == {"ChatGPT": {"win32": ("OpenAI.Codex_2p2nqsd0c76g0",)}, "Antigravity": {}}
+
+
+def test_a_store_package_counts_as_an_installed_app():
+    win_root = Path("C:/Users/user/AppData/Local")
+    apps = platforms.installed_desktop_apps(
+        platform="win32",
+        env={"LOCALAPPDATA": str(win_root)},
+        exists=lambda p: p == win_root / "Packages" / "OpenAI.Codex_2p2nqsd0c76g0",
+    )
+    assert [a.name for a in apps] == ["ChatGPT"]
+
+
+def test_another_apps_store_package_is_not_evidence_for_the_codex_app():
+    win_root = Path("C:/Users/user/AppData/Local")
+    apps = platforms.installed_desktop_apps(
+        platform="win32",
+        env={"LOCALAPPDATA": str(win_root)},
+        exists=lambda p: p == win_root / "Packages" / "Claude_pzs8sxrjxfjjc",
+    )
+    assert apps == []
+
+
+def test_a_store_package_folder_is_not_an_install_root():
+    """Nothing inside `%LOCALAPPDATA%\\Packages` is the app's own layout, so it is never searched."""
+    win_root = Path("C:/Users/user/AppData/Local")
+    roots = platforms.existing_roots(
+        platforms.DESKTOP_APPS[0], platform="win32", env={"LOCALAPPDATA": str(win_root)},
+    )
+    assert roots == []
+
+
+def test_a_store_only_codex_app_still_gets_the_codex_target(tmp_path, monkeypatch):
+    """The app-only machine this detection exists for: the Store package is the app, so ~/.codex is configured."""
+    _no_cli(monkeypatch)
+    win_root = Path("C:/Users/user/AppData/Local")
+    store = win_root / "Packages" / "OpenAI.Codex_2p2nqsd0c76g0"
+    monkeypatch.setattr(
+        bootstrap,
+        "installed_desktop_apps",
+        lambda: platforms.installed_desktop_apps(
+            platform="win32", env={"LOCALAPPDATA": str(win_root)}, exists=lambda p: p == store,
+        ),
+    )
+    assert bootstrap.detect_clis(tmp_path) == ["codex"]
+
+
 def _no_cli(monkeypatch):
     monkeypatch.setattr(bootstrap.shutil, "which", lambda name: None)
 
@@ -149,6 +199,22 @@ def test_skew_is_silent_without_a_cli_codex(monkeypatch):
     monkeypatch.setattr(desktop_checks, "_bundled_codex", lambda: Path("/usr/lib/chatgpt/resources/codex"))
     monkeypatch.setattr(desktop_checks.shutil, "which", lambda name: None)
     assert desktop_checks.check_codex_desktop_skew() is None
+
+
+def test_skew_stays_silent_when_the_app_is_a_store_package(monkeypatch):
+    """The Store package has no install root, so no bundled Codex is compared: silence, not a guess."""
+    win_root = Path("C:/Users/user/AppData/Local")
+    monkeypatch.setattr(desktop_checks, "installed_desktop_apps", lambda: [platforms.DESKTOP_APPS[0]])
+    monkeypatch.setattr(
+        desktop_checks,
+        "existing_roots",
+        lambda app: platforms.existing_roots(app, platform="win32", env={"LOCALAPPDATA": str(win_root)}),
+    )
+    monkeypatch.setattr(desktop_checks.shutil, "which", lambda name: "/home/user/bin/codex")
+    probes: list[str] = []
+    monkeypatch.setattr(desktop_checks, "_binary_version", lambda binary: probes.append(str(binary)))
+    assert desktop_checks.check_codex_desktop_skew() is None
+    assert probes == []
 
 
 def _skew_setup(monkeypatch, bundled_version, cli_version):

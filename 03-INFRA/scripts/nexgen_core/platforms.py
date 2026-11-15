@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from nexgen_core.paths import resolve_home
@@ -92,18 +92,27 @@ class DesktopApp:
     `bundled` names the CLI binary shipped inside the app, relative to the
     app root, when there is one. The macOS and Windows layouts are not
     verified on a real install; only the Linux one is.
+
+    `package_families` names the Microsoft Store packages (MSIX), per
+    operating-system family, that are the same app. A Store copy has no
+    install root under `%LOCALAPPDATA%\\Programs`; what it leaves behind is its
+    per-user folder under `%LOCALAPPDATA%\\Packages`, created the first time the
+    app runs, and its presence is enough to say "installed" without reading the
+    elevated `WindowsApps` folder.
     """
 
     name: str
     targets: tuple[str, ...]
     locations: Mapping[str, tuple[str, ...]]
     bundled: tuple[str, ...] = ()
+    package_families: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 #: Where each app lives per operating-system family ("linux", "darwin",
-#: "win32"). `%LOCALAPPDATA%` is expanded at lookup time. The Windows Store
-#: package is not listed: its folder under WindowsApps is versioned and not
-#: readable without elevated rights, so it cannot be detected honestly.
+#: "win32"). `%LOCALAPPDATA%` is expanded at lookup time. A Windows Store
+#: package has no readable install folder (`WindowsApps` is versioned and
+#: unreadable without elevation), so it is declared by package family name
+#: under `%LOCALAPPDATA%/Packages` instead.
 DESKTOP_APPS: tuple[DesktopApp, ...] = (
     DesktopApp(
         "ChatGPT",
@@ -114,6 +123,10 @@ DESKTOP_APPS: tuple[DesktopApp, ...] = (
             "win32": ("%LOCALAPPDATA%/Programs/ChatGPT",),
         },
         bundled=("resources/codex", "resources/codex.exe", "Contents/Resources/codex"),
+        # The Codex app the owner installed from the Store; `Identity Name` in
+        # its AppxManifest.xml. `%LOCALAPPDATA%\Programs\ChatGPT` does not exist
+        # on a Store install, so this is the only honest evidence there is.
+        package_families={"win32": ("OpenAI.Codex_2p2nqsd0c76g0",)},
     ),
     DesktopApp(
         "Antigravity",
@@ -135,12 +148,28 @@ def _family(platform: str) -> str:
     return "linux"
 
 
+def _local_app_data(env: Mapping[str, str]) -> str:
+    """`%LOCALAPPDATA%`, or the per-user default when the variable is not set."""
+    return env.get("LOCALAPPDATA") or str(resolve_home() / "AppData" / "Local")
+
+
 def _candidate_roots(app: DesktopApp, family: str, env: Mapping[str, str]) -> list[Path]:
     roots: list[Path] = []
-    local_app_data = env.get("LOCALAPPDATA") or str(resolve_home() / "AppData" / "Local")
+    local_app_data = _local_app_data(env)
     for raw in app.locations.get(family, ()):
         roots.append(Path(raw.replace("%LOCALAPPDATA%", local_app_data)))
     return roots
+
+
+def _store_roots(app: DesktopApp, family: str, env: Mapping[str, str]) -> list[Path]:
+    """The `%LOCALAPPDATA%\\Packages` folders a Store-installed copy leaves behind.
+
+    One folder per declared package family name. It is evidence that the
+    package is installed, not an install root: the app's own files stay in the
+    elevated `WindowsApps` folder, so nothing inside this one is searched.
+    """
+    packages = Path(_local_app_data(env)) / "Packages"
+    return [packages / family_name for family_name in app.package_families.get(family, ())]
 
 
 def existing_roots(app: DesktopApp, platform: str | None = None, env: Mapping[str, str] | None = None) -> list[Path]:
@@ -159,14 +188,17 @@ def installed_desktop_apps(
 
     `platform`, `env` and `exists` are injectable so every operating system
     can be exercised from one test run. A missing or unreadable location is
-    simply "not installed": detection never raises.
+    simply "not installed": detection never raises. An app installed from the
+    Microsoft Store is present through its package family folder even though
+    it has no install root, so an app-only machine is still configured.
     """
     family = _family(sys.platform if platform is None else platform)
     environment = os.environ if env is None else env
     found: list[DesktopApp] = []
     for app in DESKTOP_APPS:
         try:
-            if any(exists(root) for root in _candidate_roots(app, family, environment)):
+            roots = _candidate_roots(app, family, environment) + _store_roots(app, family, environment)
+            if any(exists(root) for root in roots):
                 found.append(app)
         except OSError:
             continue

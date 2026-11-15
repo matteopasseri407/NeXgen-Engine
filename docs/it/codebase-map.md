@@ -255,9 +255,9 @@ Adapter guardrail dei runtime.
 
 ## 03-INFRA/agent-universal-layer/leak-scan
 
-Scansione dei segreti prima del commit.
+Scansione dei segreti prima del commit: i modi e la policy del motore sopra lo scanner gitleaks.
 
-- `03-INFRA/agent-universal-layer/leak-scan/leak_scan.py`: `Unit` (class, 47), `Finding` (class, 53), `load_patterns` (function, 61), `load_denylist` (function, 75), `redact` (function, 89), `_allowlisted` (function, 95), `scan_units` (function, 135), `units_from_tree` (function, 155), `parse_added_lines` (function, 186), `run_git` (function, 212), `units_from_staged` (function, 220), `units_from_message` (function, 229), `units_from_commit_range` (function, 234), `main` (function, 252)
+- `03-INFRA/agent-universal-layer/leak-scan/leak_scan.py`: `Finding` (class, 60), `redact` (function, 68), `load_denylist` (function, 75), `gitleaks_binary` (function, 89), `_tail` (function, 97), `_run_report` (function, 101), `_finding` (function, 128), `_config_with_denylist` (function, 141), `_git` (function, 162), `_message_findings` (function, 171), `_findings_for` (function, 182), `scan_text` (function, 202), `_baseline_for` (function, 212), `_parse_args` (function, 224), `_print_and_exit` (function, 241), `main` (function, 258)
 
 ## 03-INFRA/deploy
 

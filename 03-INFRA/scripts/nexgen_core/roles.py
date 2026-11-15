@@ -3,7 +3,8 @@
 nexgen: one-job reason="the three machine roles, what each one installs, and the record of which one ran here; the installers call it and nothing else decides it"
 One job: configure a machine into one of three distinct roles:
 - server: always-on OpenClaw gateway on headless Linux (loopback + Tailscale Serve).
-- node: PC connecting to an existing gateway, registering its agent via RPC.
+- node: PC joining an existing gateway with `openclaw connect --service`, which
+  pairs it and installs its own user service in one documented step.
 - standalone: local PC running its own gateway.
 
 Idempotent by contract: re-running any role on an already configured machine
@@ -35,11 +36,7 @@ from nexgen_core.first_run import (
     write_user_profile,
 )
 from nexgen_core.i18n import t
-from nexgen_core.openclaw.node_attach import (
-    DEFAULT_NODE_ATTACH_TIMEOUT_S,
-    FULL_EXEC_POLICY,
-    apply_exec_policy,
-)
+from nexgen_core.openclaw.node_attach import FULL_EXEC_POLICY, apply_exec_policy
 from nexgen_core.openclaw.node_cli import Run
 from nexgen_core.openclaw.node_transition import (
     detect_existing_node,
@@ -447,28 +444,21 @@ def _stop_local_gateway_step(
     return [report(RetireResult(drop_in_archive=None, config=change))]
 
 
-def _attach_and_wait(
+def _attach(
     join_target: str,
     home: Path | None,
     runner: Run | None,
-    wait_probe_fn: Callable[[], bool] | None,
-    name: str,
-    timeout_s: float,
     out: Callable[[str], None],
 ) -> int:
-    """Connects node as an OS service and waits for connection verification."""
-    from nexgen_core.openclaw.node_attach import (
-        check_node_connected,
-        connect_node_service,
-        wait_for_node_connection,
-    )
+    """Connects this machine as a node service: OpenClaw pairs and installs in one step.
 
-    ok = connect_node_service(join_target, home=home, runner=runner, out=out)
-    if not ok:
-        return 1
-    probe = wait_probe_fn or (lambda: check_node_connected(runner=runner))
-    connected, _ = wait_for_node_connection(probe, node_name=name, timeout_s=timeout_s, emit=out)
-    return 0 if connected else 1
+    A successful exit is the whole check: `openclaw connect --service` completes the
+    first authenticated connection before it installs the service and exits non-zero
+    when it cannot, so there is nothing left here to poll for.
+    """
+    from nexgen_core.openclaw.node_attach import connect_node_service
+
+    return 0 if connect_node_service(join_target, home=home, runner=runner, out=out) else 1
 
 
 def _show_final_summary(
@@ -517,8 +507,6 @@ def _execute_node_transition(
     systemd_user_dir: Path | None,
     update_fn: Any,
     align_fn: Any,
-    wait_probe_fn: Any,
-    timeout_s: float,
     out: Callable[[str], None],
     exec_policy: str | None = None,
     exec_runner: Callable[[list[str], str], Any] | None = None,
@@ -535,7 +523,7 @@ def _execute_node_transition(
     if sync_code != 0:
         return sync_code
 
-    code = _attach_and_wait(join_target, home, runner, wait_probe_fn, name, timeout_s, out)
+    code = _attach(join_target, home, runner, out)
     if code != 0:
         return code
     if exec_policy and not apply_exec_policy(runner=exec_runner, out=out):
@@ -627,8 +615,6 @@ def run_node_role(
     update_fn: Callable[..., int] | None = None,
     align_fn: Callable[[], tuple[bool, str]] | None = None,
     runner: Run | None = None,
-    wait_probe_fn: Callable[[], bool] | None = None,
-    timeout_s: float = DEFAULT_NODE_ATTACH_TIMEOUT_S,
     platform: str | None = None,
     appdata: Path | None = None,
     startup_dir: Path | None = None,
@@ -673,6 +659,5 @@ def run_node_role(
         root=root, home=home, inspection=inspection, join_target=join_target, name=name,
         platform=platform, runner=runner, appdata=appdata, startup_dir=startup_dir,
         systemd_user_dir=systemd_user_dir, update_fn=update_fn, align_fn=align_fn,
-        wait_probe_fn=wait_probe_fn, timeout_s=timeout_s, out=out,
-        exec_policy=exec_policy, exec_runner=exec_runner,
+        out=out, exec_policy=exec_policy, exec_runner=exec_runner,
     )

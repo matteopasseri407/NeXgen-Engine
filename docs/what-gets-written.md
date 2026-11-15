@@ -117,6 +117,23 @@ it. `nexgen doctor` measures the file each installed CLI actually reads, warns a
 broken alignment past it; a CLI that is not installed, or has no instructions file yet, is not reported. The enforced
 numbers live in `INSTRUCTION_READERS` in `03-INFRA/scripts/nexgen_core/checks/instruction_limits_checks.py`.
 
+## Claude Code as a native plugin (opt-in, off by default)
+
+`plugins.claude.enabled: true` in the installation's private `03-INFRA/agent-universal-layer/sync/remotes.yaml` moves
+the three Claude Code artifacts into one plugin directory the engine generates under its state folder
+(`plugins/claude/`) and installs with Claude Code's own commands: `claude plugin validate`, `claude plugin marketplace
+add <dir> --scope user`, `claude plugin install nexgen@nexgen-engine --scope user`. The generated tree is a
+marketplace (`.claude-plugin/marketplace.json`) with one plugin inside it: `.claude-plugin/plugin.json`, the guardrail
+hook in `hooks/hooks.json` running the same fail-closed adapter through `${CLAUDE_PLUGIN_ROOT}`, the servers in
+`.mcp.json`, and the skills whose `targets` name `claude`. Secrets are not written into it: a `${VAR}` a server entry
+would otherwise read from the process environment becomes a `userConfig` option with `"sensitive": true`, so Claude
+Code keeps the value in the system credential store. The three rows above for Claude Code are left alone only once
+Claude Code has accepted the generated tree, never merely because the switch is on: the engine then removes its own
+hook from `~/.claude/settings.json`, the servers the plugin mounts from `~/.claude.json`, and the engine's links in
+`~/.claude/skills`, so nothing is registered twice and a failing install never leaves Claude Code unguarded.
+`claude plugin uninstall nexgen@nexgen-engine` removes it, and setting the switch back to `false` restores the classic
+writers.
+
 ## MULTI profile only: additional writes by the guard cycle (`nexgen sync`, `nexgen guard`, aliases `agent-sync apply`, `agent-sync guard`)
 
 - `~/.config/systemd/user/agent-sync.service` and `agent-sync.timer`, plus `agent-heartbeat.service`,
@@ -210,10 +227,14 @@ numbers live in `INSTRUCTION_READERS` in `03-INFRA/scripts/nexgen_core/checks/in
     is `nexgen openclaw setup` with the gateway stopped, and `nexgen doctor` reports "deposited but not enabled" until
     then. The hook covers only the calls OpenClaw executes itself; an agent on the `claude-cli` or `codex` runtime runs
     its tools inside that CLI, where its own guardrail already applies.
-  - Codex has no wired guardrail mechanism. Its hook contract gates every hook behind a persisted per-hash trust
-    prompt, or an explicit `--dangerously-bypass-hook-trust` flag, that this engine cannot satisfy unattended. A
-    guardrail declared for `codex` is a silent no-op: nothing is written and nothing errors. `approval_policy` and
-    `sandbox_mode` are Codex's own settings and are not written either.
+  - Codex: `codex-guardrail-adapter.mjs` is copied to `~/.codex/codex-guardrail-adapter.mjs` and registered as a
+    `PreToolUse` entry with the matcher `Bash` in `~/.codex/hooks.json`, next to the hooks you wrote yourself: the
+    engine finds its own entry by its command and never touches another group, event or file. The declared body goes
+    to `~/.codex/nexgen-guardrail-hooks/` with the same kind of sidecar beside the adapter. Codex refuses to run a
+    hook before a person accepts that exact hook definition in `/hooks`: the engine writes the registration and never
+    the acceptance, so the first cycle prints what you have to confirm, and `nexgen doctor` reports "registered but
+    not trusted" (and "changed after it was accepted") until you do. `approval_policy` and `sandbox_mode` are Codex's
+    own settings and are not written either.
 - Windows only, and only if your private vault ships `03-INFRA/scripts/local-model-agent.ps1` (a bring-your-own
   adapter, never part of the public engine): that script is relinked, or copied when symlink privileges are
   unavailable, to `~/.local/bin/local-model-agent.ps1`, alongside two stable wrappers,

@@ -27,8 +27,9 @@ keywords = ["agents", "mcp", "automation", "knowledge-vault", "ai-agents", "clau
 # SQLite checkpoints) is core: every machine provisions it. Only the model
 # endpoint itself (your Ollama server, your opencode-attached model) is the
 # user's own business and never ships here.
-# websockets is used by nexgen_core.openclaw.gateway_rpc to talk to OpenClaw Gateway.
-dependencies = ["PyYAML>=6.0,<7.0", "langgraph>=1.0,<2", "langchain-ollama>=1.0,<2", "httpx>=0.28,<1", "mcp>=2.2.0,<3", "langgraph-checkpoint-sqlite>=3,<4", "websockets>=14.0,<17"]
+# psutil reads and stops the process table the supervisor works on, on both platforms.
+# tomlkit edits Codex's own config.toml without rewriting the lines it does not own.
+dependencies = ["PyYAML>=6.0,<7.0", "langgraph>=1.0,<2", "langchain-ollama>=1.0,<2", "httpx>=0.28,<1", "mcp>=2.2.0,<3", "langgraph-checkpoint-sqlite>=3,<4", "filelock>=4.2,<5", "psutil>=6.0,<8", "tomlkit>=0.15,<1"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-xdist>=3.6", "ruff>=0.6"]

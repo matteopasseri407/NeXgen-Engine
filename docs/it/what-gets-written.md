@@ -124,6 +124,23 @@ del limite di quella CLI e segnala un allineamento rotto quando lo supera; una C
 ancora un file di istruzioni, non viene riportata. I numeri applicati stanno in `INSTRUCTION_READERS`, in
 `03-INFRA/scripts/nexgen_core/checks/instruction_limits_checks.py`.
 
+## Claude Code come plugin nativo (facoltativo, spento di default)
+
+`plugins.claude.enabled: true` nella configurazione privata dell'installazione
+(`03-INFRA/agent-universal-layer/sync/remotes.yaml`) sposta i tre artefatti di Claude Code in un'unica cartella di
+plugin che il motore genera nella sua cartella di stato (`plugins/claude/`) e installa con i comandi di Claude Code
+stesso: `claude plugin validate`, `claude plugin marketplace add <cartella> --scope user`, `claude plugin install
+nexgen@nexgen-engine --scope user`. L'albero generato è un marketplace (`.claude-plugin/marketplace.json`) con dentro un
+plugin: `.claude-plugin/plugin.json`, l'hook del guardrail in `hooks/hooks.json` che lancia lo stesso adattatore
+fail-closed tramite `${CLAUDE_PLUGIN_ROOT}`, i server in `.mcp.json` e le skill con `claude` nei `targets`. I segreti non
+finiscono lì: un `${VAR}` che una voce server leggerebbe dall'ambiente diventa un'opzione `userConfig` con
+`"sensitive": true`, quindi Claude Code tiene il valore nel portachiavi di sistema. Le tre righe qui sopra per Claude
+Code non vengono più scritte solo dopo che Claude Code ha accettato l'albero generato, mai solo perché l'interruttore è
+acceso: il motore toglie il proprio hook da `~/.claude/settings.json`, i server che il plugin monta da `~/.claude.json`
+e i propri collegamenti in `~/.claude/skills`, così niente è registrato due volte e un'installazione che continua a
+fallire non lascia mai Claude Code senza guardrail. `claude plugin uninstall nexgen@nexgen-engine` lo rimuove, e
+riportare l'interruttore a `false` fa tornare i writer classici.
+
 ## Solo profilo MULTI: scritture aggiuntive del ciclo di guardia (`nexgen sync`, `nexgen guard`, alias `agent-sync apply`, `agent-sync guard`)
 
 - `~/.config/systemd/user/agent-sync.service` e `agent-sync.timer`, più `agent-heartbeat.service`,
@@ -219,10 +236,14 @@ ancora un file di istruzioni, non viene riportata. I numeri applicati stanno in 
     lo rompe, quindi abilitare il plugin è `nexgen openclaw setup` con il gateway fermo, e `nexgen doctor` segnala
     "deposited but not enabled" fino ad allora. L'hook copre solo le chiamate che OpenClaw esegue lui; un agente sul
     runtime `claude-cli` o `codex` esegue i suoi tool dentro quella CLI, dove vale già il suo guardrail.
-  - Codex non ha alcun meccanismo di guardrail collegato. Il suo contratto di hook mette ogni hook dietro una richiesta
-    di fiducia persistente per hash, oppure un flag esplicito `--dangerously-bypass-hook-trust`, che questo motore non
-    può soddisfare senza una persona davanti. Un guardrail dichiarato per `codex` è un no-op silenzioso: non si scrive
-    niente e non si segnala niente. `approval_policy` e `sandbox_mode` sono impostazioni di Codex e non vengono scritte.
+  - Codex: `codex-guardrail-adapter.mjs` viene copiato in `~/.codex/codex-guardrail-adapter.mjs` e registrato come voce
+    `PreToolUse` con matcher `Bash` in `~/.codex/hooks.json`, accanto agli hook che hai scritto tu: il motore trova la
+    propria voce dal comando e non tocca nessun altro gruppo, evento o file. Il corpo dichiarato va in
+    `~/.codex/nexgen-guardrail-hooks/`, con lo stesso tipo di sidecar accanto all'adapter. Codex non esegue un hook
+    finché una persona non accetta quella esatta definizione da `/hooks`: il motore scrive la registrazione e mai
+    l'accettazione, quindi il primo ciclo stampa cosa devi confermare, e `nexgen doctor` segnala "registrato ma non
+    accettato" (e "cambiato dopo l'accettazione") finché non lo fai. `approval_policy` e `sandbox_mode` sono
+    impostazioni di Codex e non vengono scritte.
 - Solo Windows, e solo se il tuo Vault privato contiene `03-INFRA/scripts/local-model-agent.ps1` (un adapter
   bring-your-own, mai parte del motore pubblico): quello script viene ricollegato, o copiato quando i privilegi di
   symlink mancano, in `~/.local/bin/local-model-agent.ps1`, accanto a due wrapper stabili,

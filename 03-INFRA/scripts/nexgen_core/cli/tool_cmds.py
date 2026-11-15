@@ -170,8 +170,25 @@ def _register_mcp_bridge(msub) -> None:
 def register(sub) -> None:
     _register_utilities(sub)
     _register_mcp_block(sub)
+    _register_thirdparty(sub)
     _register_quota(sub)
     _register_usage(sub)
+
+
+def _register_thirdparty(sub) -> None:
+    """What updates by itself, what waits for the owner, and what to type.
+
+    Its own verb because the answer is not about one kind of thing: a third-party skill, an MCP
+    server and a component inside a module are updated by three different paths, and the owner asked
+    for one place that says which one applies to which item.
+    """
+    p = sub.add_parser("thirdparty", help=t("What updates by itself, what waits for you, and what to type"))
+    psub = p.add_subparsers(dest="thirdparty_command", metavar="verb")
+
+    q = psub.add_parser("status", help=t("One line per third-party item: pin, newest, policy and the command that moves it"))
+    q.set_defaults(func=cmd_thirdparty_status)
+
+    p.set_defaults(func=lambda a: _usage(p))
 
 
 def _register_quota(sub) -> None:
@@ -282,6 +299,12 @@ def cmd_usage(args) -> int:
     from nexgen_core import usage
 
     return usage.main(as_json=getattr(args, "json", False))
+
+
+def cmd_thirdparty_status(args) -> int:
+    from nexgen_core import thirdparty_status
+
+    return thirdparty_status.main()
 
 
 def cmd_mcp_add(args) -> int:

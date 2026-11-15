@@ -154,14 +154,6 @@ _PROVENANCE_LABEL = {
     "third-party": lambda: t("third-party"),
 }
 
-
-#: Why a server is mounted nowhere, in words (the placement rule's own reasons are for `nexgen mcp plan`).
-_WHY_OFF = {
-    "not in targets": lambda: t("no CLI is in its targets"),
-    "disabled": lambda: t("switched off in the manifest"),
-    "inert (not core, not enabled)": lambda: t("neither core nor switched on"),
-}
-
 _WHERE_LABEL = {
     "direct": lambda: t("direct"),
     "gateway": lambda: t("lazy"),
@@ -176,7 +168,7 @@ def _mix(counted: dict[str, int]) -> str:
 
 def _extension_lines(ext: dict[str, Any], show_all: bool) -> list[str]:
     """The connectors and skills sections: what is installed, whose it is, what is pinned, what moved upstream."""
-    from nexgen_core import extensions
+    from nexgen_core import extensions, info_notes
 
     out: list[str] = []
     mcp, skills = ext.get("mcp", []), ext.get("skills", [])
@@ -192,7 +184,7 @@ def _extension_lines(ext: dict[str, Any], show_all: bool) -> list[str]:
             origin = _PROVENANCE_LABEL[r["provenance"]]()
             limited = f" ({', '.join(r['clis'])})" if r["clis"] and len(r["clis"]) < len(r["placement"]) else ""
             out.append(f"  {C_SLATE}•{C_RESET} {r['name'].ljust(width)}  {origin.ljust(11)} {where.ljust(8)} {C_DIM}{pin}{limited}{C_RESET}")
-            notes = _mcp_notes(r)
+            notes = info_notes.mcp_notes(r)
             for note in notes:
                 out.append(f"      {C_YELLOW}↳ {note}{C_RESET}")
     out.append("")
@@ -204,7 +196,7 @@ def _extension_lines(ext: dict[str, Any], show_all: bool) -> list[str]:
         width = max(len(r["name"]) for r in shown)
         for r in shown:
             out.append(f"  {C_SLATE}•{C_RESET} {r['name'].ljust(width)}  {_PROVENANCE_LABEL[r['provenance']]().ljust(11)} {C_DIM}{r['pin']}{C_RESET}")
-            for note in _skill_notes(r):
+            for note in info_notes.skill_notes(r):
                 out.append(f"      {C_YELLOW}↳ {note}{C_RESET}")
     hidden = len(skills) - len(shown)
     if hidden > 0:
@@ -219,81 +211,15 @@ def _extension_lines(ext: dict[str, Any], show_all: bool) -> list[str]:
         width = max(len(r["name"]) for r in modules)
         for r in modules:
             out.append(f"  {C_SLATE}•{C_RESET} {r['name'].ljust(width)}  {C_DIM}{r['component']}  {r['pinned']}{C_RESET}")
-            for note in _module_notes(r):
+            for note in info_notes.module_notes(r):
                 out.append(f"      {C_YELLOW}↳ {note}{C_RESET}")
         out.append("")
 
-    moved = extensions.updates(ext)
-    age = extensions.age_text(ext.get("upstream_checked_at"))
-    if moved:
-        out.append(f"  {C_YELLOW}{t('Newer upstream versions exist for third-party items: {count} (checked {age} ago).', count=len(moved), age=age or '?')}{C_RESET}")
-        out.append(f"  {C_DIM}{t('nexgen skills bump  (or: nexgen mcp bump)  raises the ones the guardian cleared, tries each server and puts the old pin back if it fails.')}{C_RESET}")
-    elif age is None and any(r["update"].get("state") == "unknown" for r in mcp + skills):
-        out.append(f"  {C_DIM}{t('Upstream versions not checked on this machine yet: the hourly watch will, or run nexgen skills bump.')}{C_RESET}")
-    else:
-        out.append(f"  {C_DIM}{t('Third-party pins are current (checked {age} ago).', age=age or '?')}{C_RESET}")
-    withdrawn = extensions.deprecations(ext)
-    if withdrawn:
-        out.append(f"  {C_YELLOW}{t('Support withdrawn by the publisher: {names}', names=', '.join(d['name'] for d in withdrawn))}{C_RESET}")
+    for text, kind in info_notes.update_footer(ext):
+        colour = C_YELLOW if kind == info_notes.ALERT else C_DIM
+        out.append(f"  {colour}{text}{C_RESET}")
     out.append("")
     return out
-
-
-def _mcp_notes(r: dict[str, Any]) -> list[str]:
-    notes = []
-    update = r["update"]
-    if update.get("state") == "stale":
-        line = t("upstream {new} available (pinned {old})", new=update.get("upstream") or "?", old=update.get("pinned") or "?")
-        if update.get("verdict") == "held":
-            line += " — " + t("held: {why}", why=update.get("plain") or t("read the changelog first"))
-        elif update.get("verdict") == "ready":
-            line += " — " + t("cleared, ready to raise")
-        notes.append(line)
-    if update.get("deprecated"):
-        notes.append(t("its publisher withdrew support for this version: {why}", why=update["deprecated"]))
-    if r["pin_state"] == "unpinned":
-        notes.append(t("not pinned: runs whatever the registry serves today, and nothing watches it"))
-    if r["hidden_tools"]:
-        notes.append(t("{count} tools hidden", count=r["hidden_tools"]))
-    if r["only_tools"]:
-        notes.append(t("only {count} tools exposed", count=r["only_tools"]))
-    if r["where"] == "off" and r["why_off"]:
-        notes.append(t("not mounted anywhere: {why}", why=_WHY_OFF.get(r["why_off"], lambda: r["why_off"])()))
-    return notes
-
-
-def _module_notes(r: dict[str, Any]) -> list[str]:
-    notes = []
-    update = r["update"]
-    if update.get("state") == "stale":
-        if r["kind"] == "docker-image":
-            # The engine's shipped default, not what any one server runs: say so instead of "you have".
-            line = t("upstream {new} available (the engine's default image is {old}; the server running it may differ)",
-                     new=update.get("upstream") or "?", old=update.get("pinned") or "?")
-        else:
-            line = t("upstream {new} available (pinned {old})", new=update.get("upstream") or "?", old=update.get("pinned") or "?")
-        if update.get("verdict") == "held":
-            line += " — " + t("held: {why}", why=update.get("plain") or t("read the changelog first"))
-        notes.append(line)
-    if update.get("deprecated"):
-        notes.append(t("its publisher withdrew support for this version: {why}", why=update["deprecated"]))
-    return notes
-
-
-def _skill_notes(r: dict[str, Any]) -> list[str]:
-    notes = []
-    update = r["update"]
-    if update.get("state") == "stale":
-        notes.append(t("upstream {new} available (pinned {old})", new=update.get("upstream") or "?", old=update.get("pinned") or "?"))
-    if update.get("deprecated"):
-        notes.append(t("its publisher withdrew support for this version: {why}", why=update["deprecated"]))
-    if r["engine_copy"] == "differs":
-        notes.append(t("your Vault's copy differs from the engine's, and the copy is what runs"))
-    elif r["engine_copy"] == "same":
-        notes.append(t("a frozen copy in your Vault, identical to the engine's today: nexgen skills adopt"))
-    if not r["in_library"]:
-        notes.append(t("declared but not materialized on this machine yet"))
-    return notes
 
 
 def render_info(as_json: bool = False, vault_data: Path | None = None, show_all: bool = False) -> str:

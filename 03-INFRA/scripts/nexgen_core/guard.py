@@ -230,9 +230,15 @@ class GuardRunner:
             )
 
     def _phase_align(self, actions: list[str], skip_mcp: bool) -> list[str]:
-        """First alignment block: skills + MCP rendering (moved from _run_phases)."""
+        """First alignment block: the optional Claude plugin, skills, then MCP rendering.
+
+        The plugin runs first so the three classic writers see, in the same cycle, whether
+        Claude Code accepted it: while the plugin is not installed they keep working, and
+        once it is, nothing is written twice.
+        """
         failed: list[str] = []
-        for name, run_phase in (("skills", lambda: self._phase_skills(actions)),
+        for name, run_phase in (("claude-plugin", lambda: self._phase_claude_plugin(actions)),
+                                ("skills", lambda: self._phase_skills(actions)),
                                 ("mcp", lambda: self._phase_mcp(actions, skip_mcp))):
             try:
                 outcome = run_phase()
@@ -359,6 +365,21 @@ class GuardRunner:
         # been applied, which is a failed phase (run_phases records it), not a
         # warning. Unreadable policy files are reported as warnings by the call.
         actions.extend(self.apply_runtime_permissions())
+
+    def _phase_claude_plugin(self, actions: list[str]) -> None:
+        """Claude Code's hook, servers and skills as one native plugin, when this machine asked.
+
+        Off by default and read from the private config, so a machine that never opted in
+        pays one file read. Once Claude Code accepts the generated tree the three classic
+        Claude writers stand down (runtimes/claude.py, mcp_render/claude.py, skills.py);
+        until then they keep working, so a failing install cannot leave Claude unguarded.
+        """
+        from nexgen_core import plugin_claude
+
+        actions.extend(plugin_claude.apply(
+            vault_data=self.vault_data, engine_root=self.engine_root,
+            home=self.home, state_dir=self.state_dir,
+        ))
 
     def _phase_instructions(self, actions: list[str]) -> None:
         """Instruction alignment, plus the Windows-only local-model adapter."""

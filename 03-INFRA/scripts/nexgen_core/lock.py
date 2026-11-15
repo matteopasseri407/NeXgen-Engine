@@ -6,6 +6,15 @@ Preserves the operational contract:
 - Contention on 'guard': clean exit with code 0 (another operation is already running).
 - Contention on manual operations ('apply', 'publish', 'vault-push'): exit with code 75.
 
+The locking mechanism belongs to filelock (MIT, https://github.com/tox-dev/filelock):
+on Windows it opens the file through NtCreateFile and takes the range with
+LockFileEx, so a symlink or junction planted at the lock path is refused
+rather than followed; on POSIX it takes an flock. On both, a lock file held
+open for an instant by somebody else (Defender, the search indexer) is
+retried as contention instead of failing the cycle. What stays in this
+module is the policy: which contention is a silent guard skip, which is exit
+75 for a person, and one lock per host.
+
 Scope limit: this is a HOST lock, and the state dir must live on local
 storage. On a network share (NFS/SMB) POSIX locks can be client-local, so
 two hosts could both believe they hold it. Never point the state dir at a
@@ -13,15 +22,14 @@ share; the vault itself syncs through git, not through shared files.
 """
 from __future__ import annotations
 
-import contextlib
-import errno
 import math
 import os
-import random
-import sys
 import time
 from pathlib import Path
 from typing import Any
+
+from filelock import FileLock
+from filelock import Timeout as FileLockTimeout
 
 from nexgen_core.errors import NexgenError
 from nexgen_core.i18n import t
@@ -45,24 +53,6 @@ class LockTimeoutError(NexgenError, TimeoutError):
 class LockIOError(NexgenError, OSError):
     """The lock is inaccessible, rather than held by another process."""
     exit_code = 1
-
-
-#: ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION: another process holds the file.
-_SHARING_WINERRORS = (32, 33)
-
-
-def _is_retryable_open_error(exc: OSError) -> bool:
-    """A lock file held open for an instant (Defender, the indexer) is contention.
-
-    Windows reports ERROR_SHARING_VIOLATION ("the file is being used by
-    another process", WinError 32) as a PermissionError with EACCES: the
-    file is there, the moment is wrong. Retrying inside the same timeout as
-    a held lock is the right posture; anything else stays a typed error.
-    EACCES alone is not enough: a lock that is really off-limits (sudo, an
-    ACL, WinError 5) says the same, and retrying it would end as a silent
-    guard contention instead of an error.
-    """
-    return getattr(exc, "winerror", None) in _SHARING_WINERRORS
 
 
 class HostLock:
@@ -104,6 +94,7 @@ class HostLock:
 
         self.is_guard = is_guard
         self.command_name = command_name
+        self._lock: FileLock | None = None
         self._fd: int | None = None
 
     def acquire(self) -> bool:
@@ -114,94 +105,60 @@ class HostLock:
             raise LockIOError(
                 t("Could not prepare the lock directory '{path}' ({error}).", path=self.lock_path.parent, error=exc),
             ) from exc
-        start_time = time.monotonic()
 
-        while True:
-            try:
-                # Open for read/write (create if missing)
-                self._fd = os.open(str(self.lock_path), os.O_RDWR | os.O_CREAT, 0o644)
-                if self._try_lock(self._fd):
-                    # Write metadata about the current process
-                    try:
-                        os.ftruncate(self._fd, 0)
-                        os.lseek(self._fd, 0, os.SEEK_SET)
-                        meta = f"pid={os.getpid()}\ncommand={self.command_name}\ntimestamp={time.time()}\n"
-                        os.write(self._fd, meta.encode("utf-8"))
-                    except OSError:
-                        pass
-                    return True
-                else:
-                    os.close(self._fd)
-                    self._fd = None
-            except OSError as exc:
-                if self._fd is not None:
-                    with contextlib.suppress(OSError):
-                        os.close(self._fd)
-                    self._fd = None
-                if not _is_retryable_open_error(exc):
-                    raise LockIOError(t("Could not open lock {path}: {error}", path=self.lock_path, error=exc)) from exc
-                # Contention on the file itself: retry below, within the
-                # same budget as a held lock.
+        # filelock reads a negative timeout as "wait forever" and 0 as "one
+        # attempt"; this contract is "try once and fail fast" for both, so a
+        # misconfigured caller never blocks a terminal or a timer unit.
+        wait = max(self.timeout, 0.0)
+        lock = FileLock(
+            str(self.lock_path),
+            timeout=wait,
+            preserve_lock_file=True,
+            on_acquired=self._record_holder,
+        )
+        try:
+            lock.acquire(timeout=wait)
+        except FileLockTimeout as exc:
+            msg = t(
+                "Could not acquire lock '{lock_path}' after {timeout:.1f}s "
+                "(another sync is still running). Wait a minute and retry; "
+                "if it keeps happening, look for a stuck 'nexgen sync' process.",
+                lock_path=self.lock_path, timeout=self.timeout,
+            )
+            raise LockTimeoutError(msg, self.lock_path, self.is_guard) from exc
+        except OSError as exc:
+            raise LockIOError(t("Could not open lock {path}: {error}", path=self.lock_path, error=exc)) from exc
+        self._lock = lock
+        return True
 
-            elapsed = time.monotonic() - start_time
-            if elapsed >= self.timeout:
-                msg = t(
-                    "Could not acquire lock '{lock_path}' after {timeout:.1f}s "
-                    "(another sync is still running). Wait a minute and retry; "
-                    "if it keeps happening, look for a stuck 'nexgen sync' process.",
-                    lock_path=self.lock_path, timeout=self.timeout,
-                )
-                raise LockTimeoutError(msg, self.lock_path, self.is_guard)
+    def _record_holder(self, fd: int) -> None:
+        """Notes who holds the lock in the file, for the person reading it next.
 
-            # Jittered: several waiting processes must not retry in lock step.
-            time.sleep(0.5 * (0.5 + random.random()))
+        The descriptor is the one filelock locked, so the note lands in the
+        locked inode without a second open, which on Windows would collide
+        with the range lock just taken. A lock file that accepts the lock but
+        not the note still locks: the note is a courtesy and never a reason
+        to fail a cycle.
+        """
+        self._fd = fd
+        meta = f"pid={os.getpid()}\ncommand={self.command_name}\ntimestamp={time.time()}\n"
+        try:
+            os.ftruncate(fd, 0)
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.write(fd, meta.encode("utf-8"))
+        except OSError:  # nexgen: allow reason="an unwritable lock file still serializes the host"
+            pass
 
     def release(self) -> None:
-        """Releases the lock and closes the file descriptor."""
-        if self._fd is not None:
-            try:
-                self._unlock(self._fd)
-            finally:
-                with contextlib.suppress(OSError):
-                    os.close(self._fd)
-                self._fd = None
-
-    def _try_lock(self, fd: int) -> bool:
-        """Non-blocking, OS-dependent lock attempt."""
-        if sys.platform == "win32":
-            import msvcrt
-            try:
-                if os.fstat(fd).st_size == 0:
-                    with contextlib.suppress(OSError):
-                        os.write(fd, b"0")
-                        os.lseek(fd, 0, os.SEEK_SET)
-                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-                return True
-            except OSError as exc:
-                if exc.errno in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
-                    return False
-                raise
-        else:
-            import fcntl
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return True
-            except OSError as exc:
-                if exc.errno in (errno.EACCES, errno.EAGAIN):
-                    return False
-                raise
-
-    def _unlock(self, fd: int) -> None:
-        """OS-dependent unlock."""
-        if sys.platform == "win32":
-            import msvcrt
-            with contextlib.suppress(OSError, PermissionError):
-                os.lseek(fd, 0, os.SEEK_SET)
-                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
-            with contextlib.suppress(OSError):
-                fcntl.flock(fd, fcntl.LOCK_UN)
+        """Releases the lock, if this object still holds it."""
+        lock = self._lock
+        if lock is None:
+            return
+        try:
+            lock.release()
+        finally:
+            self._lock = None
+            self._fd = None
 
     def __enter__(self) -> HostLock:
         self.acquire()
@@ -242,4 +199,3 @@ def host_mutation(
     else:
         path = resolve_state_dir() / LOCK_FILENAME
     return HostLock(lock_path=path, timeout=timeout, is_guard=is_guard, command_name=command_name)
-

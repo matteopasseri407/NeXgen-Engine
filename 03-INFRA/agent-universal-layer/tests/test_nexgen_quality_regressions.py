@@ -247,13 +247,13 @@ def test_private_directory_permission_error_stops_before_write(tmp_path, monkeyp
     assert not target.exists()
 
 
-def test_lock_open_error_is_not_guard_contention(tmp_path, monkeypatch):
+def test_lock_open_error_is_not_guard_contention(tmp_path):
     from nexgen_core.lock import LockIOError
-    def fail(*_):
-        raise OSError('disk full')
-    monkeypatch.setattr('nexgen_core.lock.os.open', fail)
-    with pytest.raises(LockIOError):
-        HostLock(lock_path=tmp_path / 'lock', timeout=0, is_guard=True).acquire()
+    obstacle = tmp_path / 'lock'
+    obstacle.mkdir()
+    with pytest.raises(LockIOError) as error:
+        HostLock(lock_path=obstacle, timeout=0, is_guard=True).acquire()
+    assert error.value.exit_code == 1
 
 
 def test_backup_rotation_preserves_other_files_and_tags(tmp_path):

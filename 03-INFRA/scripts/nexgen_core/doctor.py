@@ -20,6 +20,7 @@ from nexgen_core.checks import schedule  # noqa: E402 - sys.path shim for cloned
 from nexgen_core.checks.anthropic_catalog_checks import check_anthropic_catalog  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.claude_loopback_checks import check_claude_loopback  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.context_budget_checks import check_context_budget  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.checks.deploy_checks import check_deploy_alignment  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.env_checks import check_state_dir, check_vault_path  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.git_checks import (  # noqa: E402 - sys.path shim for cloned checkout
     check_engine_lane,
@@ -62,6 +63,7 @@ from nexgen_core.checks.mcp_checks import (  # noqa: E402 - sys.path shim for cl
     check_mcp_orphans,
     check_mcp_unresolved_refs,
 )
+from nexgen_core.checks.maintainer_checks import check_maintainer_registration  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.module_checks import check_modules_catalog, check_modules_ready  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.openclaw_checks import check_openclaw  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.openclaw_parity_checks import check_openclaw_parity  # noqa: E402 - sys.path shim for cloned checkout
@@ -83,6 +85,7 @@ from nexgen_core.checks.skill_checks import (  # noqa: E402 - sys.path shim for 
     check_skill_deps,
     check_skill_library_and_index,
     check_skill_library_symlinks,
+    check_skill_view_drift,
     check_skills_manifest,
     check_skills_manifest_semantics,
     check_skills_not_materialized,
@@ -90,6 +93,7 @@ from nexgen_core.checks.skill_checks import (  # noqa: E402 - sys.path shim for 
     check_skills_pin_freshness,
 )
 from nexgen_core.checks.guardrail_checks import (  # noqa: E402 - sys.path shim for cloned checkout
+    check_codex_guardrail_trust,
     check_guardrail_consulted,
     check_openclaw_guardrail_plugin,
     check_permission_posture,
@@ -106,6 +110,7 @@ from nexgen_core.checks.takeover_checks import (  # noqa: E402 - sys.path shim f
     check_last_cycle_phases,
 )
 from nexgen_core.checks.turn_budget_checks import check_turn_budget  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.checks.thirdparty_checks import check_thirdparty_updates  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import t  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.lock import LockTimeoutError, host_mutation  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.paths import (  # noqa: E402 - sys.path shim for cloned checkout
@@ -193,6 +198,7 @@ class Doctor:
             _git_checks(run, self)
             _mcp_and_module_checks(run, self)
             _skill_checks(run, self)
+            _thirdparty_checks(run, self)
             _identity_and_secret_checks(run, self)
             _run_instruction_checks(run, self.vault_data, self.home)
 
@@ -216,6 +222,9 @@ def _environment_checks(run, doc: Doctor) -> None:
     run("opencode.config_dialect", lambda: check_opencode_config_dialect(home))
     run("guardrail.consulted", lambda: check_guardrail_consulted(home))
     run("guardrail.openclaw_plugin", lambda: check_openclaw_guardrail_plugin(home))
+    # Codex runs no hook before a person accepts it in `/hooks`: a registration it skips looks
+    # exactly like a working guardrail, so the doctor says which of the two this machine is in.
+    run("guardrail.codex_trust", lambda: check_codex_guardrail_trust(home))
     # A `posture:` block in the private manifest is no longer applied: one line says so
     # instead of failing, because the value left in the manifest is the owner's to remove.
     run("permissions.posture", lambda: check_permission_posture(vault))
@@ -226,6 +235,10 @@ def _environment_checks(run, doc: Doctor) -> None:
     # "are all my machines migrated?".
     run("takeover.engine_version", lambda: check_engine_version_recorded(state))
     run("guard.last_cycle", lambda: check_last_cycle_phases(state))
+    # Green on every normal installation; a warning only on a machine that asked for the
+    # maintainer tools and cannot use them, which is the half-registration nothing else names.
+    run("maintainer.registration",
+        lambda: check_maintainer_registration(vault, doc.engine_root))
 
 
 def _git_checks(run, doc: Doctor) -> None:
@@ -271,6 +284,9 @@ def _mcp_and_module_checks(run, doc: Doctor) -> None:
     # Installed is not working: a module says so itself, and only the doctor
     # asks, never the guard cycle.
     run("modules.ready", lambda: check_modules_ready(engine_root, vault))
+    # The other half of a Cloud-Server install: the containers under deploy/
+    # do not move when the engine does, so their commit is measured here.
+    run("deploy.alignment", lambda: check_deploy_alignment(home, vault, engine_root))
     _run_harness_checks(run, home, engine_root, vault)
 
 
@@ -287,7 +303,18 @@ def _skill_checks(run, doc: Doctor) -> None:
     run("skills.out_of_manifest", lambda: check_skills_out_of_manifest(vault, home))
     run("skills.engine_starter_views", lambda: check_engine_starter_views(vault, home))
     run("skills.engine_copies", lambda: check_skill_engine_copies(vault, home, engine_root))
+    run("skills.view_drift", lambda: check_skill_view_drift(vault, home))
     run("skills.manifest_semantics", lambda: check_skills_manifest_semantics(vault, home))
+
+
+def _thirdparty_checks(run, doc: Doctor) -> None:
+    """What the update guardian decided, in one line, where the owner looks.
+
+    Its own group because it spans both manifests: a third-party skill and a third-party MCP server
+    are judged together, and the owner's question ("what is waiting for me?") is not per kind.
+    """
+    run("thirdparty.updates", lambda: check_thirdparty_updates(
+        doc.vault_data, doc.home, doc.engine_root, doc.state_dir))
 
 
 def _identity_and_secret_checks(run, doc: Doctor) -> None:

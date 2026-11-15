@@ -98,7 +98,6 @@ def test_node_role_connects_service_and_prints_squad_instruction(tmp_path: Path)
         node_name="test-node",
         align_fn=fake_align,
         runner=fake_runner,
-        wait_probe_fn=lambda: True,
         out=log_messages.append,
     )
     assert code == 0
@@ -138,34 +137,33 @@ def test_node_role_without_target_shows_join_instructions(tmp_path: Path) -> Non
     assert "host: node" in output
 
 
-def test_node_role_default_timeout_is_300s(tmp_path: Path, monkeypatch) -> None:
-    from nexgen_core.openclaw.node_attach import DEFAULT_NODE_ATTACH_TIMEOUT_S
+def test_the_node_role_trusts_the_connect_exit_code_and_polls_nothing_afterwards(tmp_path: Path) -> None:
+    """`openclaw connect --service` confirms the first connection itself, so nothing asks again.
 
-    assert DEFAULT_NODE_ATTACH_TIMEOUT_S == 300.0
+    The engine used to poll `openclaw node status --json` for up to 300 seconds and
+    guess at the service state afterwards; the attached machine is now whatever the
+    connect command's exit code says it is.
+    """
+    calls: list[list[str]] = []
 
-    captured_timeout = None
-
-    def fake_wait(probe_fn, node_name="node", timeout_s=300.0, **kwargs):
-        nonlocal captured_timeout
-        captured_timeout = timeout_s
-        return True, 0.0
-
-    monkeypatch.setattr("nexgen_core.openclaw.node_attach.wait_for_node_connection", fake_wait)
-    monkeypatch.setattr("nexgen_core.openclaw.node_attach.connect_node_service", lambda *args, **kwargs: True)
-
-    clean_status = '{"service": {"loaded": false, "command": null, "runtime": {"status": "stopped"}}}'
-    fake_runner = MagicMock(return_value=RunResult(0, clean_status, ""))
+    def runner(argv, timeout=None):
+        calls.append(list(argv))
+        if argv[:3] == ["openclaw", "node", "status"]:
+            return RunResult(0, '{"service": {"loaded": false, "command": null}}', "")
+        return RunResult(0, "", "")
 
     code = roles.run_node_role(
         root=tmp_path,
         home=tmp_path / "home",
         target="https://gateway.tailnet:18789/j/sample-join-code-123",
-        runner=fake_runner,
+        runner=runner,
         align_fn=lambda: (True, "ok"),
         out=lambda _: None,
     )
+
     assert code == 0
-    assert captured_timeout == 300.0
+    connect = next(index for index, argv in enumerate(calls) if argv[:2] == ["openclaw", "connect"])
+    assert not [argv for argv in calls[connect:] if argv[:3] == ["openclaw", "node", "status"]]
 
 
 def test_roles_idempotency(tmp_path: Path) -> None:

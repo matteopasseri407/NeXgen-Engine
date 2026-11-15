@@ -16,12 +16,18 @@ path (the guard, the doctor) still needs nothing but PyYAML.
 An engine installed as a package has no checkout to provision from and does not
 need one: its own environment already carries the dependencies, and `check` says
 so if it does not.
+
+`uv` does the building when it is on PATH: `uv venv` creates the environment and
+`uv pip install` fills it, which retires the venv call, the pip bootstrap and the
+five pip flags. uv is not on every machine, so the pip path below is still the
+fallback and is still the only mechanism on a machine without it.
 """
 from __future__ import annotations
 
 import hashlib
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 import time
@@ -67,6 +73,11 @@ def runtime_python(runtime_dir: Path) -> Path:
     if sys.platform == "win32":
         return runtime_dir / "Scripts" / "python.exe"
     return runtime_dir / "bin" / "python"
+
+
+def uv_executable() -> str | None:
+    """The `uv` on PATH, or None. uv is optional: the pip path is the fallback, not a second option."""
+    return shutil.which("uv")
 
 
 def missing_imports(modules: Sequence[str] | None = None) -> list[str]:
@@ -168,6 +179,41 @@ def verify(python: Path, *, run: Runner = subprocess.run) -> list[str]:
     return [m for m in proc.stdout.strip().split(",") if m]
 
 
+def _create_environment(uv: str | None, base_python: str | None, runtime_dir: Path) -> list[str]:
+    """The command that creates the environment: `uv venv` when uv is there, `python -m venv` otherwise.
+
+    `--no-config` and `--no-project` keep a `pyproject.toml` in the current directory from
+    changing what uv resolves, and `--no-python-downloads` keeps it from fetching an
+    interpreter: the credit for choosing a Python belongs to the installer, not to this run.
+    """
+    interpreter = base_python or sys.executable
+    if uv:
+        return [uv, "venv", "--no-config", "--no-project", "--no-python-downloads",
+                "--python", interpreter, "--clear", str(runtime_dir)]
+    return [interpreter, "-m", "venv", "--clear", str(runtime_dir)]
+
+
+def _install_dependencies(uv: str | None, python: Path, dependencies: Sequence[str]) -> list[str]:
+    """The command that installs the declared list into the provisioned environment."""
+    if uv:
+        # uv retries and resolves on its own: there is no timeout or retry flag to pass.
+        return [uv, "pip", "install", "--no-config", "--no-progress", "--no-python-downloads",
+                "--python", str(python), *dependencies]
+    return [str(python), "-m", "pip", "install", "--disable-pip-version-check", "--timeout", "30", "--retries", "2",
+            *dependencies]
+
+
+def _creation_failure(uv: str | None, base_python: str | None, tail: str) -> str:
+    """What to say when the environment could not be created: the cause, then the fix for *this* mechanism."""
+    if uv is None:
+        remedy = "On Debian or Ubuntu this usually means the python3-venv package is not installed."
+    else:
+        interpreter = base_python or sys.executable
+        remedy = (f"uv could not use {interpreter} as the interpreter for it. "
+                  "Remove uv from PATH to build it with python -m venv instead.")
+    return f"could not create the engine environment ({tail}). {remedy}"
+
+
 def ensure_runtime(
     runtime_dir: Path,
     engine_clone: Path,
@@ -186,32 +232,31 @@ def ensure_runtime(
     if is_current(runtime_dir, dependencies) and not verify(python, run=run):
         return RuntimeResult(False, "already provisioned")
 
+    uv = uv_executable()
     if not python.exists():
         runtime_dir.parent.mkdir(parents=True, exist_ok=True)
-        log(f"runtime: creating {runtime_dir}")
-        made = run([base_python or sys.executable, "-m", "venv", "--clear", str(runtime_dir)],
+        log(f"runtime: creating {runtime_dir}" + (" with uv" if uv else ""))
+        made = run(_create_environment(uv, base_python, runtime_dir),
                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=STEP_TIMEOUT_SECONDS, check=False)
         if made.returncode != 0:
-            raise RuntimeProvisionError(
-                f"could not create the engine environment ({_tail(made)}). "
-                "On Debian or Ubuntu this usually means the python3-venv package is not installed."
-            )
+            raise RuntimeProvisionError(_creation_failure(uv, base_python, _tail(made)))
     # A stamp from an older provisioning must not vouch for a half-rebuilt environment.
     (runtime_dir / STAMP_NAME).unlink(missing_ok=True)
 
-    if not _has_pip(python, run):
+    # uv brings its own installer, so a venv it made without pip is complete, not broken.
+    if uv is None and not _has_pip(python, run):
         _bootstrap_pip(python, runtime_dir, run)
 
     log(f"runtime: installing {len(dependencies)} dependencies")
     installed = run(
-        [str(python), "-m", "pip", "install", "--disable-pip-version-check", "--timeout", "30", "--retries", "2",
-         *dependencies],
+        _install_dependencies(uv, python, dependencies),
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=PIP_TIMEOUT_SECONDS, check=False,
     )
     if installed.returncode != 0:
+        escape = " Remove uv from PATH to install them with pip instead." if uv else ""
         raise RuntimeProvisionError(
-            f"pip could not install the engine's dependencies ({_tail(installed)}). "
-            "Check the network and rerun 'nexgen runtime ensure'."
+            f"{'uv' if uv else 'pip'} could not install the engine's dependencies ({_tail(installed)}). "
+            f"Check the network and rerun 'nexgen runtime ensure'.{escape}"
         )
     still_missing = verify(python, run=run)
     if still_missing:

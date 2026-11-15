@@ -21,12 +21,12 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from nexgen_core import __version__  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.console import use_utf8  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.cli import engine, local_cmds, models_cmds, module_cmds, openclaw_cmds, role_cmds, skill_cmds, stack_cmds, tool_cmds, vault_cmds  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.cli import deploy_cmds, engine, local_cmds, maintainer_cmds, models_cmds, module_cmds, openclaw_cmds, role_cmds, skill_cmds, stack_cmds, tool_cmds, vault_cmds  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import set_language, t  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.update_channel import DEFAULT_CHANNEL, read_channel, short_head  # noqa: E402 - sys.path shim for cloned checkout
 
 #: The verb groups, in the order they appear in the help text.
-GROUPS = (engine, vault_cmds, skill_cmds, stack_cmds, module_cmds, openclaw_cmds, tool_cmds, role_cmds, local_cmds, models_cmds)
+GROUPS = (engine, vault_cmds, skill_cmds, stack_cmds, deploy_cmds, module_cmds, openclaw_cmds, tool_cmds, role_cmds, local_cmds, models_cmds, maintainer_cmds)
 
 
 def _version_footer() -> str:

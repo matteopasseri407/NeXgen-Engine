@@ -16,6 +16,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from nexgen_core import maintainer  # noqa: E402
 from nexgen_core.cli import build_parser  # noqa: E402
 from nexgen_core.cli import main as nexgen_main  # noqa: E402
 from nexgen_core.cli import engine as engine_cmds  # noqa: E402
@@ -69,12 +70,22 @@ def test_engine_registers_all_expected_commands():
         assert retired not in choices, f"comando ritirato ancora registrato: {retired}"
 
 
-def test_every_engine_command_has_nonempty_help():
+def test_every_engine_command_has_nonempty_help(monkeypatch):
+    # `release` is listed only where the maintainer tools are: the listing is what the
+    # help gate hides, and `test_nexgen_maintainer` pins the other side of it.
+    monkeypatch.setattr(maintainer, "tools_available", lambda: True)
     _, choice_actions = _engine_choices()
     by_dest = {a.dest: a for a in choice_actions}
     for cmd in EXPECTED_ENGINE_COMMANDS:
         assert cmd in by_dest, f"help non trovato per: {cmd}"
         assert by_dest[cmd].help and by_dest[cmd].help.strip(), f"help vuoto per: {cmd}"
+
+
+def test_a_non_maintainer_still_gets_the_verb_out_of_the_listing(monkeypatch):
+    monkeypatch.setattr(maintainer, "tools_available", lambda: False)
+    choices, choice_actions = _engine_choices()
+    assert "release" in choices, "il verbo esiste anche dove la riga di help non si vede"
+    assert "release" not in {a.dest for a in choice_actions}
 
 
 def test_build_parser_includes_engine_commands_and_help():
