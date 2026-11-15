@@ -30,6 +30,8 @@ def test_a_typographic_apostrophe_cannot_end_the_notification_string(monkeypatch
     monkeypatch.setattr(notify.shutil, "which", lambda name: "powershell.exe")
     monkeypatch.setattr(notify, "_run", lambda command, **_: sent.append(command) or True)
     assert notify._windows("Titolo d’esempio", "l’aggiornamento'; Remove-Item x; '")
-    script = sent[0][-1]
+    # The script that carries the text: on a machine without the engine's identity yet, the
+    # first script sent is the one-time registration, and the toast comes after it.
+    script = next(command[-1] for command in sent if "Titolo" in command[-1])
     assert "'Titolo d’’esempio'" in script
     assert "'l’’aggiornamento''; Remove-Item x; '''" in script
