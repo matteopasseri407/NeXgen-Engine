@@ -377,12 +377,7 @@ def _install_shutdown_handlers() -> None:
 
 def egress_gate(text: str) -> None:
     leak_scan = _load_leak_scan()
-    patterns, allow = leak_scan.load_patterns(LEAK_SCAN_DIR / "leak_patterns.yaml")
-    units = [
-        leak_scan.Unit("brief", i, line)
-        for i, line in enumerate(text.splitlines(), 1)
-    ]
-    findings = leak_scan.scan_units(units, patterns, allow, [])
+    findings = leak_scan.scan_text(text, label="brief")
     blocking = [f for f in findings if f.blocking]
     soft = [f for f in findings if not f.blocking]
     if soft:
@@ -405,13 +400,8 @@ def redact_generated_output(text: str) -> tuple[str, bool]:
     remove the affected lines and keep the remaining analysis moving.
     """
     leak_scan = _load_leak_scan()
-    patterns, allow = leak_scan.load_patterns(LEAK_SCAN_DIR / "leak_patterns.yaml")
     lines = text.splitlines(keepends=True)
-    units = [
-        leak_scan.Unit("generated output", index, line.rstrip("\r\n"))
-        for index, line in enumerate(lines, 1)
-    ]
-    findings = leak_scan.scan_units(units, patterns, allow, [])
+    findings = leak_scan.scan_text("".join(lines), label="generated output")
     blocked_lines = {finding.lineno for finding in findings if finding.blocking}
     if not blocked_lines:
         return text, False

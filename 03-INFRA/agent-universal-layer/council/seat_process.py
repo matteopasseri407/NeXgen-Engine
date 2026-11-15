@@ -1,10 +1,11 @@
 """Spawn, stream, and time out one seat's vendor CLI process.
 
 Builds the per-CLI argv/stdin/env for a seat invocation, isolates the
-environment codex/agy/opencode run under (no application bearer tokens, and
-for codex/opencode no on-disk MCP manifest), and streams the subprocess's
-output with a deadline that distinguishes a silent client from a client
-that produced bytes but did not finish, even without a newline.
+environment codex/agy/opencode/dsh run under (no application bearer tokens,
+and for codex/opencode/dsh no on-disk MCP manifest or channel config), and
+streams the subprocess's output with a deadline that distinguishes a silent
+client from a client that produced bytes but did not finish, even without a
+newline.
 """
 from __future__ import annotations
 
@@ -23,7 +24,10 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from nexgen_core.config import COUNCIL_CLIS
 from routing import _windows_command_argv
+from seat_dsh import DshSeatError, dsh_argv, dsh_credential_env, parse_dsh_result, write_dsh_patch
+from seat_verdict import apply_verdict_schema, claude_answer_text, unwrap_structured_answer
 from session import (
     _force_stop_process_tree,
     _private_mkdir,
@@ -35,7 +39,7 @@ from session import (
     redact_generated_output,
 )
 
-SUPPORTED_CLIS = ("opencode", "agy", "codex", "claude", "ollama")
+SUPPORTED_CLIS = COUNCIL_CLIS
 
 
 def _no_window_kwargs() -> dict:
@@ -171,6 +175,9 @@ def _effort_forwarding(seat: dict) -> tuple[list[str], str]:
       its usage text); the variant is written into the model, provider/model#<v>, by
       _opencode_model_argument. Provider-specific, no fixed enum to validate against.
     - agy: --effort <v> verbatim (low|medium|high|xhigh|max, per `agy --help`).
+    - dsh: no flag. The harness's only model control is `agent-default-model` in the per-call
+      patch, where the effort is `reasoningEffort`; see seat_dsh.dsh_patch_text. Not a fixed
+      enum either: a value the route does not know is the provider's to reject.
     - ollama: --think only documents low/medium/high (`ollama run --help`).
       xhigh/max (valid claude/codex tiers) are downmapped to --think high
       rather than dropped, with the label saying so. Anything else ollama
@@ -188,6 +195,8 @@ def _effort_forwarding(seat: dict) -> tuple[list[str], str]:
     if cli == "codex":
         return ["-c", f'model_reasoning_effort="{effort}"'], label
     if cli == "opencode":
+        return [], label
+    if cli == "dsh":
         return [], label
     if cli == "agy":
         if effort in ("low", "medium", "high", "xhigh", "max"):
@@ -264,7 +273,7 @@ def _effort_label(seat: dict) -> str:
 # it never gets the (opt-in, unused here) --experimental flag that would
 # give it a tool-calling surface at all. Neither needs env-level isolation
 # on top of a guarantee that already holds at the process-capability level.
-ISOLATED_SEAT_CLIS = ("codex", "agy", "opencode")
+ISOLATED_SEAT_CLIS = ("codex", "agy", "opencode", "dsh")
 
 # Explicit ALLOWLIST, not a denylist of today's known application tokens.
 # A denylist only excludes names someone remembered to add to it; the next
@@ -288,8 +297,8 @@ _ISOLATED_SEAT_ENV_ALLOWLIST = (
 
 
 def _isolated_seat_env(cli: str, session_dir: Path) -> tuple[dict[str, str], Path]:
-    """Minimal environment for a codex/agy/opencode seat (audit FINDING A,
-    2026-07-12): the Popen that launches these three CLIs used to omit
+    """Minimal environment for a codex/agy/opencode/dsh seat (audit FINDING A,
+    2026-07-12): the Popen that launches these CLIs used to omit
     ``env=`` entirely, so the child inherited os.environ in full -- every
     applicative bearer token this machine holds (``N8N_MCP_TOKEN``,
     ``VAULT_LIBRARY_TOKEN``, ``FIRECRAWL_*``) plus the real, non-sandboxed
@@ -347,6 +356,12 @@ def _isolated_seat_env(cli: str, session_dir: Path) -> tuple[dict[str, str], Pat
          this seat's environment. Documented as a known residual gap, same
          posture as the CLI-sandbox-flag gap above ``_build_seat_command``:
          mitigated as far as verified, not claimed closed.
+       - dsh: ``DSH_HOME`` -> a fresh dir under this session, which the
+         launcher materializes with a copy of its own shipped ``headless``
+         profile and whose patch layer declares no MCP server. The per-call
+         patch points the session log and projection store here too, and a
+         full-tree diff of the person's ``~/.dsh`` across a seat run shows no
+         new file. See ``seat_dsh``.
 
     The isolated directories live under ``session_dir`` (already private,
     mode 0700 -- see ``new_session_dir``). The returned directory holds a copy
@@ -381,6 +396,11 @@ def _isolated_seat_env(cli: str, session_dir: Path) -> tuple[dict[str, str], Pat
         _private_mkdir(config_home)
         _set_private_mode(config_home, 0o700)
         env["XDG_CONFIG_HOME"] = str(config_home)
+    elif cli == "dsh":
+        dsh_home = isolation_dir / "dsh-home"
+        _private_mkdir(dsh_home)
+        _set_private_mode(dsh_home, 0o700)
+        env["DSH_HOME"] = str(dsh_home)
     # agy: base allowlist only -- see the docstring above for what was
     # checked and why no directory isolation was applied.
 
@@ -512,7 +532,9 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
     """Build a vendor command without putting the user prompt in ``argv``.
 
     Codex documents ``-`` as stdin.  Antigravity's print mode consumes stdin
-    when no positional prompt is supplied.  OpenCode exposes file attachments,
+    when no positional prompt is supplied.  DeepSeek Harness documents ``-`` as
+    "read the task from stdin" too, and takes it that way for the same reason:
+    argv is visible in the process table.  OpenCode exposes file attachments,
     so it receives a static instruction plus a protected prompt file instead.
     Codex keeps its final response in a separate protected output file because
     its stdout also carries progress and warnings.
@@ -567,6 +589,10 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
       installed Ollama build (re-verify after an Ollama upgrade). This seat
       never passes it, so there is nothing for an MCP server to be
       reachable through: verified safe by construction, not just by prompt.
+    - ``dsh``: ``--permission-mode read-only`` plus ``--approval-policy never``
+      scope writes, not reads (like codex and opencode), and its ``DSH_HOME``
+      and patch layer leave it no MCP server to reach. See ``seat_dsh`` for
+      the patch that carries the route and the three upload switches.
 
     See the "Council CLI-level enforcement is asymmetric" note in
     ``03-INFRA/council-rules.md`` (next to the "Council exception" paragraph)
@@ -599,6 +625,20 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
             cwd=session_dir,
             scratch=scratch,
         )
+    if cli == "dsh":
+        # The harness has no --model flag and no tool-blocking flag: the route, the read-only
+        # preset and the three upload switches travel in one per-call patch file, written into
+        # the isolation directory this seat already owns and removed with it. See seat_dsh.
+        env, scratch = _isolated_seat_env(cli, session_dir)
+        try:
+            env.update(dsh_credential_env(seat))
+            patch_file = write_dsh_patch(seat, scratch)
+            argv = dsh_argv(patch_file, scratch)
+        except DshSeatError as exc:
+            # run_seat never sees this invocation, so its own cleanup will not run.
+            shutil.rmtree(scratch, ignore_errors=True)
+            raise SeatRunError(str(exc), exc.kind) from exc
+        return SeatInvocation(argv, prompt, None, None, env=env, cwd=session_dir, scratch=scratch)
     if cli == "agy":
         argv = [
             "agy", "--print", "--model", model,
@@ -723,7 +763,7 @@ def _parse_claude_result(raw: str, expected_model: str) -> tuple[str, dict]:
             "model_mismatch",
         )
 
-    result = payload.get("result")
+    result = claude_answer_text(payload)
     if not isinstance(result, str) or not result.strip():
         raise SeatRunError(
             "[council] Claude responded but returned no usable result text.",
@@ -732,6 +772,14 @@ def _parse_claude_result(raw: str, expected_model: str) -> tuple[str, dict]:
     usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
     usage = {**usage, "cost": payload.get("total_cost_usd"), "model": expected_model}
     return result, usage
+
+
+def _parse_dsh_answer(raw: str, model: str, usage: dict) -> tuple[str, dict]:
+    """A dsh seat's answer, with its own error kind carried into SeatRunError."""
+    try:
+        return parse_dsh_result(raw, model, usage)
+    except DshSeatError as exc:
+        raise SeatRunError(str(exc), exc.kind) from exc
 
 
 @dataclass
@@ -839,7 +887,7 @@ def _build_command(
         raise SeatRunError(f"[council] invalid timeout for seat '{model}': {exc}.", "invalid_timeout") from exc
     timeout_label = _format_timeout_seconds(resolved_timeout_seconds)
     registry_epoch = _proc_registry_epoch()
-    invocation = _build_seat_command(seat, prompt, session_dir)
+    invocation = apply_verdict_schema(seat, _build_seat_command(seat, prompt, session_dir), session_dir)
     return _PreparedSeat(
         seat=seat,
         prompt=prompt,
@@ -1114,6 +1162,13 @@ def _collect_result(prepared: _PreparedSeat, runtime: _SeatRuntime) -> tuple[str
                     # to the partial_timeout diagnostic (2026-08-15
                     # council-7, Opus 5).
                     pass
+            elif cli == "dsh":
+                try:
+                    # Same rule: a dsh stream with no `final` event is a
+                    # cut-short run, not an opinion, so it falls through.
+                    return _parse_dsh_answer(text_output.getvalue(), model, usage)
+                except SeatRunError:  # nexgen: allow reason="the fall-through is the answer: a dsh stream with no final event reaches the timeout diagnostics below, exactly as the claude branch above does"
+                    pass
             else:
                 return text_output.getvalue(), usage
         if returncode is None:
@@ -1140,6 +1195,8 @@ def _collect_result(prepared: _PreparedSeat, runtime: _SeatRuntime) -> tuple[str
         raise SeatRunError("[council] the seat responded but with no usable text (empty output).", "empty_response")
     if cli == "claude":
         return _parse_claude_result(text_output.getvalue(), model)
+    if cli == "dsh":
+        return _parse_dsh_answer(text_output.getvalue(), model, usage)
     return text_output.getvalue(), usage
 
 
@@ -1155,8 +1212,9 @@ def run_seat(
     provider-side block with no error visible client-side -- verified live
     on a quota-exhausted seat: TimeoutExpired carries no partial output, so
     it has to be read as it arrives). Output parsing varies per CLI: opencode
-    emits JSONL events (`--format json`), Claude returns a single verifiable
-    JSON object, the other supported CLIs print plain text."""
+    emits JSONL events (`--format json`), dsh emits NDJSON events (`--json`),
+    Claude returns a single verifiable JSON object, the other supported CLIs
+    print plain text."""
     prepared = _build_command(seat, prompt, session_dir, timeout_seconds)
     runtime = _SeatRuntime()
     try:
@@ -1168,7 +1226,7 @@ def run_seat(
             # in the finally below is still visible; run_seat never mutates
             # it after returning.
             usage = {**usage, "shutdown_telemetry": runtime.shutdown_telemetry}
-        return answer, usage
+        return unwrap_structured_answer(prepared.cli, answer), usage
     except SeatRunError as exc:
         if runtime.shutdown_telemetry and exc.shutdown_telemetry is None:
             exc.shutdown_telemetry = runtime.shutdown_telemetry

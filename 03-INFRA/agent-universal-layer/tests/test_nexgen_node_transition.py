@@ -379,7 +379,6 @@ def test_case_a_windows_gateway_transition_execute(tmp_path: Path) -> None:
         runner=runner,
         align_fn=fake_align,
         update_fn=fake_update,
-        wait_probe_fn=lambda: True,
         out=log_messages.append,
     )
     assert run_code == 0
@@ -426,7 +425,6 @@ def test_case_b_linux_systemd_gateway_transition(tmp_path: Path) -> None:
         runner=runner,
         align_fn=fake_align,
         update_fn=fake_update,
-        wait_probe_fn=lambda: True,
         out=log_messages.append,
     )
     assert run_code == 0
@@ -455,7 +453,6 @@ def test_case_c_clean_machine_without_openclaw(tmp_path: Path) -> None:
         platform="win32",
         runner=runner,
         align_fn=fake_align,
-        wait_probe_fn=lambda: True,
         out=log_messages.append,
     )
     assert run_code == 0
@@ -494,10 +491,6 @@ def test_case_d_already_node_same_gateway_stopped_restarts_service(tmp_path: Pat
         join="https://server.tailnet:18789/j/another-join-token",
         runner=runner,
         align_fn=fake_align,
-        # The already-node path must answer here. If it breaks, this test has to
-        # fail at once instead of waiting the five real minutes of a connection
-        # that is not being made.
-        wait_probe_fn=lambda: True,
         out=log_messages.append,
     )
     assert run_code == 0
@@ -540,7 +533,6 @@ def test_case_d_already_node_same_gateway_running_syncs_only(tmp_path: Path) -> 
         join="https://server.tailnet:18789/j/another-join-token",
         runner=runner,
         align_fn=fake_align,
-        wait_probe_fn=lambda: True,
         out=log_messages.append,
     )
     assert run_code == 0
@@ -581,7 +573,6 @@ def test_case_e_already_node_of_different_gateway(tmp_path: Path) -> None:
         force=False,
         runner=runner,
         align_fn=fake_align,
-        wait_probe_fn=lambda: True,
         out=log_messages.append,
     )
     assert run_code != 0
@@ -598,7 +589,6 @@ def test_case_e_already_node_of_different_gateway(tmp_path: Path) -> None:
         force=True,
         runner=runner,
         align_fn=fake_align,
-        wait_probe_fn=lambda: True,
         out=log_messages.append,
     )
     assert force_code == 0

@@ -1,18 +1,19 @@
-# Pattern di leak-check per i cancelli anti-leak del repo motore (S0).
+# Le forme del rilevatore integrato: il cancello in uscita del Council (il brief
+# che sta per raggiungere un seat) e la redazione dell'output di un seat prima
+# che finisca in un altro seat o su disco.
 #
-# SOLO FORME (regex), MAI VALORI REALI: questo file e' pensato per vivere
-# identico sia qui (vault privato) sia nel repo pubblico NeXgen-Engine, dove
-# lo usa la CI. Non aggiungere mai un valore vero qui dentro: i segreti/dati
-# reali vivono SOLO nella deny-list privata (sanitize/deny.txt), che l'engine-push
-# e gli hook locali leggono da KNOWLEDGE_VAULT_PATH e la CI pubblica non vede mai.
+# SOLO FORME (regex), MAI VALORI REALI: questo file vive nel repo pubblico. I
+# segreti veri vivono SOLO nella deny-list privata (sanitize/deny.txt), che legge
+# la macchina del maintainer e che la CI pubblica non vede mai.
 #
-# Sincronizzazione (corretto 2026-07-09): sanitize.rules.yaml e sanitize-export.py
-# sono DEAD CODE dall'8/7 (pipeline "sanitize-export -> orphan snapshot" sostituita
-# da engine-push, vedi publish-os.sh). La vera copia gemella da tenere allineata A
-# MANO e' NeXgen-Engine/03-INFRA/agent-universal-layer/leak-scan/leak_patterns.yaml
-# (usata dalla CI pubblica). Un cambiamento qui va replicato la', e viceversa: e' un
-# punto di sync dichiarato, non un dettaglio da dimenticare. Dettaglio completo:
-# 03-INFRA/agentic-layer-concept-map.md, sezione "Pubblicazione del motore pubblico".
+# Perché un rilevatore integrato e non gitleaks: gitleaks è uno strumento da
+# maintainer e la scansione dei commit (`leak-scan/gitleaks.toml`) è l'unico posto
+# in cui serve. Un Council che si ferma perché su questa macchina non c'è un
+# binario esterno sarebbe una regressione del prodotto: qui si usano queste forme,
+# con lo stesso motore di prima, e non serve installare nulla.
+#
+# Un cambiamento qui vale per i due cancelli in uscita; le forme della scansione
+# dei commit stanno in `gitleaks.toml` e non si toccano da qui.
 
 leak_hard:
   - '\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'            # IPv4

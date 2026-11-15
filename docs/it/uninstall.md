@@ -40,11 +40,11 @@ guardrail per CLI scrivono `<file>.pre-<reason>-<timestamp>.bak` per i file che 
 - configurazione in `~/.codex/`, `.bak-<timestamp>`
 - `opencode.json` o `opencode.jsonc` (la sezione `mcp.servers`, le voci `plugins` e `permissions`),
   `.bak-<timestamp>`
-- `~/.gemini/antigravity/mcp_config.json`, `.bak-<timestamp>`
-- `~/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.gemini/config/AGENTS.md`, `~/.config/opencode/AGENTS.md` (il puntatore
+- `~/.gemini/config/mcp_config.json`, `.bak-<timestamp>` (e le tre copie sotto
+  `~/.gemini/{antigravity,antigravity-cli,antigravity-ide}/`)
+- `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.gemini/config/AGENTS.md`, `~/.config/opencode/AGENTS.md` (il puntatore
   alle istruzioni), `.pre-instructions-<timestamp>.bak`
-- `~/.claude/settings.json` (l'hook di checkpoint e, se il tuo Vault ne dichiarava uno, l'assetto dei permessi),
-  `.pre-permissions-<timestamp>.bak`
+- `~/.claude/settings.json` (l'hook di checkpoint e l'hook del guardrail), `.pre-permissions-<timestamp>.bak`
 
 I backup MCP e quelli dei permessi tengono i tre più recenti, quindi la copia di prima del primo avvio può essere già
 sparita. I backup dei puntatori alle istruzioni non ruotano e si accumulano.
@@ -59,7 +59,7 @@ Sono i file di bootstrap per CLI che questo progetto puntava alle sue istruzioni
 per altro: cancellarne uno elimina il tuo contenuto nello stesso file, non solo il puntatore di questo progetto.
 
 ```bash
-rm -f ~/CLAUDE.md ~/.codex/AGENTS.md ~/.gemini/config/AGENTS.md
+rm -f ~/.claude/CLAUDE.md ~/.codex/AGENTS.md ~/.gemini/config/AGENTS.md
 ```
 
 ## 4. Rimuovere le cartelle delle skill copiate da questo progetto
@@ -72,7 +72,7 @@ di runtime di ogni CLI, e rimuovi solo ciò che riconosci come proveniente dal t
 cat ~/.agents/skills/INDEX.md       # catalogo gestito, non radice dei corpi delle skill
 ls ~/.agents/skill-library           # corpi delle skill gestite
 rm -rf ~/.agents/skill-library/<skill-name>
-rm -rf ~/.claude/skills/<skill-name> ~/.codex/skills/<skill-name> ~/.gemini/antigravity-cli/skills/<skill-name>
+rm -rf ~/.claude/skills/<skill-name> ~/.agents/skills/<skill-name> ~/.codex/skills/<skill-name> ~/.gemini/antigravity-cli/skills/<skill-name>
 ```
 
 `nexgen skill index` rigenera `~/.agents/skills/INDEX.md` (nome storico `skills-sync.py --index`). Non cancellare

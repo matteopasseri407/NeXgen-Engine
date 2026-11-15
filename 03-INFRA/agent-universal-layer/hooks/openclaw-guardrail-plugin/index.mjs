@@ -12,12 +12,19 @@
 //
 // Engine-owned files travel beside the jobs, both read fresh on every call:
 //   nexgen-guardrail.config.json  the guardrail bodies, timeout, strict/autoAllow, audit file
-//   nexgen.config.json            the engine's switches: briefing, checkpoint, posture, engine, governor
+//   nexgen.config.json            the engine's switches, for one more release: briefing, checkpoint,
+//                                 posture, engine, governor, evidence
+// The switches have moved to the host: OpenClaw reads `plugins.entries.nexgen.config` and hands it
+// over as `api.pluginConfig`, and `engine-config.mjs` reads it. The file beside the jobs still
+// outranks it for this release, because a sync rewrites the file between two setups. `index.mjs` is
+// where both are pointed at the api, once, before any job registers; a job reads them per call.
 // `engine-run.mjs` is the one way a job starts the engine: no shell, a deadline, a sentence.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { setPluginConfig } from "./engine-config.mjs";
+import { setPluginHost } from "./engine-files.mjs";
 import { registerAdopt } from "./adopt.mjs";
 import { registerBriefing } from "./briefing.mjs";
 import { registerCheckpoint } from "./checkpoint.mjs";
@@ -50,6 +57,9 @@ export default {
   name: "NeXgen",
   description: "The NeXgen engine for OpenClaw.",
   register(api) {
+    // Before any job: where the host loaded this plugin from, and the switches it parsed for us.
+    setPluginHost(api);
+    setPluginConfig(api);
     registerGuardrail(api);
     registerAdopt(api);
     registerBriefing(api);

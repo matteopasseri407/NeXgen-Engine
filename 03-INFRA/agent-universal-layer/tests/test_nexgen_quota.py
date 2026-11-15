@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from nexgen_core import i18n, quota
+from nexgen_core import i18n, quota, quota_state
 
 WHEN = "2026-10-23T11:21:43.532Z"
 READ_AT = datetime(2026, 10, 23, 11, 21, 43, tzinfo=timezone.utc).timestamp()
@@ -163,7 +163,7 @@ def test_a_reading_older_than_its_window_loses_the_percentage(tmp_path):
     row = rows_for(report, "Codex (free)")[0]
     assert row.state == "stale"
     assert row.percent is None
-    assert "older than the window itself" in report.lines[0]
+    assert "too old to say what is left" in report.lines[0]
 
 
 def test_a_reading_inside_its_window_keeps_it(tmp_path):
@@ -198,6 +198,22 @@ def test_a_free_lane_is_shown_as_zero_and_not_hidden(tmp_path):
     rows = rows_for(report, "OpenCode Zen")
     assert rows and all(row.used == 0.0 for row in rows)
     assert any("0.00 $ spent in the last 5h" in line for line in report.lines)
+
+
+def test_a_session_that_names_no_provider_is_not_italian_in_an_english_report(tmp_path):
+    """The harness lane's placeholder for "no provider" is an Italian word.
+
+    Every other sentence of the report travels through `t`, so the one word a
+    person reads as a provider name has to as well: it appeared three times, once
+    per window, under an otherwise English (or otherwise translated) report.
+    """
+    archive(tmp_path, [("s1", "", 0.04, 1.0)])
+
+    report = quota.build_report(home=tmp_path, now=NOW)
+    text = "\n".join(report.lines)
+
+    assert "(unknown):" in text
+    assert "sconosciuto" not in text
 
 
 def test_a_declared_ceiling_turns_spend_into_a_percentage(tmp_path):
@@ -289,7 +305,43 @@ def test_antigravity_reading_older_than_window_becomes_stale(tmp_path):
     row = rows_for(report, "Antigravity")[0]
     assert row.state == "stale"
     assert row.percent is None
-    assert any("older than the window itself" in line for line in report.lines)
+    assert any("too old to say what is left" in line for line in report.lines)
+
+
+def test_antigravity_reading_of_three_weeks_is_shown_with_its_age_and_dropped(tmp_path):
+    """A log inside its 30d window is still weeks old: it is not what is left today."""
+    antigravity_reading(tmp_path, used=99.0)
+
+    report = quota.build_report(home=tmp_path, now=READ_AT + 21 * 86400 + 1)
+
+    row = rows_for(report, "Antigravity")[0]
+    assert row.state == "stale"
+    assert row.percent is None
+    line = next(line for line in report.lines if line.startswith("Antigravity"))
+    assert "Antigravity: the 30d reading is 21d 0h old" in line
+    assert "too old to say what is left" in line
+
+
+def test_a_stale_antigravity_reading_never_reaches_the_handover(tmp_path):
+    """The plugin blocks a turn at 95%: a three-week-old 99% must not block it."""
+    antigravity_reading(tmp_path, used=99.0)
+    later = READ_AT + 21 * 86400
+
+    rows, _notes = quota.percentage_rows(home=tmp_path, now=later)
+
+    assert quota_state.payload(rows, now=later)["providers"] == {}
+
+
+def test_antigravity_reading_written_this_morning_still_counts(tmp_path):
+    """The day's limit must not throw away a reading that is a few hours old."""
+    antigravity_reading(tmp_path, used=85.0)
+
+    report = quota.build_report(home=tmp_path, now=READ_AT + 23 * 3600 + 1)
+
+    row = rows_for(report, "Antigravity")[0]
+    assert row.state == "warn"
+    assert row.percent == 85.0
+    assert any("read 23h 00m ago" in line for line in report.lines)
 
 
 # --------------------------------------------------------------------- the json

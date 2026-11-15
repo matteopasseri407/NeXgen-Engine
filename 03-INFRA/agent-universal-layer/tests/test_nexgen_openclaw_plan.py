@@ -82,7 +82,9 @@ def test_the_plan_separates_what_it_adds_changes_and_leaves_alone(tmp_path):
 
     assert "plugins.allow" in plan.changed
     assert "gateway.bind" in plan.changed
-    assert "agents.defaults.heartbeat.every" in plan.changed
+    # The heartbeat is an automation job in this release: the retired key is named as
+    # no longer proposed, never rewritten to a value nothing reads.
+    assert "agents.defaults.heartbeat.every" in plan.dropped
     assert "plugins.entries.anthropic.config.sessionCatalog.enabled" in plan.added
     # The token is the person's: kept, and never offered as a change.
     assert plan.config["gateway"]["auth"]["token"] == "old"
@@ -451,6 +453,27 @@ def test_plugin_not_enabled_when_folder_exists_without_index_mjs(tmp_path):
     plan_with_entrypoint = build_plan(detected=detected(path), home=home, env={})
     assert "nexgen" in plan_with_entrypoint.config.get("plugins", {}).get("allow", [])
     assert "plugins.entries.nexgen.enabled" in plan_with_entrypoint.added
+
+
+def test_the_plan_puts_the_engine_switches_where_the_host_reads_them(tmp_path):
+    """OpenClaw hands `plugins.entries.nexgen.config` to the plugin as `api.pluginConfig`."""
+    home = tmp_path / "home"
+    path = put_config(home, {})
+    plugin_dir = path.parent / "extensions" / "nexgen"
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "index.mjs").write_text("// entrypoint", encoding="utf-8")
+    (plugin_dir / "vault-briefing.txt").write_text("the vault\n", encoding="utf-8")
+
+    plan = build_plan(detected=detected(path), home=home, env={})
+
+    switches = plan.config["plugins"]["entries"]["nexgen"]["config"]
+    assert switches["briefing"] == {"enabled": True}
+    assert switches["checkpoint"]["enabled"] is True
+    assert switches["checkpoint"]["state_dir"] == str(home / ".local" / "state" / "nexgen")
+    # The evidence list names the local model the proposal writes, not the one the old file had:
+    # a second setup derives the same section and finds nothing to write.
+    assert switches["evidence"] == {"enabled": True, "providers": ["ollama"]}
+    assert "plugins.entries.nexgen.config.briefing.enabled" in plan.added
 
 
 

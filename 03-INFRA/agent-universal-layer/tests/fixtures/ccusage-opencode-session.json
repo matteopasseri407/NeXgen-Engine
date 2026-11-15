@@ -1,0 +1,58 @@
+{
+  "sessions": [
+    {
+      "cacheCreationTokens": 0,
+      "cacheReadTokens": 0,
+      "inputTokens": 50,
+      "modelBreakdowns": [
+        {
+          "cacheCreationTokens": 0,
+          "cacheReadTokens": 0,
+          "cost": 0.5,
+          "inputTokens": 50,
+          "modelName": "gpt-5",
+          "outputTokens": 0,
+          "storedCost": 0.5
+        }
+      ],
+      "modelsUsed": [
+        "gpt-5"
+      ],
+      "outputTokens": 0,
+      "sessionId": "fork",
+      "totalCost": 0.5,
+      "totalTokens": 50
+    },
+    {
+      "cacheCreationTokens": 0,
+      "cacheReadTokens": 0,
+      "inputTokens": 700,
+      "modelBreakdowns": [
+        {
+          "cacheCreationTokens": 0,
+          "cacheReadTokens": 0,
+          "cost": 7.0,
+          "inputTokens": 700,
+          "modelName": "gpt-5",
+          "outputTokens": 0,
+          "storedCost": 7.0
+        }
+      ],
+      "modelsUsed": [
+        "gpt-5"
+      ],
+      "outputTokens": 0,
+      "sessionId": "parent",
+      "totalCost": 7.0,
+      "totalTokens": 700
+    }
+  ],
+  "totals": {
+    "cacheCreationTokens": 0,
+    "cacheReadTokens": 0,
+    "inputTokens": 750,
+    "outputTokens": 0,
+    "totalCost": 7.5,
+    "totalTokens": 750
+  }
+}

@@ -1,15 +1,22 @@
 """Whether the PC an agent runs its commands on will stop them.
 
 One job: read a node's exec approvals, in read-only mode, and say whether that PC
-is stricter than the policy the agent asks for. It is the failure a node gives
-when nothing can approve a command there: `exec denied: request-failed`, raised by
-a prompt on a machine with no screen whose fallback is `deny`.
+ends up stricter than the policy the agent asks for. It is the failure a node
+gives when nothing can approve a command there: `exec denied: request-failed`,
+raised by a prompt on a machine with no screen whose fallback is `deny`.
 
-Two shapes arrive from the same documented command, and both are read here: the
-approvals document OpenClaw keeps on a headless node host, whose fields are the
-policy (`security`, `ask`, `askFallback`), and the host-native policy of the
-Windows and macOS companions (`enabled`, `defaultAction`, `rules`), which
-OpenClaw cannot configure from the gateway at all.
+The merge is OpenClaw's, not this module's. `openclaw approvals get --node <id>
+--json` answers with the requested `tools.exec` policy, the host approvals-file
+policy and the merged `effectivePolicy` for every agent scope (docs.openclaw.ai/
+cli/approvals, "`get` shows the effective exec policy for the target"), so the
+judgement here is `effective` against `requested` per field: a field the node did
+not tighten reads the same and says nothing, and the precedence OpenClaw applies
+to `file.agents`/`file.defaults` is no longer re-derived in Python.
+
+Two shapes still arrive from that command, and both are read here: the merged
+policy above, and the host-native policy of the Windows and macOS companions
+(`enabled`, `defaultAction`, `rules`), which OpenClaw reports as it is because it
+cannot configure it from the gateway at all.
 
 Nothing here writes. The approvals belong to the node's own host and are the
 person's; the fix is the command the check prints, and the same body is what
@@ -25,7 +32,8 @@ from typing import Any
 from nexgen_core.i18n import t
 from nexgen_core.report import CheckOutcome, Severity
 
-#: Each policy field, loosest first: a value further right stops more commands.
+#: The values OpenClaw accepts for each policy field. A field outside these is not
+#: a policy this check can judge, and comparing it would invent a verdict.
 SECURITY = ("full", "allowlist", "deny")
 ASK = ("off", "on-miss", "always")
 ASK_FALLBACK = ("full", "allowlist", "deny")
@@ -109,7 +117,7 @@ def check_agents(config: dict[str, Any], reader: Reader | None = None) -> list[C
     for agent_id, node in targets.items():
         if node not in readings:
             readings[node] = reader(node)
-        outcome = _agent_outcome(config, agent_id, node, readings[node])
+        outcome = _agent_outcome(agent_id, node, readings[node])
         if outcome is not None:
             outcomes.append(outcome)
     return outcomes
@@ -121,97 +129,66 @@ def _exec_block(tools: Any) -> dict[str, Any]:
     return block if isinstance(block, dict) else {}
 
 
-def _requested_policy(config: dict[str, Any], agent_id: str) -> dict[str, str] | None:
-    """What the agent asks for: its own `tools.exec`, over the shared one.
+def _scopes(document: dict[str, Any]) -> list[dict[str, Any]]:
+    """The merged per-agent policies the native answer carries, and none when it computed none."""
+    policy = document.get("effectivePolicy")
+    scopes = policy.get("scopes") if isinstance(policy, dict) else None
+    if not isinstance(scopes, list):
+        return []
+    return [scope for scope in scopes if isinstance(scope, dict)]
 
-    OpenClaw fills a gap with its own `full` and `off`, which are also this check's
-    defaults. A policy written as `tools.exec.mode` is not interpreted: the check
-    says nothing rather than compare against a shape it would have to guess at.
+
+def _scope_for(document: dict[str, Any], agent_id: str) -> dict[str, Any] | None:
+    """The scope of that one agent, or None when the answer merged nothing for it.
+
+    An older node reports its effective policy as unavailable instead of assuming
+    the gateway's request also applies on its host, and a node that has not answered
+    the merge at all carries no scope: both are read as "not judged", never as
+    agreement.
     """
-    agents = config.get("agents") if isinstance(config.get("agents"), dict) else {}
-    entries = agents.get("entries") if isinstance(agents.get("entries"), dict) else {}
-    entry = entries.get(agent_id) if isinstance(entries.get(agent_id), dict) else {}
-    own = _exec_block(entry.get("tools"))
-    shared = _exec_block(config.get("tools"))
-    if (own.get("mode") or shared.get("mode")) and not (own.get("security") or own.get("ask")):
-        return None
-    policy = {
-        "security": str(own.get("security") or shared.get("security") or "full"),
-        "ask": str(own.get("ask") or shared.get("ask") or "off"),
-    }
-    fallback = own.get("askFallback") or shared.get("askFallback")
-    if isinstance(fallback, str) and fallback.strip():
-        policy["askFallback"] = fallback.strip()
-    return policy
+    for scope in _scopes(document):
+        if scope.get("agentId") == agent_id:
+            return scope
+    return None
 
 
-def _host_policy(document: dict[str, Any], agent_id: str) -> dict[str, str]:
-    """The node's policy for one agent: its own entry, then its wildcard, then its defaults.
+def _text(block: Any, key: str) -> str:
+    """One field of a native policy block, or "" when it is absent or not a string."""
+    value = block.get(key) if isinstance(block, dict) else None
+    return value.strip().lower() if isinstance(value, str) else ""
 
-    That is the precedence OpenClaw resolves (`agents.<id>` wins a field over
-    `agents."*"`, which wins over `defaults`), and a field set nowhere is left out:
-    OpenClaw then uses the value the agent asks for.
+
+def _differences(scope: dict[str, Any]) -> list[str]:
+    """The fields where the node ends up stricter than the agent asks for.
+
+    `effective` is the intersection OpenClaw computed, so a field it did not
+    tighten equals the request, and a field holding a value OpenClaw would refuse
+    is skipped rather than compared.
     """
-    file = document.get("file") if isinstance(document.get("file"), dict) else {}
-    agents = file.get("agents") if isinstance(file.get("agents"), dict) else {}
-    defaults = file.get("defaults") if isinstance(file.get("defaults"), dict) else {}
-    layers = [agents.get(agent_id), agents.get("*"), defaults]
-    policy: dict[str, str] = {}
-    for field in ("security", "ask", "askFallback"):
-        for layer in layers:
-            value = layer.get(field) if isinstance(layer, dict) else None
-            if isinstance(value, str) and value.strip():
-                policy[field] = value.strip()
-                break
-    return policy
-
-
-def _differences(requested: dict[str, str], host: dict[str, str]) -> list[str]:
-    """The fields where the node stops what the agent asks for, in the order a person reads them."""
     found: list[str] = []
-    for field, order in (("security", SECURITY), ("ask", ASK)):
-        asked, theirs = requested.get(field, ""), host.get(field, "")
-        mine, node = _rank(order, asked), _rank(order, theirs)
-        if mine is None or node is None or node <= mine:
+    for field, accepted in (("security", SECURITY), ("ask", ASK)):
+        asked, effective = _text(scope.get(field), "requested"), _text(scope.get(field), "effective")
+        if asked not in accepted or effective not in accepted or effective == asked:
             continue
-        found.append(t("{field} {node} instead of {asked}", field=field, node=theirs, asked=asked))
-    if _fallback_denies(requested, host):
-        found.append(t("askFallback {value}: a question raised there is answered by nobody, and the run is denied",
-                       value=host.get("askFallback") or "deny"))
+        found.append(t("{field} {node} instead of {asked}", field=field, node=effective, asked=asked))
+    if _a_question_is_raised(scope):
+        fallback = _text(scope.get("askFallback"), "effective")
+        if fallback in ASK_FALLBACK and fallback != "full":
+            found.append(t("askFallback {value}: a question raised there is answered by nobody, and the run is "
+                           "denied", value=fallback))
     return found
 
 
-def _fallback_denies(requested: dict[str, str], host: dict[str, str]) -> bool:
-    """Whether a question the node would raise ends in a denial nobody chose.
+def _a_question_is_raised(scope: dict[str, Any]) -> bool:
+    """Whether this PC would ever ask, which is what gives its fallback something to answer.
 
-    A question is raised when the stricter of the two `ask` values is not `off`, and
-    it is answered by the node's fallback. Omitted, that fallback is `deny`: the
-    documented default, and the one that turns a prompt into a refusal.
+    `off` never asks. Omitted, the fallback is `deny`: the documented default, and
+    the one that turns a prompt into a refusal.
     """
-    if _further(ASK, requested.get("ask"), host.get("ask")) in (None, "off"):
-        return False
-    their_rank = _rank(ASK_FALLBACK, host.get("askFallback") or "deny") or 0
-    asked_rank = _rank(ASK_FALLBACK, requested.get("askFallback") or "full") or 0
-    return their_rank > asked_rank
+    return _text(scope.get("ask"), "effective") in ("on-miss", "always")
 
 
-def _further(order: tuple[str, ...], left: Any, right: Any) -> str | None:
-    """The stricter of two values of one field, or None when neither is one OpenClaw accepts."""
-    ranks = [(rank, value) for value in (left, right) if (rank := _rank(order, value)) is not None]
-    return max(ranks)[1] if ranks else None
-
-
-def _rank(order: tuple[str, ...], value: Any) -> int | None:
-    """Where a value sits in its order, or None when it is not one the field accepts."""
-    if not isinstance(value, str):
-        return None
-    try:
-        return order.index(value.strip().lower())
-    except ValueError:  # nexgen: allow reason="a value OpenClaw would refuse is not a policy this check can judge"
-        return None
-
-
-def _agent_outcome(config: dict[str, Any], agent_id: str, node: str, reading: Reading) -> CheckOutcome | None:
+def _agent_outcome(agent_id: str, node: str, reading: Reading) -> CheckOutcome | None:
     """The line for one agent, or None when its policy cannot be judged."""
     check_id = f"openclaw.nodes.exec.{agent_id}"
     if reading.document is None:
@@ -226,10 +203,10 @@ def _agent_outcome(config: dict[str, Any], agent_id: str, node: str, reading: Re
     document = reading.document
     if "file" not in document:
         return _native_outcome(check_id, agent_id, node, document)
-    requested = _requested_policy(config, agent_id)
-    if requested is None:
+    scope = _scope_for(document, agent_id)
+    if scope is None:
         return None
-    differences = _differences(requested, _host_policy(document, agent_id))
+    differences = _differences(scope)
     if not differences:
         return CheckOutcome(
             id=check_id,

@@ -21,6 +21,11 @@ Two proposals are not about an agent at all and live in their own module:
 `background` keeps the unattended jobs off a local model, and `observation` keeps
 the gateway from watching the whole home. Both arrive as the `current` file and
 the machine's platform, never as a read of either.
+
+One key here is about the shape of a conversation rather than about a model: a
+machine that answers on a channel gets an idle reset, because the only other bound
+on one endless chat is a compaction that pays a model call. That decision lives in
+`session_policy`.
 """
 from __future__ import annotations
 
@@ -29,11 +34,13 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import detect_language
-from nexgen_core.openclaw import agy_backend, background, model_policy, observation
+from nexgen_core.openclaw import agy_backend, background, model_policy, observation, prompt_budget, utility_model
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
 from nexgen_core.openclaw.acp import acp_block, acpx_entry, sviluppo_enabled
+from nexgen_core.openclaw.channel_bindings import missing_bindings
 from nexgen_core.openclaw.detect import Detection
 from nexgen_core.openclaw.gateway_section import gateway_block
+from nexgen_core.openclaw.session_policy import session_policy
 from nexgen_core.openclaw.local_models import local_models, provider_blocks
 from nexgen_core.openclaw.tools_profile import (
     LOCAL_DENY,
@@ -64,7 +71,12 @@ __all__ = [
 #: OpenClaw's and the person's, and a plan names it as "yours, left untouched".
 #: A section is owned even when this machine proposes nothing inside it today:
 #: that is how a key the engine used to write is reported instead of forgotten.
-OWNED_SECTIONS = ("plugins", "models", "agents", "tools", "skills", "gateway", "update", "acp", "bindings")
+#: `session` joined the list when the engine began proposing one reset policy inside
+#: it for a machine that answers on a channel: everything else there is the person's,
+#: and the merge keeps it key by key.
+OWNED_SECTIONS = (
+    "plugins", "models", "agents", "tools", "skills", "gateway", "update", "acp", "bindings", "session",
+)
 
 #: Plugins every OpenClaw gets: OpenClaw's own, with no subscription behind them.
 BASE_PLUGINS = (
@@ -299,9 +311,16 @@ def _agents_section(
         "ownership": "explicit",
         "defaults": {
             **_default_model(agents, current),
+            # Titles, narration, recaps and summaries are separate model calls: without
+            # this key they are billed to the agent's primary model, which is the scarce
+            # window. `utility_model` decides the ref, and writes nothing when the file
+            # already answers or this machine has nothing cheaper.
+            **utility_model.utility_block(detected, current),
             "models": _default_models(detected),
-            # Otherwise the system jobs write to the channels continuously.
-            "heartbeat": {"every": "0m"},
+            # No `heartbeat` key: OpenClaw schedules a heartbeat as an automation job and
+            # its doctor removes the legacy key once the monitor is a job, so `every: 0m`
+            # was a green line over a switch this release does not read. The job itself is
+            # what `nexgen openclaw setup` converges (`setup_cron.heartbeat_job_step`).
         },
         "entries": _agent_entries(agents, detected, current, language),
     }
@@ -370,38 +389,6 @@ def _exec_policy(current: dict[str, Any] | None) -> dict[str, Any]:
     block = tools.get("exec") if isinstance(tools, dict) else None
     mode = block.get("mode") if isinstance(block, dict) else None
     return {} if isinstance(mode, str) and mode.strip() else {"mode": "auto"}
-
-
-def _missing_channel_bindings(
-    current: dict[str, Any] | None, entries: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """The bindings OpenClaw needs for a configured channel it cannot route.
-
-    With `agents.ownership: "explicit"` a channel without a binding reaches no
-    agent. Only missing channels are proposed, bound to `main`; a channel the
-    person already routed is never touched.
-    """
-    if not isinstance(current, dict):
-        return []
-    channels = current.get("channels") if isinstance(current.get("channels"), dict) else {}
-    if not channels or not entries:
-        return []
-    bindings = current.get("bindings") if isinstance(current.get("bindings"), list) else []
-    bound: set[str] = set()
-    for binding in bindings:
-        match = binding.get("match") if isinstance(binding, dict) else None
-        channel = match.get("channel") if isinstance(match, dict) else None
-        if isinstance(channel, str):
-            bound.add(channel)
-    agent = "main" if "main" in entries else sorted(entries, key=str)[0]
-    missing: list[dict[str, Any]] = []
-    for name, block in sorted(channels.items()):
-        if not isinstance(block, dict) or not block or block.get("enabled") is False:
-            continue
-        if str(name) in bound or "*" in bound:
-            continue
-        missing.append({"agentId": agent, "match": {"channel": str(name), "accountId": "*"}})
-    return missing
 
 
 def _add_machine_rules(
@@ -481,9 +468,13 @@ def build_config(
     if providers:
         config["models"] = {"providers": providers}
     _add_machine_rules(config, detected, agents, current, home, platform)
-    bindings = _missing_channel_bindings(current, config["agents"]["entries"])
+    prompt_budget.apply(config, current)
+    bindings = missing_bindings(current, config["agents"]["entries"])
     if bindings:
         config["bindings"] = bindings
+    session = session_policy(current)
+    if session:
+        config["session"] = session
     if not config["agents"]["entries"]:
         # OpenClaw refuses `agents` with no entry ("must contain at least one
         # configured agent"), and a proposal that cannot be written fresh would

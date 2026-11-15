@@ -97,7 +97,7 @@ def test_describe_su_manifest_finto_ritorna_righe_attese(tmp_path: Path) -> None
     assert dep["deprecated"] == "withdrawn"
     cur_dep = upstream.describe("skill", "demo-skill", [
         {"what": "x", "upstream": "a" * 40, "deprecated": "withdrawn"}])
-    assert cur_dep == {"state": "current", "deprecated": "withdrawn"}
+    assert cur_dep == {"state": "current", "upstream": "a" * 40, "deprecated": "withdrawn"}
 
 
 def test_mcp_rows_stabili_su_manifest_finto(tmp_path: Path) -> None:

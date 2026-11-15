@@ -21,6 +21,38 @@ SESSION_WAIT_S = 30.0
 POLL_S = 2.0
 CREATED_SLACK_MS = 5000
 
+#: The ids `agy models` lists (CLI 0.3.4), and the one place a family the routing
+#: tiers name becomes an id the command accepts. A tier writes `gemini-3.8-flash`,
+#: `agy` carries `gemini-3.8-flash-high` and `gpt-oss-120b-medium`: handing the family
+#: to `--model` lets the CLI decide, and the journal then cannot say what really ran.
+#: A release newer than this list still runs, because an id nobody carries travels as
+#: given; a new catalogue entry only widens the tuple.
+AGY_CATALOGUE = (
+    "gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low",
+    "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium",
+)
+
+
+def model_id(model: str) -> str:
+    """The catalogue id `agy --model` accepts for this request, or the request itself.
+
+    An id the catalogue carries is kept as it is. A family resolves to the catalogue
+    entries that start with `<family>-`, highest effort first, because that is the
+    default the owner's tiers expect; a request the catalogue does not carry is passed
+    through untouched rather than rewritten into a guess.
+    """
+    tag = (model or "").strip()
+    if not tag or tag in AGY_CATALOGUE:
+        return tag
+    variants = [entry for entry in AGY_CATALOGUE if entry.startswith(f"{tag}-")]
+    if not variants:
+        return tag
+    for effort in ("-high", "-medium", "-low"):
+        for entry in variants:
+            if entry.endswith(effort):
+                return entry
+    return variants[0]
+
 
 def _conversations_dir() -> Path:
     custom = os.environ.get("ANTIGRAVITY_HOME")
@@ -86,10 +118,11 @@ class AntigravityAdapter(base.Adapter):
         """A visible executor tab: edits allowed, the prompt as a pointer, never skip-permissions.
 
         `agy --model <id>` is the only way this CLI chooses a model, so a model the
-        owner named for this run travels on the tab itself.
+        owner named for this run travels on the tab itself, resolved to a catalogue id
+        first: the tiers name a family, and `agy` accepts an entry of its own catalogue.
         """
         argv = [executable, "--mode", "accept-edits"]
-        target = "gemini-3.8-flash-high" if model == "gemini-3.8-flash" else model
+        target = model_id(model)
         if target:
             argv.extend(["--model", target])
         if session:

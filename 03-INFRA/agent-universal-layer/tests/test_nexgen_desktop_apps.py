@@ -7,8 +7,8 @@ be configured, and a version skew or a stray copy must be visible.
 from __future__ import annotations
 
 import json
-import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -23,7 +23,19 @@ from nexgen_core.checks import desktop_checks, mcp_checks  # noqa: E402
 from nexgen_core.paths import canonical_instructions  # noqa: E402
 from nexgen_core.report import Severity  # noqa: E402
 
-requires_symlinks = pytest.mark.skipif(os.name == "nt", reason="symlinks require privileges")
+def _symlinks_supported() -> bool:
+    """Whether this machine may create a symlink at all: Windows denies it without a privilege."""
+    with tempfile.TemporaryDirectory() as folder:
+        target = Path(folder) / "target"
+        target.write_text("x", encoding="utf-8")
+        try:
+            (Path(folder) / "link").symlink_to(target)
+        except OSError:
+            return False
+        return True
+
+
+requires_symlinks = pytest.mark.skipif(not _symlinks_supported(), reason="this machine may not create symlinks")
 
 
 @pytest.fixture(autouse=True)
@@ -77,6 +89,56 @@ def test_desktop_apps_on_macos_and_windows_use_their_own_locations():
 
 def test_nothing_installed_means_no_desktop_app():
     assert platforms.installed_desktop_apps(platform="linux", exists=lambda p: False) == []
+
+
+def test_the_store_package_family_of_the_codex_app_is_declared_for_windows():
+    """A Store Codex app has no `Programs\\ChatGPT` folder; its package family is the evidence."""
+    declared = {app.name: dict(app.package_families) for app in platforms.DESKTOP_APPS}
+    assert declared == {"ChatGPT": {"win32": ("OpenAI.Codex_2p2nqsd0c76g0",)}, "Antigravity": {}}
+
+
+def test_a_store_package_counts_as_an_installed_app():
+    win_root = Path("C:/Users/user/AppData/Local")
+    apps = platforms.installed_desktop_apps(
+        platform="win32",
+        env={"LOCALAPPDATA": str(win_root)},
+        exists=lambda p: p == win_root / "Packages" / "OpenAI.Codex_2p2nqsd0c76g0",
+    )
+    assert [a.name for a in apps] == ["ChatGPT"]
+
+
+def test_another_apps_store_package_is_not_evidence_for_the_codex_app():
+    win_root = Path("C:/Users/user/AppData/Local")
+    apps = platforms.installed_desktop_apps(
+        platform="win32",
+        env={"LOCALAPPDATA": str(win_root)},
+        exists=lambda p: p == win_root / "Packages" / "Claude_pzs8sxrjxfjjc",
+    )
+    assert apps == []
+
+
+def test_a_store_package_folder_is_not_an_install_root():
+    """Nothing inside `%LOCALAPPDATA%\\Packages` is the app's own layout, so it is never searched."""
+    win_root = Path("C:/Users/user/AppData/Local")
+    roots = platforms.existing_roots(
+        platforms.DESKTOP_APPS[0], platform="win32", env={"LOCALAPPDATA": str(win_root)},
+    )
+    assert roots == []
+
+
+def test_a_store_only_codex_app_still_gets_the_codex_target(tmp_path, monkeypatch):
+    """The app-only machine this detection exists for: the Store package is the app, so ~/.codex is configured."""
+    _no_cli(monkeypatch)
+    win_root = Path("C:/Users/user/AppData/Local")
+    store = win_root / "Packages" / "OpenAI.Codex_2p2nqsd0c76g0"
+    monkeypatch.setattr(
+        bootstrap,
+        "installed_desktop_apps",
+        lambda: platforms.installed_desktop_apps(
+            platform="win32", env={"LOCALAPPDATA": str(win_root)}, exists=lambda p: p == store,
+        ),
+    )
+    assert bootstrap.detect_clis(tmp_path) == ["codex"]
 
 
 def _no_cli(monkeypatch):
@@ -139,6 +201,22 @@ def test_skew_is_silent_without_a_cli_codex(monkeypatch):
     assert desktop_checks.check_codex_desktop_skew() is None
 
 
+def test_skew_stays_silent_when_the_app_is_a_store_package(monkeypatch):
+    """The Store package has no install root, so no bundled Codex is compared: silence, not a guess."""
+    win_root = Path("C:/Users/user/AppData/Local")
+    monkeypatch.setattr(desktop_checks, "installed_desktop_apps", lambda: [platforms.DESKTOP_APPS[0]])
+    monkeypatch.setattr(
+        desktop_checks,
+        "existing_roots",
+        lambda app: platforms.existing_roots(app, platform="win32", env={"LOCALAPPDATA": str(win_root)}),
+    )
+    monkeypatch.setattr(desktop_checks.shutil, "which", lambda name: "/home/user/bin/codex")
+    probes: list[str] = []
+    monkeypatch.setattr(desktop_checks, "_binary_version", lambda binary: probes.append(str(binary)))
+    assert desktop_checks.check_codex_desktop_skew() is None
+    assert probes == []
+
+
 def _skew_setup(monkeypatch, bundled_version, cli_version):
     monkeypatch.setattr(desktop_checks, "installed_desktop_apps", lambda: [platforms.DESKTOP_APPS[0]])
     monkeypatch.setattr(desktop_checks, "_bundled_codex", lambda: Path("/usr/lib/chatgpt/resources/codex"))
@@ -188,11 +266,15 @@ def _mcp_setup(tmp_path):
     }}))
     home = tmp_path / "home"
     gemini = home / ".gemini"
-    canonical = gemini / "antigravity" / "mcp_config.json"
+    # The officially read path (Google's MCP doc) holds the real file.
+    canonical = gemini / "config" / "mcp_config.json"
     canonical.parent.mkdir(parents=True)
     body = {"mcpServers": {"alpha": {"command": "python", "args": ["-V"], "env": {}}}}
     canonical.write_text(json.dumps(body), encoding="utf-8")
     return vault, home, canonical, body
+
+
+CONSUMER_DIRS = ("antigravity", "antigravity-cli", "antigravity-ide")
 
 
 def _consumer(home: Path, name: str) -> Path:
@@ -204,15 +286,32 @@ def _consumer(home: Path, name: str) -> Path:
 @requires_symlinks
 def test_fanout_is_ok_when_every_consumer_links_to_the_canonical(tmp_path):
     vault, home, canonical, _ = _mcp_setup(tmp_path)
-    for name in ("antigravity-cli", "antigravity-ide", "config"):
+    for name in CONSUMER_DIRS:
         _consumer(home, name).symlink_to(canonical)
     assert mcp_checks.check_antigravity_fanout(vault, home).severity == Severity.OK
 
 
 def test_fanout_is_ok_for_an_identical_real_copy(tmp_path):
     vault, home, canonical, _ = _mcp_setup(tmp_path)
-    for name in ("antigravity-cli", "antigravity-ide", "config"):
+    for name in CONSUMER_DIRS:
         _consumer(home, name).write_bytes(canonical.read_bytes())
+    assert mcp_checks.check_antigravity_fanout(vault, home).severity == Severity.OK
+
+
+@requires_symlinks
+def test_fanout_is_ok_on_a_machine_still_in_the_old_layout(tmp_path):
+    """Older releases put the real file in `antigravity/` and linked `config/` to it.
+
+    Nothing has drifted there, so the check must stay quiet until the next render
+    migrates the layout: a BROKEN on every existing machine would be noise.
+    """
+    vault, home, canonical, body = _mcp_setup(tmp_path)
+    legacy = _consumer(home, "antigravity")
+    legacy.write_text(json.dumps(body), encoding="utf-8")
+    canonical.unlink()
+    canonical.symlink_to(legacy)
+    for name in ("antigravity-cli", "antigravity-ide"):
+        _consumer(home, name).symlink_to(legacy)
     assert mcp_checks.check_antigravity_fanout(vault, home).severity == Severity.OK
 
 

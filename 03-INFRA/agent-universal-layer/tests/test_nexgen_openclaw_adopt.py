@@ -244,7 +244,7 @@ def test_a_yes_run_adopts_both_and_archives_the_workshop_copy(a_machine):
     assert servers["posted-by-hand"]["origin"] == "openclaw"
     assert servers["posted-by-hand"]["openclaw_id"] == "posted-by-hand"
     for target in ("claude", "codex", "antigravity", "opencode"):
-        assert (a_machine.home / {"claude": ".claude", "codex": ".codex",
+        assert (a_machine.home / {"claude": ".claude", "codex": ".agents",
                                  "antigravity": ".gemini/antigravity-cli", "opencode": ".opencode"}[target]
                 / "skills" / "release-notes" / "SKILL.md").is_file()
     assert (a_machine.home / ".agents" / "skills" / "release-notes" / "SKILL.md").is_file()

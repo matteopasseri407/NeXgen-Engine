@@ -22,7 +22,7 @@ Read "What the gates guarantee, and what they do not" before relying on a PASS.
 A unit adds `20-brief-<unit>.md` (the brief as written), `22-ambiente-<unit>.md` (where the copy is, on which branch, inside which boundary), `40-pacchetto-<unit>.md` and `50-gate-<unit>.txt` (the review package and the raw gate output), plus its own working copy in `23-unita-<unit>/`.
 A review adds `45-revisione-<unit>-<round>.md`, and every request the engine refuses to execute goes to `07-richieste-proprietario.md`.
 
-The journal is the machine truth. Its events are `started`, `unit_created`, `unit_started`, `unit_queued`, `attached`, `harness_session_lost`, `harness_session_foreign`, `unit_reworked`, `unit_model_refused`, `unit_stalled`, `unit_resumed`, `unit_rebased`, `unit_collected`, `report_relocated`, `unit_reviewed`, `unit_published`, `unit_publish_failed`, `unit_retired`, `unit_retire_failed`, `session_closed`, `workboard_card`, `workboard_moved`, `local_server_started`, `local_server_stopped`, and for the scout `scout_opened` and `scout_finished`.
+The journal is the machine truth. Its events are `started`, `unit_created`, `unit_started`, `unit_queued`, `attached`, `harness_session_lost`, `harness_session_foreign`, `unit_reworked`, `unit_model_refused`, `unit_stalled`, `unit_resumed`, `unit_rebased`, `unit_collected`, `report_relocated`, `unit_reviewed`, `unit_published`, `unit_publish_failed`, `unit_retired`, `unit_retire_failed`, `session_closed`, `unit_unjobbed`, `workboard_card`, `workboard_moved`, `local_server_started`, `local_server_stopped`, and for the scout `scout_opened` and `scout_finished`.
 The Markdown files are what a person reads and writes, and the engine never rewrites them, so an edit is not lost.
 
 ## The verbs
@@ -33,7 +33,7 @@ nexgen-local sup status                                     # every task, one li
 nexgen-local sup status <id>                                # units, states, verdicts, costs
 nexgen-local sup unit <id> <unit> --repo <checkout> --base <ref> --brief <file> \
     --allow 'docs/*.md' [--allow ...] [--verify "<command>"] [--mcp <server>]
-nexgen-local sup run <id> <unit> [--harness <name>]         # the executor's window
+nexgen-local sup run <id> <unit> [--harness <name>] [--headless]   # the executor's window
 nexgen-local sup collect <id> <unit>                        # the tab closes when the turn is over, then the gates and the cost
 nexgen-local sup review <id> <unit> --approve "<why>" [--close]  # one review round, APPROVA
 nexgen-local sup review <id> <unit> --rework <file>         # one review round, RIMANDA
@@ -179,6 +179,9 @@ Shared git hooks are never touched: they live in the common directory and stay e
 `--mcp <name>` is how the supervisor gives the unit a connector it actually needs.
 Without it the copy's profile has no MCP server at all, and every global one is switched off in the copy by name, as the `mcp` column above says: the connectors the owner uses in their own sessions are not the executor's budget.
 
+A `.worktreeinclude` at the repository root is read, with the gitignore syntax and the two rules the same file carries in Claude Code, Conductor, Codex and `ccmanager`: a path is carried into the new copy only when a pattern of that file matches it **and** git really ignores it.
+So a `.env` or a local config the work cannot run without is there, a tracked file is never copied over the copy, and the unit's `22-ambiente-<unità>.md` names what was carried.
+
 The fetch URL and the blocked push URL of every remote are written into the journal when the unit is created, and its refs are read with `git ls-remote` on that URL.
 `sup collect` asks three questions: are the creation's remotes still configured with the same fetch URL and the blocked push URL, did the unit add a remote of its own, and does any remote ref point at a commit of this unit's `base..head`?
 `remote.<name>.pushurl` wins over the fetch URL for every push, so re-pointing it was a push the gate could not see.
@@ -210,6 +213,24 @@ The adapter owns the lookup: OpenCode lists its session store, Claude Code reads
 
 A harness that shows its own sessions opens none of the engine's windows (`window=False` in its capability table): `sup run` starts the turn itself, detached, and attaches the session under the key it chose, so the attach is not a guess made from a clock.
 OpenClaw is that harness today.
+
+### A unit with no window: `sup run --headless`
+
+`sup run --headless` starts the same detached turn and opens nothing: no tab, no Windows Terminal, no console.
+The turn runs in the unit's copy under the permission profile written a moment before, and the engine attaches the session that turn opened in that copy, read from the harness's own list as after any new tab.
+The journal records the delivery as `mode: "turn"`, not as a tab, and nothing carries `NEXGEN_SUP_TAB`, so `sup collect`, `sup review` and `sup pulizia` have no tab to close and never look for one.
+What the turn prints on stderr goes to `60-stderr-<session>.log` in the task folder, the file every one-shot turn already writes; a turn whose session does not exist yet appends to `60-stderr-session.log` until its id is known.
+
+This is the door for a supervisor that runs the verbs from an application without a terminal.
+The engine never needs a console inherited from its caller: `wt.exe`, `CREATE_NEW_CONSOLE` or the Linux terminal is started by the engine itself, so a graphical application that can start a process opens the usual `nexgen-sup` tabs.
+What the engine does need is a desktop session, and on Linux it refuses without `DISPLAY` or `WAYLAND_DISPLAY`.
+
+What `--headless` costs is exactly what a window costs: nobody sees the work happen.
+A permission request nobody answers is what the stall detector is for, and the report, the copy, the cost row and every gate are unchanged.
+The flag is accepted by OpenCode and the local executor, the two harnesses whose turn can open the session it is about to attach; for the others the verb refuses by name, because `claude`, `codex` and `agy` resume a session that already exists.
+It also decides only how a unit's first delivery starts: once the task has a session, later deliveries already run without a window, and the one case that opens a tab again is the engine's own `tab_closed`, which a review round treats as a refusal to work unseen.
+`openclaw` needs no flag: it declares `window=False` and is headless already.
+`-m` is refused together with `--headless`: that turn carries the model the routing tiers (or the quota gate) chose, and when there are no tiers it takes the one the harness is configured with.
 
 The journal records the folder with the session (`attached`, `unit_started`, `unit_queued`, `unit_reworked`).
 A unit looks first for the session recorded for that unit; the task's last session for the same harness is a fallback only for a unit that never had one.
@@ -301,6 +322,28 @@ Tests written by somebody else and red before the unit starts are the cheapest w
 
 The model is named in the lane's `local_model.model`, and `sup run --harness local` selects the local adapter for one unit. The journal records the harness, so the review delivery returns to the same session.
 
+## The quota, before dispatch
+
+Before a unit starts, `sup run` reads the cheap quota rows for the plan its executor would spend (`nexgen_core.quota.percentage_rows`: the harness archive, Codex's own rate limits, and the optional backend from the cache it shares with the hourly beat).
+It opens no transcript and starts no model.
+At most it costs one run of that backend per ten minutes, whoever asked last.
+
+When the reading is current and at or above the line the owner declared under `failover.block_at` (95% unless that file says otherwise), the unit does not start there.
+That is the plugin's own number, not a second one: the same file feeds `before_model_resolve`, so a supervisor reading the alert band instead would keep dispatching to a plan the plugin had already stopped using.
+`routing_tiers` picks the next worker candidate, skipping every model of the spent plan, because a provider at that line is spent for everything it serves, and the journal gains one `unit_quota` row naming the reading, the decision and where the unit went:
+
+```
+unità <unit>: quota al 97% (5h): passa a gemini-3.8-flash
+```
+
+A reading that is stale, cached, missing or unreadable never blocks anything: it is recorded as `quota unknown` and the unit starts where it was going to start.
+The engine has never invented a percentage, and a doubt is a worse reason to stop a unit than no reason at all.
+A plan at 97% with nowhere else to go starts anyway, and the same row says so.
+`sup run --headless` never changes harness, because that turn opens its own session and only some harnesses can do it without a window: the move is journaled as not made (`decision="headless"`) instead of failing later in the name of a harness the owner never asked for.
+
+This check needs `routing-tiers.yaml`: without that file the lane has no candidate list to move to, and it runs exactly as its settings say.
+`sup status` does not repeat the reading; the journal is where it lives.
+
 ## Stalled sessions
 
 A session that is active and has not moved is the other way an executor disappears.
@@ -366,7 +409,7 @@ The executor's report is not evidence; every line below is read from git or run 
 | `configurazione git` | either configuration file of the copy changed since the unit was created (the repository's shared `.git/config`, which every checkout reads, or the worktree's own `config.worktree`), or the effective configuration carries a `url.*.insteadOf` or `url.*.pushInsteadOf` key the creation did not have; the file or the key is named |
 | `remoto intatto` | a remote of the creation is gone, added, points at another fetch URL or push URL, or one of its refs carries a commit of the unit's interval (the unit pushed); a branch that advanced for another reason is not a failure |
 | `albero pulito` | the unit's copy has uncommitted work |
-| `scansione fughe` | the project declares CI's anti-leak scan (a workflow names `leak_scan.py`) and the scan exits non-zero on the unit's `base..head`, or the script and its patterns are not where the workflow says; a project that declares no scan adds no line |
+| `scansione fughe` | the project declares CI's anti-leak scan (a workflow names `leak_scan.py`) and the scan exits non-zero on the unit's `base..head`, or the script and its rules (`leak-scan/gitleaks.toml`) are not where the workflow says; a project that declares no scan adds no line |
 
 The verdict is PASS only when every line is.
 The package (`40-pacchetto-<unit>.md`) carries the verdict, the gate lines, the `test_removal_ok` entries the unit added, the diffstat, the diff with a declared cap of 400 lines, and the cost of the attached session.
@@ -550,6 +593,12 @@ Two things stop closing: if another unit sharing the tab is still open, the tab 
 When it closes, `tab_closed` records the pids.
 A tab the owner already closed is not an error.
 
+On Windows the turn the engine starts for a unit also lives inside a job object carrying `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, named after the task and the unit (`nexgen-sup:<task>:<unit>`).
+The turn is adopted into it as soon as it exists and receives a handle by duplication, so the job lives exactly as long as the work does, and closing the tab ends that whole tree with one kernel call instead of a walk of the process table that can miss whatever was born while it was being read.
+A process the job does not hold — a descendant this machine's own job chain lets break away, or one created through `Win32_Process.Create`, whose parent is the provider and not the unit — cannot be ended by the kernel: those are stopped one by one with psutil and counted in the line (`3 fuori dal job`) and in `tab_closed`'s `outside_job`, which is the difference between a job that worked and a job that silently held nothing.
+A turn the kernel will not hold is still delivered, and the journal says so with `unit_unjobbed` and the reason.
+POSIX is unchanged: `start_new_session` and the process group do the same work.
+
 ## Resuming a task
 
 `sup resume <id>` walks a task through the steps the owner already runs by hand: `unità -> esecuzione -> raccolta -> revisione -> pubblicazione`.
@@ -623,7 +672,7 @@ One line per unit, kind and sentence goes to `07-richieste-proprietario.md`, and
 ## Visible windows
 
 `supervision_windows` opens a terminal that runs a command and stays open; the engine never reads its output, and a window that cannot be opened raises instead of falling back to a hidden process.
-A tab opened by the engine carries its marker in one exact place, and only a shell is looked at: on Windows the assignment in the command line (`$env:NEXGEN_SUP_TAB=nexgen-sup:<task>:<role>`), on Linux the exported variable in `/proc/<pid>/environ`.
+A tab opened by the engine carries its marker in one exact place, and only a shell is looked at: on Windows the assignment in the command line (`$env:NEXGEN_SUP_TAB=nexgen-sup:<task>:<role>`), on Linux the exported variable in the shell's environment (`/proc/<pid>/environ`, read through psutil).
 A `grep` or an editor that merely quotes the marker is not a tab and is never touched.
 The engine closes exactly that tab when the work is done: at publication (`sup publish`), at retirement (`sup review --approve ... --close`), and during cleanup (`sup pulizia --chiudi`).
 A shared tab stays until the last unit using it is done, published, closed or retired, while separate tabs close with their unit.
@@ -634,7 +683,7 @@ The marker names the task and the role, so which unit a tab serves is what its c
 When `sup run`, `sup review --rework` or `--resend` open a tab for a unit that already has one, the old tab is closed first (`close_unit_tab`, same marker rule and same refusal around the shared server), and retirement closes the unit's own tab before its copy goes; a unit whose tab was never recorded costs no process-table read.
 Nine forgotten tabs of units already published were, measured on the owner's PC, the reason a cleanup found nothing to collect.
 
-On Linux the tab is a terminal window whose shell is the tab: the tree is read from `/proc` (stat, cmdline, environ) and stopped deepest first, and the window follows its shell.
+On Linux the tab is a terminal window whose shell is the tab: the tree is read through psutil, from each process's command line and environment, and stopped deepest first, and the window follows its shell.
 The same rule about the shared server applies, so a machine where the terminal started `opencode serve` keeps that window.
 
 `sup pulizia` is the verb for what the engine left behind.
@@ -665,6 +714,8 @@ The local-models bench is not the engine's: no verb stops it except the local un
 - Linux: the first of `x-terminal-emulator`, `gnome-terminal`, `konsole`, `xterm`, each with its own flags, the shell kept alive with `; exec bash`.
   Without `DISPLAY` and without `WAYLAND_DISPLAY` it refuses: a window nobody can see is a hidden process with extra steps.
 - The command is passed as argv, so the quoting rule is the engine's own (`nexgen_core.processes`), not a hand-built string.
+- Nothing here is inherited from the caller: the terminal is started by the engine, so a supervisor that runs the verbs from a graphical application gets the same tabs.
+  A unit that must not have a window goes through `sup run --headless` instead, which is described under "The executor's window".
 
 `sup window-check` is the manual proof on each machine: one window opens, prints `finestra del supervisore OK` and stays open.
 It is never part of a test: the tests substitute `Popen` and `which`, so no suite opens a window.
@@ -676,6 +727,7 @@ The source is the unit's own harness, through its adapter: OpenCode and the loca
 Codex reports tokens and no money, and `agy` reports neither: the row says the number is unreadable instead of writing a zero.
 
 `sup costi` without an id shows what the harness archive says was spent in the last 5 hours, 7 days and 30 days: every session row in `session_v2`, or the old `session` table, children included, windowed by `time_updated`.
+The dollars for those sessions come from the optional [ccusage](https://github.com/ccusage/ccusage) binary (MIT), whose OpenCode reader skips the message rows a v2 fork copied from its parent and prices a model from its bundled list when the harness stored zero, which is what a flat subscription stores: when it is installed, one `ccusage opencode session --json --offline` answers per ten minutes; when it is missing, or its answer has a shape the engine does not recognise, the archive's own `cost` column is summed exactly as before.
 The store is opened read-only, and a store that cannot be read makes the window unknown with the reason, never zero.
 No budget rule lives in the engine: the numbers are shown, and what to do about them stays the owner's decision.
 

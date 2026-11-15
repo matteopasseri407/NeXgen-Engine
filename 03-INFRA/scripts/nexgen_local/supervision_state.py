@@ -239,11 +239,14 @@ def harness_session(task_id: str, harness: str = "opencode") -> str:
 
 
 def harness_session_record(task_id: str, harness: str = "opencode", unit: str = "") -> dict | None:
-    """The session this harness owns and the folder it was born in, or None.
+    """The session this harness owns, the folder it was born in and the model it runs, or None.
 
     A session the harness no longer has is written as `harness_session_lost`,
     and from that line on the task has none: the next unit opens the one new tab
-    instead of queueing on a dead session.
+    instead of queueing on a dead session. The model is the one the engine recorded
+    when it attached, empty when it recorded none: a harness that cannot report a
+    session's model (`agy`) is refused a reopened tab without it, and this is where a
+    later round reads the model that run was given.
     """
     found: dict | None = None
     for row in read_events(task_id):
@@ -259,6 +262,7 @@ def harness_session_record(task_id: str, harness: str = "opencode", unit: str = 
             found = {
                 "session": str(row["session"]),
                 "folder": str(row.get("folder") or ""),
+                "model": str(row.get("model") or ""),
             }
     return found
 

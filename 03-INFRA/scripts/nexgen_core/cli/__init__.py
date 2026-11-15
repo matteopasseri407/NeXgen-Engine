@@ -20,12 +20,13 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core import __version__  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.cli import engine, local_cmds, models_cmds, module_cmds, openclaw_cmds, role_cmds, skill_cmds, stack_cmds, tool_cmds, vault_cmds  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.console import use_utf8  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.cli import deploy_cmds, engine, local_cmds, maintainer_cmds, models_cmds, module_cmds, openclaw_cmds, role_cmds, skill_cmds, stack_cmds, tool_cmds, vault_cmds  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import set_language, t  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.update_channel import DEFAULT_CHANNEL, read_channel, short_head  # noqa: E402 - sys.path shim for cloned checkout
 
 #: The verb groups, in the order they appear in the help text.
-GROUPS = (engine, vault_cmds, skill_cmds, stack_cmds, module_cmds, openclaw_cmds, tool_cmds, role_cmds, local_cmds, models_cmds)
+GROUPS = (engine, vault_cmds, skill_cmds, stack_cmds, deploy_cmds, module_cmds, openclaw_cmds, tool_cmds, role_cmds, local_cmds, models_cmds, maintainer_cmds)
 
 
 def _version_footer() -> str:
@@ -108,9 +109,20 @@ def _run_cli(argv: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point, with a safety net: an error never prints a traceback."""
+    """Entry point, with a safety net: an error never prints a traceback.
+
+    The streams are UTF-8 before anything prints: the line a session start reads
+    is decoded by the hook that spawned this command, and a `·` written in the
+    console's own code page is not the character the hook is looking at.
+    """
+    use_utf8()
     if argv is None:
         argv = sys.argv[1:]
+    from nexgen_core.bootstrap_runtime import heal_running_environment
+
+    healed = heal_running_environment(argv, entry=str(Path(__file__).resolve()))
+    if healed is not None:
+        return healed
     try:
         return _run_cli(argv)
     except KeyboardInterrupt:

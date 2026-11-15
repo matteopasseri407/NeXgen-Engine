@@ -39,7 +39,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from nexgen_core.paths import resolve_engine_root  # noqa: E402
 from nexgen_core.release import bump_version_files, compute_next_version, is_semver, newer_version  # noqa: E402
-from nexgen_core.release_checks import by_name as checks_by_name, commit_checks, required_annotation, required_checks, verdict  # noqa: E402
+from nexgen_core.release_checks import by_name as checks_by_name, commit_checks, pr_head_visible, pr_required_checks, required_annotation, required_checks, verdict  # noqa: E402
 from nexgen_core.release_gpg import MsysGpgError, check_windows_msys_gpg as _gpg_check  # noqa: E402
 from nexgen_core.release_git import answer as _answer, default_run as _default_run, push_if_ahead  # noqa: E402
 from nexgen_core.release_install import Installer, InstallProblem  # noqa: E402
@@ -280,7 +280,18 @@ class Shipper:
         self._enter(f"checks on #{number}")
         head = self._do("git", "rev-parse", "HEAD")
         self._smoke_status(head)  # this machine's proof, while the checks run on GitHub
-        self._wait(lambda: self._checks_verdict(number, head), "the pull request checks")
+        self._wait(lambda: "seen" if pr_head_visible(self.repo, number, head, self.run) else None,
+                   "GitHub to see the pushed head")
+        if self._required_checks():
+            # `gh pr checks --required --watch` exits 0 only when every required check
+            # passed; with no protection it would show nothing and exit green, so that
+            # case keeps the strict reading of every check the run reports.
+            ok, detail = pr_required_checks(self.repo, number, self.run)
+            if not ok:
+                raise ShipStop(self._step, detail)
+            self.log(f"   {detail}")
+        else:
+            self._wait(lambda: self._checks_verdict(number, head), "the pull request checks")
         tested = self._pull_request_tree(number)  # before the merge: that ref goes with it
         self._enter("merge")
         self._do("gh", "pr", "merge", str(number), "--merge", what="merge")
@@ -449,6 +460,14 @@ def _checkout_of_cwd() -> Path | None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    from nexgen_core import maintainer
+
+    refused = maintainer.refusal()
+    if refused:
+        # Shipping publishes a signed release. It is the one command this whole
+        # module exists for, and it runs only on a registered maintainer machine.
+        print(refused, file=sys.stderr)
+        return 1
     parser = argparse.ArgumentParser(prog="nexgen release ship", description=__doc__.splitlines()[0])
     parser.add_argument("bump", nargs="?", default="patch", help="patch, minor, major or X.Y.Z (ignored if VERSION is already bumped)")
     parser.add_argument("--notes", default="", help="one line added on top of the Unreleased notes")

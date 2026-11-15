@@ -9,8 +9,9 @@ Shape choices, all of them dictated by the standard or by what the gateway sends
 - answers are `application/json`, one JSON-RPC message per POST, never a stream.
   Streamable HTTP allows that (`GET` on the endpoint is what a server without a
   standalone stream answers with 405, which is what this one does);
-- a notification is accepted with 202 and forwarded, because `initialize` and
-  `notifications/initialized` are how a session opens;
+- a notification is accepted with 202, because a notification is not something to
+  answer; the channel that holds the backend has already performed the handshake the
+  gateway is announcing, so there is nobody left to forward it to;
 - `Mcp-Session-Id` is not issued: the bridge is stateless towards the client and
   the backend keeps whatever session it keeps, so a gateway restart does not leave
   a session the bridge has forgotten about;

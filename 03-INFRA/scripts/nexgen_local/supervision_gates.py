@@ -42,7 +42,7 @@ SKIP_TIMEOUT_S = 300.0
 #: The project's own anti-leak scan: the workflow names it, these two files run it.
 LEAK_WORKFLOW = "leak_scan.py"
 LEAK_SCRIPT = "03-INFRA/agent-universal-layer/leak-scan/leak_scan.py"
-LEAK_PATTERNS = "03-INFRA/agent-universal-layer/leak-scan/leak_patterns.yaml"
+LEAK_RULES = "03-INFRA/agent-universal-layer/leak-scan/gitleaks.toml"
 LEAK_TIMEOUT_S = 300.0
 #: The report an executor sometimes leaves inside the copy instead of the task folder.
 REPORT_FILE = "30-resoconto-{unit}.md"
@@ -204,11 +204,11 @@ def _leak_gate(folder: Path, base: str, head: str) -> list[GateResult]:
     declared = _declares_leak_scan(folder)
     if not declared:
         return []
-    script, patterns = Path(folder) / LEAK_SCRIPT, Path(folder) / LEAK_PATTERNS
-    if not script.is_file() or not patterns.is_file():
-        return [GateResult("scansione fughe", False, f"dichiarata ma {LEAK_SCRIPT} o {LEAK_PATTERNS} mancano")]
+    script, rules = Path(folder) / LEAK_SCRIPT, Path(folder) / LEAK_RULES
+    if not script.is_file() or not rules.is_file():
+        return [GateResult("scansione fughe", False, f"dichiarata ma {LEAK_SCRIPT} o {LEAK_RULES} mancano")]
     argv = [
-        sys.executable, str(script), "--patterns", str(patterns),
+        sys.executable, str(script), "--config", str(rules),
         "--repo", str(folder), "--commit-range", f"{base}..{head}",
     ]
     try:

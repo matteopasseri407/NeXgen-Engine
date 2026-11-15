@@ -27,6 +27,7 @@ from nexgen_core.openclaw.companion import Companion  # noqa: E402 - sys.path sh
 from nexgen_core.openclaw.detect import Detection, Installation, LocalModels, Login  # noqa: E402
 from nexgen_core.openclaw.setup import run_setup  # noqa: E402
 from nexgen_core.openclaw_service import RunResult  # noqa: E402
+from openclaw_patch_fake import answer_patch  # noqa: E402 - the stand-in for `openclaw config patch`
 
 TESTS_DIR = Path(__file__).resolve().parent
 PIN_FILE = TESTS_DIR.parent / "openclaw" / "pin.json"
@@ -56,6 +57,7 @@ class FakeRunner:
         self.uid = "1000"
         self.groups = "someone adm"
         self.sudo_ok = False
+        self.patch_errors: list[str] = []
 
     def __call__(self, argv, env=None):
         self.calls.append(list(argv))
@@ -74,6 +76,8 @@ class FakeRunner:
             return RunResult(0, "v24.22.1\n", "")
         if name == "systemctl":
             return RunResult(0, "", "")
+        if argv[1:3] == ["config", "patch"]:
+            return answer_patch(argv, dict(env or {}), errors=self.patch_errors)
         return RunResult(0, "", "")
 
     def commands(self) -> list[str]:
@@ -96,6 +100,9 @@ class FakeService:
     def status(self, dry_run: bool = False):
         self.events.append("status")
         return {"installed": self.installed, "mechanism": "systemd" if self.installed else None}
+
+    def extra_services(self):
+        return []
 
     def install(self, dry_run: bool = False):
         self.events.append("install")
@@ -158,7 +165,6 @@ class Machine:
             run=self.runner,
             service=self.service,
             out=self.lines.append,
-            stamp="20261024-120000",
             engine_root=ENGINE_ROOT,
             platform=platform,
             yes=True,

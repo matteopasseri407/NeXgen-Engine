@@ -165,5 +165,10 @@ def test_the_setup_does_not_touch_what_the_engine_does_not_own(tmp_path):
     one_setup(home)
 
     after = json.loads((home / ".openclaw" / "openclaw.json").read_text(encoding="utf-8"))
-    for section in ("channels", "memory", "nodeHost", "session", "mcp", "wizard", "meta"):
+    for section in ("channels", "memory", "nodeHost", "mcp", "wizard", "meta"):
         assert after[section] == original[section], section
+    # `session` is the one section the engine now proposes inside, because a channel bot
+    # with no reset policy grows one conversation forever: every key the person wrote
+    # there is still theirs, and only the reset policy is the engine's.
+    assert after["session"]["store"] == original["session"]["store"]
+    assert after["session"]["maintenance"] == original["session"]["maintenance"]

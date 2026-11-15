@@ -21,7 +21,7 @@ from supervision_repo import build, git_in
 
 VERIFY_OK = f'"{sys.executable}" -c "print(1)"'
 LEAK_SCRIPT = "03-INFRA/agent-universal-layer/leak-scan/leak_scan.py"
-LEAK_PATTERNS = "03-INFRA/agent-universal-layer/leak-scan/leak_patterns.yaml"
+LEAK_RULES = "03-INFRA/agent-universal-layer/leak-scan/gitleaks.toml"
 
 
 @pytest.fixture
@@ -66,13 +66,13 @@ def _declare_leak_scan(folder: Path, body: str) -> None:
     workflow.parent.mkdir(parents=True, exist_ok=True)
     workflow.write_text(
         "jobs:\n  fughe:\n    steps:\n      - run: python "
-        f"{LEAK_SCRIPT} --patterns {LEAK_PATTERNS}\n",
+        f"{LEAK_SCRIPT} --config {LEAK_RULES}\n",
         encoding="utf-8",
     )
     script = folder / LEAK_SCRIPT
     script.parent.mkdir(parents=True, exist_ok=True)
     script.write_text(body, encoding="utf-8")
-    (folder / LEAK_PATTERNS).write_text("patterns: []\n", encoding="utf-8")
+    (folder / LEAK_RULES).write_text('title = "fake"\n', encoding="utf-8")
 
 
 def test_collect_brings_a_report_left_inside_the_copy_to_the_task_folder(task, repo, tmp_path):
@@ -127,7 +127,7 @@ def test_the_leak_scan_runs_on_the_units_own_interval_and_a_leak_fails_collectio
     assert found[0].ok is False
     assert "un nome utente" in found[0].reason
     argv = json.loads((folder / "argv.json").read_text(encoding="utf-8"))
-    assert argv[:2] == ["--patterns", str(folder / LEAK_PATTERNS)]
+    assert argv[:2] == ["--config", str(folder / LEAK_RULES)]
     assert argv[argv.index("--commit-range") + 1] == f"{base}..{head}"
 
 

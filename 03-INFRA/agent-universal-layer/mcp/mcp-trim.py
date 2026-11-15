@@ -31,6 +31,22 @@ def _load_gateway():
     return module
 
 
+def _use_utf8() -> None:
+    """Point this shim's streams at UTF-8 before it forwards anything.
+
+    A tool result carrying a character outside the machine's code page used to
+    kill the call with `UnicodeEncodeError` and reach the client as "internal
+    error". The folder is `sys.path[0]` when a CLI starts this file and is not
+    when the suite loads it by path, so it is appended here (never inserted).
+    """
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.append(here)
+    from mcp_stdio import use_utf8  # noqa: PLC0415 - resolved from the folder prepared just above
+
+    use_utf8()
+
+
 _OUT = threading.Lock()
 
 
@@ -108,6 +124,7 @@ class Trimmed:
 
 
 def main(argv: list[str]) -> int:
+    _use_utf8()
     if len(argv) != 1:
         print("usage: mcp-trim.py NAME", file=sys.stderr)
         return 2

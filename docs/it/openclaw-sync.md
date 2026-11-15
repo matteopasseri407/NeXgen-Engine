@@ -18,7 +18,8 @@ La cartella di stato è quella in cui vive il file: `~/.openclaw` per impostazio
 | Istruzioni | un blocco in ogni `AGENTS.md` delle cartelle di lavoro | la fase istruzioni della guardia |
 | Skill | `~/.agents/skills/` (il catalogo condiviso) | la fase skill |
 | Il plugin | `<state dir>/extensions/nexgen/` | la fase permessi della guardia |
-| Briefing, checkpoint, postura, engine | `<state dir>/extensions/nexgen/nexgen.config.json` | la fase permessi e lo stato del modulo |
+| Briefing, checkpoint, engine | `plugins.entries.nexgen.config` in `openclaw.json` (OpenClaw lo passa al plugin come `api.pluginConfig`) | il setup, a gateway fermo |
+| Gli stessi interruttori, per un'altra release | `<state dir>/extensions/nexgen/nexgen.config.json` | la fase permessi e lo stato del modulo |
 
 ## Connettori MCP
 
@@ -115,18 +116,27 @@ extensions/nexgen/
   sup-tools.mjs                 la supervisione che un agente può guidare, come strumenti
   evidence.mjs                  la risposta di un modello locale, tenuta alle sue ricevute
   engine-run.mjs                come ognuno di loro avvia il motore: nessuna shell, una scadenza
-  engine-config.mjs             legge nexgen.config.json, una volta per ogni lavoro con un interruttore
+  engine-config.mjs             gli interruttori: prima api.pluginConfig, poi nexgen.config.json
   session.mjs                   a quale sessione appartiene un evento di hook
   package.json                  openclaw.extensions -> ./index.mjs
-  openclaw.plugin.json          id: nexgen, onStartup, i nomi degli strumenti che possiede
+  openclaw.plugin.json          id: nexgen, onStartup, i nomi degli strumenti che possiede, lo schema della sua configurazione
   nexgen-guardrail-core.mjs     il nucleo condiviso che ogni adattatore importa
   nexgen-guardrail.config.json  quale corpo del guardrail, con quale timeout, il file di audit
-  nexgen.config.json            gli interruttori del motore: briefing, checkpoint, postura, engine,
-                                governor, evidence
+  nexgen.config.json            gli stessi interruttori, scritti e letti per un'altra release:
+                                briefing, checkpoint, engine, governor, evidence
   nexgen-quota-state.json       cosa ha letto il battito l'ultima volta, per il governor
   vault-briefing.txt            il testo del briefing, condiviso con Claude Code
   hooks/<corpo>.mjs             il corpo del guardrail (la politica privata)
 ```
+
+Gli interruttori hanno una sola derivazione (`OpenClawRuntime.plugin_switches`) e, per questa
+release, due case. OpenClaw legge `plugins.entries.nexgen.config`, lo valida contro il
+`configSchema` del manifest e lo passa al plugin come `api.pluginConfig`; il setup lo scrive lì a
+gateway fermo. Ogni deposito della guardia scrive le stesse sezioni anche in
+`nexgen.config.json` accanto al plugin, e il plugin preferisce quel file finché esiste, perché una
+sincronizzazione può riscriverlo fra due setup mentre `openclaw.json` viene letto solo all'avvio del
+gateway. Quel file, e la ricerca verso l'alto che lo trova su una copia di build, spariscono con la
+release successiva; fino ad allora `nexgen doctor` dice su quale delle due case sta questa macchina.
 
 Due cose sull'attivazione:
 
@@ -190,7 +200,7 @@ Una risposta senza prove non viene scartata e non passa in silenzio:
 1. il modello riceve un altro passaggio (`revise`, con `retry.maxAttempts: 1` e una chiave del motore) e gli viene detto quali affermazioni non hanno ricevuta;
 2. se torna comunque senza prove, o se un hook di stop sta già chiedendo un passaggio, la risposta viene consegnata con una nota visibile, `Unverified claims: ...`, sotto.
 
-L'interruttore e i provider non stanno nel plugin. Sono la sezione `evidence` di `nexgen.config.json`, scritta dal deposito a partire dalla configurazione in vigore: `{"enabled": true, "providers": ["llama-cpp", "ollama"]}`. Una macchina senza modelli locali riceve `{"enabled": false, "providers": []}`, e un modello cloud non è mai nella lista, quindi non viene mai controllato.
+L'interruttore e i provider non stanno nel plugin. Sono la sezione `evidence`, scritta dal deposito a partire dalla configurazione in vigore: `{"enabled": true, "providers": ["llama-cpp", "ollama"]}`. Una macchina senza modelli locali riceve `{"enabled": false, "providers": []}`, e un modello cloud non è mai nella lista, quindi non viene mai controllato. La sezione arriva al plugin da `plugins.entries.nexgen.config` (che OpenClaw consegna come `api.pluginConfig`) e, per un'altra release, dal `nexgen.config.json` accanto; il doctor legge gli stessi due posti nello stesso ordine.
 
 Due limiti da sapere. `revise` richiede un'integrazione di finalizzazione: il runner integrato e il relè degli hook di Codex ne hanno una, l'harness Copilot no, e una corsa che ha già avuto un effetto collaterale deterministico non viene riavvolta, ed è per questo che la nota è la strada che non dipende dall'harness. La nota si aggiunge alla consegna che porta il testo giudicato, riconosciuta dalla sua prima riga: un canale che riscrive la risposta fino a renderla irriconoscibile non riceve la nota, e nessun altro messaggio di quella sessione viene annotato al suo posto. Le tabelle delle frasi sono lunghe e bilingui, non esaustive: un'affermazione formulata in un modo che nessuna delle due liste contiene viene comunque controllata dove la regola non dipende da una frase (una fonte citata, un risultato inventato, fatti senza nulla di recuperato).
 
@@ -202,38 +212,35 @@ La continuità di sessione tra CLI passa per lo stato locale della macchina e MC
 - da Claude Code al contesto. Su `SessionStart` (ripresa o compact), `claude-vault-checkpoint.mjs` resta rigorosamente in sola lettura e non scrive mai. Se esiste un checkpoint recente (meno di 12 ore), aggiunge una nota di guida che cita l'agente, l'ora e la chiave di sessione, e indirizza chi opera a ispezionare la cronologia della conversazione attraverso il server MCP `openclaw` (`openclaw mcp serve`, reso disponibile tra gli harness dal bridge MCP).
 - Se il checkpoint manca, ha più di 12 ore o è illeggibile, l'hook ricade in silenzio sul solo testo del briefing.
 
-Il lavoro del checkpoint è controllato da `checkpoint.enabled` in `nexgen.config.json`, attivo per impostazione predefinita come il briefing. Qualsiasi errore durante la scrittura viene inghiottito in sicurezza e non rompe mai le sessioni di OpenClaw.
+Il lavoro del checkpoint è controllato da `checkpoint.enabled`, attivo per impostazione predefinita come il briefing e letto dalle stesse due case di ogni altro interruttore. Qualsiasi errore durante la scrittura viene inghiottito in sicurezza e non rompe mai le sessioni di OpenClaw.
 
 ### Postura
 
-La postura del manifest privato dei permessi viaggia in `nexgen.config.json` nel vocabolario neutro, e il plugin la rende lì. `openclaw.json` non viene mai riscritto dalla fase permessi, perché si legge all'avvio del gateway e non deve cambiare sotto un gateway in esecuzione.
+Il motore non scrive nessuna postura. Il plugin legge ancora la chiave `posture` (`bypass`, `accept-edits`, `ask`) quando è una persona a metterla in `nexgen.config.json` o in `plugins.entries.nexgen.config`, e si comporta come `bypass` quando manca o non è leggibile. La fase permessi non la scrive mai e non riscrive `openclaw.json`, perché quel file si legge all'avvio del gateway e non deve cambiare sotto un gateway in esecuzione.
 
-| Postura | Cosa fa OpenClaw |
+| Postura nel file | Cosa fa OpenClaw |
 |---|---|
-| `bypass` | decide solo il guardrail: ciò che il corpo permette gira senza domanda, ciò che nega viene bloccato, un corpo che chiede chiede comunque |
+| `bypass` (predefinita) | decide solo il guardrail: ciò che il corpo permette gira senza domanda, ciò che nega viene bloccato, un corpo che chiede chiede comunque |
 | `accept-edits` | come `bypass` per le scritture su file; un comando di shell che il corpo non nega chiede approvazione |
 | `ask` | ogni comando di shell chiede approvazione, e anche uno strumento che modifica file (`write`, `edit`, `apply_patch`) la chiede |
 
-Senza una postura nel manifest non viene scritto nulla, esattamente come nelle altre CLI; il plugin si comporta allora come `bypass`.
-
 ## Parità con Claude Code
 
-Il motore mette gli stessi sei strati in entrambi gli host. `nexgen doctor` riporta un esito `openclaw.parity.*` per strato e tace su una macchina che non ha entrambe le CLI.
+Il motore mette gli stessi cinque strati in entrambi gli host. `nexgen doctor` riporta un esito `openclaw.parity.*` per strato e tace su una macchina che non ha entrambe le CLI.
 
 | Strato | Claude Code | OpenClaw | Runtime `claude-cli` / `codex` |
 |---|---|---|---|
 | MCP | `mcpServers` in `~/.claude.json` | `mcp.servers` in `openclaw.json` | un agente `claude-cli` li raggiunge tramite la voce `lazy-mcp` in `mcp.servers` di OpenClaw (il file di Claude Code non viene mai letto lì); Codex usa la sua configurazione scritta dal renderer |
-| Istruzioni | `~/CLAUDE.md` punta all'`AGENTS.md` canonico | il blocco gestito nell'`AGENTS.md` di ogni cartella di lavoro | il runtime dell'agente carica le sue istruzioni |
+| Istruzioni | `~/.claude/CLAUDE.md` punta all'`AGENTS.md` canonico | il blocco gestito nell'`AGENTS.md` di ogni cartella di lavoro | il runtime dell'agente carica le sue istruzioni |
 | Skill | `~/.claude/skills` | `~/.agents/skills` (catalogo condiviso) | il runtime dell'agente carica le sue skill |
 | Guardrail | `PreToolUse` → `claude-guardrail-adapter.mjs` | `before_tool_call` nel plugin | il guardrail di Claude Code o di Codex, installato da questo motore |
 | Briefing | `SessionStart` → `claude-vault-checkpoint.mjs` | il briefing del plugin, stesso `vault-briefing.txt` | l'hook del checkpoint di Claude Code |
-| Postura | `permissions.defaultMode` | `posture` in `nexgen.config.json` | il file di postura di quella CLI |
 
 Uno strato allineato è un PASS; uno strato che un host ha e l'altro no è un WARN che nomina la lacuna. L'azione è quasi sempre `nexgen sync`, l'unica fase che scrive entrambi i lati. Lo strato MCP confronta solo i nomi, mai un blocco `env`: un token non viene mai letto, stampato o conservato.
 
 ## Cosa non copre
 
-Il plugin vede solo le chiamate che OpenClaw esegue lui stesso: il runner integrato, che è quello che usano gli agenti su OpenCode Go e sul modello locale. Un agente il cui runtime è `claude-cli` o `codex` esegue i suoi strumenti dentro Claude Code o Codex, dove sono già al comando il guardrail, il briefing e la postura di quella CLI, installati da questo stesso motore. Due di ciascuno su una chiamata significherebbero due politiche da tenere allineate; uno per chiamata è il punto.
+Il plugin vede solo le chiamate che OpenClaw esegue lui stesso: il runner integrato, che è quello che usano gli agenti su OpenCode Go e sul modello locale. Un agente il cui runtime è `claude-cli` o `codex` esegue i suoi strumenti dentro Claude Code o Codex, dove sono già al comando il guardrail e il briefing di quella CLI, installati da questo stesso motore. Due di ciascuno su una chiamata significherebbero due politiche da tenere allineate; uno per chiamata è il punto.
 
 `code_execution` esegue Python, non una riga di shell. È nell'insieme osservato perché un campo `command` su di esso verrebbe giudicato, ma il suo sorgente non viene passato a un corpo che confronta pattern di shell, dove corrisponderebbe per caso invece che per significato.
 

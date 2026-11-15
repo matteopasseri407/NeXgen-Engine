@@ -49,7 +49,6 @@ def _setup(tmp_path: Path, env: dict[str, str]) -> Setup:
         which=lambda cmd: "/bin/" + cmd,
         run=MagicMock(),
         service=MagicMock(),
-        stamp="test",
     )
 
 

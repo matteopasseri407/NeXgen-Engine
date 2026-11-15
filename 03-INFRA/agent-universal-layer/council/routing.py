@@ -15,6 +15,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from nexgen_core.processes import windows_command_argv as _windows_command_argv
+from seat_dsh import dsh_executable, dsh_probe_argv
 
 LEGACY_HEADING = "### Ranking per ruoli reali"
 LEGACY_END_HEADING = "### Motivazioni concise"
@@ -69,7 +71,9 @@ def seat_channel(seat: dict[str, Any]) -> str | None:
     cli = seat.get("cli")
     if cli == "opencode" and seat.get("base_url"):
         return "local"
-    if cli == "opencode":
+    if cli in ("opencode", "dsh"):
+        # A dsh seat still spends a plan's quota: the harness is the CLI, the pool is the
+        # route. Reading the pool from the CLI would make "a dsh seat is not Go" a rule.
         provider, _, model = str(seat.get("model", "")).partition("/")
         if provider == "opencode-go":
             return "go"
@@ -437,7 +441,7 @@ def seat_capabilities(seats: dict[str, dict[str, Any]]) -> dict[str, SeatCapabil
         if host and host.casefold() != socket.gethostname().casefold():
             capabilities[name] = SeatCapability(False, f"seat bound to host '{host}'")
             continue
-        if not shutil.which(cli):
+        if not (dsh_executable() if cli == "dsh" else shutil.which(cli)):
             capabilities[name] = SeatCapability(False, f"CLI '{cli}' not present on this host")
             continue
         if cli == "opencode" and seat.get("base_url"):
@@ -450,6 +454,22 @@ def seat_capabilities(seats: dict[str, dict[str, Any]]) -> dict[str, SeatCapabil
 
         if cli == "codex":
             capabilities[name] = _probe_codex_inventory(seat)
+            continue
+        if cli == "dsh":
+            # Presence is checked via the headless profile's own help; the model is trusted to
+            # the explicit per-call patch, because the harness exposes no local model inventory
+            # to read (its catalog is bundled, and a seat pins the route itself).
+            if cli not in cli_probe_cache:
+                with tempfile.TemporaryDirectory(prefix="council-capability-") as scratch:
+                    cli_probe_cache[cli] = _run_probe(dsh_probe_argv(Path(scratch)))
+            successful, output = cli_probe_cache[cli]
+            if not successful:
+                capabilities[name] = SeatCapability(False, f"dsh probe failed: {output}")
+                continue
+            capabilities[name] = SeatCapability(
+                True,
+                "dsh CLI present; model selected explicitly by the seat's per-call patch",
+            )
             continue
         if cli == "agy":
             # Presence is checked via --help and model selection is trusted
@@ -532,15 +552,40 @@ def _routing_id_variants(value: str) -> set[str]:
 
 
 def _matches(seat: dict[str, Any], candidate: RoutingCandidate) -> bool:
-    if candidate.cli and str(seat.get("cli", "")).casefold() != candidate.cli.casefold():
-        return False
-    if candidate.channel and seat_channel(seat) != candidate.channel:
+    """Whether this seat could answer the candidate's model, in its pool.
+
+    A named channel is the pool and it decides on its own: a ``dsh`` seat on the ``go`` route
+    spends the same pool as an OpenCode one, and the channel comes from the route. The CLI is
+    then a preference (see ``_matched_seats``), and only a candidate with no channel falls back
+    to requiring the CLI itself.
+    """
+    if candidate.channel:
+        if seat_channel(seat) != candidate.channel:
+            return False
+    elif candidate.cli and str(seat.get("cli", "")).casefold() != candidate.cli.casefold():
         return False
     configured = seat.get("routing_label")
     if isinstance(configured, str) and configured.strip().casefold() == candidate.value.casefold():
         return True
     routing_id = seat.get("routing_id")
     return isinstance(routing_id, str) and routing_id.strip().casefold() in _routing_id_variants(candidate.value)
+
+
+def _matched_seats(seats: dict[str, dict[str, Any]], candidate: RoutingCandidate) -> list[str]:
+    """Seat names for this candidate, narrowed to its own CLI when a seat on that CLI exists.
+
+    The Governor names a CLI per channel, so a seat on it stays the first choice and a second
+    harness on the same pool cannot silently take the work over; when no seat on that CLI has
+    the model, the other one on the same channel is the answer instead of "no local seat".
+    """
+    matched = [name for name, seat in seats.items() if _matches(seat, candidate)]
+    if not candidate.cli:
+        return matched
+    same_cli = [
+        name for name in matched
+        if str(seats[name].get("cli", "")).casefold() == candidate.cli.casefold()
+    ]
+    return same_cli or matched
 
 
 def resolve_role_candidates(
@@ -561,8 +606,8 @@ def resolve_role_candidates(
     selected: list[str] = []
     diagnostics: list[str] = []
     for index, candidate in enumerate(plan.roles[role]):
+        matched = _matched_seats(seats, candidate)
         slot = candidate.slot or ("prescelto" if index == 0 else f"rimpiazzo {index}")
-        matched = [name for name, seat in seats.items() if _matches(seat, candidate)]
         if not matched:
             lane = f" via {candidate.cli}" if candidate.cli else ""
             diagnostics.append(f"{slot}: {candidate.value}{lane}: no local seat associated")
@@ -781,7 +826,7 @@ def resolve(
     # 1. Evaluate primary role candidates in Governor's order
     role_candidates = plan.roles.get(role, ())
     for candidate in role_candidates:
-        matched = [name for name, seat in seats.items() if _matches(seat, candidate)]
+        matched = _matched_seats(seats, candidate)
         for name in matched:
             seat = seats[name]
             vendor = str(seat.get("vendor", "")).strip()

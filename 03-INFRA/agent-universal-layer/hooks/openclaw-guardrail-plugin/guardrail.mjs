@@ -35,12 +35,11 @@ const DIR = dirname(fileURLToPath(import.meta.url));
 const SIDECAR_PATH = join(DIR, "nexgen-guardrail.config.json");
 const CONFIG_PATH = join(DIR, "nexgen.config.json");
 
-// Where the engine's own files are, per call, is `engine-files.mjs`: beside this one, or
-// in the deposit the engine wrote when OpenClaw runs a build copy of the package. The
-// sidecar, the body and the switches are never part of that copy, so looking beside it
-// alone blocked every command on a machine whose guardrail was in place, and would have
-// dropped the person's posture with it. With no sidecar anywhere the caller stays
-// closed, as it must.
+// Where the engine's own files are, per call, is `engine-files.mjs`: the folder the host loaded
+// the plugin from, or the deposit the engine wrote beside it. The sidecar, the body and the
+// switches are never part of a build copy, so looking beside it alone blocked every command on a
+// machine whose guardrail was in place, and would have dropped the person's posture with it. With
+// no sidecar anywhere the caller stays closed, as it must.
 
 // The documented OpenClaw surfaces that execute something: `exec` is the shell,
 // `process` owns a running session, `terminal` types into an operator terminal,
@@ -161,8 +160,10 @@ export function isCodeModeCell(event, ctx) {
 }
 
 // The posture the engine last wrote, read per call: a changed manifest takes effect on the
-// next command, no gateway restart. An unreadable or absent file is the old behaviour
-// (`bypass`, the guardrail decides), never a silent looser posture.
+// next command, no gateway restart. It comes from `plugins.entries.nexgen.config` when the host
+// hands it over and from the engine's own file while that file exists (`engine-config.mjs`).
+// An unreadable or absent switch is the old behaviour (`bypass`, the guardrail decides), never
+// a silent looser posture.
 export function readPosture(configPath = CONFIG_PATH) {
   const posture = readPluginConfig(configPath).posture;
   return typeof posture === "string" && POSTURES.includes(posture) ? posture : DEFAULT_POSTURE;

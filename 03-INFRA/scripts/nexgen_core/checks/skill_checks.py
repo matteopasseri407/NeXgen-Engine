@@ -70,7 +70,10 @@ def check_skill_library_and_index(vault_data: Path, home: Path) -> CheckOutcome:
 _TARGET_VIEW_ATTRS: dict[str, tuple[str, ...]] = {
     "claude": ("claude_dir",),
     "antigravity": ("gemini_dir", "gemini_config_dir", "gemini_legacy_dir"),
-    "codex": ("codex_dir",),
+    # Codex reads user skills in `~/.codex/skills` (`codex debug prompt-input` lists it
+    # as its root in codex-cli 0.155.1) and the shared `~/.agents/skills` for the app:
+    # both hold its view, so both are checked.
+    "codex": ("active_dir", "codex_dir"),
     "opencode": ("active_dir", "opencode_dir", "opencode_native_dir"),
     # OpenClaw discovers `~/.agents/skills` on its own ("agents-skills-personal"):
     # the shared catalog is its native view, with no folder of its own.
@@ -380,6 +383,53 @@ def check_skills_pin_freshness(vault_data: Path, home: Path) -> CheckOutcome:
         id="skills.pin_freshness",
         severity=Severity.OK,
         message=t("All pinned third-party skills match the manifest"),
+    )
+
+
+def check_skill_view_drift(vault_data: Path, home: Path) -> CheckOutcome:
+    """A view must still hold the library's bytes, and the lock hash is how that is known.
+
+    A view is a link to the library wherever the machine allows one, and a copy
+    where it does not, so only a copy can drift: a skill edited in one runtime's
+    folder, or a copy a failed sync left behind, still exists and still looks
+    like the skill. Each library entry is hashed once, its copies beside it are
+    compared, and a link is skipped without reading a byte because it is the
+    library. The hash itself is the published `computedHash` of
+    vercel-labs/skills (`skill_hash.py`): the same bytes are the same string on
+    every machine, which is what makes the comparison portable.
+    """
+    from nexgen_core.skill_hash import skill_folder_hash
+
+    mat = SkillMaterializer(vault_data=vault_data, home=home)
+    # One folder for every view the materializer writes: `~/.agents/skills` is the
+    # view of three runtimes at once, and hashing it three times would only make the
+    # same answer slower. `_view_label` names all of them in the finding.
+    view_dirs = sorted({directory for dirs in mat.dirs_by_target.values() for directory in dirs})
+    drifted: list[str] = []
+    for entry in _library_skill_entries(mat.library_dir):
+        library_hash: str | None = None
+        for directory in view_dirs:
+            view = directory / entry.name
+            if view.is_symlink() or not view.is_dir():
+                continue
+            if library_hash is None:
+                library_hash = skill_folder_hash(entry)
+            if skill_folder_hash(view) != library_hash:
+                drifted.append(f"{entry.name} ({mat._view_label(directory)})")
+
+    if drifted:
+        return CheckOutcome(
+            id="skills.view_drift",
+            severity=Severity.WARN,
+            message=t("Skill views that no longer hold the bytes of their library entry: {views}.",
+                      views=", ".join(sorted(drifted))),
+            action=t("Run 'agent-sync apply' (skills-sync): it rewrites the view from the library, and a copy "
+                     "with an edit of yours is set aside with a backup first."),
+        )
+    return CheckOutcome(
+        id="skills.view_drift",
+        severity=Severity.OK,
+        message=t("Every skill view holds the bytes of its library entry"),
     )
 
 

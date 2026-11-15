@@ -200,8 +200,8 @@ def test_opencode_v2_binary_accepts_rendered_schema(tmp_path: Path) -> None:
 def test_cli_paths_point_at_canonical_files_not_fanouts(tmp_path: Path, monkeypatch) -> None:
     """Single-source config paths: revert/reset must operate where the
     renderer writes and the backups live. Antigravity's canonical file is
-    `antigravity/mcp_config.json`; the `-ide` copy is a fan-out symlink,
-    and resetting the symlink would orphan the canonical file."""
+    `config/mcp_config.json` (the path Google documents); the `-ide` copy is a
+    fan-out symlink, and resetting the symlink would orphan the canonical file."""
     import sys as _sys
 
     from nexgen_core import renderer_cli  # noqa: E402
@@ -212,10 +212,10 @@ def test_cli_paths_point_at_canonical_files_not_fanouts(tmp_path: Path, monkeypa
     home = tmp_path / "home"
     monkeypatch.setattr(renderer_cli, "HOME", home)
 
-    assert renderer_cli._cli_config_path("antigravity") == home / ".gemini" / "antigravity" / "mcp_config.json"
+    assert renderer_cli._cli_config_path("antigravity") == home / ".gemini" / "config" / "mcp_config.json"
     assert renderer_cli._cli_config_path("claude") == home / ".claude.json"
     assert renderer_cli._cli_config_path("codex") == home / ".codex" / "config.toml"
     candidates = renderer_cli._cli_config_candidates("antigravity")
-    assert candidates[0].parent.name == "antigravity"
+    assert candidates[0].parent.name == "config"
     assert any(p.parent.name == "antigravity-ide" for p in candidates)
     assert _sys.platform != "win32" or renderer_cli._cli_config_path("opencode").is_absolute()

@@ -116,7 +116,15 @@ dirty, from the dependency list in `pyproject.toml`. The launchers use it as soo
 verified, and fall back to any suitable Python until then, so the guard and the doctor still need nothing but PyYAML.
 `nexgen runtime check` says whether the interpreter you are running can import everything, `nexgen runtime ensure`
 creates or repairs the environment by hand, and `nexgen doctor` reports a missing library as broken with that command. A
-package install is its own environment and is only verified.
+package install is its own environment and is only verified. When `uv` is on `PATH` that environment is built by it, with
+`uv venv` and `uv pip install`; otherwise the engine creates it with `python -m venv` and fills it with pip, and both
+routes end at the same stamp and the same import check.
+
+An update that adds a dependency needs nothing from you. The first command of the new tree that runs in that
+environment and finds a declared library missing installs the dependency list into it and runs itself again, so the
+update that brings 3.0 (filelock, psutil and tomlkit are new) installs them on its way, and a fresh install builds the
+environment whenever any declared library is missing, not only PyYAML. A jump to a new major version is never taken
+unattended: run `nexgen update` once from a terminal, where you see the plan and answer the confirmation.
 
 The manual sequence below remains the recovery path for MINIMAL installs and for the one bootstrap upgrade from a
 version that predates the command.
@@ -152,20 +160,41 @@ version that predates the command.
    as it did (MINIMAL), something in the new version does not fit your setup. Roll back with
    `git reset --hard <previous-commit-or-tag>` and report what broke.
 
-## If you run a Cloud-Server install, that VPS is a second install
+## If you run a Cloud-Server install, the server follows the engine by itself
 
-Everything above upgrades the machine you typed it on. It does not touch your server. `03-INFRA/deploy/` (the
-`vault-mcp` write door that `vault-library` speaks to, the OCR API, n8n) is engine code that happens to run elsewhere,
-and the VPS keeps running the containers it was last deployed with. Nothing on your workstation can restart them for
-you.
+Everything above upgrades the machine you typed it on. The containers under `03-INFRA/deploy/` (the `vault-mcp` write
+door that `vault-library` speaks to, the OCR API, n8n) run on the server, and they used to keep running the code they
+were built from while the engine moved on. Three things now keep the two halves together.
 
-`nexgen doctor` does not compare the deployed `vault-mcp` server version against the engine version; there is no such
-check. `CHANGELOG.md` is the signal for every stack under `deploy/`: if a release mentions `deploy/`, assume the VPS
-needs the same tag.
+**The image says what built it.** `nexgen deploy vault-mcp` builds the container with the engine commit baked in, and
+the service publishes that short commit on its unauthenticated health route. Nothing else is published there.
 
-The redeploy is short and documented once in [`03-INFRA/deploy/README.md`](../03-INFRA/deploy/README.md) under
-"Upgrading the server side": pull the same tag on the VPS and re-run `bootstrap-vps.sh`. Keep the server on the tag
-your workstations are on, not on `main`.
+**`nexgen doctor` measures the gap.** On any machine that declares the server role or a Cloud-Server install it prints a
+`deploy.alignment` line comparing three commits: this engine's, the one recorded in `99-INDEX/ENGINE-PIN.txt` for the
+fleet, and the one the deployed `vault-mcp` reports. They agree and the line is green. A server built from another
+commit is a failure naming both commits and the single command that fixes it:
+
+```bash
+# on the server
+nexgen deploy vault-mcp
+```
+
+**An update on the server redeploys the stack it moved.** After a successful `nexgen update` on a machine with the server
+role, if the release changed `03-INFRA/deploy/vault-mcp` the command rebuilds that one service and probes it, unattended
+updates included, because on a headless VPS the timer is the path that updates the engine. An update that did not touch
+the stack restarts nothing. The rebuild runs *before* the update's final doctor check, so a server never stays half-new: a
+rebuild that fails puts its own container back on the image that worked and the update is undone as a whole.
+
+The deploy is the same command by hand, and it is written to be un-watched. It backs up the current source, keeps the
+running image tagged as `<image>-pre-deploy`, rebuilds **only** the `vault-mcp` service, and then asks the rebuilt server
+the two MCP calls a client makes (the handshake and the tool list). If that probe fails, it puts the previous image back,
+restores the saved source, and exits non-zero saying so. A rebuild is a restart of the write door: notes are committed per
+write so nothing in flight is lost, but an in-progress tool call fails. Deploy when you are not mid-session.
+
+Two things remain manual, and the doctor says so instead of pretending otherwise. The OCR API and n8n have no probe that
+reports their commit, so a release touching them is still signalled by `CHANGELOG.md` and deployed by re-running
+`bootstrap-vps.sh`; and a server whose container was built from a copy of the source outside the checkout names that
+directory once with `NEXGEN_VAULT_MCP_SRC`, which the deploy refreshes from the engine tree on every run.
 
 A Local-Only install has none of this: no VPS, no `deploy/`, nothing to upgrade twice.
 
@@ -174,10 +203,9 @@ A Local-Only install has none of this: no VPS, no `deploy/`, nothing to upgrade 
 The same drift risk applies one machine closer to home. In Local-Full mode the same connectors under
 `03-INFRA/deploy/` run on this machine's own Docker instead of a VPS, started with `nexgen stack up`. A `nexgen sync` or
 `nexgen update` here upgrades the engine code and the CLI configuration, but does not restart or redeploy the running
-containers, and `nexgen doctor` does not compare the running stack's version against the engine version either; there
-is no such check, as for Cloud-Server. Watch `CHANGELOG.md` for anything mentioning `deploy/`, then re-run
-`nexgen stack up`, which re-applies the current compose definitions, to bring the containers current. `nexgen stack
-status` shows what is actually running.
+containers, and `nexgen doctor` stays silent about them: `nexgen deploy` is the server's command, and a workstation
+restarts its own stack with `nexgen stack up`, which re-applies the current compose definitions. Watch `CHANGELOG.md` for
+anything mentioning `deploy/`, then run it. `nexgen stack status` shows what is actually running.
 
 ## Manifest and skill-manifest fields
 

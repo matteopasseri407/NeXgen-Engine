@@ -55,6 +55,20 @@ def test_a_local_seat_that_could_leak_or_cannot_run_is_refused(tmp_path, overrid
         _load(tmp_path, {**MINICPM, **override})
 
 
+@pytest.mark.parametrize("cli", ["dsh", "opencode", "ollama"])
+def test_a_supported_cli_is_accepted_while_the_file_is_read(tmp_path, cli):
+    seat = {**MINICPM, "cli": cli}
+    if cli != "opencode":
+        seat.pop("base_url")
+    assert _load(tmp_path, seat)["seats"]["local-minicpm"]["cli"] == cli
+
+
+def test_a_mistyped_cli_is_refused_while_the_file_is_read(tmp_path):
+    """Un `cli` sbagliato non deve comparire nel menu dei seggi per poi fallire alla partenza."""
+    with pytest.raises(ConfigError, match="cli must be one of .*dsh"):
+        _load(tmp_path, {**MINICPM, "cli": "dshh"})
+
+
 def test_local_inference_always_goes_through_opencode():
     assert CHANNEL_TO_CLI["local"] == "opencode"
     assert seat_channel(MINICPM) == "local"

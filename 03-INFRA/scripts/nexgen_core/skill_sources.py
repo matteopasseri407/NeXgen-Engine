@@ -6,6 +6,11 @@ module fetches the bytes for everything the engine doesn't own. A new
 acquisition lane (a registry, a package manager) lands here as one method
 on `SkillFetcher`, without touching placement, views, index or CLI -- that
 split is what keeps a new origin a small change instead of a rewrite.
+
+The github lane is the one that grew past the size of a section (a pin, two
+backends, a boundary check), so it has its own module, `skill_github.py`. The
+names below are re-exported from it: an origin is still added on `SkillFetcher`,
+and every caller still finds `clone_url` and `github_skill_source` here.
 """
 from __future__ import annotations
 
@@ -15,8 +20,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -24,12 +27,15 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.action_notes import ERROR, WARN  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core import skill_github as _github  # noqa: E402 - the github lane, split out at the size ceiling
+from nexgen_core.action_notes import ERROR  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import t  # noqa: E402
 from nexgen_core.files import atomic_write_text, retry_transient_lock  # noqa: E402
 from nexgen_core.lock import HostLock  # noqa: E402
 from nexgen_core.paths import resolve_home, resolve_state_dir  # noqa: E402
 from nexgen_core.processes import ShimEntryError, windows_command_argv  # noqa: E402 - one place knows the Windows shims
+from nexgen_core.skill_backups import next_backup_path, prune_skill_backups  # noqa: E402 - the on-disk set-aside names
+from nexgen_core.skill_github import ensure_github_checkout  # noqa: E402 - the github lane itself
 
 
 @dataclass
@@ -57,19 +63,13 @@ SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 #: A pin that isn't a full commit isn't a pin: a branch or tag moves under
 #: your feet and the skill changes without anyone having chosen that.
-COMMIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
-
-#: A clone that doesn't respond must not stall the guard cycle.
-GIT_CLONE_TIMEOUT_SECONDS = 120
+COMMIT_SHA_RE = _github.COMMIT_SHA_RE
 
 #: A third-party installer that hangs must not hold the guard cycle open.
 INSTALLER_TIMEOUT_SECONDS = 300
 
 #: Git must never stop to ask for credentials inside a timer.
-GIT_NONINTERACTIVE_ENV = {
-    "GIT_TERMINAL_PROMPT": "0",
-    "GCM_INTERACTIVE": "Never",
-}
+GIT_NONINTERACTIVE_ENV = _github.GIT_NONINTERACTIVE_ENV
 
 
 def is_safe_skill_name(name: str) -> bool:
@@ -105,45 +105,6 @@ def same_tree_content(src: Path, dst: Path) -> bool:
         return False
 
 
-def next_backup_path(path: Path) -> Path:
-    """A free backup path next to `path`."""
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    candidate = path.with_name(f"{path.name}.bak-{stamp}")
-    n = 2
-    while candidate.exists():
-        candidate = path.with_name(f"{path.name}.bak-{stamp}-{n}")
-        n += 1
-    return candidate
-
-
-#: How many set-aside skill views survive rotation next to the live one.
-SKILL_BACKUP_KEEP = 3
-
-
-def _prune_skill_backups(path: Path) -> None:
-    """Drops rotated-out set-aside views, oldest first.
-
-    Covers both the `<name>.bak-<stamp>` names written here and the
-    `<name>.pre-<tag>-<stamp>.bak` names written by files.backup_file,
-    so a flap cannot pile one backup per guard cycle in the skills dirs.
-    """
-    seen: set[Path] = set()
-    for pattern in (f"{path.name}.bak-*", f"{path.name}.pre-*.bak"):
-        seen.update(path.parent.glob(pattern))
-    ordered = sorted(seen)
-    is_junction = getattr(os.path, "isjunction", lambda p: False)
-    for old in ordered[: max(len(ordered) - SKILL_BACKUP_KEEP, 0)]:
-        # unlink() drops files, symlinks AND junctions without touching
-        # any target (rmtree would follow a junction into a live tree).
-        try:
-            if old.is_symlink() or old.is_file() or is_junction(old):
-                old.unlink()
-            else:
-                shutil.rmtree(old)
-        except OSError:
-            pass
-
-
 def _link_or_copy_body(src: Path, dst: Path) -> bool:
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.is_symlink() or dst.is_file():
@@ -157,7 +118,7 @@ def _link_or_copy_body(src: Path, dst: Path) -> bool:
         if same_tree_content(src, dst):
             return False
         retry_transient_lock(lambda: dst.rename(next_backup_path(dst)))
-        _prune_skill_backups(dst)
+        prune_skill_backups(dst)
     elif os.path.lexists(dst):
         # Dangling junction or link (Windows): not a symlink, file, or
         # dir by probing, yet present on disk. It used to fall through
@@ -194,37 +155,20 @@ def make_link_or_copy(src: Path, dst: Path) -> bool:
     return _link_or_copy_body(src, dst)
 
 
-#: `owner/name`, the shorthand a manifest declares a GitHub skill with.
-GITHUB_SHORTHAND_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+#: `owner/name`, the shorthand a manifest declares a GitHub skill with. The
+#: github lane (pin, fetch, boundary) lives in `skill_github.py`; these names stay
+#: importable from here because that is where every caller has always found them.
+GITHUB_SHORTHAND_RE = _github.GITHUB_SHORTHAND_RE
 
 
 def clone_url(repo: str) -> str:
-    """The URL to clone from, given what the manifest says.
-
-    A manifest names a GitHub skill the way people write it — `owner/name` —
-    and the rewrite handed that straight to `git clone`, which read it as a
-    local path and reported that the repository does not exist. Three skills
-    on this machine failed on every alignment for that reason.
-
-    A value that already carries a scheme, or looks like an SSH remote, is
-    passed through: somebody who wrote a full URL meant it.
-    """
-    repo = repo.strip()
-    if GITHUB_SHORTHAND_RE.match(repo):
-        return f"https://github.com/{repo}.git"
-    return repo
+    """The URL to clone from, given what the manifest says (see `skill_github`)."""
+    return _github.clone_url(repo)
 
 
 def github_skill_source(cache_dir: Path, entry: SkillEntry) -> Path:
     """Resolve a declared skill within its verified repository boundary."""
-    root = cache_dir.resolve()
-    source = (cache_dir / (entry.path or "")).resolve()
-    skill = source / "SKILL.md"
-    if not source.is_relative_to(root) or not skill.resolve().is_relative_to(root):
-        raise ValueError(t("github skill '{name}': source escapes the cloned repository", name=entry.name))
-    if not skill.is_file():
-        raise ValueError(t("github skill '{name}': missing SKILL.md at the declared path", name=entry.name))
-    return source
+    return _github.github_skill_source(cache_dir, entry)
 
 
 class SkillFetcher:
@@ -239,98 +183,11 @@ class SkillFetcher:
     def ensure_github_checkout(self, cache_dir: Path, entry: SkillEntry) -> tuple[bool, str | None]:
         """Verify a pin off to the side, then replace the usable cache.
 
-        Acquisition failures leave the previous bytes and views intact.
-        Local edits are preserved and reported, never certified by HEAD alone.
+        The github lane itself lives in `skill_github.py` (the pinned `skills`
+        CLI first, a clone at the pin second); this method keeps the shape the
+        materializer calls, and hands it this machine's home for the scratch dir.
         """
-        env = {**os.environ, **GIT_NONINTERACTIVE_ENV}
-
-        def git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-            base = ["git"] + (["-C", str(cwd)] if cwd else [])
-            return subprocess.run(
-                base + list(args),
-                stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
-                timeout=GIT_CLONE_TIMEOUT_SECONDS, env=env,
-            )
-
-        try:
-            if not COMMIT_SHA_RE.fullmatch(entry.commit or ""):
-                raise ValueError(t("github skill '{name}': a full commit pin is required", name=entry.name))
-            if cache_dir.is_symlink():
-                raise ValueError(t("github skill '{name}': cache is a foreign symlink; preserved", name=entry.name))
-            clean_cache = False
-            if cache_dir.is_dir():
-                head = git("rev-parse", "HEAD", cwd=cache_dir)
-                if head.returncode == 0:
-                    dirty = git("status", "--porcelain", "--untracked-files=all", cwd=cache_dir)
-                    if dirty.returncode or dirty.stdout.strip():
-                        raise ValueError(t("github skill '{name}': cache has local changes; preserved", name=entry.name))
-                    clean_cache = True
-                    origin = git("remote", "get-url", "origin", cwd=cache_dir)
-                    if (head.stdout.strip().lower() == (entry.commit or "").lower()
-                            and origin.returncode == 0 and origin.stdout.strip() == clone_url(entry.repo or "")):
-                        github_skill_source(cache_dir, entry)
-                        return True, None
-
-            cache_dir.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.TemporaryDirectory(prefix=f"{cache_dir.name}.incoming-", dir=cache_dir.parent) as tmp:
-                incoming = Path(tmp) / "checkout"
-                res = git("clone", "--quiet", "--", clone_url(entry.repo or ""), str(incoming))
-                if res.returncode != 0:
-                    return False, ERROR + t(
-                        "github skill '{name}': cloning {repo} failed: {error}",
-                        name=entry.name, repo=entry.repo, error=res.stderr.strip(),
-                    )
-                res = git("checkout", "--quiet", "--detach", entry.commit or "", cwd=incoming)
-                if res.returncode:
-                    git("fetch", "--quiet", "origin", entry.commit or "", cwd=incoming)
-                    res = git("checkout", "--quiet", "--detach", entry.commit or "", cwd=incoming)
-                if res.returncode != 0:
-                    return False, ERROR + t(
-                        "github skill '{name}': commit {commit} is not reachable in the repository: {error}",
-                        name=entry.name, commit=entry.commit, error=res.stderr.strip(),
-                    )
-                github_skill_source(incoming, entry)
-                backup = next_backup_path(cache_dir) if cache_dir.exists() else None
-                if backup is not None:
-                    try:
-                        retry_transient_lock(lambda: cache_dir.rename(backup))
-                    except OSError as exc:
-                        # Transient lock (a CLI holding the skill open, a
-                        # scanner, a concurrent cycle): nothing was touched,
-                        # old bytes stay valid, retry next cycle. Reported
-                        # as not materialized so the caller records no pin.
-                        import errno as _errno
-
-                        if exc.errno in (_errno.EACCES, _errno.EBUSY):
-                            return False, WARN + t(
-                                "github skill '{name}': cache locked by another process, keeping the previous pin and retrying next cycle",
-                                name=entry.name,
-                            )
-                        raise
-                try:
-                    retry_transient_lock(lambda: incoming.rename(cache_dir))
-                except OSError:
-                    if backup is not None:
-                        retry_transient_lock(lambda: backup.rename(cache_dir))
-                    raise
-                # Clean Git caches are reproducible from their pin. Preserve
-                # an unknown/corrupt directory instead of deleting user bytes.
-                if backup is not None and clean_cache:
-                    try:
-                        shutil.rmtree(backup)
-                    except OSError:
-                        return True, WARN + t(
-                            "github skill '{name}': updated; old cache cleanup failed at {path}",
-                            name=entry.name, path=backup,
-                        )
-            return True, None
-        except subprocess.TimeoutExpired:
-            return False, ERROR + t(
-                "github skill '{name}': {repo} did not respond within {timeout}s, retrying next cycle",
-                name=entry.name, repo=entry.repo, timeout=GIT_CLONE_TIMEOUT_SECONDS,
-            )
-        except (OSError, ValueError) as exc:
-            return False, ERROR + t("github skill '{name}': {error}", name=entry.name, error=exc)
+        return ensure_github_checkout(cache_dir, entry, self.home)
 
     def _installed_versions_file(self) -> Path:
         return resolve_state_dir(self.home) / "installed-skill-versions.json"

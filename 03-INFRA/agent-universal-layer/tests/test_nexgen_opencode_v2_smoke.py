@@ -107,10 +107,11 @@ def test_smoke_scope_file_is_the_loaded_instructions(tmp_path: Path, monkeypatch
     assert outcome is not None and outcome.severity.name == "OK"
 
 
-def test_smoke_posture_and_guardrail_use_native_keys(
+def test_smoke_guardrail_and_its_shell_rule_use_native_keys(
     tmp_path: Path, monkeypatch, opencode_dialect
 ) -> None:
-    """Posture lands in ordered `permissions`; the guardrail is a plugin directory, not a registration."""
+    """The guardrail is a plugin directory, not a registration, and the one rule it writes is
+    the `shell: ask` that makes the plugin reachable."""
     opencode_dialect("2.2.0")
     home, _vault = _sandbox(tmp_path, monkeypatch)
     cfg = home / ".config" / "opencode" / "opencode.json"
@@ -123,12 +124,6 @@ def test_smoke_posture_and_guardrail_use_native_keys(
         encoding="utf-8",
     )
     rt = OpenCodeRuntime()
-    assert rt.apply_posture(home, "bypass") is not None
-    data = json.loads(cfg.read_text(encoding="utf-8"))
-    assert "permission" not in data
-    effects = {(r["action"], r["resource"]): r["effect"] for r in data["permissions"]}
-    assert effects[("edit", "*")] == "allow"
-    assert effects[("shell", "*")] == "allow"
 
     hook_source = tmp_path / "guardrail.mjs"
     hook_source.write_text("// policy\n", encoding="utf-8")
@@ -138,11 +133,16 @@ def test_smoke_posture_and_guardrail_use_native_keys(
     (hooks_dir / "nexgen-guardrail-core.mjs").write_text("// core\n", encoding="utf-8")
     assert rt.install_guardrail(home, hook_source, hooks_dir) is not None
     data = json.loads(cfg.read_text(encoding="utf-8"))
+    assert "permission" not in data  # the V1 object migrates, it is not duplicated
+    effects = {(r["action"], r["resource"]): r["effect"] for r in data["permissions"]}
+    assert effects[("shell", "*")] == "ask"
     # The guardrail is a directory OpenCode loads by itself: nothing about it is registered, and the person's own
     # plugin stays where they put it.
     assert data.get("plugin") == ["some-other-plugin"]
     assert not any("guardrail" in str(p) for key in ("plugin", "plugins") for p in data.get(key, []))
     assert (home / ".config" / "opencode" / "plugins" / "nexgen-guardrail" / "index.mjs").is_file()
+    sidecar = rt.read_guardrail_sidecar(rt.guardrail_sidecar(home))
+    assert sidecar["autoAllow"] is True and sidecar["strict"] is True
     # Second guardrail run is silent: idempotence the guard relies on.
     assert rt.install_guardrail(home, hook_source, hooks_dir) is None
 

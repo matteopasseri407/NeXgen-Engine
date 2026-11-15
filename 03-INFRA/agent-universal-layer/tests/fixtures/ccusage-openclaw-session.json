@@ -1,0 +1,58 @@
+{
+  "sessions": [
+    {
+      "sessionId": "595239de-69ca-402d-b1d5-431335d07102",
+      "inputTokens": 4200,
+      "outputTokens": 310,
+      "cacheCreationTokens": 900,
+      "cacheReadTokens": 250000,
+      "totalTokens": 255410,
+      "totalCost": 0.42,
+      "modelsUsed": ["[openclaw] claude-opus-5-5"],
+      "modelBreakdowns": {
+        "[openclaw] claude-opus-5-5": {
+          "inputTokens": 4200,
+          "outputTokens": 310,
+          "cacheCreationTokens": 900,
+          "cacheReadTokens": 250000,
+          "totalTokens": 255410,
+          "totalCost": 0.42
+        }
+      },
+      "lastActivity": "2026-11-14T21:10:00.000Z",
+      "firstActivity": "2026-11-14T18:02:00.000Z",
+      "projectPath": "OpenClaw"
+    },
+    {
+      "sessionId": "1d371317-e3a3-4626-b5e9-e1e158ec5339",
+      "inputTokens": 1860,
+      "outputTokens": 95,
+      "cacheCreationTokens": 500,
+      "cacheReadTokens": 109928,
+      "totalTokens": 112383,
+      "totalCost": 0.03,
+      "modelsUsed": ["[openclaw] gpt-5.2"],
+      "modelBreakdowns": {
+        "[openclaw] gpt-5.2": {
+          "inputTokens": 1860,
+          "outputTokens": 95,
+          "cacheCreationTokens": 500,
+          "cacheReadTokens": 109928,
+          "totalTokens": 112383,
+          "totalCost": 0.03
+        }
+      },
+      "lastActivity": "2026-11-13T09:41:00.000Z",
+      "firstActivity": "2026-11-13T08:15:00.000Z",
+      "projectPath": "OpenClaw"
+    }
+  ],
+  "totals": {
+    "inputTokens": 6060,
+    "outputTokens": 405,
+    "cacheCreationTokens": 1400,
+    "cacheReadTokens": 359928,
+    "totalTokens": 367793,
+    "totalCost": 0.45
+  }
+}

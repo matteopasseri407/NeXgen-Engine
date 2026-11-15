@@ -1,13 +1,15 @@
 """Which OpenClaw plugins may read the conversation: the grant the engine writes for each one.
 
-One job: write `hooks.allowConversationAccess` for the engine's own guardrail plugin,
-and for the `google-antigravity-cli` plugin when the setup has it installed and enabled.
+One job: write `hooks.allowConversationAccess` for the engine's own guardrail plugin, and the
+engine's own switches into `plugins.entries.nexgen.config`, and the same grant for the
+`google-antigravity-cli` plugin when the setup has it installed and enabled.
 OpenClaw withholds the conversation hooks from every plugin not bundled with it unless
 this grant is written. Without it the Antigravity plugin's `before_prompt_build` hook is
 blocked, so `agy` never gets its lost turns back.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
@@ -43,8 +45,13 @@ def _with_antigravity_grant(config: dict[str, Any], installed: bool) -> dict[str
     return _granted(config, LOCAL_AGY_BACKEND)
 
 
-def with_engine_plugin(config: dict[str, Any], deposited: bool, agy_installed: bool = False) -> dict[str, Any]:
-    """The engine's guardrail plugin, enabled, and allowed to read the conversation.
+def with_engine_plugin(
+    config: dict[str, Any],
+    deposited: bool,
+    agy_installed: bool = False,
+    switches: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The engine's guardrail plugin, enabled, allowed to read the conversation, with its switches.
 
     Enabling a plugin that is not there makes OpenClaw fail to start; the
     plugin is deposited by the runtime adapter, which is the only thing that
@@ -57,6 +64,12 @@ def with_engine_plugin(config: dict[str, Any], deposited: bool, agy_installed: b
     is the engine's own and already runs inside the gateway process; this is what makes
     its registration legal. The Antigravity plugin gets the same grant when it is installed
     and enabled (`agy_installed`), so its own turn hook is not withheld either.
+
+    `switches` is `OpenClawRuntime.plugin_switches`: OpenClaw parses
+    `plugins.entries.<id>.config`, validates it against the plugin's own schema and hands it
+    over as `api.pluginConfig`, which is why they belong here rather than only in the file
+    beside the plugin. They are merged into the entry, never replacing it: a key the person
+    wrote stays.
     """
     config = _with_antigravity_grant(config, agy_installed)
     if not deposited:
@@ -68,5 +81,7 @@ def with_engine_plugin(config: dict[str, Any], deposited: bool, agy_installed: b
     entries = dict(plugins.get("entries") or {})
     entry = dict(entries.get(PLUGIN_ID) or {})
     entry["enabled"] = True
+    if switches:
+        entry["config"] = {**(entry.get("config") if isinstance(entry.get("config"), dict) else {}), **switches}
     entries[PLUGIN_ID] = entry
     return _granted({**config, "plugins": {**plugins, "allow": allow, "entries": entries}}, PLUGIN_ID)

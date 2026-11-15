@@ -170,11 +170,13 @@ def check_local_agy(
 ) -> list[CheckOutcome]:
     """Every line this backend gets, and none at all on a file that never names it.
 
-    The facts are separate lines on purpose: the plugin on disk, the `agy` command
-    it drives, and the mode the plugin was given. A missing plugin used to be
+    The facts are separate lines on purpose: the plugin on disk, whether its MCP bridge
+    is patched to inject only the loopback server and the `lazy-mcp` gateway, the `agy`
+    command it drives, and the mode the plugin was given. A missing plugin used to be
     reported as a `permissionMode` problem, which pointed the person at a setting
-    while the plugin that reads it was absent. A check that cannot see enough --
-    no state folder, no home -- says nothing about that fact rather than guessing.
+    while the plugin that reads it was absent, and an unpatched bridge is the reason
+    `agy` starts every connector itself. A check that cannot see enough -- no state
+    folder, no home -- says nothing about that fact rather than guessing.
     """
     backend = local_agy_backend(config)
     if backend is None:

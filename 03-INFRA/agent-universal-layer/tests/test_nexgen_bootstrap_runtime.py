@@ -40,8 +40,13 @@ def _fake_provision(monkeypatch, tmp_path: Path) -> dict[str, list]:
     def execv(path, args):
         calls["exec"].append((path, args))
 
+    def call(args):
+        calls["exec"].append((args[0], args))
+        return 0
+
     monkeypatch.setattr(bootstrap_runtime, "ensure_runtime", ensure)
     monkeypatch.setattr(bootstrap_runtime.os, "execv", execv)
+    monkeypatch.setattr(bootstrap_runtime.subprocess, "call", call)
     monkeypatch.setattr(bootstrap_runtime, "resolve_runtime_dir", lambda home=None: tmp_path / "runtime")
     return calls
 
@@ -59,7 +64,7 @@ def test_missing_yaml_provisions_and_reruns_the_same_bootstrap(tmp_path, monkeyp
 
     stopped = bootstrap_runtime.provision_before_prerequisites(["--role", "server"])
 
-    assert stopped is None
+    assert stopped == (0 if os.name == "nt" else None)  # Windows waits for the rerun's own code
     assert capsys.readouterr().out.count("\n") == 1, "one line, before the slow part"
     runtime_dir, engine_clone = calls["ensure"][0]
     assert runtime_dir == tmp_path / "runtime"
@@ -150,7 +155,8 @@ def test_a_check_run_borrows_an_environment_an_earlier_install_built(tmp_path, m
     python.parent.mkdir(parents=True)
     python.write_text("", encoding="utf-8")
 
-    assert bootstrap_runtime.provision_before_prerequisites(["--role", "server", "--check"], check=True) is None
+    assert bootstrap_runtime.provision_before_prerequisites(["--role", "server", "--check"], check=True) == (
+        0 if os.name == "nt" else None)  # Windows waits for the rerun's own code
     assert calls["ensure"] == []
     assert calls["exec"][0][1][2:] == ["--role", "server", "--check"]
 
@@ -167,3 +173,25 @@ def test_a_role_check_without_the_environment_says_why_instead_of_a_traceback(tm
     assert code == 0
     assert "run it once without --check" in out
     assert calls["ensure"] == [] and calls["exec"] == []
+
+
+def test_a_python_with_yaml_but_without_a_declared_library_still_gets_the_environment(tmp_path, monkeypatch, capsys):
+    """3.0 on a developer's Python: PyYAML there, filelock not; the install died on the import."""
+    monkeypatch.setattr(bootstrap_runtime, "yaml_available", lambda: True)
+    monkeypatch.setattr(bootstrap_runtime, "missing_imports", lambda: ["filelock", "psutil"])
+    calls = _fake_provision(monkeypatch, tmp_path)
+
+    stopped = bootstrap_runtime.provision_before_prerequisites(["--role", "standalone"])
+
+    assert stopped == (0 if os.name == "nt" else None)  # Windows waits for the rerun's own code
+
+    assert calls["ensure"] == [(tmp_path / "runtime", bootstrap.SCRIPTS_DIR.parents[1])]
+    assert calls["exec"][0][1][-2:] == ["--role", "standalone"]
+    assert "filelock, psutil" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the rerun waits only where there is no exec")
+def test_on_windows_the_rerun_is_waited_for_and_its_code_is_the_answer(tmp_path, monkeypatch):
+    monkeypatch.setattr(bootstrap_runtime.subprocess, "call", lambda args: 7)
+
+    assert bootstrap_runtime._reexec(tmp_path / "python.exe", ["--role", "standalone"]) == 7

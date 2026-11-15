@@ -186,6 +186,21 @@ def test_the_doctor_names_a_switch_that_was_never_deposited(tmp_path):
     assert "nexgen sync" in evidence.action
 
 
+def test_the_doctor_reads_the_switch_the_host_hands_the_plugin(tmp_path):
+    """A setup writes `plugins.entries.nexgen.config` and no file: the doctor must agree."""
+    config = enabled_config()
+    config["plugins"]["entries"][PLUGIN_ID]["config"] = {
+        "evidence": {"enabled": True, "providers": ["ollama"]},
+    }
+    a_home(tmp_path, config)
+    assert not (plugin_dir(tmp_path / "home") / "nexgen.config.json").exists()
+
+    evidence = outcomes(tmp_path, config)["openclaw.evidence"]
+
+    assert evidence.severity == Severity.OK
+    assert "ollama" in evidence.message
+
+
 def test_the_doctor_keeps_the_off_cases_apart(tmp_path):
     """No local model and no plugin are both fine, and they are not the same sentence."""
     off_config = cloud_config()

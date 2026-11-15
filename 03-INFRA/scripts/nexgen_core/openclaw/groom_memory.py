@@ -60,8 +60,24 @@ def load_memory(home: Path | None = None) -> dict[str, dict[str, Any]]:
 
 def save_memory(memory: Mapping[str, dict[str, Any]], home: Path | None = None) -> None:
     """Publish the memory atomically: a crash never leaves half a fingerprint behind."""
-    payload = {"schema_version": 1, "sessions": dict(memory)}
+    payload = {"schema_version": 2, "sessions": dict(memory)}
     write_private_text(memory_path(home), json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+
+
+def save_changed(
+    memory: Mapping[str, dict[str, Any]],
+    before: Mapping[str, dict[str, Any]],
+    home: Path | None = None,
+) -> bool:
+    """Publish the memory only when this run changed it, and say whether it wrote.
+
+    A run that changed nothing writes nothing: the file is compared, not rewritten,
+    so an hourly job with nothing to do leaves the disk and its own mtime alone.
+    """
+    if dict(memory) == dict(before):
+        return False
+    save_memory(memory, home)
+    return True
 
 
 def settled(memory: Mapping[str, dict[str, Any]], key: str, mark: Mapping[str, float]) -> bool:
@@ -88,11 +104,32 @@ def remember(
     outcome: str,
     retry_at: float | None = None,
     provider: str = "",
+    runtime: str = "",
 ) -> None:
-    """Replace what is known about a session with the attempt just made."""
-    memory[key] = {"fingerprint": dict(mark), "outcome": outcome}
+    """Replace what is known about a session with the attempt just made.
+
+    `runtime` is the backend that answered, so a chat the gateway refused is still
+    nameable a day later: a memory keyed by outcome alone cannot say which chats
+    are stuck behind a harness that will never compact them.
+    """
+    memory[key] = {"fingerprint": dict(mark), "outcome": outcome, "runtime": runtime}
     if retry_at is not None:
         memory[key].update(retry_at=retry_at, provider=provider)
+
+
+def forget_runtime(memory: dict[str, dict[str, Any]], runtime: str) -> list[str]:
+    """Forget every attempt made by one backend, and say which chats are offered again.
+
+    A backend that could not answer before can answer now (a plugin update removed
+    the manual compaction, and the groom put it back): what was remembered about it
+    is a decision about a machine that no longer exists, and the unchanged
+    fingerprint would otherwise keep those chats out of every future run.
+    """
+    dropped = [key for key, record in memory.items() if record.get("runtime") == runtime]
+    for key in dropped:
+        del memory[key]
+    return dropped
+
 
 
 def prune(memory: dict[str, dict[str, Any]], listed_keys: Iterable[Any]) -> None:

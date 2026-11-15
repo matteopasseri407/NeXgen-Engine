@@ -1,9 +1,12 @@
-"""Whether each CLI really calls the guardrail that is registered for it."""
+"""Whether each CLI really calls the guardrail that is registered for it, whether the CLI that
+asks a person first has been answered, and what the private permission manifest no longer decides."""
 from __future__ import annotations
 
 import json
 import time
 from pathlib import Path
+
+import yaml
 
 from nexgen_core.i18n import t
 from nexgen_core.report import CheckOutcome, Severity
@@ -68,6 +71,94 @@ def check_guardrail_consulted(home: Path) -> list[CheckOutcome]:
             ),
         ))
     return outcomes
+
+
+def check_permission_posture(vault_data: Path) -> CheckOutcome | None:
+    """A leftover `posture:` block in the private permission manifest, said once.
+
+    The engine used to translate that block into each app's own mode keys on every cycle,
+    which reverted a choice made in the app's settings screen. It reads nothing from the key
+    now: each app's own setting decides. A block left in the manifest is not an error and is
+    never rewritten -- removing it is the owner's call -- but the doctor says what it no longer
+    does, so a manifest that still declares `bypass` is not read as a machine that bypasses
+    prompts. OpenClaw is the exception the line names: it has no app-side approval setting of
+    its own, so its plugin reads `posture` from the engine-owned `nexgen.config.json` and
+    behaves as `bypass` when the key is absent.
+    """
+    manifest = vault_data / "03-INFRA" / "agent-universal-layer" / "permissions" / "manifest.yaml"
+    if not manifest.is_file():
+        return None
+    try:
+        raw = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):  # nexgen: allow reason="an unreadable manifest is already reported by the permissions phase and its own warnings; this line only says what is not applied"
+        return None
+    if not isinstance(raw, dict) or "posture" not in raw:
+        return None
+    return CheckOutcome(
+        id="permissions.posture",
+        severity=Severity.OK,
+        message=t(
+            "posture is no longer applied: each app's own setting decides, except OpenClaw, whose "
+            "plugin reads 'posture' in its own nexgen.config.json and behaves as bypass without it"
+        ),
+    )
+
+
+def check_codex_guardrail_trust(home: Path) -> CheckOutcome | None:
+    """Whether Codex has accepted the guardrail hook it will not run without a person's yes.
+
+    Codex records trust as a hash of the hook's own definition and skips a new or changed hook
+    until somebody accepts it in `/hooks` (developers.openai.com/codex/hooks, "Review and trust
+    hooks"). The engine never writes that hash, because that would be consent nobody gave: a
+    hook written and never accepted looks exactly like a working guardrail, and this line is
+    what makes the difference visible without faking the decision.
+    """
+    from nexgen_core.runtimes.base import GuardrailError
+    from nexgen_core.runtimes.codex import STALE, TRUSTED, CodexRuntime, guardrail_trust
+
+    runtime = CodexRuntime()
+    if not runtime.is_installed(home):
+        return None
+    sidecar = runtime.guardrail_sidecar(home)
+    if sidecar is None or not sidecar.is_file():
+        return None
+    try:
+        state = guardrail_trust(home)
+    except GuardrailError as exc:
+        return CheckOutcome(
+            id="guardrail.codex_trust",
+            severity=Severity.WARN,
+            message=t("Codex: its own hook file could not be read, so the guardrail's trust is unknown ({error}).", error=exc),
+            action=t("Fix the JSON in Codex's hooks.json, then run 'nexgen doctor' again."),
+        )
+    if state is None:
+        return CheckOutcome(
+            id="guardrail.codex_trust",
+            severity=Severity.WARN,
+            message=t("Codex: the guardrail is deployed but not registered in its own hooks.json."),
+            action=t("Run 'nexgen sync' to register it. Until then Codex's shell commands are not checked."),
+        )
+    if state == TRUSTED:
+        return CheckOutcome(
+            id="guardrail.codex_trust",
+            severity=Severity.OK,
+            message=t("Codex has accepted the guardrail hook, so Codex runs it."),
+        )
+    if state == STALE:
+        return CheckOutcome(
+            id="guardrail.codex_trust",
+            severity=Severity.WARN,
+            message=t(
+                "Codex: the guardrail hook changed after it was accepted, so Codex skips it until it is reviewed again."
+            ),
+            action=t("Open Codex, run /hooks and accept the new version of the NeXgen guardrail hook."),
+        )
+    return CheckOutcome(
+        id="guardrail.codex_trust",
+        severity=Severity.WARN,
+        message=t("Codex: the guardrail hook is registered but not trusted, so Codex skips it."),
+        action=t("Open Codex, run /hooks and accept the NeXgen guardrail hook."),
+    )
 
 
 def check_openclaw_guardrail_plugin(home: Path) -> CheckOutcome | None:

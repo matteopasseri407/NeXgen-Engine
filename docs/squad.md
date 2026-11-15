@@ -28,9 +28,12 @@ A map of agent ids to their configuration:
 
 - `name`: display name in OpenClaw.
 - `model`: model identifier, for example `anthropic/claude-opus-5-5` or `opencode-go/deepseek-v4.1-flash`.
+- `harness`: optional lane selector, one of `claude`, `codex`, `opencode`, `agy`, `none`. Omitted or `none` keeps the provider lane. See [Which lane an agent runs on](#which-lane-an-agent-runs-on).
 - `role`: what the agent is for.
 - `workspace`: optional custom path for the agent's workspace.
 - `thinkingDefault`: optional reasoning level, for example `high`.
+- `tool_surface`: optional `lean`, which publishes a minimal tool surface on this agent's model instead of the gateway's whole catalogue. Off when omitted. See [`tool_surface: lean`](#tool_surface-lean).
+- `context_tokens`: optional per-call context cap in tokens, written as that model's `contextTokens`. Off when omitted. See [`context_tokens: N`](#context_tokens-n).
 - `soul`: optional personality or guidance prompt. A workspace gets a `SOUL.md` only when this field is present. `soul_from` does the same from a file, relative to the squad file, for a longer text somebody can edit. Agents with neither get no default `SOUL.md`.
 - `agents_md`: optional path, relative to the squad file, of the instructions this agent receives as its workspace `AGENTS.md`. See [Instructions per role](#agents_md-and-common_md).
 - `default`: optional `true` naming this agent as the installation's default. See [`default`](#default).
@@ -171,6 +174,51 @@ The squad adds what it names: each `model` on an agent, and each key of its `mod
 
 Two rules protect a choice already made. A policy already in force is extended, never replaced: what the owner wrote stays first and stays there, and a provider the configuration already names stays selectable. No agent's `model` is changed by any of this.
 
+## Which lane an agent runs on
+
+`harness` on an agent decides what actually runs its turn. An agent without the key keeps the lane it has today, so nothing in a setup moves an existing agent anywhere.
+
+| `harness` | The lane | What runs the turn | What it costs |
+| --- | --- | --- | --- |
+| absent, or `none` | provider | OpenClaw itself, calling the model API it holds a key for (`opencode-go/*`, a local model, ...) | one turn of OpenClaw's own prompt, on the flat plan or the key |
+| `opencode`, `claude`, `codex` | ACP session | the real CLI, as its own agent, in that agent's workspace, on its own login | the harness's own context, on the harness's own plan. OpenClaw keeps channels, delivery and policy |
+| `agy` | CLI backend | the official `agy` CLI, through the `google-antigravity-cli` plugin | OpenClaw's prompt plus the loopback tool surface |
+
+The ACP lane is the one that changes the bill: a turn carries the harness's own prompt and skills instead of OpenClaw's, which is the difference between a few thousand tokens of context and the 78,717 tokens measured for one `claude-cli` turn on this engine (`docs/proposals/daru-burn.md`).
+
+Two things are fixed, not configurable:
+
+- `agy` never becomes an ACP session. It is a CLI backend on Google's own client; ACP for Antigravity would need Google's separate proprietary server, which carries a Google plan outside Google's clients. The plugin is requested by a model that names `google-antigravity-cli/...`, which is a separate decision from this key.
+- An ACP lane is written as **both halves, or not at all**: `agents.entries.<id>.runtime` and a `bindings` entry of `type: "acp"`. A runtime block with no bound conversation answers a direct chat with the default model instead of the harness.
+
+An ACP agent needs a channel binding that routes a conversation to it. The setup then writes one runtime block and one binding for that conversation:
+
+```yaml
+agents:
+  sviluppo:
+    harness: "opencode"
+bindings:
+  - match:
+      channel: "telegram"
+    agentId: "sviluppo"
+```
+
+```json5
+{
+  agents: { entries: { sviluppo: { runtime: { type: "acp", acp: {
+    agent: "opencode", backend: "acpx", mode: "persistent", cwd: "<that agent's workspace>",
+  } } } } },
+  bindings: [{ type: "acp", agentId: "sviluppo", match: { channel: "telegram" },
+    acp: { mode: "persistent", cwd: "<that agent's workspace>", label: "sviluppo-opencode" } }],
+}
+```
+
+`nexgen openclaw plan` names the cases it cannot write, and leaves that agent on the lane it already has: a value that is not one of the five above, a harness that is not installed on this machine, an agent that no binding routes a conversation to, an agent with no workspace.
+
+On an ACP lane the agent's `model` is handed to the harness as its model selection, so it has to name a model that harness can run, not one OpenClaw holds a key for. Model control over ACP is adapter-dependent: if the adapter cannot accept a selection, the harness keeps its own default and the entry's `model` stays advisory.
+
+The setup never removes those blocks. The merge keeps every key that may be yours, so removing `harness:` from the squad does not move the agent back: to return it to the provider lane, remove the entry's `runtime` block and its `type: "acp"` binding in `openclaw.json`.
+
 ### `bindings`
 
 A list of channel bindings that route incoming messages on a communication channel to a specific agent:
@@ -183,6 +231,62 @@ bindings:
 ```
 
 A binding also brings that channel's bundled plugin into `plugins.allow` (`telegram` for the example above), the entry OpenClaw adds itself the first time a channel is configured: a channel whose plugin is not allowed routes nothing. A channel no bundled plugin serves is left to the plugin the person installed and allowed.
+
+## Opt-in consumption levers
+
+Three settings bound what a turn is allowed to spend. All three are off until you write them: an agent that declares none of them keeps the surface, the context and the behaviour it has today. The numbers below come from `docs/proposals/daru-burn.md`, where each one says whether it was measured or estimated, and the baseline is the `capo` turn measured on this engine: 74 model calls, about 78,000 tokens of prompt in each call, about 5.77 M tokens per turn.
+
+| Key | Where | What it writes | Tokens per turn, before | Tokens per turn, after | Recommended |
+| --- | --- | --- | --- | --- | --- |
+| `tool_surface: lean` | on an agent | `tools.byProvider["<that agent's model>"] = { profile: "minimal", alsoAllow: [...] }` | 78,000 per call, 5.77 M per turn | ~63,000 per call, ~4.66 M per turn (-19%) | yes, for an agent on a CLI backend |
+| `context_tokens: N` | on an agent | `models.providers.<provider>.models[].contextTokens` | no per-call ceiling: the worst case is the model's window, so 74 M per turn at 1 M | same per-turn median, but the worst case is 74 x N: 14.8 M per turn at 200,000 | `200000`, then measure |
+| `acp_admission: true` | at the root | `governor.acp.agents` in the plugin's sidecar | a turn started on a spent plan runs until it fails mid-loop, paying for the calls it made | 0 model calls, 0 tokens: one line naming the plan and the window, before the harness starts | yes, once a `harness:` lane exists |
+
+Calls per turn: none of the three changes them. `tool_surface` and `context_tokens` make each call cheaper and bound the total; `acp_admission` removes the calls of a turn that would have died anyway. The call count itself is the one lever the pinned OpenClaw does not expose, and `docs/proposals/daru-burn.md` describes it rather than pretending otherwise.
+
+### `tool_surface: lean`
+
+```yaml
+agents:
+  capo:
+    model: "anthropic/claude-opus-5-5"
+    tool_surface: "lean"
+```
+
+On a CLI-backend lane the gateway's own tool catalogue reaches the harness eagerly, so 51 schemas ride in every model call: they were 112,239 of the ~264,000 prompt characters of the measured turn, about 33,000 of its 78,000 tokens. `profile: minimal` publishes OpenClaw's own small allowlist, and `alsoAllow` adds back what the agent actually uses: shell, files, web, the session tools, memory, the supervisor tools for the agent that supervises, and the four `lazy-mcp` meta-tools.
+
+Connectors stay reachable: the loopback deny already removes their schemas, and the `lazy-mcp` gateway is the one road left open, so Vault, GitHub, Vercel and the rest are called through `lazy-mcp__lazy_call` as before. Nothing on the agent's capability list is dropped, and the engine writes no `allow` list (OpenClaw refuses `allow` beside `alsoAllow` in one scope; this entry uses `alsoAllow` only).
+
+The key is the model, not the agent, because that is what `tools.byProvider` means: every agent running that model gets the lean surface. Give the agent its own model if that is not what you want.
+
+### `context_tokens: N`
+
+```yaml
+agents:
+  capo:
+    model: "anthropic/claude-opus-5-5"
+    context_tokens: 200000
+```
+
+The cap is the active input of one model call. On the `claude-cli` road it becomes Claude Code's own auto-compact window, so a conversation is summarised at the cap instead of growing towards a 1,000,000-token worst case: 74 calls against a 200,000 cap is 14.8 M tokens, against 74 M at the native window. The trade is real and it is yours: older turns become a summary sooner.
+
+Only `contextTokens` is written, never `contextWindow`: the cap is a decision, the native window is the model's. When two agents name the same model with different numbers, the smallest wins.
+
+**Experimental, and why.** This is the one lever that writes a `models` array for a provider a bundled plugin owns (here `anthropic`). The pinned release documents the merge: an entry you author in `models.providers.<id>.models` keeps its own rows, and the plugin's catalogue stops contributing only when a provider-level `baseURL` points outside the plugin's declared endpoints, which this engine never writes (`openclaw models list` documentation of the pinned release). So the auth route should survive. Should is not the same as proved on your machine: the engine has not watched a live turn on your lane, so verify once. Run `openclaw config validate`, then one real turn, then `openclaw models list --provider anthropic` and check the entry still carries its auth. If the model list changes shape, remove the key: the agent keeps working and stops compacting early.
+
+### `acp_admission: true`
+
+```yaml
+acp_admission: true
+agents:
+  sviluppo:
+    harness: "opencode"
+    model: "opencode-go/deepseek-v4.1-flash"
+```
+
+An ACP session is the harness running as itself, so OpenClaw's fallback chains are never consulted for it: without this branch the lane with the most context per turn is the one with no gate at all. With it, the plugin reads `nexgen-quota-state.json` (the readings the hourly beat already writes) before a turn, and when the plan the agent's model names is at or above the `block_at` line of your policy, it answers with one line naming the plan and the window instead of starting a harness turn.
+
+It costs no model call: the answer is the plugin's own text. Nothing happens when the state is missing, older than the policy allows, has no reading for that plan, or reads below the line; and the branch is written only when `acp_admission: true` is in the squad, so a machine that never asked for it never refuses a turn.
 
 ## Secure model authentication
 

@@ -1,15 +1,14 @@
 """The single contract: one adapter per CLI, one single boundary to add a fifth.
 
-The v1 release applied posture + guardrail hook for four CLIs inside
-agent_sync.py (~767 lines) with five separate rendering maps
-(PERMISSION_RENDERERS, CODEX_POSTURE_RENDER, OPENCODE_POSTURE_RENDER,
-ANTIGRAVITY_POSTURE_RENDER, PERMISSION_HOOK_TARGETS...) all in the same
-file. Adding a CLI meant touching all of them. Here each CLI is a file that
-implements this contract: adding one means adding a file.
+The v1 release wrote the permission mode and the guardrail hook for four CLIs
+inside agent_sync.py (~767 lines) with five separate rendering maps all in the
+same file. Adding a CLI meant touching all of them. Here each CLI is a file
+that implements this contract: adding one means adding a file.
 
-Postures travel in NEUTRAL vocabulary (bypass / accept-edits / ask), never
-in a specific CLI's dialect -- translation is each adapter's own internal
-responsibility, never the caller's.
+An adapter registers the guardrail hook and nothing else. The permission mode
+(bypass, accept edits, ask) is each app's own setting, written by the app: the
+engine stopped translating a private `posture` into those keys, so a choice made
+in an app is no longer reverted by the next guard cycle.
 """
 from __future__ import annotations
 
@@ -26,15 +25,33 @@ from nexgen_core.errors import NexgenError
 GUARDRAIL_CORE_NAME = "nexgen-guardrail-core.mjs"
 GUARDRAIL_SIDECAR_NAME = "nexgen-guardrail.config.json"
 
-#: The event-sink hook's file name: how its registrations are recognised for removal. Nothing
-#: else is ever removed, whatever else the user has registered on the same events.
-EVENT_SINK_NAME = "nexgen-event-sink.mjs"
 
-#: Neutral vocabulary of the three posture levels this engine knows about.
-#: An adapter without a verified rendering for one of these values silently
-#: ignores it (apply_posture returns None) -- guessing at an unverified
-#: dialect already caused an incident in v1.
-POSTURES = ("bypass", "accept-edits", "ask")
+def sidecar_content(
+    existing: dict,
+    *,
+    body: Path,
+    audit_file: Path,
+    timeout: int,
+    strict: bool | None = None,
+    auto_allow: bool | None = None,
+) -> str:
+    """The JSON an adapter reads beside itself: which body, its deadline, and its two flags.
+
+    One definition for every adapter and for the native Claude Code plugin, whose copy of
+    the same adapter reads the same file: two spellings of this shape would diverge in
+    silence, and the sidecar is what decides whether a command is checked at all. A flag
+    that is not passed keeps the value the file already carries, because an adapter may
+    set it in a later step (OpenCode's mediated shell rule does).
+    """
+    return json.dumps(
+        {
+            "hooks": [{"file": str(body), "timeout": timeout}],
+            "strict": bool(existing.get("strict")) if strict is None else strict,
+            "autoAllow": bool(existing.get("autoAllow")) if auto_allow is None else auto_allow,
+            "auditFile": str(audit_file),
+        },
+        indent=2,
+    ) + "\n"
 
 
 class GuardrailError(NexgenError):
@@ -42,11 +59,10 @@ class GuardrailError(NexgenError):
     path that escapes the permitted folder, an unexpected shape in a key
     this engine owns.
 
-    Deliberately distinct from "CLI not installed" or "posture not
-    supported here", which are normal and expressed with a plain None --
-    this one is for the anomaly that must never be allowed to pass
-    silently, because otherwise a posture that removes prompts could reach
-    disk without the guardrail that was supposed to accompany it.
+    Deliberately distinct from "CLI not installed", which is normal and
+    expressed with a plain None -- this one is for the anomaly that must never
+    be allowed to pass silently, because otherwise a guardrail could be left
+    half registered on disk while the doctor showed a healthy machine.
     """
 
 
@@ -70,98 +86,6 @@ class Runtime(ABC):
         cycle, installed or not: none of these is a valid signal). This
         defect was found twice in 24 hours in the previous release.
         """
-
-    @abstractmethod
-    def read_posture(self, home: Path) -> str | None:
-        """The posture in effect RIGHT NOW, in neutral vocabulary, or None
-        if this CLI's config doesn't exist or doesn't express one."""
-
-    @abstractmethod
-    def apply_posture(self, home: Path, posture: str) -> str | None:
-        """Translates `posture` (neutral vocabulary) into this CLI's dialect.
-
-        Returns an action line if it wrote something, None if there was
-        nothing to do -- already correct (idempotence), or this CLI has no
-        verified rendering for that value (silent skip, never a guessed
-        attempt)."""
-
-    def rendered_postures(self) -> tuple[str, ...]:
-        """Neutral postures this adapter can actually render.
-
-        Lets the orchestrator tell "already correct" apart from "asked
-        for something this CLI cannot do": the latter warns instead of
-        passing silent. The maps live as module globals per adapter
-        (each adapter names its own); this probes the known ones.
-        """
-        import sys as _sys
-
-        module = _sys.modules.get(self.__module__)
-        for attr in ("_POSTURE_RENDER", "_POSTURE_TO_CLAUDE"):
-            render = getattr(module, attr, None) if module is not None else None
-            if render is None:
-                render = getattr(self, attr, None)
-            if isinstance(render, dict):
-                return tuple(render)
-        return ()
-
-    def remove_event_sink(self, home: Path) -> str | None:
-        """Takes back what older versions registered for the event sink, and nothing else.
-        Returns an action line when it changed something."""
-        del home
-        return None
-
-    @staticmethod
-    def _is_sink_command(cmd: object) -> bool:
-        import shlex
-
-        if not isinstance(cmd, str):
-            return False
-        text = cmd.strip()
-        try:
-            parts = shlex.split(text, posix=True)
-        except ValueError:
-            parts = text.split()
-        if not parts:
-            return False
-        return any(Path(p).name == EVENT_SINK_NAME for p in parts)
-
-    @staticmethod
-    def _strip_sink_from_event(hooks: dict, event: str) -> bool:
-        groups = hooks.get(event)
-        if not isinstance(groups, list):
-            return False
-        kept = []
-        changed_here = False
-        for group in groups:
-            inner = group.get("hooks") if isinstance(group, dict) else None
-            if not isinstance(inner, list):
-                kept.append(group)
-                continue
-            remaining = [h for h in inner if not (isinstance(h, dict) and Runtime._is_sink_command(h.get("command")))]
-            if len(remaining) == len(inner):
-                kept.append(group)
-                continue
-            changed_here = True
-            if remaining:
-                kept.append({**group, "hooks": remaining})
-        if kept:
-            hooks[event] = kept
-        else:
-            del hooks[event]
-        return changed_here
-
-    @staticmethod
-    def strip_event_sink_hooks(hooks: dict, events: tuple[str, ...] = ("Stop", "PreToolUse")) -> bool:
-        """Drops the sink's hook items from `{event: [{matcher?, hooks: [...]}]}`; True if it dropped any.
-
-        A group left with no hooks goes with them, and an event left with no groups; groups that
-        also hold someone else's hooks keep those exactly as they were.
-        """
-        changed = False
-        for event in events:
-            if Runtime._strip_sink_from_event(hooks, event):
-                changed = True
-        return changed
 
     @staticmethod
     def remove_deployed(path: Path) -> bool:
@@ -257,15 +181,14 @@ class Runtime(ABC):
         strict: bool | None,
         auto_allow: bool | None,
     ) -> str:
-        return json.dumps(
-            {
-                "hooks": [{"file": str(body), "timeout": timeout}],
-                "strict": bool(existing.get("strict")) if strict is None else strict,
-                "autoAllow": bool(existing.get("autoAllow")) if auto_allow is None else auto_allow,
-                "auditFile": str(self.guardrail_audit_file(home, self.name)),
-            },
-            indent=2,
-        ) + "\n"
+        return sidecar_content(
+            existing,
+            body=body,
+            audit_file=self.guardrail_audit_file(home, self.name),
+            timeout=timeout,
+            strict=strict,
+            auto_allow=auto_allow,
+        )
 
     def write_guardrail_sidecar(
         self,
@@ -278,8 +201,8 @@ class Runtime(ABC):
         auto_allow: bool | None = None,
     ) -> bool:
         """Writes the sidecar the adapter reads on every call. Flags that are not passed keep the
-        value the sidecar already has: the posture (which decides them) is applied after the
-        guardrail, in a separate call, and must not be undone by the next guardrail install."""
+        value the sidecar already has: an adapter may set them in a later step (OpenCode's
+        mediated shell rule does), and the next guardrail install must not undo that."""
         existing = self.read_guardrail_sidecar(path)
         content = self._build_sidecar_content(existing, body, home, timeout, strict, auto_allow)
         if path.is_file() and path.read_text(encoding="utf-8") == content:

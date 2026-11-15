@@ -9,6 +9,11 @@ The order matters and was learned the hard way on 2026-10-26: a local gateway
 left running keeps a channel poller and a token of its own, and a node started
 beside it crash-loops on `AUTH_TOKEN_MISMATCH` until both are retired. So the
 retirement comes first, and it is the same code `install.sh --role node` uses.
+
+Both routes end at an OpenClaw command that does the work and reports whether it
+worked: `openclaw connect --service` pairs, installs the service and confirms the
+first connection before it returns, and `openclaw node install` plus `node start`
+is the explicit route for a machine whose person cannot paste a join URL.
 """
 from __future__ import annotations
 
@@ -17,12 +22,7 @@ from pathlib import Path
 
 from nexgen_core import roles
 from nexgen_core.i18n import t
-from nexgen_core.openclaw.node_attach import (
-    DEFAULT_NODE_ATTACH_TIMEOUT_S,
-    check_node_connected,
-    connect_node_service,
-    wait_for_node_connection,
-)
+from nexgen_core.openclaw.node_attach import connect_node_service
 from nexgen_core.openclaw.node_cli import SERVICE_TIMEOUT_S, Run, run_command
 from nexgen_core.openclaw.node_link import SERVE_PORT, NodeLink, build_node_link, install_argv
 from nexgen_core.openclaw.node_retire import (
@@ -117,20 +117,12 @@ def _attach(
     name: str | None,
     join_target: str | None,
     runner: Run | None,
-    wait_probe_fn: Callable[[], bool] | None,
-    timeout_s: float,
     out: Callable[[str], None],
 ) -> int:
     """Enrol this machine the way the person chose: one paste, or two approvals."""
     run_fn = runner or run_command
     if join_target:
         if not connect_node_service(join_target, runner=runner, out=out):
-            return 1
-        probe = wait_probe_fn or (lambda: check_node_connected(runner=runner))
-        connected, _elapsed = wait_for_node_connection(
-            probe, node_name=name or "node", timeout_s=timeout_s, emit=out,
-        )
-        if not connected:
             return 1
         _finish(link, name, True, out)
         return 0
@@ -159,8 +151,6 @@ def apply_node(
     platform: str | None = None,
     runner: Run | None = None,
     systemd_user_dir: Path | None = None,
-    wait_probe_fn: Callable[[], bool] | None = None,
-    timeout_s: float = DEFAULT_NODE_ATTACH_TIMEOUT_S,
     out: Callable[[str], None] = print,
 ) -> int:
     """Make this machine a node of the gateway at `host`, or say what that would do."""
@@ -192,5 +182,5 @@ def apply_node(
         systemd_user_dir=systemd_user_dir, config_path=config_path, out=out,
     )
     out(report(result))
-    return _attach(link, effective_port, name, join_target, runner, wait_probe_fn, timeout_s, out)
+    return _attach(link, effective_port, name, join_target, runner, out)
 

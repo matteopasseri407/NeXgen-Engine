@@ -42,10 +42,11 @@ consigli; lo script non salva nessuna delle tue risposte. Niente qui richiede ad
 
 | CLI | File di bootstrap | Configurazione MCP | Cartella delle skill |
 |---|---|---|---|
-| Claude Code | `~/CLAUDE.md` (puntatore agli `AGENTS.md` di questo repo) | campo `mcpServers` in `~/.claude.json` | `~/.claude/skills/`, per ogni skill con `claude` nei `targets` |
-| Codex | `~/.codex/AGENTS.md` | `~/.codex/config.toml` | `~/.codex/skills/`, per ogni skill con `codex` nei `targets` |
+| Claude Code | `~/.claude/CLAUDE.md` (puntatore user-scope agli `AGENTS.md` di questo repo) | campo `mcpServers` in `~/.claude.json` | `~/.claude/skills/`, per ogni skill con `claude` nei `targets` |
+| App Claude Desktop | nessuno: tiene le proprie preferenze e lo stato della finestra nello stesso file, e il motore non tocca quelle chiavi | `mcpServers` in `%APPDATA%\Claude\claude_desktop_config.json` (Windows), `~/Library/Application Support/Claude/` (macOS), `~/.config/Claude/` (Linux), solo i server autorizzati: il manifest deve dichiarare `desktop_allow: true`, il valore predefinito è il rifiuto. I nomi che il motore ha scritto sono elencati accanto in `claude_desktop_config.managed.json`, così revocare il flag toglie solo quelli | nessuna: l'app non ha una cartella di skill che il motore scrive |
+| Codex | `~/.codex/AGENTS.md` | `~/.codex/config.toml` | `~/.codex/skills/` (la radice che `codex debug prompt-input` elenca, verificata su codex-cli 0.155.1) e il catalogo condiviso `~/.agents/skills/` che l'app Codex/ChatGPT legge, per ogni skill con `codex` nei `targets`. Si scrivono entrambe le viste: una versione della CLI che legge solo la prima resterebbe senza nessuna skill dell'utente |
 | OpenCode v2 | `~/.config/opencode/AGENTS.md`, symlink agli `AGENTS.md` di questo repo (V2 accetta l'array `instructions` ma non lo risolve mai, quindi non viene più scritto; le voci aggiunte dal motore vengono rimosse una volta, quelle tue restano) | `mcp.servers` in `opencode.jsonc` o `opencode.json`, con il layout piatto V1 migrato una volta, più le chiavi native `plugins` e `permissions` (`plugin` e `permission` migrano una volta, le regole tue non vengono mai sovrascritte) | viste native in `~/.config/opencode/skills/` e catalogo condiviso `~/.agents/skills/`, per ogni skill con `opencode` nei `targets` |
-| Antigravity | `~/.gemini/config/AGENTS.md` | `~/.gemini/antigravity/mcp_config.json`\* | tre cartelle insieme, vedi sotto |
+| Antigravity | `~/.gemini/config/AGENTS.md` | `~/.gemini/config/mcp_config.json`\* | tre cartelle insieme, vedi sotto |
 | OpenClaw | il blocco gestito negli `AGENTS.md` del workspace di ogni agente (`agents.entries.<id>.workspace`, altrimenti `agents.defaults.workspace`, altrimenti `<state dir>/workspace`); OpenClaw non ha un file puntatore proprio | `mcp.servers` in `~/.openclaw/openclaw.json`, oppure il file nominato da `OPENCLAW_CONFIG_PATH`, oppure `OPENCLAW_STATE_DIR/openclaw.json` | il catalogo condiviso `~/.agents/skills/`, che OpenClaw scopre da solo, per ogni skill con `openclaw` nei `targets` |
 
 `exposure` non decide se una skill ottiene una vista. Una skill dichiarata viene collegata in ogni runtime nominato nei
@@ -57,7 +58,11 @@ tutte e tre `~/.gemini/antigravity-cli/skills/`, `~/.gemini/config/skills/` e `~
 perché modi diversi di avviare Antigravity sono stati visti leggere cartelle diverse.
 
 Le sezioni MCP sono additive per impostazione predefinita: un server già nella configurazione di una CLI ma non nel
-manifest viene conservato, perché può essere tuo. Due tipi di nome escono comunque da ogni configurazione generata: un
+manifest viene conservato, perché può essere tuo. Un server che il motore gestisce conserva invece le chiavi che il
+motore non scrive, cioè lo stato per server dell'app: l'interruttore `disabled`, le liste dei tool ammessi e negati, i
+flag eager. Spegnere un server nella schermata di Antigravity, di Claude o di Codex sopravvive quindi al successivo
+`nexgen sync`: vengono riscritti solo i campi di avvio (`command`, `args`, `env`, l'URL con i suoi header, i timeout).
+Due tipi di nome escono comunque da ogni configurazione generata: un
 nome esatto che il manifest elenca sotto `retired_servers`, una lapide esplicita, e un nome che questo motore ha
 dichiarato in un sync precedente e che il manifest non dichiara più. Il motore ricorda i nomi dichiarati all'ultimo
 render reale in `mcp-state.json`, nella directory di stato della macchina, così una rimozione arriva a ogni CLI anche
@@ -65,13 +70,18 @@ quando nessuno scrive una lapide. Un nome che il motore non ha mai dichiarato no
 corso o una voce in `orphans_allowlist` tiene vivo il suo nome. `nexgen doctor` segnala una voce rimasta del secondo
 tipo come detrito del motore che il prossimo `nexgen sync` rimuove, mai come qualcosa da adottare. Le voci HTTP
 autenticate di Antigravity usano `mcp-http-bridge.mjs`, di proprietà del motore; il JSON generato contiene solo il nome
-della variabile d'ambiente del bearer, mai il suo valore.
+della variabile d'ambiente del bearer, mai il suo valore. Un server HTTP autorizzato sull'app Claude Desktop passa dallo
+stesso bridge, quindi anche `claude_desktop_config.json` contiene solo il nome di quella variabile.
 
-\* `~/.gemini/antigravity/mcp_config.json` è il file canonico che il renderer genera. Lo stesso passo lo moltiplica,
-con symlink o con una copia reale su Windows quando il privilegio di symlink manca, verso altri tre percorsi:
+\* `~/.gemini/config/mcp_config.json` è il file canonico che il renderer genera: è il percorso che la documentazione
+MCP di Google indica sia per l'app Antigravity sia per la CLI `agy`. Lo stesso passo lo moltiplica, con symlink o con una
+copia reale su Windows quando il privilegio di symlink manca, verso altri tre percorsi:
 `~/.gemini/antigravity-cli/mcp_config.json`, `~/.gemini/antigravity-ide/mcp_config.json` e
-`~/.gemini/config/mcp_config.json`. `nexgen doctor` rilegge `~/.gemini/antigravity-ide/mcp_config.json` in particolare
-quando controlla che la configurazione generata di Antigravity porti ogni server atteso dal manifest.
+`~/.gemini/antigravity/mcp_config.json`, la cartella in cui scrivevano le versioni precedenti. `nexgen doctor` li
+controlla tutti, e una macchina ancora nel layout vecchio (il file reale in `~/.gemini/antigravity/`, `~/.gemini/config/`
+un link a esso) viene migrata al render successivo: il contenuto viene salvato, ripubblicato nel percorso canonico, e la
+vecchia cartella diventa una delle copie. Due file reali che non concordano non vengono mai sovrascritti: il render si
+ferma e nomina entrambi i percorsi.
 
 Sono modifiche a file che devono già esistere, perché ogni CLI crea la propria configurazione predefinita la prima
 volta che la apri. Niente qui crea da zero la configurazione di una CLI; se non hai mai aperto una CLI scelta, quel
@@ -95,6 +105,41 @@ del gateway. Tre regole del suo schema ti costano un connettore in silenzio, e i
 I timeout vengono convertiti dai secondi del manifest a `connectionTimeoutMs` e `requestTimeoutMs`, e una lista
 `tools_deny` diventa `"toolFilter": {"exclude": [...]}`. I segreti restano riferimenti
 (`"Authorization": "Bearer ${NAME}`), mai valori.
+
+### Quanto del bootstrap legge ogni CLI
+
+Ogni CLI che carica `AGENTS.md` all'avvio legge solo la prima parte del file e scarta il resto senza dirlo, quindi una
+regola scritta oltre quel punto smette di esistere per quel runtime soltanto.
+
+| CLI | File che legge | Limite, verificato il 14/11/2026 | Fonte |
+|---|---|---|---|
+| Antigravity | `~/.gemini/config/AGENTS.md` | 24.000 byte, oltre i quali il file viene troncato | https://antigravity.google/docs/rules/ |
+| Codex | `~/.codex/AGENTS.md` | 32 KiB di default (`project_doc_max_bytes`) | https://learn.chatgpt.com/docs/agent-configuration/agents-md |
+| DeepSeek harness | `~/.dsh/AGENTS.md` | 65.536 byte per catena di istruzioni | https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/context/agent-instructions/README.md |
+| Claude Code | `~/.claude/CLAUDE.md` | 4 MiB, oltre i quali il file viene saltato del tutto | https://code.claude.com/docs/en/memory |
+
+OpenCode non documenta nessun limite in byte per il suo `AGENTS.md` (https://opencode.ai/docs/instructions/), quindi per
+lui non ne viene applicato nessuno. `nexgen doctor` misura il file che ogni CLI installata legge davvero, avvisa al 90%
+del limite di quella CLI e segnala un allineamento rotto quando lo supera; una CLI che non è installata, o che non ha
+ancora un file di istruzioni, non viene riportata. I numeri applicati stanno in `INSTRUCTION_READERS`, in
+`03-INFRA/scripts/nexgen_core/checks/instruction_limits_checks.py`.
+
+## Claude Code come plugin nativo (facoltativo, spento di default)
+
+`plugins.claude.enabled: true` nella configurazione privata dell'installazione
+(`03-INFRA/agent-universal-layer/sync/remotes.yaml`) sposta i tre artefatti di Claude Code in un'unica cartella di
+plugin che il motore genera nella sua cartella di stato (`plugins/claude/`) e installa con i comandi di Claude Code
+stesso: `claude plugin validate`, `claude plugin marketplace add <cartella> --scope user`, `claude plugin install
+nexgen@nexgen-engine --scope user`. L'albero generato è un marketplace (`.claude-plugin/marketplace.json`) con dentro un
+plugin: `.claude-plugin/plugin.json`, l'hook del guardrail in `hooks/hooks.json` che lancia lo stesso adattatore
+fail-closed tramite `${CLAUDE_PLUGIN_ROOT}`, i server in `.mcp.json` e le skill con `claude` nei `targets`. I segreti non
+finiscono lì: un `${VAR}` che una voce server leggerebbe dall'ambiente diventa un'opzione `userConfig` con
+`"sensitive": true`, quindi Claude Code tiene il valore nel portachiavi di sistema. Le tre righe qui sopra per Claude
+Code non vengono più scritte solo dopo che Claude Code ha accettato l'albero generato, mai solo perché l'interruttore è
+acceso: il motore toglie il proprio hook da `~/.claude/settings.json`, i server che il plugin monta da `~/.claude.json`
+e i propri collegamenti in `~/.claude/skills`, così niente è registrato due volte e un'installazione che continua a
+fallire non lascia mai Claude Code senza guardrail. `claude plugin uninstall nexgen@nexgen-engine` lo rimuove, e
+riportare l'interruttore a `false` fa tornare i writer classici.
 
 ## Solo profilo MULTI: scritture aggiuntive del ciclo di guardia (`nexgen sync`, `nexgen guard`, alias `agent-sync apply`, `agent-sync guard`)
 
@@ -136,8 +181,7 @@ I timeout vengono convertiti dai secondi del manifest a `connectionTimeoutMs` e 
     applica niente.
 - `~/.claude/settings.json`, il file di impostazioni di Claude, modificato in modo additivo, e solo se il tuo Vault
   privato dichiara `agent-universal-layer/permissions/manifest.yaml`; senza quel file l'intero passo è un no-op, che è
-  il caso predefinito. Quando esiste, una voce `posture` per `claude` scrive `permissions.defaultMode` e, per l'assetto
-  `bypass`, `skipDangerousModePermissionPrompt`. Una voce `hooks` registra `claude-guardrail-adapter.mjs` del motore
+  il caso predefinito. Una voce `hooks` registra `claude-guardrail-adapter.mjs` del motore
   (copiato in `~/.claude/` con il `nexgen-guardrail-core.mjs` condiviso) come hook `PreToolUse` su `Bash`, e copia il
   corpo del guardrail dichiarato in `~/.claude/nexgen-guardrail-hooks/<il nome che dichiara>`, qualunque nome gli dia
   il manifest privato, con un sidecar `~/.claude/nexgen-guardrail.config.json` che lo nomina. L'adapter esiste perché un
@@ -145,7 +189,10 @@ I timeout vengono convertiti dai secondi del manifest a `connectionTimeoutMs` e 
   un errore non bloccante ed esegue il comando. L'adapter esegue il corpo in un sottoprocesso, trasforma ogni esito
   anomalo (crash, blocco, file mancante, risposta illeggibile) in una decisione esplicita (`ask`, oppure `deny` sotto
   `bypassPermissions`), ed esce con 2 se fallisce lui. Una registrazione scritta da una versione precedente, dove il
-  corpo stesso era l'hook, viene migrata sul posto.
+  corpo stesso era l'hook, viene migrata sul posto. La modalità di permesso **non** viene scritta:
+  `permissions.defaultMode` e `skipDangerousModePermissionPrompt` appartengono a Claude e a chi sceglie la modalità
+  nella sua schermata di impostazioni, e un motore precedente che li riasseriva a ogni ciclo poteva annullare quella
+  scelta. Un blocco `posture` rimasto nel manifest privato viene ignorato, e `nexgen doctor` lo dice una volta.
 - Hook guardrail di OpenCode, Antigravity e OpenClaw, dallo stesso manifest e nello stesso passo. Un hook guardrail può
   avere come target `opencode`, `antigravity` o `openclaw` oltre a, o al posto di, `claude`. Il contratto di hook nativo
   di ogni CLI è diverso da quello di Claude, quindi un adapter sottile del motore lo traduce da e verso la forma JSON su
@@ -161,17 +208,26 @@ I timeout vengono convertiti dai secondi del manifest a `connectionTimeoutMs` e 
     permesso in `ctx.permission.hook("evaluate")`. I motori precedenti registravano il file dell'adapter nell'array
     `plugins`; OpenCode 2.0.24 lo rifiuta ("configured plugin path must be a directory") e non chiama più l'hook V1
     `permission.ask`, quindi quel guardrail non veniva mai consultato. La prima esecuzione della versione nuova ritira
-    quella registrazione e i file che aveva distribuito, per nome, e lascia stare gli altri plugin. L'assetto sono
-    regole V2 `permissions` ordinate (`edit` e `shell` allow o ask); l'oggetto `permission` storico migra una volta in
-    regole equivalenti, e una regola esplicita dell'utente sulla stessa coppia vince sempre. Con il plugin presente,
-    `bypass` viene reso come `shell: ask` e il plugin risponde `allow` per ciò che il corpo permette (quindi non c'è
-    comunque richiesta) e `deny` per il resto; il sidecar lo registra come `autoAllow`. Se OpenCode non chiamasse il
-    plugin, ogni comando di shell chiederebbe conferma in modo visibile invece di passare non controllato in silenzio.
-    L'event sink di OpenCode non viene più installato, e ogni registrazione storica viene ripulita al sync.
+    quella registrazione e i file che aveva distribuito, per nome, e lascia stare gli altri plugin. L'unica regola di
+    permesso che il motore scrive è `shell: ask`, ed è per il plugin: OpenCode consulta l'hook dei permessi solo per
+    un'azione che sta per chiedere. Con quella regola il plugin risponde a ogni comando, `allow` per ciò che il corpo
+    permette (quindi non c'è comunque richiesta) e `deny` per il resto, e il sidecar lo registra come `autoAllow` (con
+    `strict`, che fa bloccare un guardrail rotto invece di chiedere). Se OpenCode non chiamasse il plugin, ogni comando
+    di shell chiederebbe conferma in modo visibile invece di passare non controllato in silenzio. Un `shell: allow`
+    lasciato da un motore precedente viene portato a `ask`; un `deny` esplicito sulla stessa coppia non viene mai
+    toccato. Del resto dei permessi non viene scritto niente: ciò che fanno `edit` e le altre azioni è impostazione di
+    OpenCode. L'oggetto `permission` storico migra una volta in regole equivalenti, così la stessa coppia ha una sola
+    fonte di verità. Chi ha scelto `ask` continua a ricevere la richiesta: la regola resta `ask` e `autoAllow` resta
+    spento, così il plugin si limita a bloccare un comando negato e la conferma arriva comunque. L'event sink di
+    OpenCode non viene più installato, e nemmeno il codice che ripuliva una registrazione storica esiste più: una
+    macchina che ne porta ancora una se la tiene.
   - Antigravity: `antigravity-guardrail-adapter.mjs` viene copiato in `~/.gemini/config/antigravity-guardrail-adapter.mjs`
     e registrato come voce `PreToolUse` sotto la chiave `nexgen-guardrail` in `~/.gemini/config/hooks.json`. Ogni altro
     nome di hook di primo livello in quel file, tuo o di un altro strumento, resta intatto. Il corpo dichiarato va in
-    `~/.gemini/config/nexgen-guardrail-hooks/`, con lo stesso tipo di sidecar accanto all'adapter.
+    `~/.gemini/config/nexgen-guardrail-hooks/`, con lo stesso tipo di sidecar accanto all'adapter. `toolPermission` e
+    `artifactReviewPolicy` sono impostazioni dell'app e non vengono scritte. Questo passo gira quando la CLI `agy` ha
+    girato qui **oppure** quando ci ha girato l'app Antigravity o l'IDE: leggono tutti lo stesso `hooks.json` globale,
+    quindi anche una macchina con l'app e senza CLI viene sorvegliata.
   - OpenClaw: una cartella di plugin nativa, `<openclaw state dir>/extensions/nexgen-guardrail/`, con l'adapter
     (`index.mjs`), `package.json`, `openclaw.plugin.json`, il core condiviso, il corpo dichiarato sotto `hooks/` e il
     sidecar. Il plugin risponde a `before_tool_call` per i tool che portano un comando di shell (`exec`, `process`,
@@ -180,16 +236,18 @@ I timeout vengono convertiti dai secondi del manifest a `connectionTimeoutMs` e 
     lo rompe, quindi abilitare il plugin è `nexgen openclaw setup` con il gateway fermo, e `nexgen doctor` segnala
     "deposited but not enabled" fino ad allora. L'hook copre solo le chiamate che OpenClaw esegue lui; un agente sul
     runtime `claude-cli` o `codex` esegue i suoi tool dentro quella CLI, dove vale già il suo guardrail.
-  - Codex non ha alcun meccanismo di guardrail collegato. Il suo contratto di hook mette ogni hook dietro una richiesta
-    di fiducia persistente per hash, oppure un flag esplicito `--dangerously-bypass-hook-trust`, che questo motore non
-    può soddisfare senza una persona davanti. Un guardrail dichiarato per `codex` è un no-op silenzioso: non si scrive
-    niente e non si segnala niente.
+  - Codex: `codex-guardrail-adapter.mjs` viene copiato in `~/.codex/codex-guardrail-adapter.mjs` e registrato come voce
+    `PreToolUse` con matcher `Bash` in `~/.codex/hooks.json`, accanto agli hook che hai scritto tu: il motore trova la
+    propria voce dal comando e non tocca nessun altro gruppo, evento o file. Il corpo dichiarato va in
+    `~/.codex/nexgen-guardrail-hooks/`, con lo stesso tipo di sidecar accanto all'adapter. Codex non esegue un hook
+    finché una persona non accetta quella esatta definizione da `/hooks`: il motore scrive la registrazione e mai
+    l'accettazione, quindi il primo ciclo stampa cosa devi confermare, e `nexgen doctor` segnala "registrato ma non
+    accettato" (e "cambiato dopo l'accettazione") finché non lo fai. `approval_policy` e `sandbox_mode` sono
+    impostazioni di Codex e non vengono scritte.
 - Solo Windows, e solo se il tuo Vault privato contiene `03-INFRA/scripts/local-model-agent.ps1` (un adapter
   bring-your-own, mai parte del motore pubblico): quello script viene ricollegato, o copiato quando i privilegi di
   symlink mancano, in `~/.local/bin/local-model-agent.ps1`, accanto a due wrapper stabili,
   `~/.local/bin/local-worker.ps1` e `~/.local/bin/local-agent.ps1`.
-- Pulizia dell'event sink storico. I motori precedenti registravano `nexgen-event-sink.mjs` sugli eventi del ciclo di
-  vita di ogni CLI; il motore ora toglie quelle registrazioni e rimuove il file obsoleto su tutti gli harness.
 - Avviso di aggiornamento nella shell e all'accesso, con un interruttore per spegnerlo. La guardia tiene un blocco
   gestito in `~/.bashrc`, più `~/.zshrc`, fish e i profili PowerShell dove quelle shell esistono (un profilo PowerShell
   viene scritto solo dove `pwsh` è installato o il profilo esiste già), e un controllo all'avvio: un timer utente
@@ -197,10 +255,11 @@ I timeout vengono convertiti dai secondi del manifest a `connectionTimeoutMs` e 
   `nexgen tool update-notifier --install-shell-hook --remove` e `--install-autostart --remove` li rimuovono e registrano
   la scelta in `update-notifier-optout.txt` nella directory di stato della macchina, così il ciclo di guardia successivo
   non li rimette; il comando di installazione corrispondente toglie il divieto.
-- I quattro percorsi di configurazione di Antigravity. `~/.gemini/antigravity/mcp_config.json` è il file canonico;
-  `~/.gemini/{antigravity-cli,antigravity-ide,config}/mcp_config.json` sono link a esso, copie dove i link non si
+- I quattro percorsi di configurazione di Antigravity. `~/.gemini/config/mcp_config.json` è il file canonico;
+  `~/.gemini/{antigravity,antigravity-cli,antigravity-ide}/mcp_config.json` sono link a esso, copie dove i link non si
   possono fare. Un file reale già presente in uno di quei tre percorsi viene prima salvato accanto a sé, e i server che
-  contiene e che il file canonico non ha vengono portati dentro.
+  contiene e che il file canonico non ha vengono portati dentro. Il renderer migra una volta il layout che le versioni
+  precedenti scrivevano (il file reale in `~/.gemini/antigravity/`), con lo stesso salvataggio.
 - Il wrapper di Playwright modifica la cache di npm. `playwright-human-safe.mjs` esegue `@playwright/mcp` alla versione
   esatta che pinna e applica le sue patch di sicurezza umana alla copia nella cache `_npx` di npm, tenendo l'originale
   accanto come `*.agent-human-file-chooser-patch-v1.original`. Quella copia è condivisa con chiunque altro esegua

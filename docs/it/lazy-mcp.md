@@ -138,6 +138,13 @@ lasciare un server dietro il gateway a meno che non debba esserci sempre.
 | `lazy_call` | Inoltra una chiamata a un tool che il manifest dichiara in sola lettura (`readonly: true` sul server, oppure `readonly_tools: [...]`). Rifiuta tutto il resto. |
 | `lazy_mutate` | Inoltra una chiamata a qualsiasi altro tool. Richiede `"confirm": true`. |
 
+Una chiamata i cui argomenti non stanno nello `inputSchema` del tool (manca un campo obbligatorio, un valore ha il tipo
+sbagliato, un campo che lo schema non consente) viene rifiutata prima di essere inoltrata: il rifiuto nomina il campo e
+ripete lo schema in una riga, così la chiamata dopo è giusta invece di spendere un giro sull'upstream per un
+`workflowId: Required`. Si controlla solo ciò che il proxy sa leggere con certezza (un `$ref`, una union o un vincolo
+annidato passano), e lo schema arriva dall'indice che `lazy_list` ha già costruito: una chiamata che precede ogni
+indice viene inoltrata senza controllo.
+
 Letture e scritture sono tool separati perché i permessi della tua CLI possano distinguerli: consentire `lazy_call` e
 continuare a essere interpellato per `lazy_mutate`. La sola lettura non si deduce mai dal nome di un tool né dalle
 annotazioni del server, che arrivano da un server che non controlli: deve dirlo il manifest. `"confirm": true` è il

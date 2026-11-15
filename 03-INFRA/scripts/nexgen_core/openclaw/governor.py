@@ -6,6 +6,11 @@ judge in one line whether any agent is left without a chain. When to move a turn
 not decided here: OpenClaw does it on a provider failure, from its own file, and the
 engine's plugin does it one step early, from the readings the beat wrote.
 
+The sidecar also names the plan each ACP lane spends. On that lane the harness runs
+as itself and OpenClaw's chains are never consulted, so there is nothing to move and
+the honest answer is to refuse the turn: the plugin does it, from the same file and
+the same reading, and only when the squad writes `acp_admission: true`.
+
 Two rules are not preferences:
 
 - a chain the owner wrote by hand is never removed. The proposal and the merge both
@@ -19,8 +24,22 @@ from collections.abc import Mapping
 from typing import Any
 
 from nexgen_core.i18n import t
+from nexgen_core.openclaw.claude_cli import split_ref
 from nexgen_core.quota_policy import Failover
 from nexgen_core.report import CheckOutcome, Severity
+
+#: The runtime block type that marks an agent as running on an ACP session
+#: (`runtime.acp_runtime`), which is the lane this module can refuse a turn on.
+ACP_RUNTIME = "acp"
+
+#: The squad key that opts a machine into the admission branch. Off by default:
+#: it stops a turn that would otherwise run.
+ADMISSION_KEY = "acp_admission"
+
+
+def admitted(squad: Mapping[str, Any] | None) -> bool:
+    """Whether the squad asked for the ACP admission branch."""
+    return isinstance(squad, Mapping) and squad.get(ADMISSION_KEY) is True
 
 
 def agent_entries(config: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -70,6 +89,57 @@ def governor_section(policy: Failover, config: Mapping[str, Any]) -> dict[str, A
         "state_max_age_seconds": policy.state_max_age_seconds,
         "agents": {agent_id: list(chain) for agent_id, chain in chains.items()},
     }
+
+
+def acp_lanes(config: Mapping[str, Any]) -> dict[str, str]:
+    """Every agent on an ACP lane, mapped to the plan its turn spends.
+
+    The lane is read from `agents.entries.<id>.runtime.type`, which is the half
+    `harness_lanes.py` writes; the plan is the provider of that agent's model,
+    which is the same `provider` key `nexgen-quota-state.json` counts under. An
+    agent whose model names no provider is left out: the plugin must never name a
+    plan the state file cannot have a reading for.
+    """
+    lanes: dict[str, str] = {}
+    for agent_id, entry in agent_entries(config).items():
+        if not isinstance(entry, Mapping):
+            continue
+        runtime = entry.get("runtime")
+        if not isinstance(runtime, Mapping) or runtime.get("type") != ACP_RUNTIME:
+            continue
+        model = entry.get("model")
+        primary = model.get("primary") if isinstance(model, Mapping) else model
+        provider, name = split_ref(primary if isinstance(primary, str) else "")
+        if provider and name:
+            lanes[str(agent_id)] = provider
+    return lanes
+
+
+def admission_section(config: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The lanes the plugin may refuse a turn on, or None when no agent is on one."""
+    lanes = acp_lanes(config)
+    return {"agents": lanes} if lanes else None
+
+
+def sidecar_section(
+    policy: Failover, config: Mapping[str, Any], *, acp_admission: bool = False,
+) -> dict[str, Any] | None:
+    """The whole `governor` sidecar: the chains, the two numbers, and the ACP lanes.
+
+    One section and one write, because the plugin replaces it whole. The admission
+    branch is written only when the squad asks for it: refusing a turn on a lane
+    whose plan reads spent is a real behaviour change, so it is the owner's switch
+    and never a default.
+    """
+    section = governor_section(policy, config) or {}
+    admission = admission_section(config) if acp_admission else None
+    if admission:
+        section = {**section, "acp": admission}
+    if not section:
+        return None
+    section.setdefault("block_at", policy.block_at)
+    section.setdefault("state_max_age_seconds", policy.state_max_age_seconds)
+    return section
 
 
 def agent_chains(config: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:

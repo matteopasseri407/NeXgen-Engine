@@ -4,6 +4,12 @@ Owns the shared VERDICT: APPROVE|REVISE|REJECT contract every seat prompt
 promises to close with (``extract_verdict``), the brainstorm/challenge/
 code-review round runner that applies it (``run_rounds``), and the initial
 brief text every mode hands to its first prompt (``build_brief``).
+
+``extract_verdict`` reads that closing line. For claude, codex and agy the line
+was written by ``seat_verdict`` from the field the CLI itself validated, so the
+parser below re-reads our own canonical line instead of trusting the model's
+prose; for the seats whose CLI has no schema flag (opencode, dsh, ollama) it
+still decides the verdict from the model's own last line.
 """
 from __future__ import annotations
 
@@ -59,7 +65,12 @@ def extract_verdict(text: str) -> str:
     'VERDICT: REJECT' while itself approving at the end -- is never picked up
     as if it were this response's own conclusion. fullmatch on the trimmed
     last line also rejects a verdict buried in trailing prose on that same
-    line: the contract is a standalone line, not merely 'appears last'."""
+    line: the contract is a standalone line, not merely 'appears last'.
+
+    For a seat whose CLI validates a schema, that last line is the one
+    ``seat_verdict.unwrap_structured_answer`` appended from the verdict field,
+    so this function confirms a value the CLI already enforced rather than
+    choosing between lines the model wrote."""
     last_line = ""
     for line in reversed(text.splitlines()):
         if line.strip():

@@ -14,15 +14,18 @@ il compito la richiede.
 | `~/.agents/skill-library/` | Corpi completi gestiti. Non è una radice di scoperta. |
 | `~/.agents/skills/INDEX.md` | Catalogo generato, molto piccolo. Accanto non stanno corpi `SKILL.md` facoltativi. |
 | `~/.claude/skills/` | Viste native di Claude, quando Claude è un target. |
-| `~/.codex/skills/` (o `$CODEX_HOME/skills`) | Viste native per skill, quando Codex è un target. È l'unica radice di Codex: non legge `~/.agents/skills`. |
+| `~/.agents/skills/` | Il catalogo condiviso, e la vista nativa di Codex, OpenCode e OpenClaw, ciascuno quando è un target. |
+| `~/.codex/skills/` | Viste native della CLI Codex, scritte accanto al catalogo condiviso: `codex debug prompt-input` elenca questa cartella come radice propria su codex-cli 0.155.1. |
 | `~/.gemini/antigravity-cli/skills/` | Viste native di Antigravity, quando `antigravity` è un target. Nella TUI di agy compaiono come comandi `/name`. |
 
 Ogni voce del manifest ha un `origin`, dei `targets` facoltativi e un'`exposure`.
 
 `targets` decide dove viene scritta una vista, ed è l'unica cosa che lo decide. Una skill dichiarata ottiene una vista
-in ogni runtime che nomina. Claude, Codex e Antigravity leggono una cartella propria, quindi una skill che non li
-nomina non è scopribile lì. OpenCode e OpenClaw leggono anche il catalogo condiviso `~/.agents/skills`, oltre alle
-proprie cartelle.
+in ogni runtime che nomina. Claude e Antigravity leggono una cartella propria, quindi una skill che non li nomina non è
+scopribile lì. OpenClaw scopre da solo il catalogo condiviso `~/.agents/skills`, OpenCode legge quel catalogo più
+`~/.config/opencode/skills`, e un target `codex` scrive sia il catalogo condiviso sia `~/.codex/skills`: la CLI Codex e
+l'app Codex/ChatGPT non concordano su quale delle due scansionano, quindi si scrivono entrambe e nessuna versione resta
+senza skill.
 
 `exposure` è registrata nel manifest e mostrata in `INDEX.md`. Non governa le viste: una skill dichiarata le ottiene
 qualunque sia la sua exposure, perché eliminarle aveva reso le skill irraggiungibili in silenzio dopo ogni sync. Il
@@ -65,8 +68,9 @@ my-command:
 ```
 
 - `claude` collega la vista per Claude Code (`/my-command`).
-- `codex` la collega in `$CODEX_HOME/skills` (predefinita `~/.codex/skills`), l'unica radice di Codex, dove compare
-  come menzione `$my-command`.
+- `codex` scrive la skill in `~/.codex/skills`, la radice che `codex debug prompt-input` elenca su codex-cli 0.155.1, e
+  nel catalogo condiviso `~/.agents/skills` che l'app Codex/ChatGPT è documentata a leggere, così compare come menzione
+  `$my-command` qualunque delle due la versione installata scansiona.
 - `antigravity` la collega in `~/.gemini/antigravity-cli/skills/` (`/my-command` nella TUI di agy).
 - `opencode` la collega in `~/.config/opencode/skills/` e nel catalogo condiviso `~/.agents/skills/`, e il sync
   verifica che la skill sia davvero scopribile lì.

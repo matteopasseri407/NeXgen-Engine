@@ -44,7 +44,6 @@ def role_inputs(tmp_path: Path) -> dict:
         "node_name": "test-node",
         "align_fn": lambda: (True, "aligned"),
         "runner": lambda cmd, timeout: RunResult(0, '{"connected": true}\n', ""),
-        "wait_probe_fn": lambda: True,
     }
 
 

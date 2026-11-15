@@ -176,6 +176,77 @@ The later a layer runs, the more it wins; a field a later layer does not set sta
 Invariant: the render path never writes the canonical manifest, except through the explicit `--adopt` flow with backup
 and re-validation. The last layer to win is additive live preservation, never the other way around.
 
+## Claude Desktop (Chat and Cowork)
+
+The desktop app is a renderer target with its own contract: `nexgen_core/mcp_render/claude_desktop.py` owns the
+`mcpServers` table of `claude_desktop_config.json` and nothing else, because the app owns the rest of that file
+(preferences, window state) and may save it at any moment.
+
+**What Chat and Cowork get by default: nothing.** No server reaches the app until its manifest entry sets
+`desktop_allow: true`, and the shipped template declares that flag on no server at all
+(`03-INFRA/agent-universal-layer/mcp/manifest.yaml`). Two filters apply, in this order: the flag (absent or not
+exactly `true` means deny), and the gateway (refused even when flagged, because every server behind it, mutating
+ones included, would become reachable through it). An allowlisted entry is rendered whether it speaks stdio or
+HTTP: a remote one is mounted through the engine's `mcp-http-bridge.mjs`, the same bridge Antigravity uses, because
+the app can only be handed a child process.
+
+**Why the default is deny.** The app has no guardrail hooks: no permission file, no hook, no sandbox in front of a tool
+call, so the only thing between an untrusted document and the host is the app's own Allow popup. The toolset the app
+would otherwise inherit includes Vault writes, workflow mutation and arbitrary browser code. The Vault is the one
+grant the owner decided on anyway, and the next section says why.
+
+**How a grant is taken back.** The renderer keeps a sidecar (`claude_desktop_config.managed.json`) listing the names it
+wrote itself. A name that loses the flag is removed on the next cycle. An entry somebody added by hand in the app is
+never touched, and `mcp.desktop_allowlist` in `nexgen doctor` reports the manifest-known ones as WARN instead of
+deleting them.
+
+### Opting the Vault in, read and write
+
+The rule for this app has been to grant a server only if it is read-only, because the app has no guardrail hooks. For
+the Vault the owner's decision is read AND write, and the reason lives in the server's own contract rather than in
+this one: a write built on a stale read is refused instead of applied (`update_note` and `update_section` take
+`expected_hash`, and `create_note` refuses to overwrite), every write is a Git commit, so anything can be reverted, and
+the server exposes no delete tool at all. The read-only-only convention therefore does not apply to it.
+
+So the Vault in Chat and Cowork is the shipped `vault-library` entry plus one flag:
+
+```yaml
+  vault-library:
+    # ... the shipped fields (transport: http, url, auth, require_env) ...
+    desktop_allow: true
+```
+
+Then run `nexgen sync` (or let `guard` reach it) and restart the app. `vault-library` is `transport: http`, so the
+renderer mounts it through `mcp-http-bridge.mjs`, the same bridge Antigravity uses. The generated entry is
+
+```json
+{"command": "node", "args": ["<engine>/agent-universal-layer/mcp/mcp-http-bridge.mjs",
+                             "https://<vault host>/mcp", "VAULT_LIBRARY_TOKEN", "mcp-remote@0.1.38"], "env": {}}
+```
+
+Four things to know before doing it:
+
+- the URL is written resolved, because the render only runs while `VAULT_LIBRARY_URL` is set (`require_env`). The
+  token is not written at all: the third argument is the NAME of the variable holding it, and the bridge reads the
+  bearer from that variable in the environment of the process the app starts. So `VAULT_LIBRARY_TOKEN` has to reach
+  the app through its own environment (`~/.config/environment.d` or the secrets deposit on Linux, the user
+  environment on Windows): the app starts from a graphical session, not from a shell;
+- `exposure` and `targets` do not apply to this app, only the flag does, so a server the plan routes behind the gateway
+  is mounted directly here when it is flagged, and then `readonly` and `readonly_tools` protect nothing;
+- `tools_allow` stays the option for a server that must really be read-only, whichever transport it speaks: the
+  renderer then writes `mcp-trim.py <name>` as the command, and the shim lists only the allowed tools and refuses a
+  call to anything else. Such an entry is not bridged, because the wrapper is the child process and it speaks HTTP to
+  the real server itself, with the bearer taken from the credential chain. `readonly` and `readonly_tools` are not that
+  limit: they decide whether `lazy_call` or `lazy_mutate` forwards a tool, which only means something behind the
+  gateway, and the gateway never mounts here;
+- the bridge shape on this app is pinned in `test_nexgen_claude_desktop.py`: a literal argv, the same arguments
+  Antigravity writes for the same entry, the token value absent from the file, an unflagged HTTP entry absent, and the
+  guard keeping a bridge entry whose `require_env` it cannot see.
+
+If the goal is a machine whose Vault is read-only for everyone, the other lever is on the server, not in this contract:
+`VAULT_WRITE_ENABLED=false` makes the deployed `vault-library` serve as `markdown-vault-readonly` and never expose the
+write tools at all. That is per instance and applies to every client on it, the owner's own write path included.
+
 ## Known limitation
 
 This whole contract is built for one person keeping several machines of their own in sync, not for a team writing to

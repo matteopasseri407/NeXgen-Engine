@@ -122,6 +122,10 @@ def _register_run(run) -> None:
         "--limited", action="store_true",
         help="usa i modelli del tier limited (attenzione: mai per finanze, posta, identità, segreti)",
     )
+    run.add_argument(
+        "--headless", action="store_true",
+        help="nessuna scheda: il turno parte staccato e i suoi errori vanno in 60-stderr-*.log",
+    )
     run.set_defaults(func=cmd_sup_run)
 
 
@@ -341,7 +345,8 @@ def cmd_sup_run(args: argparse.Namespace) -> int:
         print("riprova `sup run` quando quella sessione è ferma: una finestra nuova non si apre")
         return 0
     if result["mode"] == "run":
-        print(f"lavoro inviato alla sessione {result['session']} (pid {result['pid']}), nessuna scheda nuova")
+        who = result["session"] or "non ancora determinata"
+        print(f"lavoro inviato alla sessione {who} (pid {result['pid']}), nessuna scheda nuova")
         if result.get("reason"):
             print(f"nota: {result['reason']}")
         row = result.get("row") or {}
@@ -384,6 +389,13 @@ def _run_unit(args: argparse.Namespace) -> dict:
         options["model"] = args.model
     if getattr(args, "limited", False):
         options["limited"] = True
+    if getattr(args, "headless", False):
+        if options.get("model"):
+            raise harness.HarnessError(
+                "--headless non applica -m: quel turno prende il modello scelto dai tier "
+                "(o quello con cui l'harness è configurato)"
+            )
+        options["headless"] = True
     return harness.run_unit(args.id, args.unit, **options)
 
 

@@ -33,7 +33,7 @@ nexgen-local sup status                                     # every task, one li
 nexgen-local sup status <id>                                # units, states, verdicts, costs
 nexgen-local sup unit <id> <unit> --repo <checkout> --base <ref> --brief <file> \
     --allow 'docs/*.md' [--allow ...] [--verify "<command>"] [--mcp <server>]
-nexgen-local sup run <id> <unit> [--harness <name>]         # the executor's window
+nexgen-local sup run <id> <unit> [--harness <name>] [--headless]  # the executor's window
 nexgen-local sup collect <id> <unit>                        # the tab closes when the turn is over, then the gates and the cost
 nexgen-local sup review <id> <unit> --approve "<why>" [--close]  # one review round, APPROVA
 nexgen-local sup review <id> <unit> --rework <file>         # one review round, RIMANDA
@@ -211,6 +211,24 @@ La ricerca è dell'adattatore: OpenCode elenca il proprio archivio di sessioni, 
 Un harness che mostra le proprie sessioni non apre nessuna delle finestre del motore (`window=False` nella sua tabella di capacità): `sup run` avvia il turno da sé, staccato, e aggancia la sessione sotto la chiave che ha scelto, così l'aggancio non è un'induzione fatta da un orologio.
 OpenClaw è oggi quell'harness.
 
+### Un'unità senza finestra: `sup run --headless`
+
+`sup run --headless` avvia lo stesso turno staccato e non apre niente: nessuna scheda, nessun Windows Terminal, nessuna console.
+Il turno gira nella copia dell'unità sotto il profilo dei permessi scritto un attimo prima, e il motore aggancia la sessione che quel turno ha aperto in quella copia, letta dall'elenco dell'harness come dopo qualsiasi scheda nuova.
+Il diario registra la consegna come `mode: "turn"`, non come scheda, e nessun processo porta `NEXGEN_SUP_TAB`: `sup collect`, `sup review` e `sup pulizia` non hanno schede da chiudere e non ne cercano.
+Quello che il turno scrive su stderr finisce in `60-stderr-<session>.log` nella cartella del compito, il file che ogni turno one-shot già scrive; un turno la cui sessione non esiste ancora accoda in `60-stderr-session.log` finché il suo id non è noto.
+
+È la porta per chi guida i verbi da un'applicazione senza terminale.
+Il motore non ha mai bisogno di una console ereditata da chi lo chiama: `wt.exe`, `CREATE_NEW_CONSOLE` o il terminale Linux li avvia il motore stesso, quindi un'applicazione grafica che sa avviare un processo apre le solite schede `nexgen-sup`.
+Quello che serve al motore è una sessione grafica, e su Linux rifiuta senza `DISPLAY` o `WAYLAND_DISPLAY`.
+
+`--headless` costa esattamente quello che costa una finestra: nessuno vede il lavoro mentre accade.
+Una richiesta di permesso a cui nessuno risponde è il motivo per cui esiste il rilevatore di stallo, e il resoconto, la copia, la riga di costo e ogni cancello restano identici.
+Il flag lo accettano OpenCode e l'esecutore locale, i due harness il cui turno sa aprire la sessione che sta per agganciare; per gli altri il verbo rifiuta per nome, perché `claude`, `codex` e `agy` riprendono una sessione che esiste già.
+Decide anche solo come parte la prima consegna di un'unità: quando il compito ha già una sessione, le consegne successive girano comunque senza finestra, e l'unico caso che riapre una scheda è il `tab_closed` del motore, che un giro di revisione tratta come un rifiuto a lavorare alla cieca.
+`openclaw` non ha bisogno di nessun flag: dichiara `window=False` ed è già senza finestra.
+`-m` viene rifiutato insieme a `--headless`: quel turno porta il modello scelto dai tier (o dalla coda quota), e quando i tier non ci sono prende quello con cui l'harness è configurato.
+
 Il diario registra la cartella insieme alla sessione (`attached`, `unit_started`, `unit_queued`, `unit_reworked`).
 Un'unità cerca prima la sessione registrata per quell'unità; l'ultima sessione del compito per lo stesso harness è un ripiego solo per un'unità che non ne ha mai avuta una.
 Il motore riusa una sessione solo quando quella cartella è la copia dell'unità stessa; quando è la copia di un'altra unità scrive `harness_session_foreign` con entrambi i percorsi, e apre una scheda nuova nella copia giusta solo quando l'harness dice che quella sessione è libera.
@@ -301,6 +319,28 @@ Test scritti da qualcun altro e rossi prima che l'unità parta sono il modo più
 
 Il modello è nominato in `local_model.model` della corsia, e `sup run --harness local` seleziona l'adattatore locale per un'unità. Il diario registra l'harness, così la consegna della revisione torna alla stessa sessione.
 
+## La quota, prima di partire
+
+Prima che un'unità parta, `sup run` legge le righe di quota gratuite del piano che il suo esecutore spenderebbe (`nexgen_core.quota.percentage_rows`: l'archivio dell'harness, i limiti che Codex riporta da solo e il backend opzionale dalla cache che condivide con il beat orario).
+Non apre nessun transcript e non avvia nessun modello.
+Al massimo costa una corsa di quel backend ogni dieci minuti, chiunque abbia chiesto per ultimo.
+
+Quando la lettura è corrente e pari o sopra la linea che il proprietario ha dichiarato in `failover.block_at` (95% se quel file non dice altro), l'unità non parte lì.
+È il numero del plugin, non un secondo numero: lo stesso file alimenta `before_model_resolve`, quindi un supervisore che leggesse la soglia dell'avviso continuerebbe a mandare unità su un piano che il plugin aveva già smesso di usare.
+`routing_tiers` sceglie il candidato worker successivo, saltando ogni modello del piano speso, perché un provider a quella linea è speso per tutto quello che serve, e il diario guadagna una riga `unit_quota` che nomina la lettura, la decisione e dove è andata l'unità:
+
+```
+unità <unit>: quota al 97% (5h): passa a gemini-3.8-flash
+```
+
+Una lettura vecchia, in cache, assente o illeggibile non blocca mai niente: viene registrata come `quota unknown` e l'unità parte dove stava per partire.
+Il motore non ha mai inventato una percentuale, e un dubbio è un motivo peggiore per fermare un'unità di nessun motivo.
+Un piano al 97% senza nessun'altra destinazione parte lo stesso, e la stessa riga lo dice.
+`sup run --headless` non cambia mai harness, perché quel turno apre una sessione propria e solo alcuni harness sanno farlo senza finestra: lo spostamento viene registrato come non fatto (`decision="headless"`) invece di fallire più tardi a nome di un harness che il proprietario non ha chiesto.
+
+Questo controllo richiede `routing-tiers.yaml`: senza quel file la corsia non ha una lista di candidati verso cui spostarsi, e gira esattamente come dicono le sue impostazioni.
+`sup status` non ripete la lettura; il diario è il posto dove vive.
+
 ## Sessioni in stallo
 
 Una sessione attiva che non si è mossa è l'altro modo in cui un esecutore sparisce.
@@ -366,7 +406,7 @@ Il resoconto dell'esecutore non è una prova; ogni riga qui sotto viene letta da
 | `configurazione git` | uno dei due file di configurazione della copia è cambiato da quando l'unità è stata creata (il `.git/config` condiviso del repository, che ogni checkout legge, oppure il `config.worktree` del worktree), o la configurazione effettiva porta una chiave `url.*.insteadOf` o `url.*.pushInsteadOf` che la creazione non aveva; vengono nominati il file o la chiave |
 | `remoto intatto` | un remote della creazione è sparito, è stato aggiunto, punta a un altro URL di fetch o di push, oppure uno dei suoi ref porta un commit dell'intervallo dell'unità (l'unità ha spinto); un ramo avanzato per un altro motivo non è un guasto |
 | `albero pulito` | la copia dell'unità ha lavoro non committato |
-| `scansione fughe` | il progetto dichiara la scansione anti-fuga della CI (un workflow nomina `leak_scan.py`) e la scansione esce con codice diverso da zero sul `base..head` dell'unità, oppure lo script e i suoi pattern non sono dove il workflow dice; un progetto che non dichiara nessuna scansione non aggiunge righe |
+| `scansione fughe` | il progetto dichiara la scansione anti-fuga della CI (un workflow nomina `leak_scan.py`) e la scansione esce con codice diverso da zero sul `base..head` dell'unità, oppure lo script e le sue regole (`leak-scan/gitleaks.toml`) non sono dove il workflow dice; un progetto che non dichiara nessuna scansione non aggiunge righe |
 
 Il verdetto è PASS solo quando ogni riga lo è.
 Il pacchetto (`40-pacchetto-<unit>.md`) porta il verdetto, le righe dei cancelli, le voci di `test_removal_ok` aggiunte dall'unità, il diffstat, il diff con un tetto dichiarato di 400 righe e il costo della sessione agganciata.
@@ -623,7 +663,7 @@ Una riga per unità, tipo e frase va in `07-richieste-proprietario.md`, e una fr
 ## Finestre visibili
 
 `supervision_windows` apre un terminale che esegue un comando e resta aperto; il motore non ne legge mai l'output, e una finestra che non si riesce ad aprire solleva un errore invece di ripiegare su un processo nascosto.
-Una scheda aperta dal motore porta il suo marcatore in un punto esatto, e viene guardata solo una shell: su Windows l'assegnazione nella riga di comando (`$env:NEXGEN_SUP_TAB=nexgen-sup:<task>:<role>`), su Linux la variabile esportata in `/proc/<pid>/environ`.
+Una scheda aperta dal motore porta il suo marcatore in un punto esatto, e viene guardata solo una shell: su Windows l'assegnazione nella riga di comando (`$env:NEXGEN_SUP_TAB=nexgen-sup:<task>:<role>`), su Linux la variabile esportata nell'ambiente della shell (`/proc/<pid>/environ`, letto con psutil).
 Un `grep` o un editor che si limita a citare il marcatore non è una scheda e non viene mai toccato.
 Il motore chiude esattamente quella scheda quando il lavoro è finito: alla pubblicazione (`sup publish`), al ritiro (`sup review --approve ... --close`) e durante la pulizia (`sup pulizia --chiudi`).
 Una scheda condivisa resta finché l'ultima unità che la usa non è finita, pubblicata, chiusa o ritirata, mentre le schede separate si chiudono con la loro unità.
@@ -634,7 +674,7 @@ Il marcatore nomina il compito e il ruolo, quindi quale unità serve una scheda 
 Quando `sup run`, `sup review --rework` o `--resend` aprono una scheda per un'unità che ne ha già una, la vecchia scheda viene chiusa prima (`close_unit_tab`, stessa regola del marcatore e stesso rifiuto intorno al server condiviso), e il ritiro chiude la scheda dell'unità prima che la copia se ne vada; un'unità la cui scheda non è mai stata registrata non costa nessuna lettura della tabella dei processi.
 Nove schede dimenticate di unità già pubblicate sono state, misurate sul PC del proprietario, il motivo per cui una pulizia non trovava nulla da raccogliere.
 
-Su Linux la scheda è una finestra di terminale la cui shell è la scheda: l'albero si legge da `/proc` (stat, cmdline, environ) e si ferma dal più profondo, e la finestra segue la sua shell.
+Su Linux la scheda è una finestra di terminale la cui shell è la scheda: l'albero si legge con psutil, dalla riga di comando e dall'ambiente di ogni processo, e si ferma dal più profondo, e la finestra segue la sua shell.
 Vale la stessa regola sul server condiviso, quindi una macchina in cui il terminale ha avviato `opencode serve` tiene quella finestra.
 
 `sup pulizia` è il verbo per quello che il motore ha lasciato indietro.
@@ -665,6 +705,8 @@ Il banco dei modelli locali non è del motore: nessun verbo lo ferma tranne l'un
 - Linux: il primo tra `x-terminal-emulator`, `gnome-terminal`, `konsole`, `xterm`, ognuno con i propri flag, con la shell tenuta viva da `; exec bash`.
   Senza `DISPLAY` e senza `WAYLAND_DISPLAY` rifiuta: una finestra che nessuno può vedere è un processo nascosto con qualche passaggio in più.
 - Il comando viene passato come argv, quindi la regola di quoting è quella del motore (`nexgen_core.processes`), non una stringa costruita a mano.
+- Niente qui viene ereditato da chi chiama: il terminale lo avvia il motore, quindi un supervisore che lancia i verbi da un'applicazione grafica ottiene le stesse schede.
+  Un'unità che non deve avere una finestra passa da `sup run --headless`, descritto in "La finestra dell'esecutore".
 
 `sup window-check` è la prova manuale su ogni macchina: si apre una finestra, stampa `finestra del supervisore OK` e resta aperta.
 Non fa mai parte di un test: i test sostituiscono `Popen` e `which`, quindi nessuna suite apre una finestra.
@@ -676,6 +718,7 @@ La fonte è l'harness dell'unità, attraverso il suo adattatore: OpenCode e l'es
 Codex riporta token e nessun denaro, e `agy` non riporta nessuno dei due: la riga dice che il numero è illeggibile invece di scrivere zero.
 
 `sup costi` senza id mostra quello che l'archivio dell'harness dice essere stato speso nelle ultime 5 ore, 7 giorni e 30 giorni: ogni riga di sessione in `session_v2`, o nella vecchia tabella `session`, figli compresi, finestrata per `time_updated`.
+I dollari di quelle sessioni li dà il binario opzionale [ccusage](https://github.com/ccusage/ccusage) (MIT), il cui lettore OpenCode salta le righe di messaggio che una fork v2 ha copiato dal genitore e prezza un modello dal listino incluso quando l'harness ha scritto zero, che è quello che scrive un abbonamento flat: quando è installato, un `ccusage opencode session --json --offline` risponde una volta ogni dieci minuti; quando manca, o la sua risposta ha una forma che il motore non riconosce, si somma la colonna `cost` dell'archivio esattamente come prima.
 L'archivio viene aperto in sola lettura, e un archivio che non si riesce a leggere rende la finestra sconosciuta con il motivo, mai zero.
 Nessuna regola di budget vive nel motore: i numeri si mostrano, e cosa farne resta una decisione del proprietario.
 

@@ -42,6 +42,27 @@ Registra un token API di PyPI come segreto `PYPI_API_TOKEN` e il passo "Publish 
 wheel a ogni release. Fino a quel momento `uv tool install nexgen-engine` non risolve niente, ed è per questo che il
 README installa dall'URL git.
 
+## Macchine da maintainer
+
+Alcuni comandi pubblicano il motore invece di usarlo: `nexgen release ...`, la scansione delle fughe del repo del
+motore, gli hook di disciplina di quel repo e ogni strumento privato che il motore lancia. Girano solo su una macchina
+registrata come maintainer, e una registrazione sono due fatti, nessuno dei due in questo repository:
+
+- `maintainer: true` nella configurazione privata dell'installazione, `sync/remotes.yaml` nel Vault, il file che il
+  cancello dei canali di update legge già.
+- una chiave di firma git che questa macchina userebbe (`git config user.signingkey`, oppure la chiave con cui firma il
+  suo portachiavi), elencata in `03-INFRA/agent-universal-layer/trust/release-signers.txt`.
+
+`nexgen maintainer status` dice quale metà manca; `nexgen maintainer register` scrive il flag in quella configurazione
+privata e la lascia non committata, quindi pubblicarla è un `nexgen vault push` a parte. Il flag da solo non autorizza
+niente: senza una chiave elencata l'installazione non è un maintainer, e ogni comando protetto lo dice in una riga.
+Tutto quello che serve a una persona resta fuori da questo cancello, la disciplina nei suoi progetti compresa.
+
+**Non è un confine di sicurezza.** Quello che ferma un estraneo sono i permessi di GitHub: `main` è protetto e
+richiede i controlli verdi, i tag di release devono essere firmati, e il proprietario è l'unico collaboratore. La
+registrazione tiene gli strumenti di chi pubblica fuori dai piedi di un'installazione che non se ne fa niente; una
+macchina che mettesse il flag senza una chiave elencata non avrebbe comunque niente con cui fare push, tag o release.
+
 ## Windows: cosa esiste, cosa è una decisione
 
 - `install.ps1 -Check` nella radice del repo è la strada Windows di oggi, versionata insieme al repo.

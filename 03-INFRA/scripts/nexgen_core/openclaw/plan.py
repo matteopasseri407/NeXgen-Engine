@@ -16,7 +16,7 @@ from typing import Any
 from nexgen_core import quota_policy
 from nexgen_core.i18n import detect_language, t
 from nexgen_core.openclaw import companion as app_gateway
-from nexgen_core.openclaw import agy_prereqs, hierarchy, observation
+from nexgen_core.openclaw import agy_prereqs, harness_lanes, hierarchy, observation
 from nexgen_core.openclaw.browser_profile import server_section
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.conversation_grant import with_engine_plugin
@@ -38,7 +38,7 @@ from nexgen_core.openclaw.profile import (
 from nexgen_core.openclaw.skills_policy import with_skill_policy
 from nexgen_core.openclaw.squad import apply_squad, find_squad_file, load_squad
 from nexgen_core.paths import openclaw_config, resolve_home, resolve_vault_data
-from nexgen_core.runtimes.openclaw import PLUGIN_ID
+from nexgen_core.runtimes.openclaw import PLUGIN_ID, OpenClawRuntime
 
 DISPLAY_NAMES = {"main": "assistente", "capo": "capo", "automazioni": "automazioni", "sviluppo": "sviluppo"}
 
@@ -141,7 +141,12 @@ def _agent_notes(
 
 
 def _context_notes(config: dict[str, Any]) -> list[str]:
-    """Models whose context window the backend did not report, and so is not written."""
+    """Models whose context window the backend did not report, and so is not written.
+
+    A model the squad caps with `context_tokens` is not one of them: the cap is the
+    number the engine was asked to write, and calling it an unknown window would be a
+    note about a decision the person already made.
+    """
     providers = config.get("models", {}).get("providers")
     if not isinstance(providers, dict):
         return []
@@ -149,7 +154,12 @@ def _context_notes(config: dict[str, Any]) -> list[str]:
     for block in providers.values():
         models = block.get("models") if isinstance(block, dict) else None
         for entry in models or []:
-            if isinstance(entry, dict) and entry.get("id") and "contextWindow" not in entry:
+            if (
+                isinstance(entry, dict)
+                and entry.get("id")
+                and "contextWindow" not in entry
+                and "contextTokens" not in entry
+            ):
                 unknown.append(str(entry["id"]))
     if not unknown:
         return []
@@ -350,20 +360,25 @@ def build_plan(
         proposed, current,
         Path(snapshot.openclaw.config_path).parent if snapshot.openclaw.config_path else None,
     )
-    config = with_engine_plugin(
-        with_chains(with_skill_policy(proposed, vault_data, current), failover), _plugin_deposited(path, plugin_deposited),
-        agy_installed=agy_prereqs.installed_version(path.parent) is not None,
+    # The lane an agent declares with `harness:` is written as both halves or not at
+    # all, and the ones that cannot be written are named to the person below.
+    unrouted = harness_lanes.apply(proposed, squad_data, snapshot)
+    config = _engine_plugin_block(
+        with_chains(with_skill_policy(proposed, vault_data, current), failover),
+        path, plugin_deposited, home_dir,
     )
     # Last, and on purpose: the deny is decided on the document the write will leave,
     # so it sees what every pass above proposed and what the merge will keep.
     config = _with_loopback(config, current, home=home_dir, vault_data=vault_data, engine_root=engine_root)
     config, browser_note = _with_server_browser(config, current, serve=chosen.serve, home=home_dir)
     changes = _diff(config, current)
+    lane_notes = [harness_lanes.problem(lane) for lane in unrouted]
     notes = [
         *_wanted_notes(config, snapshot, chosen, squad_data),
         # A fallback line the engine cannot use is named here too: the plan is what a person
         # reads before the setup writes anything, so a typo in the policy must not be silent.
         *failover_notes,
+        *[note for note in lane_notes if note],
         *([browser_note] if browser_note else []),
         *_change_notes(config, changes, current),
     ]
@@ -381,6 +396,29 @@ def _plugin_deposited(path: Path, asked: bool | None) -> bool:
     if asked is not None:
         return asked
     return (path.parent / "extensions" / PLUGIN_ID / "index.mjs").is_file()
+
+
+def _engine_plugin_block(
+    config: dict[str, Any],
+    path: Path,
+    asked: bool | None,
+    home_dir: Path,
+) -> dict[str, Any]:
+    """The engine's own plugin in the proposal: enabled only when it is there, with its switches.
+
+    The switches go into `plugins.entries.nexgen.config`, which OpenClaw validates against the
+    plugin's manifest and hands to it as `api.pluginConfig`. They are derived from the proposal
+    itself, not from the file being replaced, so the plan a second setup builds names the same
+    sections and the write step finds nothing to write. They are derived only for a deposited
+    plugin: they describe files the deposit wrote, and a plugin that is not there obeys nothing.
+    """
+    deposited = _plugin_deposited(path, asked)
+    return with_engine_plugin(
+        config,
+        deposited,
+        agy_installed=agy_prereqs.installed_version(path.parent) is not None,
+        switches=OpenClawRuntime().plugin_switches(home_dir, config) if deposited else None,
+    )
 
 
 def _diff(config: dict[str, Any], current: dict[str, Any] | None) -> dict[str, tuple[str, ...]]:

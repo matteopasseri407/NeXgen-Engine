@@ -323,7 +323,7 @@ def test_dead_opencode_instructions_are_not_rewritten_when_their_safety_copy_fai
 
 
 def test_claude_md_symlink_survives_the_pointer_being_rewritten(tmp_path, monkeypatch):
-    """~/CLAUDE.md is often a link into a dotfiles repository. Rewriting the pointer
+    """The Claude pointer is often a link into a dotfiles repository. Rewriting it
     replaced the link with a regular file, detaching it from its owner."""
     vault = tmp_path / "vault"
     canon = vault / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
@@ -334,12 +334,13 @@ def test_claude_md_symlink_survives_the_pointer_being_rewritten(tmp_path, monkey
     dotfiles = tmp_path / "dotfiles" / "CLAUDE.md"
     dotfiles.parent.mkdir()
     dotfiles.write_text("hand-written lines\n", encoding="utf-8")
-    (home / "CLAUDE.md").symlink_to(dotfiles)
+    (home / ".claude").mkdir()
+    (home / ".claude" / "CLAUDE.md").symlink_to(dotfiles)
     runner = GuardRunner(vault_data=vault, home=home)
 
     runner.align_instructions()
 
-    assert (home / "CLAUDE.md").is_symlink()
+    assert (home / ".claude" / "CLAUDE.md").is_symlink()
     assert dotfiles.read_text(encoding="utf-8").startswith("# Claude compatibility pointer")
 
 

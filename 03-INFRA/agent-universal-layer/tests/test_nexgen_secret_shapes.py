@@ -4,14 +4,17 @@ Each consumer used to carry its own list of what a secret looks like, and each l
 providers. A credential type added to one and forgotten in another is invisible until it leaks, so
 this feeds the same strings through all of them: the shared module, the connector manifest guard,
 the lazy-mcp stderr redaction, vault-mcp's snippet redaction (which keeps a mirror, because its
-container ships without the engine package) and the commit-time leak gate.
+container ships without the engine package) and the commit-time leak gate, whose rules now live in
+the gitleaks config the gate reads.
 """
 from __future__ import annotations
 
 import importlib.util
 import random
+import re
 import string
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -66,13 +69,15 @@ def lazy():
 
 
 @pytest.fixture(scope="module")
-def leak_scan():
-    return _load("leak_scan_for_shapes", LEAK_DIR / "leak_scan.py")
+def leak_rules():
+    """The commit-time gate's rules, as gitleaks will compile them."""
+    config = tomllib.loads((LEAK_DIR / "gitleaks.toml").read_text(encoding="utf-8"))
+    return [re.compile(rule["regex"]) for rule in config["rules"] if "regex" in rule]
 
 
 @pytest.mark.parametrize("provider", sorted(corpus()))
 @pytest.mark.parametrize("template", ["{tok}", "API_KEY={tok}", "error: rejected {tok} for this request"])
-def test_every_consumer_recognises_every_provider(provider, template, lazy, leak_scan):
+def test_every_consumer_recognises_every_provider(provider, template, lazy, leak_rules):
     token = corpus()[provider]
     text = template.format(tok=token)
 
@@ -82,9 +87,7 @@ def test_every_consumer_recognises_every_provider(provider, template, lazy, leak
     assert token not in lazy._redact(text, {}), "lazy-mcp stderr redaction"
     assert token not in _redact_snippet(text), "vault-mcp snippet redaction (mirror)"
 
-    patterns, allow = leak_scan.load_patterns(LEAK_DIR / "leak_patterns.yaml")
-    findings = leak_scan.scan_units([leak_scan.Unit("sample", 1, text)], patterns, allow, [])
-    assert any(f.blocking for f in findings), "commit-time leak gate"
+    assert any(rule.search(text) for rule in leak_rules), "commit-time leak gate"
 
 
 def test_a_padded_base64_secret_is_recognised_with_its_padding():

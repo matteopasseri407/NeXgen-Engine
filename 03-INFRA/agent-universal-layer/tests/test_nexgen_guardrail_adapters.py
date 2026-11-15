@@ -44,6 +44,20 @@ BODIES["echo.mjs"] = (
     "import { readFileSync, writeFileSync } from 'node:fs';"
     "writeFileSync(process.env.GUARDRAIL_ECHO, readFileSync(0, 'utf8'));"
 )
+# Reads the command the way the private policy reads it, and answers for a PowerShell verb:
+# this is what a policy rule for the PowerShell tool looks like, run through the same adapter.
+BODIES["powershell-policy.mjs"] = (
+    "let raw = '';"
+    "process.stdin.setEncoding('utf8');"
+    "process.stdin.on('data', (c) => (raw += c));"
+    "process.stdin.on('end', () => {"
+    "  const cmd = JSON.parse(raw)?.tool_input?.command ?? '';"
+    "  if (/Remove-Item\\b[^;&|]*-Recurse/i.test(cmd)) {"
+    "    process.stdout.write(JSON.stringify({hookSpecificOutput: {hookEventName: 'PreToolUse',"
+    "      permissionDecision: 'deny', permissionDecisionReason: 'rm ricorsivo sulla home (PowerShell)'}}));"
+    "  }"
+    "});"
+)
 
 
 def deploy(tmp_path: Path, adapter: str, body: str | None, **sidecar) -> Path:
@@ -71,6 +85,13 @@ CLAUDE_INPUT = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
                            "tool_input": {"command": "ls"}, "permission_mode": "default"})
 BYPASS_INPUT = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
                            "tool_input": {"command": "ls"}, "permission_mode": "bypassPermissions"})
+# On Windows the shell is this tool, and it carries the command in the same field.
+POWERSHELL_COMMAND = r"Remove-Item -Recurse -Force C:\Users\alice\KnowledgeVault"
+POWERSHELL_INPUT = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "PowerShell",
+                               "tool_input": {"command": POWERSHELL_COMMAND}, "permission_mode": "default"})
+POWERSHELL_BYPASS_INPUT = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "PowerShell",
+                                      "tool_input": {"command": POWERSHELL_COMMAND},
+                                      "permission_mode": "bypassPermissions"})
 
 
 def claude_decision(result: subprocess.CompletedProcess[str]) -> str:
@@ -107,6 +128,35 @@ def test_a_broken_body_is_a_decision_never_a_pass(tmp_path, body):
     adapter = deploy(tmp_path, "claude-guardrail-adapter.mjs", body)
     assert claude_decision(run(adapter, CLAUDE_INPUT)) == "ask"  # a person is asked
     assert claude_decision(run(adapter, BYPASS_INPUT)) == "deny"  # nothing else would prompt: it blocks
+
+
+def test_a_powershell_command_reaches_the_body_untouched(tmp_path):
+    """The matcher is what decides whether the guardrail ever runs on Windows: when it does, the
+    PowerShell call arrives in the shape the policy already reads."""
+    echo = tmp_path / "echoed.json"
+    adapter = deploy(tmp_path, "claude-guardrail-adapter.mjs", "echo.mjs")
+
+    run(adapter, POWERSHELL_INPUT, GUARDRAIL_ECHO=str(echo))
+
+    assert json.loads(echo.read_text(encoding="utf-8"))["tool_input"]["command"] == POWERSHELL_COMMAND
+
+
+def test_the_same_policy_rules_judge_a_powershell_command(tmp_path):
+    adapter = deploy(tmp_path, "claude-guardrail-adapter.mjs", "powershell-policy.mjs")
+
+    denied = run(adapter, POWERSHELL_INPUT)
+    assert claude_decision(denied) == "deny"
+    assert "rm ricorsivo sulla home (PowerShell)" in denied.stdout
+    benign = json.dumps({"tool_name": "PowerShell", "tool_input": {"command": "git status"}})
+    assert claude_decision(run(adapter, benign)) == "allow"
+
+
+def test_a_broken_body_blocks_a_powershell_command_too(tmp_path):
+    """Widening the matcher must not widen the failure path: a body that crashes still decides."""
+    adapter = deploy(tmp_path, "claude-guardrail-adapter.mjs", "crash.mjs")
+
+    assert claude_decision(run(adapter, POWERSHELL_BYPASS_INPUT)) == "deny"
+    assert claude_decision(run(adapter, POWERSHELL_INPUT)) == "ask"
 
 
 def test_a_missing_body_blocks_under_bypass(tmp_path):
@@ -394,3 +444,99 @@ def test_the_body_is_run_by_node_even_when_the_host_is_not_node(tmp_path):
         "]));\n", encoding="utf-8")
     out = json.loads(subprocess.run([NODE, str(driver)], capture_output=True, text=True, timeout=60, check=True).stdout)
     assert out == ["node", "/usr/bin/node", "C:\\Program Files\\nodejs\\node.exe", "node", "node"]
+
+
+# ------------------------------------------------------------------ Codex
+#
+# Codex's PreToolUse input already has the shape the body speaks, so this adapter translates only the
+# answer. Two documented facts decide it (developers.openai.com/codex/hooks, "PreToolUse"): Codex has no
+# `ask` at this event -- it is parsed, the hook run is reported as failed and the tool runs anyway -- and
+# a hook that errors, times out or answers with something unusable lets the tool run.
+
+CODEX_INPUT = json.dumps({"session_id": "thread-1", "cwd": "/work", "hook_event_name": "PreToolUse",
+                          "tool_name": "Bash", "tool_input": {"command": "rm -rf /"},
+                          "turn_id": "turn-1", "permission_mode": "bypassPermissions"})
+
+
+def codex_decision(result: subprocess.CompletedProcess[str]) -> str:
+    """What Codex would do with this hook's output: exit 2 blocks it, silence lets the tool run."""
+    if result.returncode == 2:
+        return "deny"
+    assert result.returncode == 0, f"exit {result.returncode} would let the tool run: {result.stderr}"
+    if not result.stdout.strip():
+        return "allow"
+    return json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"]
+
+
+@pytest.mark.parametrize(("body", "expected"), [("allow.mjs", "allow"), ("deny.mjs", "deny")])
+def test_codex_adapter_passes_the_bodys_decision_through(tmp_path, body, expected):
+    result = run(deploy(tmp_path, "codex-guardrail-adapter.mjs", body), CODEX_INPUT)
+    assert codex_decision(result) == expected
+    if expected == "deny":
+        assert "rm -rf is not allowed" in result.stdout
+
+
+def test_codex_adapter_turns_a_question_into_a_refusal_that_says_why(tmp_path):
+    result = run(deploy(tmp_path, "codex-guardrail-adapter.mjs", "ask.mjs"), CODEX_INPUT)
+
+    assert codex_decision(result) == "deny"
+    assert "looks risky" in result.stdout and "Codex cannot ask" in result.stdout
+
+
+@pytest.mark.parametrize("body", ["crash.mjs", "garbage.mjs", "undecided.mjs"])
+def test_codex_a_broken_body_is_a_refusal_never_a_pass(tmp_path, body):
+    assert codex_decision(run(deploy(tmp_path, "codex-guardrail-adapter.mjs", body), CODEX_INPUT)) == "deny"
+
+
+def test_codex_a_hook_without_its_sidecar_is_a_broken_install_not_an_absence(tmp_path):
+    """The adapter is registered only together with its sidecar: one without the other is half an install."""
+    adapter = deploy(tmp_path, "codex-guardrail-adapter.mjs", "allow.mjs")
+    (adapter.parent / "nexgen-guardrail.config.json").unlink()
+
+    assert codex_decision(run(adapter, CODEX_INPUT)) == "deny"
+
+
+def test_codex_a_sidecar_with_no_hooks_stays_a_legitimate_allow(tmp_path):
+    assert codex_decision(run(deploy(tmp_path, "codex-guardrail-adapter.mjs", None), CODEX_INPUT)) == "allow"
+
+
+@pytest.mark.parametrize("sidecar_text", ["{not json", '{"hooks": "nope"}', ""])
+def test_codex_a_corrupt_sidecar_refuses(tmp_path, sidecar_text):
+    adapter = deploy(tmp_path, "codex-guardrail-adapter.mjs", "allow.mjs")
+    (adapter.parent / "nexgen-guardrail.config.json").write_text(sidecar_text, encoding="utf-8")
+
+    assert codex_decision(run(adapter, CODEX_INPUT)) == "deny"
+
+
+def test_codex_unparseable_input_is_not_waved_through(tmp_path):
+    adapter = deploy(tmp_path, "codex-guardrail-adapter.mjs", "allow.mjs")
+
+    assert codex_decision(run(adapter, "not json")) == "deny"
+    assert codex_decision(run(adapter, "")) == "deny"
+
+
+def test_codex_a_missing_or_truncated_core_blocks_instead_of_exiting_one(tmp_path):
+    adapter = deploy(tmp_path, "codex-guardrail-adapter.mjs", "allow.mjs")
+    core = adapter.parent / "nexgen-guardrail-core.mjs"
+
+    core.unlink()
+    assert run(adapter, CODEX_INPUT).returncode == 2
+    core.write_text("export function loadSidecar( {", encoding="utf-8")  # a write cut short
+    assert run(adapter, CODEX_INPUT).returncode == 2
+
+
+def test_codex_hands_the_body_its_own_input_untouched(tmp_path):
+    echo = tmp_path / "echoed.json"
+
+    run(deploy(tmp_path, "codex-guardrail-adapter.mjs", "echo.mjs"), CODEX_INPUT, GUARDRAIL_ECHO=str(echo))
+
+    assert echo.read_text(encoding="utf-8") == CODEX_INPUT
+
+
+def test_codex_every_command_is_recorded_as_a_consultation(tmp_path):
+    audit = tmp_path / "state" / "codex.json"
+
+    run(deploy(tmp_path, "codex-guardrail-adapter.mjs", "deny.mjs", auditFile=str(audit)), CODEX_INPUT)
+
+    record = json.loads(audit.read_text(encoding="utf-8"))
+    assert record["cli"] == "codex" and record["count"] == 1 and record["last"] == "deny"

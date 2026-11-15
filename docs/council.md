@@ -24,7 +24,7 @@ With no `seats.yaml` configured it is completely inert, and nothing else in the 
    Neither is read unless set, so a single-user install sees no difference.
 2. Keep `schema_version: 1` at the root, then pick the seats you have, following the comments in the template.
    Each seat needs `vendor`, `cli`, `model`, and an explicit `zero_retention: true|false`.
-   `cli` must be one of `opencode`, `agy`, `codex`, `claude` or `ollama`, which are the CLIs `council.py` knows how to invoke today.
+   `cli` must be one of `opencode`, `agy`, `codex`, `claude`, `ollama` or `dsh`, which are the CLIs `council.py` knows how to invoke today.
    Set `zero_retention: true` only if you have confirmed it with a primary source, not with a summary.
    You can also set an optional positive `timeout_seconds` for a seat that is known to need more or less time.
 3. In a MULTI setup, run `agent-sync apply` once to install the `council` launcher on Linux and the `council.cmd` wrapper on Windows, then run any command below.
@@ -83,6 +83,10 @@ Pass `--continue-on-reject` to run every declared stage regardless.
 Verdict parsing is positional, not a text search: only a response's last non-blank line can set that stage's verdict, with markdown emphasis and terminal punctuation tolerated and a quote prefix not.
 A stage that quotes an earlier `VERDICT: REJECT` while reaching its own different conclusion is read as that conclusion, and a verdict cited mid-response no longer stops the relay.
 Only a seat's own standalone closing line does.
+
+For the three CLIs that can validate a schema themselves (`claude --json-schema`, `codex exec --output-schema`, `agy --json-schema`), that closing line is no longer the model's own prose: the CLI is asked for a `verdict` field restricted to APPROVE, REVISE and REJECT plus the review as `text`, and Council restates the validated value on the closing line before the relay hand-off.
+A quoted verdict inside the review therefore cannot outvote the field, and a reply that omits the field is the CLI's schema violation rather than a silent `(absent)`.
+The seats whose CLI has no such flag (`opencode`, `dsh`, `ollama`) keep the positional contract above unchanged.
 
 ```bash
 council relay \
@@ -174,7 +178,8 @@ Set `decision_file` to a relative path inside the private data root.
 Council understands the per-role Markdown tables emitted by the public [LLM Model Routing Governor](https://github.com/matteopasseri407/NeXgen-addon-llm-model-routing-governor), and the older flat table for backward compatibility.
 
 Council keeps every fallback in the Governor table and resolves the model label together with its channel against local seats.
-Go, free Zen and paid Zen stay separate even though all three use OpenCode.
+Go, free Zen and paid Zen stay separate even though all three can run through one CLI, and a `dsh` seat still reports the pool its model route names (`opencode-go/...` is Go), because the channel comes from the route and not from the CLI.
+A seat on the channel's own CLI stays the first choice, so a second harness on the same pool does not take work from the one that already works; when no seat on that CLI has the model, another one on the same channel answers instead of the row being dropped.
 Privacy accepts one or more local candidates and ignores explicitly excluded rows.
 Unknown channels and malformed candidate rows stop the proposal.
 An older flat table works only when each model maps to one execution pool, and ambiguous matches are excluded.
@@ -243,6 +248,7 @@ One mapping per CLI serves both the real command and every place that prints the
 - `opencode`: no flag. OpenCode 2 dropped `--variant`, so the variant is appended to the model as `provider/model#<value>`, verbatim, and a model that already names a variant keeps it. The value is provider-specific, with no fixed enum to validate against locally.
 - `ollama`: `--think` only documents `low`/`medium`/`high`. `xhigh` and `max` are downmapped to `--think high`, and the printed label says so. Any other value is dropped with no flag, and the label says that too.
 - `agy`: `--effort` accepts `low`/`medium`/`high`/`xhigh`/`max`, forwarded verbatim. Any other value is dropped with no flag, and the label says that too.
+- `dsh`: no flag either. DeepSeek Harness has neither `--model` nor an effort option: Council writes one patch file per call and the effort becomes `agent-default-model.reasoningEffort` there, forwarded verbatim. A value the chosen route does not know is the route's own to reject.
 
 ## Session handling
 
@@ -267,7 +273,7 @@ council clean --all           # removes every kept session now
 
 - **Egress**: the original brief, including context and diffs, is scanned for likely secrets before any seat receives it. A match stops the call.
 - **Generated output**: when a seat emits a value that looks like a secret, Council redacts the affected line before it reaches the next relay stage or a kept session, and the relay can continue with the remaining analysis.
-- Both checks reuse the engine's shared `leak_scan.py` module, and they are a separate, always-on end-user protection rather than the repository CI leak scan that guards publishing to GitHub. See [SECURITY.md](../SECURITY.md).
+- Both checks reuse the engine's shared `leak_scan.py` module and the engine's own shapes in `leak-scan/leak_patterns.yaml`, matched by the built-in matcher, so they need no binary installed: they are a separate, always-on end-user protection rather than the repository CI leak scan (gitleaks, `leak-scan/gitleaks.toml`) that guards publishing to GitHub. See [SECURITY.md](../SECURITY.md).
 - **Zero-retention**: every seat must declare `zero_retention: true|false`.
   A false value prints a clear warning in menus and immediately before the model starts.
   It is metadata, not an execution gate, and secret scanning stays blocking as a separate control.
@@ -294,9 +300,21 @@ council clean --all           # removes every kept session now
   The adapter requests a fresh project and strips application tokens.
   Sandbox flags do not prove that MCP tools are disabled, and the CLI isolation limits stay vendor-specific.
   Regression tests verify transport and effort forwarding; they do not certify live availability of each model or isolation on every host.
+- **`dsh` (DeepSeek Harness) has a Council adapter**, invoked as `dsh --profile headless --patch <patch> --permission-mode read-only --approval-policy never --json -` with the brief on stdin.
+  The harness ships inside the desktop app and is not on `PATH`; Council finds it at `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd` on Windows, or on `PATH` after an `npx`-style install.
+  That Windows path contains a space, which `cmd.exe` truncates when the engine starts a batch file, so the seat starts it through a one-line wrapper inside its own private directory.
+  A seat names `provider/model` (`opencode-go/deepseek-v4.1-flash`), because the harness has no `--model` flag: Council writes one patch file per call that declares the pi-ai route and pins `agent-default-model`.
+  **Privacy**: the harness ships three uploads on by default, and that patch turns all three off. `session-log-deepseek` appends up to 8 MiB of the session to requests made to the official DeepSeek API, `session-telemetry-otel` exports session history to DeepSeek's collector, and `plugin-package-inventory-deepseek` sends the active plugin list. The brief therefore leaves the machine only to the route the seat declares.
+  The seat also runs on a private `DSH_HOME`, and the patch points the harness's session log and projection store there too, so a full-tree diff of `~/.dsh` across a real seat run shows no new file; the composed configuration carries no MCP server at all.
+  The plan key travels through the one variable the harness reads: `OPENCODE_GO_API_KEY` for an `opencode-go` route, `OPENCODE_ZEN_API_KEY` for an `opencode` route, bridged to `OPENCODE_API_KEY` for the child process only.
+  A host that exports only `OPENCODE_API_KEY`, the name the harness documents for both routes, is read from there, and the secrets deposit (`~/.config/nexgen/secrets.env`) is the last place the seat looks, because nothing loads that file into a graphical session.
+  Verified live on 2026-11-14 against DeepSeek Harness 0.2.2-rc.3 on Windows with `opencode-go/deepseek-v4.1-flash`: exit 0, answer read from the `final` event, token usage reported for the call and no cost claimed.
+  Limits: `read-only` scopes writes, not reads, so a dsh seat can still read files and run read-only commands, like a `codex` or `opencode` seat.
+  The harness records no cost anywhere, so the usage recap prints tokens only.
+  The harness is a developer preview that ships 2-3 releases a week and moves its profile format; `nexgen council contract` catches a flag that disappeared, not a changed patch schema.
 - Automated regression tests cover the control flow for all four modes, session cleanup, relay fallback, all supported vendor CLIs and the Linux launcher.
   They use fake seats, so they do not replace live checks of each vendor CLI.
 - The Windows launcher has portable regression tests and runs natively under the unified Python core.
-- Large prompts use stdin for Codex, Claude, Ollama and Antigravity, and a protected temporary attachment for OpenCode.
+- Large prompts use stdin for Codex, Claude, Ollama, Antigravity and DeepSeek Harness, and a protected temporary attachment for OpenCode.
   The attachment is created inside the private session tree and removed after the seat exits.
 - Seats via CLI are slow, minutes rather than seconds: this is for brainstorming, challenging and review, not a quick question mid-task.

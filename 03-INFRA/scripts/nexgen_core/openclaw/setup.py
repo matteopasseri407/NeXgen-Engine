@@ -17,11 +17,11 @@ import os
 import shutil
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from datetime import datetime
 from pathlib import Path
 
 from nexgen_core.i18n import t
 from nexgen_core.openclaw import agy_prereqs, claude_native, setup_agy, setup_write
+from nexgen_core.openclaw.automations import read_jobs_with_detail
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.doctor import collect as doctor_collect
 from nexgen_core.openclaw.doctor import render as doctor_render
@@ -30,7 +30,7 @@ from nexgen_core.openclaw.plan import Plan, build_plan, render_plan, with_engine
 from nexgen_core.openclaw.profile import GATEWAY_PORT, Choices
 from nexgen_core.openclaw.setup_agents import snapshot_dirs
 from nexgen_core.openclaw.setup_app import app_gateway_stop, app_step, device_line
-from nexgen_core.openclaw.setup_cron import groom_job_step
+from nexgen_core.openclaw.setup_cron import groom_job_step, heartbeat_job_step
 from nexgen_core.openclaw.setup_service_env import write_gateway_service_env
 from nexgen_core.openclaw.server_gateway import server_stop
 from nexgen_core.openclaw.setup_steps import (
@@ -64,6 +64,7 @@ from nexgen_core.openclaw_pairing import pending as pairing_pending
 from nexgen_core.openclaw_service import OpenClawService, RunResult
 from nexgen_core.paths import openclaw_config, resolve_home, resolve_vault_data
 from nexgen_core.processes import command_line_text
+from nexgen_core.runtimes.openclaw import OpenClawRuntime
 
 __all__ = ["START_TIMEOUT_SECONDS", "run_pair", "run_restart", "run_setup", "run_stop"]
 
@@ -110,7 +111,6 @@ def _prepare(
     dry_run: bool,
     engine_root: Path | None,
     vault_data: Path | None,
-    stamp: str | None,
     out: Emit,
     platform: str | None,
 ) -> tuple[Setup, Detection]:
@@ -132,10 +132,7 @@ def _prepare(
         out=out,
         which=which or shutil.which,
         run=run or default_run,
-        service=service or OpenClawService(
-            home=home_dir, state_dir=config_path.parent, port=GATEWAY_PORT, platform=platform,
-        ),
-        stamp=stamp or datetime.now().strftime("%Y%m%d-%H%M%S"),
+        service=service or OpenClawService(home=home_dir, port=GATEWAY_PORT, platform=platform),
         platform=platform,
     )
     snapshot = detected if detected is not None else detect(
@@ -215,7 +212,15 @@ def _granted_plan(setup: Setup, plan: Plan) -> Plan:
     is read from disk here, so the setup installs that plugin first.
     """
     installed = agy_prereqs.installed_version(setup.state_dir) is not None
-    return replace(plan, config=with_engine_plugin(plan.config, is_plugin_verified(setup), agy_installed=installed))
+    deposited = is_plugin_verified(setup)
+    # Same switches the guard deposit writes beside the plugin, now also where the host reads
+    # them: `plugins.entries.nexgen.config`. The proposal, not the file it replaces, so the
+    # evidence list names the models this run writes and a second run finds nothing to write.
+    switches = OpenClawRuntime().plugin_switches(setup.home, plan.config) if deposited else None
+    return replace(
+        plan,
+        config=with_engine_plugin(plan.config, deposited, agy_installed=installed, switches=switches),
+    )
 
 
 def _apply(
@@ -266,12 +271,14 @@ def _apply(
     _step(setup.out, 7, t("Module"))
     module_step(setup)
     groom_job_step(setup)
+    heartbeat_job_step(setup)
     _step(setup.out, 8, t("Phone"))
     phone_step(setup)
     _step(setup.out, 9, t("Doctor"))
     outcomes = doctor_collect(
         detected=installed, home=setup.home, env=setup.env, engine_root=setup.engine_root,
         vault_data=setup.vault_data, platform=setup.platform,
+        automations_reader=read_jobs_with_detail,
     )
     setup.out(doctor_render(outcomes))
     setup.out("")
@@ -299,7 +306,6 @@ def run_setup(
     out: Emit = print,
     engine_root: Path | None = None,
     vault_data: Path | None = None,
-    stamp: str | None = None,
     platform: str | None = None,
 ) -> int:
     """The nine steps, and the exit code a shell can act on."""
@@ -309,7 +315,7 @@ def run_setup(
         return 2
     setup, snapshot = _prepare(
         home=home, env=env, detected=detected, which=which, run=run, service=service,
-        dry_run=dry_run, engine_root=engine_root, vault_data=vault_data, stamp=stamp,
+        dry_run=dry_run, engine_root=engine_root, vault_data=vault_data,
         out=out, platform=platform,
     )
     if app_gateway_stop(setup, snapshot, node_gateway=node_gateway):

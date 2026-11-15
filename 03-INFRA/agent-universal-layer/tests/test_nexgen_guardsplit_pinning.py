@@ -68,7 +68,7 @@ def test_align_instructions_stabile(tmp_path, monkeypatch) -> None:
     runner = GuardRunner(vault_data=vault, home=home)
     first = runner.align_instructions()
     assert isinstance(first, list) and len(first) > 0
-    claude_md = home / "CLAUDE.md"
+    claude_md = home / ".claude" / "CLAUDE.md"
     assert claude_md.is_file()
     assert str(claude_md).startswith(str(tmp_path))
     content_after_first = claude_md.read_text(encoding="utf-8")

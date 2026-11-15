@@ -1,10 +1,13 @@
 """Does OpenClaw receive from the engine exactly what Claude Code receives?
 
-One plugin, two hosts, the same layers on both: MCP servers, instructions, skills, the guardrail,
-the vault briefing and the permission posture. Each layer is compared as a fact the
+One plugin, two hosts, the same layers on both: MCP servers, instructions, skills, the guardrail
+and the vault briefing. Each layer is compared as a fact the
 engine can read back from disk -- what is registered, deposited or switched on -- never as an
 intention. An aligned layer is a PASS; a layer one host has and the other lacks is a WARN that
 names the gap and the one command that closes it.
+
+The permission mode is not one of the layers: each app writes its own, so there is nothing to
+compare.
 
 Two rules shape the whole file:
 
@@ -189,10 +192,14 @@ def _layer_mcp(claude: dict, openclaw: dict, home: Path, vault_data: Path) -> Ch
 
 
 def _layer_instructions(claude: dict, openclaw: dict, home: Path, vault_data: Path) -> CheckOutcome:
+    from nexgen_core.guard_instructions import claude_pointer_path
     from nexgen_core.paths import canonical_instructions
 
     canon = canonical_instructions(vault_data)
-    pointer = home / "CLAUDE.md"
+    # Claude Code reads user scope, `~/.claude/CLAUDE.md`: the guard writes the pointer there
+    # and removes the old `~/CLAUDE.md` file. Reading the home file made this layer report a
+    # gap the engine itself had just created, with a "run nexgen sync" that cannot close it.
+    pointer = claude_pointer_path(home)
     claude_ok = pointer.is_file()
     if claude_ok and canon.is_file():
         try:
@@ -258,24 +265,6 @@ def _layer_briefing(claude: dict, openclaw: dict, home: Path, vault_data: Path) 
     )
 
 
-def _layer_posture(claude: dict, openclaw: dict, home: Path, vault_data: Path) -> CheckOutcome:
-    from nexgen_core.runtimes.claude import _CLAUDE_TO_POSTURE
-
-    permissions = claude["settings"].get("permissions") if isinstance(claude["settings"].get("permissions"), dict) else {}
-    claude_posture = _CLAUDE_TO_POSTURE.get(permissions.get("defaultMode"))
-    openclaw_posture = openclaw["plugin_config"].get("posture")
-    openclaw_posture = openclaw_posture if isinstance(openclaw_posture, str) else None
-    if claude_posture == openclaw_posture:
-        state = claude_posture or t("none (no manifest posture)")
-        return _outcome("posture", True, t("Posture: both CLIs run '{state}'.", state=state))
-    return _outcome(
-        "posture", False,
-        t("Posture diverges: Claude Code runs '{claude}', OpenClaw runs '{openclaw}'.",
-          claude=claude_posture or t("none"), openclaw=openclaw_posture or t("none")),
-        t("Declare 'openclaw' next to 'claude' under posture in permissions/manifest.yaml, then run 'nexgen sync'."),
-    )
-
-
 # ---------------------------------------------------------------- entry point
 
 _LAYERS = (
@@ -284,7 +273,6 @@ _LAYERS = (
     _layer_skills,
     _layer_guardrail,
     _layer_briefing,
-    _layer_posture,
 )
 
 

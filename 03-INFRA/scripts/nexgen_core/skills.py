@@ -87,6 +87,11 @@ class SkillMaterializer:
         self.gemini_dir = self.home / ".gemini" / "antigravity-cli" / "skills"
         self.gemini_config_dir = self.home / ".gemini" / "config" / "skills"
         self.gemini_legacy_dir = self.home / ".gemini" / "skills"
+        # Codex reads user skills from `~/.codex/skills`: `codex debug prompt-input`
+        # lists it as its own root (verified on codex-cli 0.155.1, 2026-11-15). The
+        # Codex/ChatGPT app is documented to read the shared `~/.agents/skills`, which
+        # is why both folders are written: one extra link, and neither version of the
+        # app is left with no skill at all.
         self.codex_dir = self.home / ".codex" / "skills"
         self.opencode_dir = self.home / ".opencode" / "skills"
         # OpenCode V2 discovers `~/.config/opencode/skills` natively (plus,
@@ -98,22 +103,32 @@ class SkillMaterializer:
         #: Le cartelle da cui i runtime scoprono le skill da soli. Un
         #: installer di terze parti ci lascia la propria copia, e da lì viene
         #: caricata sempre: è il contrario di pigra. Il motore la sposta.
-        #: OpenCode e OpenClaw leggono la stessa `~/.agents/skills`: un target
-        #: può quindi condividere la cartella con un altro, e una skill resta
-        #: in vita finché almeno uno dei due la nomina.
+        #: OpenCode, OpenClaw e Codex leggono la stessa `~/.agents/skills`: un
+        #: target può quindi condividere la cartella con un altro, e una skill
+        #: resta in vita finché almeno uno dei due la nomina.
         self.dirs_by_target: dict[str, tuple[Path, ...]] = {
             "claude": (self.claude_dir,),
             "antigravity": (self.gemini_dir, self.gemini_config_dir, self.gemini_legacy_dir),
-            "codex": (self.codex_dir,),
+            "codex": (self.active_dir, self.codex_dir),
             "opencode": (self.active_dir, self.opencode_dir, self.opencode_native_dir),
             "openclaw": (self.active_dir,),
         }
 
+        #: Every folder a runtime discovers on its own: the pruning pass looks at all
+        #: of them, and takes back only the views the engine itself left behind.
         self.discovery_dirs = (
             self.active_dir, self.claude_dir, self.gemini_dir,
             self.gemini_config_dir, self.gemini_legacy_dir,
             self.codex_dir, self.opencode_dir, self.opencode_native_dir,
         )
+
+        #: Claude Code reads its skills from the native plugin (`plugin_claude`) when this
+        #: installation opted in: a link here would load every skill twice, so the folder
+        #: stops being a Claude target and the pruning pass takes its links back.
+        from nexgen_core.plugin_claude import installed as claude_runs_as_a_plugin
+
+        self.claude_plugin = claude_runs_as_a_plugin(self.home, self.vault_data)
+        self.dirs_by_target["claude"] = () if self.claude_plugin else (self.claude_dir,)
 
     def load_manifest(self) -> dict[str, SkillEntry]:
         manifest_file = skills_manifest(self.vault_data)
@@ -323,9 +338,21 @@ class SkillMaterializer:
                         shutil.rmtree(candidate)
                 except OSError:
                     continue
-                actions.append(t("Skill '{name}' is lazy again for {target}",
-                                 name=name, target=self._view_label(directory)))
+                if directory == self.claude_dir and self.claude_plugin:
+                    actions.append(t("Skill '{name}': the Claude view moved into the plugin", name=name))
+                else:
+                    actions.append(t("Skill '{name}' is lazy again for {target}",
+                                     name=name, target=self._view_label(directory)))
         return actions
+
+    def desired(self) -> dict[str, SkillEntry]:
+        """The manifest entries that concern whoever is using this machine, by name.
+
+        The one public name for the filter `_collect_desired` applies: a second component
+        that needs to know which skills exist here (the native plugin) must not re-derive
+        `scope` and `owner` on its own.
+        """
+        return self._collect_desired(self.load_manifest())
 
     def _collect_desired(self, skills: dict[str, SkillEntry]) -> dict[str, SkillEntry]:
         """Which manifest entries concern whoever is using this machine."""
@@ -534,19 +561,13 @@ class SkillMaterializer:
             managed = self.library_dir / entry.name
             spec = skills.get(entry.name)
             # One rule per scope, mirroring what materialize() creates: a
-            # native view exists for every manifest skill naming that
-            # runtime in targets (the shared catalog is the exposure-only
-            # exception). The v2 port checked "claude" for the codex scope
-            # too, so a legitimate codex view looked like a stray on every
-            # explicit --migrate-legacy run.
-            scope_target = {"claude": "claude", "codex": "codex", "opencode": "opencode"}.get(scope)
+            # native view exists for every manifest skill naming that runtime
+            # in targets (the shared catalog is the exposure-only exception).
+            # The target comes from the folder, so the retired codex root --
+            # which no runtime reads any more -- keeps nothing.
             expected = (
                 (scope == "shared" and spec is not None)
-                or (
-                    scope_target is not None
-                    and spec is not None
-                    and scope_target in (spec.targets or [])
-                )
+                or (spec is not None and bool(set(self._targets_of(root)) & set(spec.targets or [])))
             )
             prefix = f"legacy/{scope}/{entry.name}"
             if expected and (managed.exists() or managed.is_symlink()):

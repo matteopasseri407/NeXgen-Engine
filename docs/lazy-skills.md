@@ -13,14 +13,18 @@ awareness, the MCP manifest carries tools, and a skill body is opened only when 
 | `~/.agents/skill-library/` | Complete managed bodies. Never a discovery root. |
 | `~/.agents/skills/INDEX.md` | Small generated catalog. No optional `SKILL.md` bodies live beside it. |
 | `~/.claude/skills/` | Native Claude views, when Claude is a target. |
-| `~/.codex/skills/` (or `$CODEX_HOME/skills`) | Native per-skill views, when Codex is a target. This is Codex's only skill root: it does not read `~/.agents/skills`. |
+| `~/.agents/skills/` | The shared catalog, and the native view of Codex, OpenCode and OpenClaw, each when it is a target. |
+| `~/.codex/skills/` | Native Codex CLI views, written beside the shared catalog: `codex debug prompt-input` lists this folder as a skill root of its own on codex-cli 0.155.1. |
 | `~/.gemini/antigravity-cli/skills/` | Native Antigravity views, when `antigravity` is a target. They surface as `/name` commands in the agy TUI. |
 
 Every manifest entry has an `origin`, optional `targets` and an `exposure`.
 
 `targets` decides where a view is written, and it is the only thing that does. A declared skill gets a view in every
-runtime it names. Claude, Codex and Antigravity each read a folder of their own, so a skill that does not name them is
-not discoverable there. OpenCode and OpenClaw read the shared `~/.agents/skills` catalog as well as their own folders.
+runtime it names. Claude and Antigravity each read a folder of their own, so a skill that does not name them is not
+discoverable there. OpenClaw discovers the shared `~/.agents/skills` catalog on its own, OpenCode reads that catalog
+plus `~/.config/opencode/skills`, and a `codex` target writes both the shared catalog and `~/.codex/skills`: the Codex
+CLI and the Codex/ChatGPT app do not agree on which of the two they scan, so both are written and neither version is
+left without a skill.
 
 `exposure` is recorded in the manifest and shown in `INDEX.md`. It does not gate the views: a declared skill gets
 them whatever its exposure, because pruning declared skills made them silently unreachable after every sync. Loading
@@ -63,8 +67,9 @@ my-command:
 ```
 
 - `claude` links the view for Claude Code (`/my-command`).
-- `codex` links it into `$CODEX_HOME/skills` (default `~/.codex/skills`), Codex's only skill root, where it surfaces
-  as a `$my-command` mention.
+- `codex` links it into `~/.codex/skills`, the root `codex debug prompt-input` lists on codex-cli 0.155.1, and into the
+  shared `~/.agents/skills` catalog the Codex/ChatGPT app is documented to read, so it surfaces as a `$my-command`
+  mention whichever of the two the installed version scans.
 - `antigravity` links it into `~/.gemini/antigravity-cli/skills/` (`/my-command` in the agy TUI).
 - `opencode` links it into `~/.config/opencode/skills/` and the shared `~/.agents/skills/` catalog, and the sync
   verifies the skill is discoverable there.

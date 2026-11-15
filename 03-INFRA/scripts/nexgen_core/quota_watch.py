@@ -24,8 +24,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from nexgen_core import quota, quota_state
-from nexgen_core.i18n import t
+from nexgen_core import alerts, quota, quota_state
 from nexgen_core.megaphone import Megaphone
 
 #: The prefix of every debounce key this module writes, so they are recognisable
@@ -53,10 +52,11 @@ def check_and_alert(*, home: Path | None = None, vault: Path | None = None,
             continue
         key = f"{ALERT_KEY_PREFIX}:{row.provider}:{row.window}:{band:.0f}"
         judged.append(key)
+        title, message, action = _alert(row, moment)
         phone.send_alert(
-            title=t("Quota at {percent}%: {provider}", percent=f"{row.percent:.0f}", provider=row.provider),
-            message=_message(row, moment),
-            action=t("Run 'nexgen quota' to see every window."),
+            title=title,
+            message=message,
+            action=action,
             alert_key=key,
         )
     state = quota_state.write(home, rows, now=moment)
@@ -69,16 +69,20 @@ def band_of(percent: float | None) -> float | None:
     return reached[-1] if reached else None
 
 
-def _message(row: quota.QuotaRow, now: float | None) -> str:
-    """The sentence the alert carries, with the reset when the provider gave one."""
+def _alert(row: quota.QuotaRow, now: float | None) -> tuple[str, str, str]:
+    """The alert for one row: the catalogue's words, this row's numbers.
+
+    The reset time is a separate message because a provider that did not give one
+    must not leave a sentence reading "it resets in" with nothing after it.
+    """
     moment = now if now is not None else (row.read_at or 0.0)
-    if row.resets_at:
-        return t(
-            "{provider} has used {percent}% of its {window} window; it resets in {age}.",
-            provider=row.provider, percent=f"{(row.percent or 0.0):.0f}", window=row.window,
-            age=quota.age_text(max(0.0, row.resets_at - moment)),
-        )
-    return t(
-        "{provider} has used {percent}% of its {window} window.",
-        provider=row.provider, percent=f"{(row.percent or 0.0):.0f}", window=row.window,
+    fields = {
+        "provider": row.provider,
+        "percent": f"{(row.percent or 0.0):.0f}",
+        "window": row.window,
+    }
+    if not row.resets_at:
+        return alerts.QUOTA_AT_NO_RESET.say(**fields)
+    return alerts.QUOTA_AT.say(
+        **fields, age=quota.age_text(max(0.0, row.resets_at - moment))
     )

@@ -21,7 +21,14 @@
 
 services:
   vault-mcp:
-    build: .
+    build:
+      context: .
+      # The engine commit the image is built from, written into the image and
+      # published on its health route. `nexgen deploy vault-mcp` sets it; a
+      # build made any other way says "unknown" and the doctor asks for a
+      # deploy instead of pretending the server is aligned.
+      args:
+        NEXGEN_ENGINE_COMMIT: ${NEXGEN_ENGINE_COMMIT:-unknown}
     image: ${VAULT_MCP_IMAGE:-vault-mcp:0.5.0}
     container_name: vault-mcp
     restart: unless-stopped

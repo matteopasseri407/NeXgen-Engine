@@ -205,6 +205,29 @@ def bump_version_files(repo_path: Path, new_version: str, notes: str = "") -> li
 PRIVATE_MARKER = "NEXGEN" "-PRIVATE-" "MAINTAINER-TOOL"
 
 
+def _parity_problem(repo: Path) -> str | None:
+    """Why the OpenClaw parity record does not speak for this release, or None.
+
+    The owner's rule is not negotiable: an agent that runs a harness inside OpenClaw
+    has to cost per call what the same harness costs run directly, plus a light
+    overhead. `nexgen openclaw parity` measures it on the gateway -- the only machine
+    that has both the gateway and the harnesses -- and keeps the record in the Vault,
+    which is why one preflight cannot produce it and refuses without it.
+    """
+    from nexgen_core.openclaw import parity_gate
+    from nexgen_core.paths import resolve_vault_data
+
+    def part_of_this_release(commit: str) -> bool:
+        """Whether this commit is the one being released, or comes before it."""
+        relation = subprocess.run(
+            ["git", "-C", str(repo), "merge-base", "--is-ancestor", commit, "HEAD"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=30,
+        )
+        return relation.returncode == 0
+
+    return parity_gate.release_refusal(vault=resolve_vault_data(), is_ancestor=part_of_this_release)
+
+
 def _preflight() -> int:
     """The checks a maintainer would otherwise have to remember.
 
@@ -283,6 +306,14 @@ def _preflight() -> int:
     else:
         checked.append("lint gate passes")
 
+    # Last, because it is the one check that cannot be satisfied from this machine:
+    # the measurement runs on the gateway and its record arrives through the Vault.
+    parity_problem = _parity_problem(repo)
+    if parity_problem:
+        problems.append(f"the OpenClaw parity record does not cover this release: {parity_problem}")
+    else:
+        checked.append("a passing OpenClaw parity record covers this release")
+
     for line in checked:
         print(f"  ok   {line}")
     for line in problems:
@@ -334,6 +365,22 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _maintainer_gate() -> int:
+    """Refuses a person-facing release verb where this installation is not a maintainer.
+
+    The plumbing verbs (`scan-range`, `next-version`, `bump`, `check-version`, `ci-passed`)
+    stay open: the CI runs them on a fresh clone, where no registration exists, and none of
+    them publishes anything.
+    """
+    from nexgen_core import maintainer
+
+    message = maintainer.refusal()
+    if not message:
+        return 0
+    print(message, file=sys.stderr)
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["ship"]:
@@ -344,6 +391,8 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
     if args.command == "preflight":
+        if (refused := _maintainer_gate()):
+            return refused
         return _preflight()
 
     if args.command == "next-version":

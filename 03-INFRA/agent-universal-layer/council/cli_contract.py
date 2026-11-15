@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from routing import _run_probe
+from seat_dsh import dsh_executable, dsh_launcher, dsh_probe_argv
 from seat_process import SUPPORTED_CLIS, _build_seat_command
 
 #: Where each CLI lists the flags of the command a seat runs (not always the top-level help).
@@ -26,6 +27,8 @@ HELP_ARGV: dict[str, list[str]] = {
     # Never an opencode command without --standalone: without it `run` talks to the background service.
     "opencode": ["opencode", "run", "--standalone", "--help"],
     "ollama": ["ollama", "run", "--help"],
+    # The headless profile's own flags: the launcher's help names --profile and --patch instead.
+    "dsh": ["dsh", "--profile", "headless", "--help"],
 }
 
 _FLAG = re.compile(r"-{1,2}[A-Za-z][\w-]*")
@@ -41,9 +44,14 @@ class ContractResult:
     missing: tuple[str, ...] = ()
 
 
+def _seat_probe_model(cli: str) -> str:
+    """A model string a seat builder accepts. Only dsh reads it as ``provider/model``."""
+    return "opencode-go/contract-probe" if cli == "dsh" else "contract-probe"
+
+
 def flags_passed(cli: str) -> list[str]:
     """Every flag a seat for ``cli`` is started with, effort flag included."""
-    seat = {"cli": cli, "model": "contract-probe", "reasoning_effort": "high"}
+    seat = {"cli": cli, "model": _seat_probe_model(cli), "reasoning_effort": "high"}
     with tempfile.TemporaryDirectory(prefix="council-contract-") as scratch:
         session_dir = Path(scratch)
         # The codex builder copies the real credentials into the seat's private directory;
@@ -68,9 +76,21 @@ def flag_listed(flag: str, help_text: str) -> bool:
 
 
 def check_cli(cli: str, run_probe=_run_probe) -> ContractResult:
-    if shutil.which(cli) is None:
+    executable = dsh_executable() if cli == "dsh" else shutil.which(cli)
+    if executable is None:
         return ContractResult(cli, "absent", f"'{cli}' is not installed on this host")
-    ok, output = run_probe(HELP_ARGV[cli])
+    if cli == "dsh":
+        # The same launcher road the seat uses, in a throwaway directory: on Windows the
+        # shipped launcher sits under a path with a space, which cmd.exe truncates. A dsh
+        # seat's flags also live on two pages -- `--patch` and `--profile` belong to the
+        # launcher, the rest to the headless profile -- so both are read.
+        with tempfile.TemporaryDirectory(prefix="council-contract-") as scratch:
+            launcher = dsh_launcher(Path(scratch))
+            answers = [run_probe([launcher, "--help"]), run_probe(dsh_probe_argv(Path(scratch)))]
+        ok = all(answer[0] for answer in answers)
+        output = "\n".join(answer[1] for answer in answers)
+    else:
+        ok, output = run_probe([executable, *HELP_ARGV[cli][1:]])
     if not ok:
         return ContractResult(cli, "unprobed", f"'{' '.join(HELP_ARGV[cli])}' did not answer: {output[:120]}")
     passed = flags_passed(cli)

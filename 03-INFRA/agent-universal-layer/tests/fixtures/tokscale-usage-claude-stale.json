@@ -1,0 +1,100 @@
+[
+  {
+    "provider": "Codex",
+    "plan": "Free",
+    "metrics": [
+      {
+        "label": "30d",
+        "used_percent": 72.0,
+        "remaining_percent": 28.0,
+        "remaining_label": null,
+        "resets_at": "2026-11-17T11:29:57+00:00"
+      }
+    ],
+    "reset_credits": {
+      "available_count": 0
+    },
+    "credit_status": {
+      "has_credits": false,
+      "unlimited": false,
+      "overage_limit_reached": false
+    },
+    "spend_control": {
+      "reached": false
+    }
+  },
+  {
+    "provider": "Claude",
+    "plan": "Max 5x",
+    "metrics": [
+      {
+        "label": "Session",
+        "used_percent": 34.0,
+        "remaining_percent": 66.0,
+        "remaining_label": null,
+        "resets_at": "2026-11-14T15:40:00+00:00"
+      },
+      {
+        "label": "Weekly",
+        "used_percent": 61.0,
+        "remaining_percent": 39.0,
+        "remaining_label": null,
+        "resets_at": "2026-11-18T09:00:00+00:00"
+      }
+    ]
+  },
+  {
+    "provider": "Copilot",
+    "plan": "Individual",
+    "metrics": [
+      {
+        "label": "Chat",
+        "used_percent": 0.7,
+        "remaining_percent": 99.3,
+        "remaining_label": "198/200 left",
+        "resets_at": "2026-12-01"
+      },
+      {
+        "label": "Completions",
+        "used_percent": 0.0,
+        "remaining_percent": 100.0,
+        "remaining_label": "2000/2000 left",
+        "resets_at": "2026-12-01"
+      },
+      {
+        "label": "Premium",
+        "used_percent": 100.0,
+        "remaining_percent": 0.0,
+        "remaining_label": null,
+        "resets_at": "2026-12-01"
+      }
+    ]
+  },
+  {
+    "provider": "OpenCode Go",
+    "plan": "Go",
+    "metrics": [
+      {
+        "label": "Rolling",
+        "used_percent": 1.0,
+        "remaining_percent": 99.0,
+        "remaining_label": null,
+        "resets_at": "2026-11-15T01:04:52.000Z"
+      },
+      {
+        "label": "Weekly",
+        "used_percent": 0.0,
+        "remaining_percent": 100.0,
+        "remaining_label": null,
+        "resets_at": "2026-11-16T00:00:00.000Z"
+      },
+      {
+        "label": "Monthly",
+        "used_percent": 0.0,
+        "remaining_percent": 100.0,
+        "remaining_label": null,
+        "resets_at": "2026-12-14T19:15:41.000Z"
+      }
+    ]
+  }
+]

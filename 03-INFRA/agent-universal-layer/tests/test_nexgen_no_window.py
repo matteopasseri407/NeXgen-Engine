@@ -60,21 +60,30 @@ def test_scheduler_external_calls_stay_windowless(monkeypatch):
 
 @windows_only
 def test_mcp_check_session_stays_windowless(monkeypatch):
+    """The child is spawned through the official SDK client, which is where the flags live.
+
+    `nexgen_core.mcp_check` no longer calls `Popen`: `StdioSession` hands the command to
+    the SDK's stdio client, and that client's Windows spawn always sets
+    `CREATE_NO_WINDOW` (`mcp/os/win32/utilities.py`). Patching the SDK's one spawn seam
+    is therefore what proves the session still starts windowless children.
+    """
+    from mcp.client import stdio as sdk_stdio
+
     captured: dict = {}
 
-    class _FakeProc:
-        def __init__(self, argv, **kwargs):
-            captured.update(kwargs)
-            self.stdout = iter(())
-            self.stdin = io.BytesIO()
+    async def _spy(*, command, args, env, errlog, cwd):
+        captured.update({"command": command, "args": args, "cwd": str(cwd)})
+        raise OSError("synthetic: this test never starts a process")
 
-        def poll(self):
-            return 0
-
-    monkeypatch.setattr(mcp_check.subprocess, "Popen", _FakeProc)
-    mcp_check._Session(["synthetic"], {}, None)
-    assert captured.get("creationflags", 0) & 0x08000000
-    assert "startupinfo" in captured
+    monkeypatch.setattr(sdk_stdio, "_create_platform_compatible_process", _spy)
+    session = mcp_check._Session(["synthetic-runner", "--flag"], {}, None)
+    try:
+        with pytest.raises(OSError, match="synthetic"):
+            session.handshake(10)
+    finally:
+        session.close()
+    assert captured["command"] == "synthetic-runner"
+    assert captured["args"] == ["--flag"]
 
 
 @windows_only

@@ -154,6 +154,33 @@ def test_an_http_server_carries_a_resolved_url_and_the_transport(renderer) -> No
     assert "${" not in remote["url"]
 
 
+def test_the_panel_s_own_state_survives_a_render(renderer) -> None:
+    """A connector switched off in OpenClaw's own panel stays off.
+
+    `mcp.servers.<name>` carries OpenClaw's per-server state beside the launch fields
+    (`enabled`, its OAuth block). Rebuilding the entry from scratch turned a connector
+    switched off there back on at the next cycle, with nothing in the action list to
+    explain it; the launch fields still come from the manifest.
+    """
+    cfg = openclaw_config(renderer.home)
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    user_file = json.loads(json.dumps(USER_FILE))
+    user_file["mcp"]["servers"]["node-tool"] = {
+        "command": "node",
+        "args": ["stale.mjs"],
+        "enabled": False,
+        "oauth": {"provider": "demo"},
+    }
+    cfg.write_text(json.dumps(user_file, indent=2), encoding="utf-8")
+
+    assert renderer.render_openclaw(write=True)[0]
+
+    node = _servers(renderer)["node-tool"]
+    assert node["enabled"] is False, "the panel's switch survives"
+    assert node["oauth"] == {"provider": "demo"}
+    assert node["args"] == ["server.mjs"], "the launch fields still come from the manifest"
+
+
 def test_a_secret_stays_an_environment_reference(renderer) -> None:
     cfg = _install_openclaw(renderer)
     assert renderer.render_openclaw(write=True)[0]

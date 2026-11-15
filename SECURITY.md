@@ -26,7 +26,7 @@ If one of these is already committed, treat it as a leak: rotate the credential 
 
 ## Two leak scans, two audiences
 
-The engine ships one secret-detection module, `03-INFRA/agent-universal-layer/leak-scan/leak_scan.py`, behind two gates with different scopes:
+The engine ships one secret-detection module, `03-INFRA/agent-universal-layer/leak-scan/leak_scan.py`, behind two gates with different scopes. The commit gate is the engine's own publishing gate: its scanning is [gitleaks](https://github.com/gitleaks/gitleaks) (MIT), a single maintainer binary that must be installed on the machine (`winget install gitleaks.gitleaks`, `brew install gitleaks`, or a release zip), the shapes it looks for are the engine's own, in `leak-scan/gitleaks.toml`, and when the binary is missing the gate refuses to run and says how to install it rather than reporting a clean tree. The pair that protects a session (the Council egress gate on the brief, and the redaction of a seat's output) never needs it: those two use the built-in matcher and the forms in `leak-scan/leak_patterns.yaml`, because they must keep working on any installation a person uses.
 
 - The Council scan protects the end user and is always on. Every `council.py` call scans the outgoing brief, and the text a seat sends back, before either reaches or returns from a third-party model. It runs for every user in every session, with no opt-out short of not using Council. See the Guardrails section of `docs/council.md`.
 - The CI leak scan is the repository's publishing gate. It runs on every pull request and keeps likely secrets and personal paths out of the public history. Normal users never publish engine code, so it has nothing to do with their Vault or their Council sessions.

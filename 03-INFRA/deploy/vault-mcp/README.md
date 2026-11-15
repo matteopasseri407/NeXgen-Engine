@@ -21,6 +21,19 @@ transport) that mounts the vault worktree plus its bare repo and exposes:
   an advisory `unresolved_links` list (dead wikilinks in what was just
   written, never blocking: a deliberate forward link is legitimate)
 
+`read_note` returns at most 40000 characters of note text per call
+(`max_chars` overrides that budget). When the note is longer the result says
+so in `content_truncated` and still lists every section with its hash, and
+`section: "## Heading"` reads one section with the hash `update_section`
+compares against — so a large note is never cut by the client after being
+paid for.
+
+Every failure a tool can anticipate reaches the model as a tool error
+carrying the reason and the next step ("No note matches 'x'. Closest
+matches: a, b. Call search_notes…"; "expected_hash does not match … Call
+read_note and retry with the content_hash it returns"), never as a bare
+"Error executing tool read_note".
+
 Every write is serialized with a process lock, restricted to Markdown paths
 (`99-SECRETS` and `.git` are always refused), and committed to the bare repo
 as author "Vault MCP" — so vault history stays clean and attributable.

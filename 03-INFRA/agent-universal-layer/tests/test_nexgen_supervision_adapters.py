@@ -120,6 +120,13 @@ def test_opencode_builds_the_tab_turn_resume_and_scout_it_declares(tmp_path):
     ]
 
 
+def test_opencode_without_a_session_opens_one_instead_of_resuming_it():
+    """`sup run --headless` non ha una sessione da riprendere: `run` la apre nella copia."""
+    assert opencode.OpenCodeAdapter().send_argv("oc", "", "leggi il brief") == [
+        "oc", "run", "leggi il brief",
+    ]
+
+
 def test_opencode_lists_sessions_with_its_own_command_from_the_copy(tmp_path):
     seen: dict = {}
 

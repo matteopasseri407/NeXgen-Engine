@@ -459,30 +459,22 @@ def test_logo_travels_on_dialogs_not_as_fixed_icon(tmp_path, monkeypatch):
         assert icons[0] == "--window-icon=system-software-update"
 
 
-def test_windows_toast_carries_logo_only_when_resolved(tmp_path, monkeypatch):
-    """BurntToast: -AppLogo solo se il logo si risolve; MessageBox resta senza."""
+def test_the_boot_notice_goes_through_the_desktop_notifier(tmp_path, monkeypatch):
+    """L'avviso d'avvio non chiede più una BurntToast installata a mano, e non apre finestre.
+
+    Passa dal notificatore desktop dell'engine, che è lo stesso che porta gli avvisi:
+    un toast che resta nel centro notifiche, mai un MessageBox che blocca l'avvio.
+    """
     _isolate(tmp_path, monkeypatch)
-    calls: list = []
+    sent: list[tuple[str, str]] = []
+    from nexgen_core import notify
 
-    def _run(argv, **kwargs):
-        calls.append(argv)
-        probe = any("Get-Module" in str(a) for a in argv)
+    monkeypatch.setattr(notify, "desktop_is_available", lambda: True)
+    monkeypatch.setattr(notify, "send_desktop", lambda title, body: sent.append((title, body)) or True)
 
-        class _Proc:
-            returncode = 0
-            stdout = "BurntToast" if probe else ""
-            stderr = ""
-        return _Proc()
-
-    monkeypatch.setattr(notifier.subprocess, "run", _run)
-    monkeypatch.setattr(notifier, "_logo_path", lambda: "")
     notifier._notify_passive_windows("aggiornamento disponibile")
-    assert calls and "-AppLogo" not in calls[-1][-1]
 
-    calls.clear()
-    monkeypatch.setattr(notifier, "_logo_path", lambda: "C:\\engine\\assets\\nexgen-logo.jpg")
-    notifier._notify_passive_windows("aggiornamento disponibile")
-    assert calls and "-AppLogo" in calls[-1][-1]
+    assert sent == [("NeXgen Engine", "aggiornamento disponibile")]
 
 
 def test_ensure_shell_hook_honors_explicit_home(tmp_path, monkeypatch):
@@ -543,3 +535,57 @@ def test_background_refresh_spawns_without_console_window_on_windows(tmp_path, m
     flags = calls["kwargs"].get("creationflags", 0)
     assert flags & getattr(notifier.subprocess, "DETACHED_PROCESS", 0x00000008)
     assert flags & getattr(notifier.subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
+
+def test_the_install_lane_registers_the_notification_identity(tmp_path, monkeypatch):
+    """Un toast da un'applicazione che Windows non conosce viene scartato in silenzio."""
+    from nexgen_core import windows_toast
+    from nexgen_core.tools import notifier_boot
+
+    monkeypatch.setattr(windows_toast, "identity_present", lambda home=None: False)
+    monkeypatch.setattr(windows_toast, "register", lambda home=None, run=None: True)
+
+    note = notifier_boot._ensure_windows_toast_identity(tmp_path)
+
+    assert "identity" in note and "installed" in note
+
+
+def test_an_identity_already_in_place_costs_nothing(tmp_path, monkeypatch):
+    from nexgen_core import windows_toast
+    from nexgen_core.tools import notifier_boot
+
+    calls: list[str] = []
+    monkeypatch.setattr(windows_toast, "identity_present", lambda home=None: True)
+    monkeypatch.setattr(windows_toast, "register", lambda home=None, run=None: calls.append("register") or True)
+
+    note = notifier_boot._ensure_windows_toast_identity(tmp_path)
+
+    assert "already in place" in note
+    assert calls == []
+
+
+def test_an_identity_that_cannot_be_created_says_so(tmp_path, monkeypatch):
+    """Meglio dirlo che lasciare credere che gli avvisi arrivino."""
+    from nexgen_core import windows_toast
+    from nexgen_core.tools import notifier_boot
+
+    monkeypatch.setattr(windows_toast, "identity_present", lambda home=None: False)
+    monkeypatch.setattr(windows_toast, "register", lambda home=None, run=None: False)
+
+    note = notifier_boot._ensure_windows_toast_identity(tmp_path)
+
+    assert "not installed" in note and "balloon" in note
+
+
+def test_uninstall_removes_the_notification_identity(tmp_path, monkeypatch, pretend_os):
+    from nexgen_core import windows_toast
+    from nexgen_core.tools import notifier_boot
+
+    pretend_os(notifier_boot, "nt")
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    removed: list = []
+    monkeypatch.setattr(windows_toast, "unregister", lambda home=None: removed.append(home) or True)
+    monkeypatch.setattr(notifier_boot, "_run_quiet", lambda argv, timeout=60: (0, ""))
+
+    assert notifier_boot._remove_autostart(tmp_path) == 0
+    assert removed == [tmp_path]

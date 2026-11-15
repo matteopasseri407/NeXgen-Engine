@@ -7,7 +7,8 @@ this module keeps argument wiring (main) and re-exports every cmd_* so
 from __future__ import annotations
 
 import argparse
-import sys
+
+from nexgen_core.console import use_utf8
 
 from .cmds import base as _base
 from .cmds.drive import cmd_drive_mcp, cmd_drive_propose, cmd_drive_upload
@@ -53,29 +54,15 @@ def _utf8_console() -> None:
 
     The `sup` verbs print `·`, `unità` and `integrità`; on a Windows console whose
     code page is not UTF-8 those characters reached the reader as `?` or as a
-    replacement box, and the same bytes are what a captured run shows. No other
-    engine command reconfigures its output (`smoke.py` only tolerates bad bytes),
-    so the lane does it once, at the start of every verb, and only for itself.
+    replacement box, and the same bytes are what a captured run shows. The rule
+    itself is `nexgen_core.console`'s, because `nexgen` needs the same one for the
+    line a hook decodes; this name is what every verb of this lane calls.
     """
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is None:
-            continue
-        try:
-            reconfigure(encoding="utf-8", errors="replace")
-        except (OSError, ValueError):  # nexgen: allow reason="uno stdout già chiuso o non riconfigurabile non deve impedire al verbo di girare: resta la codifica che aveva"
-            continue
+    use_utf8()
 
 
 def main(argv: list[str] | None = None) -> int:
     _utf8_console()
-    args_list = sys.argv[1:] if argv is None else list(argv)
-    if args_list and args_list[0] == "run":
-        print(
-            "nexgen-local run è stato ritirato: usa 'openclaw agent' o 'openclaw tui' "
-            "(l'esecuzione degli agenti appartiene a OpenClaw)."
-        )
-        return 0
     parser = argparse.ArgumentParser(
         prog="nexgen-local",
         description="Lane locale governata: sola lettura, tool decisi dal motore, ricevute su audit.",

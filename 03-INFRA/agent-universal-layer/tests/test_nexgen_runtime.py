@@ -69,6 +69,16 @@ def test_a_missing_parent_package_counts_as_missing_not_as_a_crash(monkeypatch):
 # ---------------------------------------------------------------- provisioning
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_uv(monkeypatch):
+    """Every test here names the mechanism it exercises: this machine's uv must not pick it.
+
+    The provisioning tests below pin the pip fallback, which is what a machine without
+    uv runs; the uv tests turn it back on.
+    """
+    monkeypatch.setattr(runtime, "uv_executable", lambda: None)
+
+
 class FakeRun:
     """Stands in for subprocess.run: creates the venv's python, 'installs', reports what is missing."""
 
@@ -504,3 +514,100 @@ def test_a_venv_whose_pip_cannot_be_bootstrapped_names_the_fix_and_the_path(tmp_
     assert "python3-venv" in str(raised.value)
     assert str(runtime_dir) in str(raised.value)
     assert not (runtime_dir / runtime.STAMP_NAME).exists()
+
+
+# ---------------------------------------------------------------- uv, when it is on PATH
+
+
+def _use_uv(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "uv_executable", lambda: "uv")
+
+
+def test_uv_creates_and_fills_the_environment_when_it_is_on_path(tmp_path, monkeypatch):
+    """uv replaces the venv call, the pip bootstrap and the five pip flags with two commands."""
+    _use_uv(monkeypatch)
+    rt = tmp_path / "runtime"
+    run = FakeRun()
+
+    assert runtime.ensure_runtime(rt, _checkout(tmp_path), run=run, log=lambda _l: None).changed is True
+
+    assert run.calls[0] == [
+        "uv", "venv", "--no-config", "--no-project", "--no-python-downloads",
+        "--python", sys.executable, "--clear", str(rt),
+    ]
+    assert run.calls[1] == [
+        "uv", "pip", "install", "--no-config", "--no-progress", "--no-python-downloads",
+        "--python", str(runtime.runtime_python(rt)), "PyYAML>=6.0",
+    ]
+    assert (rt / runtime.STAMP_NAME).is_file()
+
+
+def test_uv_does_not_bootstrap_pip_in_the_environment_it_made(tmp_path, monkeypatch):
+    """A `uv venv` holds no pip by design: the old probe would have called it broken and
+    tried to install one. This run must never ask the interpreter about pip at all."""
+    _use_uv(monkeypatch)
+    run = PipLessRun()  # pip probe and ensurepip both fail
+
+    result = runtime.ensure_runtime(tmp_path / "runtime", _checkout(tmp_path), run=run, log=lambda _l: None)
+
+    assert result.changed is True
+    assert [c for c in run.calls if "ensurepip" in c or "--version" in c] == []
+
+
+def test_a_failed_uv_install_names_uv_and_leaves_no_stamp(tmp_path, monkeypatch):
+    _use_uv(monkeypatch)
+    rt = tmp_path / "runtime"
+
+    with pytest.raises(runtime.RuntimeProvisionError, match="network"):
+        runtime.ensure_runtime(rt, _checkout(tmp_path), run=FakeRun(pip_rc=1), log=lambda _l: None)
+
+    assert not (rt / runtime.STAMP_NAME).exists()
+
+
+def test_uv_failing_on_the_interpreter_does_not_blame_python3_venv(tmp_path, monkeypatch):
+    """The venv package has nothing to do with uv's failure, and advising it sends a person
+    to install a package that changes nothing."""
+    _use_uv(monkeypatch)
+
+    with pytest.raises(runtime.RuntimeProvisionError) as raised:
+        runtime.ensure_runtime(tmp_path / "runtime", _checkout(tmp_path), run=FakeRun(venv_rc=1), log=lambda _l: None)
+
+    assert "python3-venv" not in str(raised.value)
+    assert sys.executable in str(raised.value)
+
+
+def test_without_uv_the_pip_fallback_still_runs_end_to_end(tmp_path):
+    """uv is not on every machine, so the pip path has to stay a whole mechanism on its own."""
+    rt = tmp_path / "runtime"
+    run = FakeRun()
+
+    assert runtime.ensure_runtime(rt, _checkout(tmp_path), run=run, log=lambda _l: None).changed is True
+
+    assert [c[1:] for c in run.calls[:3]] == [
+        ["-m", "venv", "--clear", str(rt)],
+        ["-m", "pip", "--version"],
+        ["-m", "pip", "install", "--disable-pip-version-check", "--timeout", "30", "--retries", "2", "PyYAML>=6.0"],
+    ]
+    verify = run.calls[3]
+    assert verify[0] == str(runtime.runtime_python(rt)) and verify[1] == "-c"
+    assert verify[2].startswith("import importlib.util")  # the verify step, asked of that interpreter
+    assert (rt / runtime.STAMP_NAME).is_file()
+
+
+
+def test_the_installer_runs_inside_the_environment_it_fills(tmp_path, monkeypatch):
+    """A pip with a relative cache wrote 28 MB of `pip/` into the engine checkout, and the
+    next update refused the untracked folder: the install runs with the runtime as its cwd."""
+    monkeypatch.setattr(runtime, "uv_executable", lambda: None)
+    seen: list[tuple[list[str], object]] = []
+    fake = FakeRun()
+
+    def run(args, **kwargs):
+        seen.append(([str(a) for a in args], kwargs.get("cwd")))
+        return fake(args, **kwargs)
+
+    rt = tmp_path / "runtime"
+    runtime.ensure_runtime(rt, _checkout(tmp_path), run=run, log=lambda _l: None)
+
+    install_cwd = next(cwd for args, cwd in seen if "install" in args)
+    assert install_cwd == str(rt)

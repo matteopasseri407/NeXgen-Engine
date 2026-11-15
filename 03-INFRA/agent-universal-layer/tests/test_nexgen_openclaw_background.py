@@ -59,7 +59,9 @@ def a_local_default(**extra) -> dict:
 
 
 def test_the_unattended_jobs_move_to_the_cloud_model_an_agent_already_uses():
-    current = a_local_default()
+    current = a_local_default(plugins={"allow": ["memory-core"], "entries": {"memory-core": {
+        "config": {"dreaming": {"enabled": True}},
+    }}})
     config = build_config(machine(), current=current)
 
     memory = config["plugins"]["entries"]["memory-core"]
@@ -68,6 +70,52 @@ def test_the_unattended_jobs_move_to_the_cloud_model_an_agent_already_uses():
     compaction = config["agents"]["defaults"]["compaction"]
     assert compaction["model"] == GO
     assert compaction["memoryFlush"] == {"model": GO}
+
+
+def test_dreaming_runs_weekly_where_the_file_says_nothing():
+    """Upstream's sweep is nightly at 03:00: one night in seven keeps it and costs a seventh."""
+    current = {
+        "plugins": {"allow": ["memory-core"], "entries": {"memory-core": {}}},
+        "agents": {"defaults": {"model": {"primary": GO}}, "entries": {"main": {"model": GO}}},
+    }
+    config = build_config(machine(), current=current)
+
+    assert config["plugins"]["entries"]["memory-core"] == {"config": {"dreaming": {"frequency": "0 3 * * 0"}}}
+    assert background.jobs(current)["dreaming"] == GO
+
+
+def test_no_dreaming_key_is_opened_inside_a_plugin_that_is_not_loaded():
+    """An entry in a plugin nobody loads is a key for a job that cannot run."""
+    current = {"agents": {"defaults": {"model": {"primary": GO}}, "entries": {"main": {"model": GO}}}}
+    config = build_config(machine(), current=current)
+
+    assert "memory-core" not in config["plugins"]["entries"]
+
+
+def test_a_cadence_of_the_persons_own_is_never_overwritten():
+    """A person who kept the nightly sweep asked for it: `enabled: true` or a frequency of theirs."""
+    current = {
+        "plugins": {"allow": ["memory-core"], "entries": {"memory-core": {
+            "config": {"dreaming": {"enabled": True, "frequency": "0 3 * * *"}},
+        }}},
+        "agents": {"defaults": {"model": {"primary": GO}}, "entries": {"main": {"model": GO}}},
+    }
+    config = build_config(machine(), current=current)
+
+    assert "memory-core" not in config["plugins"]["entries"]
+
+
+def test_dreaming_the_person_switched_off_is_not_a_job_that_runs():
+    current = {
+        "plugins": {"allow": ["memory-core"], "entries": {"memory-core": {
+            "config": {"dreaming": {"enabled": False}},
+        }}},
+        "agents": {"defaults": {"model": {"primary": GO}}, "entries": {"main": {"model": GO}}},
+    }
+    config = build_config(machine(), current=current)
+
+    assert "memory-core" not in config["plugins"]["entries"]
+    assert background.jobs(current)["dreaming"] is None
 
 
 def test_a_cloud_default_leaves_every_key_alone():
@@ -142,7 +190,11 @@ def test_the_persons_allowlist_survives_the_engines_model(tmp_path):
     current = {
         "plugins": {
             "entries": {
-                "memory-core": {"subagent": {"allowModelOverride": True, "allowedModels": ["anthropic/claude-opus-5-5"]}},
+                "memory-core": {
+                    "enabled": True,
+                    "subagent": {"allowModelOverride": True, "allowedModels": ["anthropic/claude-opus-5-5"]},
+                    "config": {"dreaming": {"enabled": True}},
+                },
             },
         },
         "agents": {"defaults": {"model": {"primary": LOCAL}}, "entries": {"main": {"model": LOCAL}}},
@@ -167,6 +219,9 @@ def test_the_default_model_is_the_system_agents_before_the_default_key():
 
 def test_the_doctor_names_only_the_jobs_still_on_a_local_model():
     half = {
+        "plugins": {"allow": ["memory-core"], "entries": {"memory-core": {
+            "config": {"dreaming": {"enabled": True}},
+        }}},
         "agents": {
             "defaults": {"model": {"primary": LOCAL}, "compaction": {"model": GO}},
             "entries": {"main": {"model": LOCAL}},

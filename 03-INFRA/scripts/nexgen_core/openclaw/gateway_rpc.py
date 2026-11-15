@@ -1,38 +1,38 @@
-"""OpenClaw Gateway WebSocket RPC client for configuration and plugin management.
+"""Ask the OpenClaw gateway for something, through the CLI that is already its client.
 
-This module provides the low-level RPC transport connecting NeXgen Engine to
-OpenClaw Gateway via WebSocket on protocol v4. It authenticates as an operator
-client, enforces optimistic concurrency on config updates, handles plugin
-installation and reloading, and wraps raw transport failures in clean, readable
-exceptions without leaking credentials.
+One job: turn an engine call into `openclaw gateway call <method> --params <json>
+--json --timeout <ms>`, and turn the answer back into the engine's own typing.
+
+The CLI speaks the gateway protocol already: it resolves the URL (its config,
+`OPENCLAW_GATEWAY_URL`, the loopback port), authenticates with the token that
+gateway configured, asks for the least-privilege operator scopes the method
+needs, and prints the payload as JSON. The engine used to carry a WebSocket
+client for the same job -- 506 lines here plus a 39-line module whose only
+purpose was keeping the socket library out of every command's import path, and
+the `websockets` dependency with it. What stays here is the engine's knowledge
+of the payloads and the error classes its callers branch on.
 """
 from __future__ import annotations
 
 import json
-import os
-import sys
-import uuid
-from collections.abc import Mapping
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self
+from typing import Any, Final
 
-if TYPE_CHECKING:  # annotations only: the library itself is imported when a socket opens
-    import websockets.sync.client as ws_sync
+from nexgen_core.openclaw.node_cli import run_command
+from nexgen_core.openclaw_service import RunResult
 
-from nexgen_core import __version__ as ENGINE_VERSION
-from nexgen_core.openclaw import ws_transport
-from nexgen_core.paths import openclaw_config
+#: The program the CLI is reached by; `node_cli` knows how to start it here.
+COMMAND = "openclaw"
 
-DEFAULT_GATEWAY_PORT = 18789
-DEFAULT_GATEWAY_URL = f"ws://127.0.0.1:{DEFAULT_GATEWAY_PORT}"
+#: What a call waits for the gateway. The CLI has the same default.
 DEFAULT_TIMEOUT = 10.0
-PROTOCOL_VERSION = 4
-CLIENT_ID = "cli"
-CLIENT_MODE = "cli"
-CLIENT_DISPLAY_NAME = "nexgen"
-SCOPE_READ = "operator.read"
-SCOPE_WRITE = "operator.write"
-SCOPE_ADMIN = "operator.admin"
+
+#: Extra time on top of the RPC timeout before the process is killed: every call
+#: is a fresh node start, and `node_cli` measured a cold Windows start at fifteen
+#: to twenty-five seconds before the gateway is asked anything at all.
+STARTUP_GRACE_S = 30.0
+
+#: A CLI answer that is not JSON; distinct from the JSON value `null`.
+_UNPARSED: Final = object()
 
 
 class GatewayRpcError(Exception):
@@ -40,7 +40,7 @@ class GatewayRpcError(Exception):
 
 
 class GatewayConnectionError(GatewayRpcError):
-    """The gateway is unreachable, shut down, or closed the connection unexpectedly."""
+    """The gateway is unreachable, shut down, or the CLI could not reach it."""
 
 
 class GatewayAuthError(GatewayRpcError):
@@ -72,80 +72,144 @@ class GatewayResponseError(GatewayRpcError):
         self.details = details or {}
 
 
-def _socket_api() -> tuple[Any, tuple[type[BaseException], ...]]:
-    """The socket client and its errors; a missing library is this module's own error."""
+def _json_value(text: str) -> Any:
+    """The JSON value the CLI printed, or `_UNPARSED` when it printed something else."""
     try:
-        return ws_transport.socket_api()
-    except ws_transport.SocketLibraryMissing as exc:
-        raise GatewayConnectionError(str(exc)) from exc
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return _UNPARSED
 
 
-def resolve_gateway_url(
+def _sentence(result: RunResult) -> str:
+    """What to tell the person when the CLI failed without a machine-readable answer."""
+    lines = [line.strip() for line in (result.stderr or "").splitlines() if line.strip()]
+    if lines:
+        return lines[-1]
+    said = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+    if said:
+        return said[0]
+    return f"the {COMMAND} CLI exited {result.returncode} without an answer"
+
+
+def _classify(method: str, error: dict[str, Any]) -> GatewayRpcError:
+    """The engine's error for one of the CLI's failure envelopes.
+
+    The CLI publishes a small set of shapes (`gateway_transport_error`,
+    `gateway_request_error`, `gateway_credentials_required`, `cli_error`) and the
+    engine's callers branch on what went wrong rather than on those names, so the
+    mapping lives here and nowhere else. Nothing in it ever carries the token:
+    the sentences come from the answer, never from the argv that asked for it.
+    """
+    kind = str(error.get("type") or "")
+    message = str(error.get("message") or f"Gateway RPC {method} failed").strip()
+    code = str(error.get("code") or "")
+    details = error.get("details") if isinstance(error.get("details"), dict) else {}
+    detail_code = str(details.get("code") or "")
+    lowered = message.lower()
+
+    if (kind == "gateway_credentials_required"
+            or "AUTH" in code or "AUTH" in detail_code
+            or "unauthorized" in lowered or "token mismatch" in lowered or "authentication failed" in lowered):
+        return GatewayAuthError(f"Gateway authentication failed: {message}")
+    if "PROTOCOL" in code or "PROTOCOL" in detail_code or "protocol mismatch" in lowered:
+        return GatewayProtocolError(f"Gateway protocol mismatch: {message}")
+    if kind == "gateway_transport_error":
+        if code == "ETIMEDOUT" or "timed out" in lowered or "timeout" in lowered:
+            return GatewayTimeoutError(message)
+        return GatewayConnectionError(message)
+    if method == "config.patch" and (
+        "base hash" in lowered
+        or "conflict" in lowered
+        or "CONFIG_BASE_HASH_MISMATCH" in (code, detail_code)
+        or details.get("type") == "conflict"
+    ):
+        return GatewayConflictError(f"Config conflict: {message}")
+    if "scope" in lowered or "forbidden" in lowered or code == "FORBIDDEN" or detail_code == "FORBIDDEN":
+        return GatewayScopeError(f"Gateway scope missing: {message}")
+    return GatewayResponseError(f"Gateway RPC {method} failed ({code}): {message}", code=code, details=details)
+
+
+def _answer(result: RunResult, method: str) -> dict[str, Any]:
+    """The payload the CLI printed, or the engine's error for why it printed none."""
+    parsed = _json_value((result.stdout or "").strip())
+    if result.returncode == 0:
+        if parsed is _UNPARSED:
+            raise GatewayProtocolError(
+                f"the {COMMAND} CLI answered {method!r} without a JSON payload: {_sentence(result)}")
+        return parsed if isinstance(parsed, dict) else {"result": parsed}
+    error = parsed.get("error") if isinstance(parsed, dict) else None
+    if isinstance(error, dict):
+        raise _classify(method, error)
+    if parsed is _UNPARSED:
+        raise GatewayConnectionError(_sentence(result))
+    raise GatewayConnectionError(
+        f"the {COMMAND} CLI exited {result.returncode} without an error it could describe")
+
+
+def call_gateway(
+    method: str,
+    params: dict[str, Any] | None = None,
     url: str | None = None,
-    home: Path | None = None,
-    env: Mapping[str, str] | None = None,
-) -> str:
-    """Resolve the WebSocket URL for OpenClaw Gateway.
-
-    Precedence: explicit url arg, OPENCLAW_GATEWAY_URL, OPENCLAW_GATEWAY_PORT,
-    openclaw.json (gateway.url or gateway.port), then default loopback port 18789.
-    """
-    if url and url.strip():
-        return url.strip()
-    environ = os.environ if env is None else env
-    if environ.get("OPENCLAW_GATEWAY_URL"):
-        return environ["OPENCLAW_GATEWAY_URL"].strip()
-    if environ.get("OPENCLAW_GATEWAY_PORT"):
-        return f"ws://127.0.0.1:{environ['OPENCLAW_GATEWAY_PORT'].strip()}"
-    cfg_path = openclaw_config(home=home, env=env)
-    if cfg_path.is_file():
-        try:
-            with open(cfg_path, "r", encoding="utf-8") as fp:
-                data = json.load(fp)
-            gw = data.get("gateway") if isinstance(data, dict) else None
-            if isinstance(gw, dict):
-                if gw.get("url") and isinstance(gw["url"], str):
-                    return gw["url"].strip()
-                if gw.get("port") and isinstance(gw["port"], int):
-                    return f"ws://127.0.0.1:{gw['port']}"
-        except (OSError, json.JSONDecodeError, KeyError, TypeError):  # nexgen: allow reason="missing or invalid openclaw.json falls back to default gateway url"
-            pass
-    return DEFAULT_GATEWAY_URL
-
-
-def resolve_gateway_token(
     token: str | None = None,
-    home: Path | None = None,
-    env: Mapping[str, str] | None = None,
-) -> str | None:
-    """Resolve the authentication token for OpenClaw Gateway.
+    timeout: float = DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    """Ask the gateway one method and return its payload.
 
-    Precedence: explicit token arg, OPENCLAW_GATEWAY_TOKEN, or openclaw.json gateway.auth.token.
-    The resolved token must never be logged or printed.
+    `url` and `token` are passed to the CLI only when the caller supplied them:
+    an omitted token is resolved by the CLI from its own config and environment,
+    which is the same token the gateway was configured with, and it never
+    travels through the engine's argv or memory.
     """
+    argv = [
+        COMMAND, "gateway", "call", str(method),
+        "--params", json.dumps(params or {}, ensure_ascii=False),
+        "--json",
+        "--timeout", str(int(timeout * 1000)),
+    ]
+    if url and url.strip():
+        argv.extend(["--url", url.strip()])
     if token and token.strip():
-        return token.strip()
-    environ = os.environ if env is None else env
-    if environ.get("OPENCLAW_GATEWAY_TOKEN"):
-        return environ["OPENCLAW_GATEWAY_TOKEN"].strip()
-    cfg_path = openclaw_config(home=home, env=env)
-    if cfg_path.is_file():
-        try:
-            with open(cfg_path, "r", encoding="utf-8") as fp:
-                data = json.load(fp)
-            gw = data.get("gateway") if isinstance(data, dict) else None
-            auth = gw.get("auth") if isinstance(gw, dict) else None
-            if isinstance(auth, dict) and isinstance(auth.get("token"), str):
-                t_val = auth["token"].strip()
-                if t_val:
-                    return t_val
-        except (OSError, json.JSONDecodeError, KeyError, TypeError):  # nexgen: allow reason="missing or invalid openclaw.json falls back to unauthenticated or env token"
-            pass
-    return None
+        argv.extend(["--token", token.strip()])
+    return _answer(run_command(argv, timeout + STARTUP_GRACE_S), str(method))
 
 
-def _normalize_plugin_source(source: dict[str, Any] | str) -> dict[str, Any]:
-    """Convert a plugin install source specifier or dict to gateway RPC params."""
+def health(
+    url: str | None = None,
+    token: str | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    """Inspect the OpenClaw Gateway health snapshot."""
+    return call_gateway("health", {}, url=url, token=token, timeout=timeout)
+
+
+def config_get(
+    url: str | None = None,
+    token: str | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    """Read the active configuration snapshot and the base hash a patch needs."""
+    return call_gateway("config.get", {}, url=url, token=token, timeout=timeout)
+
+
+def config_patch(
+    patch: dict[str, Any] | str,
+    base_hash: str | None = None,
+    url: str | None = None,
+    token: str | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+    replace_paths: list[str] | None = None,
+) -> dict[str, Any]:
+    """Apply an optimistic partial configuration update to the gateway."""
+    params: dict[str, Any] = {"raw": json.dumps(patch) if isinstance(patch, dict) else str(patch)}
+    if base_hash is not None:
+        params["baseHash"] = str(base_hash)
+    if replace_paths is not None:
+        params["replacePaths"] = list(replace_paths)
+    return call_gateway("config.patch", params, url=url, token=token, timeout=timeout)
+
+
+def _plugin_source(source: dict[str, Any] | str) -> dict[str, Any]:
+    """The gateway's install params for one source specifier or dict."""
     if isinstance(source, dict):
         return dict(source)
     s = str(source).strip()
@@ -162,322 +226,9 @@ def _normalize_plugin_source(source: dict[str, Any] | str) -> dict[str, Any]:
                 return {"source": "npm-pack", "archivePath": target}
             if prefix == "local":
                 return {"source": "local", "path": target}
-    if s.startswith((".", "/", "\\")) or os.sep in s or "/" in s:
+    if s.startswith((".", "/", "\\")) or "/" in s or "\\" in s:
         return {"source": "local", "path": s}
     return {"source": "npm", "spec": s}
-
-
-class GatewayRpcClient:
-    """WebSocket JSON-RPC client speaking the OpenClaw Gateway Protocol."""
-
-    def __init__(
-        self,
-        url: str | None = None,
-        token: str | None = None,
-        timeout: float = DEFAULT_TIMEOUT,
-        home: Path | None = None,
-        env: Mapping[str, str] | None = None,
-        scopes: list[str] | tuple[str, ...] | None = None,
-        client_id: str = CLIENT_ID,
-        client_mode: str = CLIENT_MODE,
-        client_display_name: str = CLIENT_DISPLAY_NAME,
-        client_version: str = ENGINE_VERSION,
-    ) -> None:
-        self.url = resolve_gateway_url(url, home=home, env=env)
-        self._token = resolve_gateway_token(token, home=home, env=env)
-        self.default_timeout = float(timeout)
-        self.scopes = list(scopes) if scopes is not None else [SCOPE_READ]
-        self.client_id = client_id
-        self.client_mode = client_mode
-        self.client_display_name = client_display_name
-        self.client_version = client_version
-        self._ws: ws_sync.ClientConnection | None = None
-        self._hello_payload: dict[str, Any] | None = None
-
-    def __repr__(self) -> str:
-        # Intentionally omit the authentication token to prevent credential leaks
-        return f"GatewayRpcClient(url={self.url!r}, connected={self.is_connected})"
-
-    @property
-    def is_connected(self) -> bool:
-        """True if the client currently holds an open WebSocket connection."""
-        return self._ws is not None
-
-    def connect(self) -> None:
-        """Connect to the gateway, wait for optional challenge, and complete handshake."""
-        if self._ws is not None:
-            return
-        client, transport_errors = _socket_api()
-        try:
-            ws = client.connect(
-                self.url,
-                open_timeout=self.default_timeout,
-                close_timeout=2.0,
-            )
-        except TimeoutError:
-            raise GatewayTimeoutError(f"Connection to gateway at {self.url} timed out") from None
-        except (OSError, *transport_errors) as e:
-            raise GatewayConnectionError(f"Gateway is not reachable at {self.url}: {e}") from None
-
-        self._ws = ws
-        try:
-            self._perform_handshake()
-        except Exception:
-            self.close()
-            raise
-
-    def _perform_handshake(self) -> None:
-        """Execute the OpenClaw connect challenge / hello-ok handshake."""
-        assert self._ws is not None
-        _, transport_errors = _socket_api()
-        try:
-            raw_challenge = self._ws.recv(timeout=0.2)
-            parsed_ch = json.loads(raw_challenge)
-            if isinstance(parsed_ch, dict) and parsed_ch.get("event") == "connect.challenge":
-                pass
-        except TimeoutError:  # nexgen: allow reason="pre-connect challenge is optional in older or fast gateways"
-            pass
-        except (*transport_errors, OSError, json.JSONDecodeError):  # nexgen: allow reason="non-challenge initial frame is handled by connect handshake"
-            pass
-
-        req_id = str(uuid.uuid4())
-        connect_params: dict[str, Any] = {
-            "minProtocol": PROTOCOL_VERSION,
-            "maxProtocol": PROTOCOL_VERSION,
-            "client": {
-                "id": self.client_id,
-                "version": self.client_version,
-                "platform": sys.platform,
-                "mode": self.client_mode,
-                "displayName": self.client_display_name,
-            },
-            "role": "operator",
-            "scopes": list(self.scopes),
-        }
-        if self._token:
-            connect_params["auth"] = {"token": self._token}
-
-        connect_req = {"type": "req", "id": req_id, "method": "connect", "params": connect_params}
-        self._ws.send(json.dumps(connect_req))
-
-        try:
-            raw_res = self._ws.recv(timeout=self.default_timeout)
-        except TimeoutError:
-            raise GatewayTimeoutError("Gateway handshake timed out") from None
-        except (*transport_errors, OSError) as e:
-            raise GatewayConnectionError(f"Gateway disconnected during handshake: {e}") from None
-
-        try:
-            res = json.loads(raw_res)
-        except json.JSONDecodeError as e:
-            raise GatewayProtocolError(f"Gateway sent invalid JSON in handshake: {e}") from None
-
-        self._validate_handshake_response(res)
-
-    def _validate_handshake_response(self, res: dict[str, Any]) -> None:
-        """Validate the hello-ok response or raise typed error."""
-        if res.get("ok") is not True:
-            err = res.get("error") if isinstance(res.get("error"), dict) else {}
-            code = str(err.get("code") or "")
-            msg = str(err.get("message") or "Gateway connect rejected")
-            details = err.get("details") if isinstance(err.get("details"), dict) else {}
-            detail_code = str(details.get("code") or "")
-
-            if "AUTH" in code or "AUTH" in detail_code or "unauthorized" in msg.lower() or "token mismatch" in msg.lower():
-                raise GatewayAuthError("Gateway authentication failed: token rejected")
-            if "PROTOCOL" in code or "PROTOCOL" in detail_code or "protocol mismatch" in msg.lower():
-                raise GatewayProtocolError(f"Gateway protocol mismatch: {msg}")
-            if "FORBIDDEN" in code or "scope" in msg.lower() or "FORBIDDEN" in detail_code:
-                raise GatewayScopeError(f"Gateway authorization error: {msg}")
-            raise GatewayRpcError(f"Gateway connect rejected: {msg}")
-
-        payload = res.get("payload")
-        if not isinstance(payload, dict) or payload.get("type") != "hello-ok":
-            type_name = payload.get("type") if isinstance(payload, dict) else type(payload).__name__
-            raise GatewayProtocolError(f"Unexpected gateway connect response: expected hello-ok, got {type_name}")
-        self._hello_payload = payload
-
-    def request(
-        self,
-        method: str,
-        params: dict[str, Any] | None = None,
-        timeout: float | None = None,
-    ) -> dict[str, Any]:
-        """Dispatch a JSON-RPC request to the gateway and return its payload."""
-        if not self.is_connected:
-            self.connect()
-        assert self._ws is not None
-        _, transport_errors = _socket_api()
-
-        req_id = str(uuid.uuid4())
-        frame = {
-            "type": "req",
-            "id": req_id,
-            "method": method,
-            "params": params or {},
-        }
-        t_limit = float(timeout) if timeout is not None else self.default_timeout
-
-        try:
-            self._ws.send(json.dumps(frame))
-        except (*transport_errors, OSError) as e:
-            self.close()
-            raise GatewayConnectionError(f"Failed to send RPC request {method!r}: {e}") from None
-
-        while True:
-            try:
-                raw = self._ws.recv(timeout=t_limit)
-            except TimeoutError:
-                raise GatewayTimeoutError(f"Gateway request {method!r} timed out after {t_limit}s") from None
-            except (*transport_errors, OSError) as e:
-                self.close()
-                raise GatewayConnectionError(f"Gateway connection lost during {method!r}: {e}") from None
-
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError as e:
-                raise GatewayProtocolError(f"Gateway sent invalid JSON: {e}") from None
-
-            if isinstance(msg, dict) and msg.get("type") == "res" and msg.get("id") == req_id:
-                return self._unpack_response(method, msg)
-
-    def _unpack_response(self, method: str, msg: dict[str, Any]) -> dict[str, Any]:
-        """Unpack a matching RPC response frame, raising typed errors on failure."""
-        if msg.get("ok") is True:
-            payload = msg.get("payload")
-            return payload if isinstance(payload, dict) else {"result": payload}
-
-        err = msg.get("error") if isinstance(msg.get("error"), dict) else {}
-        code = str(err.get("code") or "")
-        err_msg = str(err.get("message") or f"RPC {method} failed")
-        details = err.get("details") if isinstance(err.get("details"), dict) else {}
-        detail_code = str(details.get("code") or "")
-
-        if method == "config.patch" and (
-            "base hash" in err_msg.lower()
-            or "conflict" in err_msg.lower()
-            or "CONFIG_BASE_HASH_MISMATCH" in (code, detail_code)
-            or details.get("type") == "conflict"
-        ):
-            raise GatewayConflictError(f"Config conflict: {err_msg}")
-
-        if (
-            "scope" in err_msg.lower()
-            or "forbidden" in err_msg.lower()
-            or code == "FORBIDDEN"
-            or detail_code == "FORBIDDEN"
-        ):
-            raise GatewayScopeError(f"Gateway scope missing: {err_msg}")
-
-        raise GatewayResponseError(f"Gateway RPC {method} failed ({code}): {err_msg}", code=code, details=details)
-
-    def health(self, timeout: float | None = None) -> dict[str, Any]:
-        """Fetch the health snapshot from OpenClaw Gateway."""
-        return self.request("health", {}, timeout=timeout)
-
-    def config_get(self, timeout: float | None = None) -> dict[str, Any]:
-        """Fetch the current on-disk configuration snapshot and optimistic base hash."""
-        return self.request("config.get", {}, timeout=timeout)
-
-    def config_patch(
-        self,
-        patch: dict[str, Any] | str,
-        base_hash: str | None = None,
-        replace_paths: list[str] | None = None,
-        timeout: float | None = None,
-    ) -> dict[str, Any]:
-        """Apply an optimistic partial configuration update to OpenClaw Gateway."""
-        raw = json.dumps(patch) if isinstance(patch, dict) else str(patch)
-        params: dict[str, Any] = {"raw": raw}
-        if base_hash is not None:
-            params["baseHash"] = str(base_hash)
-        if replace_paths is not None:
-            params["replacePaths"] = list(replace_paths)
-        return self.request("config.patch", params, timeout=timeout)
-
-    def plugins_install(
-        self,
-        source: dict[str, Any] | str,
-        timeout: float | None = 30.0,
-    ) -> dict[str, Any]:
-        """Install a plugin on OpenClaw Gateway from a source specifier or dict."""
-        return self.request("plugins.install", _normalize_plugin_source(source), timeout=timeout or 30.0)
-
-    def plugins_reload(
-        self,
-        plugin_id: str,
-        timeout: float | None = 15.0,
-    ) -> dict[str, Any]:
-        """Reload an active plugin on OpenClaw Gateway by its identifier."""
-        params = {"plugins": [{"pluginId": str(plugin_id).strip()}]}
-        return self.request("plugins.reload", params, timeout=timeout or 15.0)
-
-    def close(self) -> None:
-        """Close the active WebSocket connection."""
-        ws = self._ws
-        self._ws = None
-        if ws is not None:
-            _, transport_errors = _socket_api()
-            try:
-                ws.close()
-            except (*transport_errors, OSError):  # nexgen: allow reason="best-effort socket closure on cleanup"
-                pass
-
-    def __enter__(self) -> Self:
-        self.connect()
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: object,
-    ) -> None:
-        self.close()
-
-
-def health(
-    url: str | None = None,
-    token: str | None = None,
-    timeout: float = DEFAULT_TIMEOUT,
-    scopes: list[str] | tuple[str, ...] | None = None,
-) -> dict[str, Any]:
-    """Inspect OpenClaw Gateway health snapshot via WebSocket RPC."""
-    req_scopes = list(scopes) if scopes is not None else [SCOPE_READ]
-    with GatewayRpcClient(url=url, token=token, timeout=timeout, scopes=req_scopes) as client:
-        return client.health(timeout=timeout)
-
-
-def config_get(
-    url: str | None = None,
-    token: str | None = None,
-    timeout: float = DEFAULT_TIMEOUT,
-    scopes: list[str] | tuple[str, ...] | None = None,
-) -> dict[str, Any]:
-    """Read OpenClaw Gateway active configuration snapshot via WebSocket RPC."""
-    req_scopes = list(scopes) if scopes is not None else [SCOPE_READ]
-    with GatewayRpcClient(url=url, token=token, timeout=timeout, scopes=req_scopes) as client:
-        return client.config_get(timeout=timeout)
-
-
-def config_patch(
-    patch: dict[str, Any] | str,
-    base_hash: str | None = None,
-    url: str | None = None,
-    token: str | None = None,
-    timeout: float = DEFAULT_TIMEOUT,
-    replace_paths: list[str] | None = None,
-    scopes: list[str] | tuple[str, ...] | None = None,
-) -> dict[str, Any]:
-    """Apply an optimistic partial configuration update to OpenClaw Gateway."""
-    req_scopes = list(scopes) if scopes is not None else [SCOPE_ADMIN]
-    with GatewayRpcClient(url=url, token=token, timeout=timeout, scopes=req_scopes) as client:
-        return client.config_patch(
-            patch=patch,
-            base_hash=base_hash,
-            replace_paths=replace_paths,
-            timeout=timeout,
-        )
 
 
 def plugins_install(
@@ -485,12 +236,9 @@ def plugins_install(
     url: str | None = None,
     token: str | None = None,
     timeout: float = 30.0,
-    scopes: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
-    """Install a plugin on OpenClaw Gateway via WebSocket RPC."""
-    req_scopes = list(scopes) if scopes is not None else [SCOPE_ADMIN]
-    with GatewayRpcClient(url=url, token=token, timeout=timeout, scopes=req_scopes) as client:
-        return client.plugins_install(source=source, timeout=timeout)
+    """Install a plugin on the gateway from a source specifier or dict."""
+    return call_gateway("plugins.install", _plugin_source(source), url=url, token=token, timeout=timeout)
 
 
 def plugins_reload(
@@ -498,9 +246,7 @@ def plugins_reload(
     url: str | None = None,
     token: str | None = None,
     timeout: float = 15.0,
-    scopes: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
-    """Reload an active plugin on OpenClaw Gateway via WebSocket RPC."""
-    req_scopes = list(scopes) if scopes is not None else [SCOPE_ADMIN]
-    with GatewayRpcClient(url=url, token=token, timeout=timeout, scopes=req_scopes) as client:
-        return client.plugins_reload(plugin_id=plugin_id, timeout=timeout)
+    """Reload an active plugin on the gateway by its identifier."""
+    params = {"plugins": [{"pluginId": str(plugin_id).strip()}]}
+    return call_gateway("plugins.reload", params, url=url, token=token, timeout=timeout)

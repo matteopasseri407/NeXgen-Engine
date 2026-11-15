@@ -134,6 +134,12 @@ gateway unless it must always be there.
 | `lazy_call` | Forwards a call to a tool the manifest declares read-only (`readonly: true` on the server, or `readonly_tools: [...]`). Refuses anything else. |
 | `lazy_mutate` | Forwards a call to any other tool. Needs `"confirm": true`. |
 
+A call whose arguments do not fit the tool's own `inputSchema` — a required field missing, a value of the wrong type, a
+field the schema does not allow — is refused before it is forwarded: the refusal names the field and repeats the schema
+in one line, so the next call is right instead of spending an upstream round trip on `workflowId: Required`. Only what
+the proxy can read with certainty is checked (a `$ref`, a union or a nested constraint passes), and the schema comes
+from the index `lazy_list` already built, so a call placed before any index exists is forwarded unchecked.
+
 Reads and writes are separate tools so your CLI's own permission rules can tell them apart: allow `lazy_call` and
 still be asked about `lazy_mutate`. Read-only is never inferred from a tool's name or from the server's own
 annotations, which come from a server you do not control: the manifest has to say it. `"confirm": true` is the model

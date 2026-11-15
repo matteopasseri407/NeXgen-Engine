@@ -1,0 +1,55 @@
+# Dependabot: the update mechanics for everything this repository only consumes.
+#
+# One grouped pull request per ecosystem, once a week, against `developer`:
+# a grouped update keeps one review open instead of one per package, and a small
+# open-PR limit keeps the queue sorted out by hand rather than by accumulation.
+#
+# The engine keeps the judgement and nothing else: a bump lands as a pull
+# request that runs the same gates as any other change (CI, discipline, leak
+# scan), and a person merges it. Nothing here pushes to `main`, and the release
+# flow is unchanged: `main` still only advances through a release pull request.
+#
+# `03-INFRA/deploy/vault-mcp` is the deployable the engine ships, and it has its
+# own pyproject.toml, so it gets its own grouped pip entry: its dependencies are
+# the server's runtime, not the engine's, and they move for different reasons.
+version: 2
+
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    target-branch: "developer"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      python-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: "pip"
+    directory: "/03-INFRA/deploy/vault-mcp"
+    target-branch: "developer"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore(deps-vault-mcp)"
+    groups:
+      vault-mcp-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "developer"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore(actions)"
+    groups:
+      github-actions:
+        patterns: ["*"]

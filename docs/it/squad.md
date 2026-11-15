@@ -28,9 +28,12 @@ Una mappa da id di agente alla sua configurazione:
 
 - `name`: nome visualizzato in OpenClaw.
 - `model`: identificatore del modello, per esempio `anthropic/claude-opus-5-5` o `opencode-go/deepseek-v4.1-flash`.
+- `harness`: selettore facoltativo di corsia, uno fra `claude`, `codex`, `opencode`, `agy`, `none`. Omesso o `none` tiene la corsia provider. Vedi [Su quale corsia gira un agente](#su-quale-corsia-gira-un-agente).
 - `role`: a cosa serve l'agente.
 - `workspace`: percorso personalizzato facoltativo per la cartella di lavoro dell'agente.
 - `thinkingDefault`: livello di ragionamento facoltativo, per esempio `high`.
+- `tool_surface`: facoltativo `lean`, che pubblica una superficie di strumenti minima sul modello di questo agente invece del catalogo intero del gateway. Spento se omesso. Vedi [`tool_surface: lean`](#tool_surface-lean).
+- `context_tokens`: tetto facoltativo di contesto per chiamata, in token, scritto come `contextTokens` di quel modello. Spento se omesso. Vedi [`context_tokens: N`](#context_tokens-n).
 - `soul`: prompt di personalità o di guida facoltativo. Una cartella di lavoro riceve un `SOUL.md` solo quando questo campo è presente. `soul_from` fa lo stesso a partire da un file, relativo al file squadra, per un testo più lungo che qualcuno può modificare. Gli agenti senza nessuno dei due non ricevono un `SOUL.md` predefinito.
 - `agents_md`: percorso facoltativo, relativo al file squadra, delle istruzioni che questo agente riceve come `AGENTS.md` nella sua cartella di lavoro. Vedi [Istruzioni per ruolo](#agents_md-e-common_md).
 - `default`: `true` facoltativo che nomina questo agente come predefinito dell'installazione. Vedi [`default`](#default).
@@ -171,6 +174,51 @@ La squadra aggiunge quello che nomina: ogni `model` su un agente e ogni chiave d
 
 Due regole proteggono una scelta già fatta. Una politica già in vigore viene estesa, mai sostituita: quello che il proprietario ha scritto resta primo e resta lì, e un provider che la configurazione nomina già resta selezionabile. Il `model` di nessun agente viene cambiato da tutto questo.
 
+## Su quale corsia gira un agente
+
+`harness` su un agente decide che cosa esegue davvero il suo turno. Un agente senza la chiave tiene la corsia che ha oggi, quindi nessun setup sposta un agente esistente da nessuna parte.
+
+| `harness` | La corsia | Che cosa esegue il turno | Quanto costa |
+| --- | --- | --- | --- |
+| assente, oppure `none` | provider | OpenClaw stesso, che chiama l'API del modello di cui ha la chiave (`opencode-go/*`, un modello locale, ...) | un turno con il prompt di OpenClaw, sul piano flat o sulla chiave |
+| `opencode`, `claude`, `codex` | sessione ACP | la CLI vera, come agente a sé, nella cartella di quell'agente, con il suo login | il contesto dell'harness, sul piano dell'harness. OpenClaw tiene solo canali, consegna e politica |
+| `agy` | backend CLI | la CLI ufficiale `agy`, attraverso il plugin `google-antigravity-cli` | il prompt di OpenClaw più la superficie degli strumenti loopback |
+
+La corsia ACP è quella che cambia il conto: un turno porta il prompt e le skill dell'harness invece di quelli di OpenClaw, ed è la differenza fra qualche migliaio di token di contesto e i 78.717 token misurati per un turno `claude-cli` su questo motore (`docs/proposals/daru-burn.md`).
+
+Due cose sono fisse, non configurabili:
+
+- `agy` non diventa mai una sessione ACP. È un backend CLI sul client di Google; ACP per Antigravity richiederebbe il server proprietario separato di Google, che porta un piano Google fuori dai client di Google. Il plugin si richiede con un modello che nomina `google-antigravity-cli/...`, che è una decisione diversa da questa chiave.
+- Una corsia ACP si scrive come **due metà, o nessuna**: `agents.entries.<id>.runtime` e una voce in `bindings` di `type: "acp"`. Un blocco runtime senza una conversazione legata risponde a una chat diretta con il modello predefinito invece che con l'harness.
+
+Un agente ACP ha bisogno di un binding di canale che gli instradi una conversazione. Il setup scrive allora un blocco runtime e un binding per quella conversazione:
+
+```yaml
+agents:
+  sviluppo:
+    harness: "opencode"
+bindings:
+  - match:
+      channel: "telegram"
+    agentId: "sviluppo"
+```
+
+```json5
+{
+  agents: { entries: { sviluppo: { runtime: { type: "acp", acp: {
+    agent: "opencode", backend: "acpx", mode: "persistent", cwd: "<cartella di quell'agente>",
+  } } } } },
+  bindings: [{ type: "acp", agentId: "sviluppo", match: { channel: "telegram" },
+    acp: { mode: "persistent", cwd: "<cartella di quell'agente>", label: "sviluppo-opencode" } }],
+}
+```
+
+`nexgen openclaw plan` nomina i casi che non può scrivere, e lascia quell'agente sulla corsia che ha già: un valore che non è uno dei cinque qui sopra, un harness non installato su questa macchina, un agente a cui nessun binding instrada una conversazione, un agente senza cartella di lavoro.
+
+Su una corsia ACP il `model` dell'agente viene passato all'harness come sua scelta di modello, quindi deve nominare un modello che quell'harness può eseguire, non uno di cui OpenClaw tiene la chiave. Il controllo del modello su ACP dipende dall'adattatore: se l'adattatore non accetta una scelta, l'harness tiene il suo predefinito e il `model` della voce resta indicativo.
+
+Il setup non rimuove mai quei blocchi. Il merge conserva ogni chiave che può essere tua, quindi togliere `harness:` dalla squadra non riporta indietro l'agente: per riportarlo sulla corsia provider, togli il blocco `runtime` della voce e il suo binding `type: "acp"` in `openclaw.json`.
+
 ### `bindings`
 
 Lista di binding di canale che instradano i messaggi in arrivo su un canale di comunicazione a un agente specifico:
@@ -183,6 +231,62 @@ bindings:
 ```
 
 Un binding porta anche il plugin incluso in quel canale dentro `plugins.allow` (`telegram` per l'esempio qui sopra), la voce che OpenClaw aggiunge da sé la prima volta che un canale viene configurato: un canale il cui plugin non è permesso non instrada nulla. Un canale che nessun plugin incluso serve resta al plugin che la persona ha installato e permesso.
+
+## Leve di consumo, tutte a scelta
+
+Tre impostazioni limitano quanto può spendere un turno. Tutte e tre sono spente finché non le scrivi: un agente che non ne dichiara nessuna tiene la superficie, il contesto e il comportamento che ha oggi. I numeri qui sotto vengono da `docs/proposals/daru-burn.md`, dove ognuno dice se è misurato o stimato, e la base è il turno `capo` misurato su questo motore: 74 chiamate al modello, circa 78.000 token di prompt in ogni chiamata, circa 5,77 M di token per turno.
+
+| Chiave | Dove | Che cosa scrive | Token per turno, prima | Token per turno, dopo | Consigliato |
+| --- | --- | --- | --- | --- | --- |
+| `tool_surface: lean` | su un agente | `tools.byProvider["<modello di quell'agente>"] = { profile: "minimal", alsoAllow: [...] }` | 78.000 per chiamata, 5,77 M per turno | ~63.000 per chiamata, ~4,66 M per turno (-19%) | sì, per un agente su backend CLI |
+| `context_tokens: N` | su un agente | `models.providers.<provider>.models[].contextTokens` | nessun tetto per chiamata: il caso peggiore è la finestra del modello, quindi 74 M per turno a 1 M | stessa mediana per turno, ma il caso peggiore è 74 x N: 14,8 M per turno a 200.000 | `200000`, poi misura |
+| `acp_admission: true` | alla radice | `governor.acp.agents` nel file di fianco al plugin | un turno iniziato su un piano esaurito gira finché non fallisce a metà, pagando le chiamate fatte | 0 chiamate al modello, 0 token: una riga che nomina piano e finestra, prima che l'harness parta | sì, quando esiste una corsia `harness:` |
+
+Chiamate per turno: nessuna delle tre le cambia. `tool_surface` e `context_tokens` rendono più economica ogni chiamata e limitano il totale; `acp_admission` toglie le chiamate di un turno che sarebbe comunque morto. Il numero di chiamate è l'unica leva che l'OpenClaw fissato non espone, e `docs/proposals/daru-burn.md` la descrive invece di far finta del contrario.
+
+### `tool_surface: lean`
+
+```yaml
+agents:
+  capo:
+    model: "anthropic/claude-opus-5-5"
+    tool_surface: "lean"
+```
+
+Su una corsia backend CLI il catalogo di strumenti del gateway arriva all'harness in modo anticipato, quindi 51 schemi viaggiano in ogni chiamata al modello: erano 112.239 dei circa 264.000 caratteri di prompt del turno misurato, circa 33.000 dei suoi 78.000 token. `profile: minimal` pubblica la lista corta di OpenClaw, e `alsoAllow` rimette quello che l'agente usa davvero: shell, file, web, gli strumenti di sessione, la memoria, gli strumenti di supervisione per l'agente che supervisiona, e i quattro meta-strumenti `lazy-mcp`.
+
+I connettori restano raggiungibili: il deny sul loopback toglie già i loro schemi, e il gateway `lazy-mcp` è l'unica strada lasciata aperta, quindi Vault, GitHub, Vercel e il resto si chiamano con `lazy-mcp__lazy_call` come prima. Nulla della lista di capacità dell'agente viene tolto, e il motore non scrive nessuna lista `allow` (OpenClaw rifiuta `allow` accanto a `alsoAllow` nello stesso ambito; questa voce usa solo `alsoAllow`).
+
+La chiave è il modello, non l'agente, perché è questo che significa `tools.byProvider`: ogni agente che gira su quel modello riceve la superficie ridotta. Se non è quello che vuoi, dai all'agente un modello suo.
+
+### `context_tokens: N`
+
+```yaml
+agents:
+  capo:
+    model: "anthropic/claude-opus-5-5"
+    context_tokens: 200000
+```
+
+Il tetto è l'input attivo di una chiamata al modello. Sulla corsia `claude-cli` diventa la finestra di auto-compattazione di Claude Code, quindi una conversazione viene riassunta al tetto invece di crescere verso un caso peggiore da 1.000.000 di token: 74 chiamate contro un tetto di 200.000 sono 14,8 M di token, contro 74 M alla finestra nativa. Lo scambio è reale ed è tuo: i turni vecchi diventano un riassunto prima.
+
+Viene scritto solo `contextTokens`, mai `contextWindow`: il tetto è una decisione, la finestra nativa è del modello. Quando due agenti nominano lo stesso modello con numeri diversi, vince il più piccolo.
+
+**Sperimentale, e perché.** È l'unica leva che scrive un array `models` per un provider che appartiene a un plugin incluso (qui `anthropic`). La release fissata documenta la fusione: una voce che scrivi in `models.providers.<id>.models` tiene le sue righe, e il catalogo del plugin smette di contribuire solo quando un `baseURL` a livello di provider punta fuori dagli endpoint dichiarati dal plugin, cosa che questo motore non scrive mai (documentazione di `openclaw models list` nella release fissata). Quindi la via di autenticazione dovrebbe sopravvivere. Dovrebbe non è lo stesso di dimostrato sulla tua macchina: il motore non ha osservato un turno vero sulla tua corsia, quindi verifica una volta. Esegui `openclaw config validate`, poi un turno vero, poi `openclaw models list --provider anthropic` e controlla che la voce porti ancora la sua autenticazione. Se la lista dei modelli cambia forma, togli la chiave: l'agente continua a funzionare e smette di compattare prima.
+
+### `acp_admission: true`
+
+```yaml
+acp_admission: true
+agents:
+  sviluppo:
+    harness: "opencode"
+    model: "opencode-go/deepseek-v4.1-flash"
+```
+
+Una sessione ACP è l'harness che gira come se stesso, quindi le catene di fallback di OpenClaw non vengono mai consultate per lei: senza questo ramo la corsia con più contesto per turno è quella senza nessun cancello. Con questo ramo il plugin legge `nexgen-quota-state.json` (le letture che il battito orario scrive già) prima di un turno, e quando il piano che il modello dell'agente nomina è alla riga `block_at` della tua politica o sopra, risponde con una riga che nomina il piano e la finestra invece di far partire un turno dell'harness.
+
+Non costa nessuna chiamata al modello: la risposta è testo del plugin. Non succede nulla quando lo stato manca, è più vecchio di quanto la politica permette, non ha una lettura per quel piano, o legge sotto la riga; e il ramo viene scritto solo quando `acp_admission: true` è nella squadra, quindi una macchina che non l'ha mai chiesto non rifiuta mai un turno.
 
 ## Autenticazione sicura dei modelli
 

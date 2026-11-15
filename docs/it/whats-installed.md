@@ -54,6 +54,57 @@ come farebbero le CLI, e controlla che elenchi i suoi tool. Se uno non funziona,
 configurazioni delle CLI vengono rigenerate da quelle vecchie; non si committa niente. Dietro il gateway, un server a
 cui in questa sessione manca solo una credenziale non conta contro l'aggiornamento.
 
+## Cosa si aggiorna da solo e cosa aspetta te
+
+Ogni voce di terzi segue una di cinque strade, e `nexgen thirdparty status` stampa, una riga per voce, quale vale per
+quella voce, a che versione è ferma, quale è la più recente a monte, quando è stata controllata l'ultima volta e il
+comando esatto che la muove. Chiedi prima quel comando.
+
+| Politica stampata | Cosa significa | Come si muove |
+| --- | --- | --- |
+| `si alza da sola` | I byte sono identici fra la versione vecchia e la nuova, quindi niente può cambiare. | La alza il controllo orario e committa. Non devi fare niente. |
+| `aspetta il tuo sì` | Solo prosa, un commit discendente, o una patch npm: forma sicura e piccola. | `nexgen skills bump`, un sì per tutte. |
+| `da guardare prima` | Uno script nuovo, un hook toccato, una minor o una major, una storia riscritta, o una versione ritirata da chi pubblica. | **Nessun comando la alza.** Leggi cosa è cambiato, poi modifica il pin nel file che la riga nomina. |
+| `a mano, dove gira` | Un componente dentro un modulo: l'immagine n8n, il lanciatore Playwright, OpenClaw stesso. | Si sostituisce dove gira, dopo averlo provato. Il motore non li riscrive mai. |
+| `fluttuante, senza pin` | Un server `npx` senza `package@versione`, o un endpoint servito da altri (`mcp.vercel.com`). | Già adesso cambia senza che qui nessuno decida. Lo aggiorna chi lo serve, oppure fissi una versione per riprenderti la scelta. |
+
+Tre cose che sorprendono:
+
+- **Con `nexgen sync` non si aggiorna niente.** Il sync materializza il pin scritto nel manifest. Una skill o un
+  server bloccato a una versione sono identici prima e dopo il sync, qualunque cosa abbia pubblicato chi sta a monte.
+- **Una versione più nuova non è un aggiornamento approvato.** Il controllo delle dipendenze dice solo che qualcosa si
+  è mosso; il guardiano decide se il movimento è banale. `nexgen info` conta quello che si è mosso, quindi il suo
+  numero può essere più grande di quante cose aspettano te.
+- **`nexgen skills bump` che non fa niente è una risposta, non un guasto.** Stampa quante voci restano ferme, e
+  `nexgen thirdparty status` dice cosa serve a ciascuna.
+
+`nexgen doctor` porta una riga per tutto questo: quante cose sono già approvate e aspettano un sì (con il comando che
+le applica), oppure quante vanno guardate prima. Non diventa rosso per un aggiornamento in attesa, e `doctor -v` la
+stampa.
+
+### Da dove vengono queste meccaniche
+
+Il motore decide cosa governa una voce e tiene il manifest; la meccanica di una certa sorgente è sempre più spesso di
+qualcun altro, ed è voluto: un progetto mantenuto che si occupa di installare una cosa sola se ne accorge prima di
+questo motore.
+
+- **Una skill da github** la scarica la [CLI `skills`](https://github.com/vercel-labs/skills) (MIT, fissata a
+  npm `skills@1.8.1`) quando Node è installato: risolve il commit scritto nel manifest e scarica quella sola cartella
+  invece di tutto il repository, e la cartella che lascia è quella che il motore copia in libreria. Il controllo di
+  integrità è il suo `skills-lock.json`, che deve nominare il commit fissato e un hash del contenuto, altrimenti i byte
+  vengono rifiutati. Una macchina senza Node clona il repository al pin, esattamente come prima; una CLI assente, che
+  fallisce o che risponde con un altro commit non costa niente, perché il clone segue. Il suo `update` non viene usato:
+  muove le proprie installazioni e le proprie cartelle delle CLI, quindi sarebbe un secondo scrittore degli stessi byte.
+  A muovere resta `nexgen skills bump`.
+- **Un plugin** appartiene alla CLI che lo ha installato, e il motore lo riporta invece di copiarne l'aggiornamento:
+  `nexgen thirdparty status` finisce con i plugin che Claude Code, Codex e Antigravity elencano con il proprio
+  `plugin list --json`, ognuno con il comando che lo muove (`claude plugin update <plugin>`,
+  `codex plugin marketplace upgrade`, `agy plugin install <plugin>`). Niente di tutto questo viene eseguito dal motore.
+- **La versione di un server MCP** si legge da npm e da nessun'altra parte. Il registry ufficiale MCP è stato misurato
+  contro npm ed è stato rifiutato: è indietro (il server di un publisher era quattordici release dietro), e due dei
+  server fissati su questa macchina non sono elencati sotto il nome del loro pacchetto, quindi leggerlo avrebbe nascosto
+  proprio le release che il controllo esiste per riportare.
+
 ## Le skill che distribuisce il motore
 
 Le installazioni più vecchie copiavano le skill iniziali del motore nel Vault e dichiaravano le copie `origin: vault`.

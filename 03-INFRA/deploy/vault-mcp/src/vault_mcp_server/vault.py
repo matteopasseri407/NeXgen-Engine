@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import difflib
 import hashlib
 import os
 import re
@@ -97,6 +98,24 @@ def _prefix_matches(rel_path: str, prefix: str) -> bool:
     return normalized_path == normalized_prefix or normalized_path.startswith(normalized_prefix)
 
 
+def _closest_paths(index: VaultIndex, note_ref: str, limit: int = 3) -> list[str]:
+    """The note paths closest to a reference that matched nothing.
+
+    A model that mistypes a path or remembers an old name needs the nearest
+    real one, not a refusal: this is what turns "NotFound" into one retry
+    that works.
+    """
+    records = index.records
+    by_lower = {record.rel_path.lower(): record.rel_path for record in records}
+    close = difflib.get_close_matches(note_ref.strip().lower(), list(by_lower), n=limit, cutoff=0.5)
+    if close:
+        return [by_lower[name] for name in close]
+    # A close string is not the only signal: the reference may carry a word
+    # of the path the caller meant ("agent-self" for 03-INFRA/agent-self.md).
+    words = [word for word in _normalize_lookup(Path(note_ref).stem).split() if len(word) > 3]
+    return [record.rel_path for record in records if any(word in record.rel_path.lower() for word in words)][:limit]
+
+
 def _read_text(path: Path, max_bytes: int) -> tuple[str, bool]:
     with path.open("rb") as handle:
         raw_bytes = handle.read(max_bytes + 1)
@@ -105,8 +124,31 @@ def _read_text(path: Path, max_bytes: int) -> tuple[str, bool]:
     return text, truncated
 
 
+def _read_limit(max_chars: int | None) -> int:
+    """The character budget of one read: the caller's, or the safe default."""
+    if max_chars is None:
+        return DEFAULT_READ_CHARS
+    return max(1, max_chars)
+
+
+def _cut_text(text: str, limit: int) -> tuple[str, bool]:
+    """`text` within `limit` characters, and whether anything was left out."""
+    if len(text) <= limit:
+        return text, False
+    return text[:limit], True
+
+
 def _hash_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    """The compare-and-swap token for a note, or for one section of it.
+
+    Hashed with CRLF folded to LF, the canonical form the engine's own
+    `hash_bytes` uses (`nexgen_core/vault/gate.py`; this container cannot import
+    it). The index hashes a note as it sits on disk, where Windows keeps CRLF,
+    while `update_note`/`update_section` read the same file through Python's
+    newline translation, so hashing the raw text refused every read-then-update
+    on a multi-line note. A note that already uses LF hashes as it did before.
+    """
+    return hashlib.sha256(text.replace("\r\n", "\n").encode("utf-8")).hexdigest()
 
 
 def _strip_frontmatter(text: str) -> tuple[str, str]:
@@ -254,7 +296,10 @@ def _match_section(sections: tuple[NoteSection, ...], section_heading: str) -> N
 
     if not candidates:
         available = ", ".join(section.heading for section in sections[:20])
-        raise ValueError(f"Section not found: {section_heading!r}. Available headings: {available}")
+        raise ValueError(
+            f"Section not found: {section_heading!r}. Available headings: {available}. "
+            "Pass one of these as section_heading, exactly as read_note's `sections` list spells it."
+        )
     if len(candidates) > 1:
         if level is None and len({section.level for section in candidates}) > 1:
             options = ", ".join(section.heading for section in candidates[:5])
@@ -270,6 +315,12 @@ def _match_section(sections: tuple[NoteSection, ...], section_heading: str) -> N
 
 
 _REDACTED = "[redacted]"
+
+#: How much note text one `read_note` returns before it says how to read the
+#: rest. A module constant so the promise has an address: the tool description
+#: names the same number, and a model that pays for a note twice because the
+#: client truncated it is a round trip the vault could have avoided.
+DEFAULT_READ_CHARS = 40000
 
 #: How much of a note a search snippet may carry. A module constant so the
 #: property ("orientation, not fidelity") has an address, not just a number.
@@ -382,17 +433,33 @@ class VaultService:
             return payload
 
         raise FileNotFoundError(
-            f"No start note found under {self.root}. Expected {self._settings.start_here_filename}"
+            f"No start note found. Expected {self._settings.start_here_filename} at the vault root; "
+            "call search_notes with a word from its title to find the entry note."
         )
 
-    def read_note(self, note_ref: str) -> dict[str, Any]:
+    def read_note(
+        self,
+        note_ref: str,
+        max_chars: int | None = None,
+        section: str | None = None,
+    ) -> dict[str, Any]:
+        """One note, or one section of it, within a character budget.
+
+        `max_chars` bounds the text a single call returns; `section` reads one
+        ATX-heading section with the hash `update_section` expects. Both are
+        opt-in, so a small note answers exactly what it answered before.
+        """
         record = self._resolve_note_ref(note_ref)
-        return self._note_payload(record)
+        if section is not None:
+            return self._section_payload(record, section, _read_limit(max_chars))
+        return self._note_payload(record, _read_limit(max_chars))
 
     def search_notes(self, query: str, limit: int | None = None) -> dict[str, Any]:
         cleaned_query = query.strip()
         if not cleaned_query:
-            raise ValueError("query cannot be empty")
+            raise ValueError(
+                "query cannot be empty: pass a word from the note's title, path, tag or body."
+            )
 
         normalized_query = cleaned_query.lower()
         terms = [term for term in NON_WORD_RE.split(normalized_query) if term]
@@ -579,8 +646,9 @@ class VaultService:
             current_hash = _hash_text(current)
             if expected_hash.strip().lower() != current_hash:
                 raise ValueError(
-                    "expected_hash does not match the current note. "
-                    "Read the note again before updating."
+                    f"expected_hash does not match the current content of {rel_path} "
+                    "(it changed since you read it, or the hash belongs to another note). "
+                    "Call read_note and retry with the content_hash it returns."
                 )
             self._write_note_file(target_path, content)
             result = self._commit_note(rel_path, message or f"vault: update {rel_path}", action="updated")
@@ -621,8 +689,8 @@ class VaultService:
             if expected_hash.strip().lower() != span_hash:
                 raise ValueError(
                     f"expected_hash does not match the current content of section "
-                    f"{section.heading!r}. Read the note again (read_note lists "
-                    "per-section hashes) before updating."
+                    f"{section.heading!r} in {rel_path}. Call read_note (its `sections` list carries "
+                    "one content_hash per heading) and retry with that section's hash."
                 )
 
             new_span = self._validate_section_replacement(content, section)
@@ -920,7 +988,12 @@ class VaultService:
 
         return True
 
-    def _note_payload(self, record: NoteRecord) -> dict[str, Any]:
+    def _note_payload(self, record: NoteRecord, limit: int = DEFAULT_READ_CHARS) -> dict[str, Any]:
+        """The whole note, cut at `limit` characters together with the way to read the rest.
+
+        A note that fits answers exactly the payload it answered before the
+        budget existed: the cut keys appear only when something was left out.
+        """
         # Truncated reads would hash spans that do not exist on disk; those
         # notes fall back to whole-note update_note.
         sections = (
@@ -935,7 +1008,7 @@ class VaultService:
                 for section in _parse_sections(record.full_content)
             ]
         )
-        return {
+        payload = {
             "path": record.rel_path,
             "title": record.title,
             "tags": list(record.tags),
@@ -947,6 +1020,64 @@ class VaultService:
             "content_hash": record.content_hash,
             "sections": sections,
         }
+        content, content_cut = _cut_text(record.body, limit)
+        full_content, full_cut = _cut_text(record.full_content, limit)
+        if not (content_cut or full_cut):
+            return payload
+        payload.update(
+            {
+                "content": content,
+                "full_content": full_content,
+                "content_truncated": True,
+                "returned_chars": len(full_content),
+                "total_chars": len(record.full_content),
+                "next_step": (
+                    f"content is cut at {len(full_content)} of {len(record.full_content)} characters: "
+                    "call read_note with section='## <heading from `sections`>' to read one section at a "
+                    "time (each carries its content_hash), or pass a larger max_chars."
+                ),
+            }
+        )
+        return payload
+
+    def _section_payload(
+        self, record: NoteRecord, section_heading: str, limit: int = DEFAULT_READ_CHARS
+    ) -> dict[str, Any]:
+        """One ATX-heading section, with the hash `update_section` compares against."""
+        if record.truncated:
+            raise ValueError(
+                f"{record.rel_path} is larger than MAX_NOTE_BYTES and is read partially, so its sections "
+                "cannot be addressed. Read it whole, or use update_note."
+            )
+        section = _match_section(_parse_sections(record.full_content), section_heading)
+        span = record.full_content[section.start : section.end]
+        content, cut = _cut_text(span, limit)
+        payload: dict[str, Any] = {
+            "path": record.rel_path,
+            "title": record.title,
+            "tags": list(record.tags),
+            "size_bytes": record.size_bytes,
+            "modified_at": record.modified_at,
+            "section": section.heading,
+            "section_level": section.level,
+            "content": content,
+            # The hash of the WHOLE section, cut or not: update_section replaces
+            # the section, so a partial read must not produce a partial token.
+            "content_hash": _hash_text(span),
+        }
+        if cut:
+            payload.update(
+                {
+                    "content_truncated": True,
+                    "returned_chars": len(content),
+                    "total_chars": len(span),
+                    "next_step": (
+                        f"section is cut at {len(content)} of {len(span)} characters: pass a larger "
+                        "max_chars. The content_hash covers the whole section, so update_section applies."
+                    ),
+                }
+            )
+        return payload
 
     def _normalize_limit(self, limit: int | None) -> int:
         if limit is None:
@@ -976,11 +1107,19 @@ class VaultService:
         if not candidates:
             if allow_missing:
                 return None
-            raise FileNotFoundError(f"Note not found: {note_ref}")
+            closest = _closest_paths(index, cleaned_ref)
+            hint = f"Closest matches: {', '.join(closest)}. " if closest else ""
+            raise FileNotFoundError(
+                f"No note matches '{note_ref}'. {hint}"
+                "Call search_notes with a word from its title to get the exact path, then retry."
+            )
 
         if len(candidates) > 1:
             candidate_paths = ", ".join(candidate.rel_path for candidate in candidates[:5])
-            raise ValueError(f"Ambiguous note reference '{note_ref}'. Candidates: {candidate_paths}")
+            raise ValueError(
+                f"Ambiguous note reference '{note_ref}': {candidate_paths}. "
+                "Retry with the full relative path of the one you meant."
+            )
 
         return candidates[0]
 
@@ -1019,7 +1158,10 @@ class VaultService:
 
     def _assert_write_enabled(self) -> None:
         if not self._settings.write_enabled:
-            raise PermissionError("Vault write tools are disabled for this MCP server.")
+            raise PermissionError(
+                "Vault write tools are disabled for this MCP server (VAULT_WRITE_ENABLED is not true). "
+                "Nothing was written: use a read tool, or ask the operator to enable writes."
+            )
 
     @contextmanager
     def _write_lock(self):
@@ -1080,10 +1222,17 @@ class VaultService:
         except ValueError as exc:
             raise ValueError("note_path escapes the vault root") from exc
 
-        if any(_prefix_matches(rel_path, prefix) for prefix in self._settings.write_exclude_path_prefixes):
-            raise PermissionError(f"Writing to this vault path is blocked: {rel_path}")
+        blocked_by = [prefix for prefix in self._settings.write_exclude_path_prefixes if _prefix_matches(rel_path, prefix)]
+        if blocked_by:
+            raise PermissionError(
+                f"Writing to this vault path is blocked: {rel_path} (excluded prefix: {', '.join(blocked_by)}). "
+                "Nothing was written: choose a path outside that prefix."
+            )
         if not self._path_allowed(rel_path):
-            raise PermissionError(f"Writing to this vault path is not allowed by prefix filters: {rel_path}")
+            raise PermissionError(
+                f"Writing to this vault path is not allowed by the server's path filters: {rel_path}. "
+                "Nothing was written: choose a path the include prefixes cover."
+            )
 
         return resolved, rel_path
 
@@ -1092,7 +1241,11 @@ class VaultService:
             raise ValueError("content cannot contain null bytes")
         encoded = content.encode("utf-8")
         if len(encoded) > self._settings.max_write_bytes:
-            raise ValueError(f"content exceeds MAX_WRITE_BYTES ({self._settings.max_write_bytes})")
+            raise ValueError(
+                f"content is {len(encoded)} bytes, above MAX_WRITE_BYTES "
+                f"({self._settings.max_write_bytes}). Nothing was written: split the note, or send the "
+                "change in smaller append_note/update_section chunks."
+            )
         return content if content.endswith("\n") else f"{content}\n"
 
     def _write_note_file(self, target_path: Path, content: str, *, already_validated: bool = False) -> None:
@@ -1150,8 +1303,8 @@ class VaultService:
         entries = [entry for entry in status.stdout.split("\0") if entry]
         if any(not self._is_orphan_temp(entry) for entry in entries):
             raise RuntimeError(
-                "Vault Git working tree has uncommitted changes. "
-                "Refusing MCP write until it is clean."
+                "Vault Git working tree has uncommitted changes. Nothing was written: wait for the "
+                "other writer to commit, or ask the operator to commit the vault, then retry."
             )
 
     def _commit_note(self, rel_path: str, message: str, *, action: str) -> dict[str, Any]:

@@ -53,6 +53,45 @@ def harness_archive(home: Path, rows: list[tuple[float, float, str]]) -> Path:
     return db
 
 
+def codex_reading(home: Path, *, used: float, window_minutes: int, read_at: float) -> Path:
+    """A Codex session carrying one rate-limit line, stamped with the moment it was written."""
+    sessions = home / ".codex" / "sessions" / "2026" / "11" / "14"
+    sessions.mkdir(parents=True, exist_ok=True)
+    path = sessions / "rollout-1.jsonl"
+    path.write_text(
+        json.dumps({
+            "timestamp": datetime.fromtimestamp(read_at).astimezone().isoformat(timespec="seconds"),
+            "payload": {"rate_limits": {
+                "primary": {"used_percent": used, "window_minutes": window_minutes},
+                "secondary": None,
+            }},
+        }) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def antigravity_log(home: Path, *, used: float, read_at: float) -> Path:
+    """An Antigravity quota log in the format its extension writes, stamped `read_at`."""
+    folder = home / "AppData" / "Roaming" / "Antigravity IDE" / "logs" / "session1"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "8-Antigravity Quota.log"
+    stamp = datetime.fromtimestamp(read_at).astimezone().isoformat(timespec="seconds")
+    body = {
+        "prompt_credits": {
+            "available": int(50000 * (1 - used / 100.0)),
+            "monthly": 50000,
+            "used_percentage": used,
+        },
+        "timestamp": stamp,
+    }
+    path.write_text(
+        f"{stamp} DEBUG [AGQ][Extension] Quota update received: {json.dumps(body)}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def by_name(reading: usage.Usage) -> dict[str, Provider]:
     return {provider.name: provider for provider in reading.providers}
 
@@ -149,6 +188,51 @@ def test_antigravity_with_no_log_is_not_measured(tmp_path):
     assert line_of(usage.build(home=tmp_path, now=NOW), "Antigravity").startswith("Antigravity: ")
 
 
+def test_codex_prints_the_age_of_the_percentage_it_read(tmp_path):
+    codex_reading(tmp_path, used=42.0, window_minutes=300, read_at=NOW - 240)
+
+    line = line_of(usage.build(home=tmp_path, now=NOW), "Codex")
+
+    assert line == "Codex: 42% of the 5h window used, read 4m ago"
+
+
+def test_a_codex_reading_older_than_its_window_is_not_shown_as_current(tmp_path):
+    """A 5h window read six hours ago has reset: the number describes nothing."""
+    codex_reading(tmp_path, used=42.0, window_minutes=300, read_at=NOW - 6 * 3600)
+
+    line = line_of(usage.build(home=tmp_path, now=NOW), "Codex")
+
+    assert line == "Codex: the 5h reading is 6h 00m old, too old to say what is left"
+    assert "42%" not in line
+
+
+def test_antigravity_prints_the_age_of_the_percentage_it_read(tmp_path):
+    antigravity_log(tmp_path, used=85.0, read_at=NOW - 3600)
+
+    line = line_of(usage.build(home=tmp_path, now=NOW), "Antigravity")
+
+    assert line == "Antigravity: 85% of the 30d window used, read 1h 00m ago"
+
+
+def test_an_antigravity_reading_written_this_morning_still_counts(tmp_path):
+    """The day's limit must not throw away a reading a few hours old."""
+    antigravity_log(tmp_path, used=85.0, read_at=NOW - 23 * 3600)
+
+    line = line_of(usage.build(home=tmp_path, now=NOW), "Antigravity")
+
+    assert line == "Antigravity: 85% of the 30d window used, read 23h 00m ago"
+
+
+def test_an_antigravity_reading_older_than_a_day_is_not_shown_as_current(tmp_path):
+    """Inside its 30d window and still too old: the log only moves while the IDE runs."""
+    antigravity_log(tmp_path, used=99.0, read_at=NOW - 25 * 3600)
+
+    line = line_of(usage.build(home=tmp_path, now=NOW), "Antigravity")
+
+    assert line == "Antigravity: the 30d reading is 1d 1h old, too old to say what is left"
+    assert "99%" not in line
+
+
 # -------------------------------------------------------------------- the shape
 
 
@@ -158,9 +242,30 @@ def test_the_json_carries_the_providers_and_the_lines_the_chat_shows(tmp_path):
     payload = json.loads(json.dumps(usage.build(home=tmp_path, now=NOW).to_dict()))
 
     assert payload["providers"][0]["name"] == "OpenCode Go"
-    assert payload["providers"][0]["windows"][-1] == {"window": "30d", "used": 2.5, "unit": "usd", "note": ""}
+    assert payload["providers"][0]["windows"][-1] == {
+        "window": "30d", "used": 2.5, "unit": "usd", "note": "", "read_at": None, "state": "ok",
+    }
     assert payload["lines"] == usage.build(home=tmp_path, now=NOW).lines
     assert payload["read_at"].startswith("20")
+
+
+def test_the_json_carries_the_age_and_the_state_of_each_reading(tmp_path):
+    """A stale percentage must be told apart from a fresh one outside the text renderer too.
+
+    The human line says how old a reading is and drops one declared too old; a
+    script reading `--json` has to be able to make the same call, and the ISO
+    moment is the same one `nexgen quota` writes.
+    """
+    read_at = NOW - 25 * 3600
+    antigravity_log(tmp_path, used=99.0, read_at=read_at)
+
+    window = json.loads(json.dumps(usage.build(home=tmp_path, now=NOW).to_dict()))[
+        "providers"
+    ][-1]["windows"][0]
+
+    assert window["state"] == "stale"
+    assert window["read_at"] == datetime.fromtimestamp(read_at).isoformat(timespec="seconds")
+    assert window["used"] == 99.0
 
 
 def test_every_known_lane_answers_even_when_it_cannot_be_read(tmp_path):
@@ -177,6 +282,12 @@ def test_a_window_with_no_number_is_a_sentence_and_never_a_zero():
 
 def test_a_provider_with_no_window_prints_its_reason():
     assert usage.render_provider(Provider(name="Codex", note="no reading")) == "Codex: no reading"
+
+
+def test_a_stale_window_with_no_moment_cannot_claim_an_age():
+    window = Window(label="30d", used=99.0, unit="percent", state="stale")
+
+    assert usage.render_window(window, NOW) == "not measured"
 
 
 def test_the_quantity_is_written_once_by_the_engine():

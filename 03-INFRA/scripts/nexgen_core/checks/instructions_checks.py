@@ -5,7 +5,9 @@ sections of the release's bash doctor. Every CLI derives its own
 instructions from ONE canonical file (`instructions/AGENTS.md`); these
 checks verify that each CLI's pointer still targets it, and that the
 bootstrap itself stays within its size budgets and doesn't point to notes
-that have vanished.
+that have vanished. The per-harness read limits live in
+`instruction_limits_checks.py`: one component each, so a change to either
+stays readable.
 """
 from __future__ import annotations
 
@@ -14,6 +16,7 @@ import re
 import shutil
 from pathlib import Path
 
+from nexgen_core.guard_instructions import claude_pointer_path, is_engine_pointer
 from nexgen_core.i18n import t
 from nexgen_core.paths import canonical_instructions
 from nexgen_core.report import CheckOutcome, Severity
@@ -49,42 +52,79 @@ def check_canonical_instructions_present(vault_data: Path) -> CheckOutcome:
 
 
 def check_claude_pointer(vault_data: Path, home: Path) -> CheckOutcome:
-    """~/CLAUDE.md must be a lightweight pointer to the canonical file, not
-    a copy or a symlink: a copy silently diverges from the canonical."""
-    canon = canonical_instructions(vault_data)
-    claude_file = home / "CLAUDE.md"
+    """`~/.claude/CLAUDE.md` must let Claude Code reach the canonical file.
 
-    if claude_file.is_symlink() or not claude_file.is_file():
+    The check mirrors the guard, because that path is documented user scope where people keep
+    their own instructions (Claude Code's `#` shortcut appends to it): the engine's pointer is
+    accepted, a dotfiles-managed symlink is accepted when the file behind it names the
+    canonical file (the guard writes through it), and a file that is neither is the person's
+    own, reported as a warning with no "replace it" remedy -- the guard leaves that file alone
+    on purpose, so a remedy written from here would destroy text the engine refused to touch.
+    A link that resolves to the canonical file itself is broken instead: writing through it
+    would overwrite the instructions, so the guard replaces the link.
+    """
+    canon = canonical_instructions(vault_data)
+    claude_file = claude_pointer_path(home)
+
+    if not claude_file.exists() and not claude_file.is_symlink():
         return CheckOutcome(
             id="instructions.claude_pointer",
             severity=Severity.BROKEN,
             message=t(
-                "~/CLAUDE.md must be a plain-text pointer file, not missing or a symlink ({claude_file}).",
+                "~/.claude/CLAUDE.md is missing: Claude Code reads no instructions ({claude_file}).",
                 claude_file=claude_file,
             ),
-            action=t("Write a short pointer referencing {canon} into {claude_file}.", canon=canon, claude_file=claude_file),
+            action=t("Run 'agent-sync apply' to write the pointer to {canon}.", canon=canon),
         )
-
     try:
         content = claude_file.read_text(encoding="utf-8")
     except OSError as exc:
         return CheckOutcome(
             id="instructions.claude_pointer",
             severity=Severity.UNDETERMINED,
-            message=t("Could not read ~/CLAUDE.md: {error}", error=exc),
+            message=t("Could not read ~/.claude/CLAUDE.md: {error}", error=exc),
         )
+    return _claude_pointer_verdict(claude_file, content, canon)
 
+
+def _claude_pointer_verdict(claude_file: Path, content: str, canon: Path) -> CheckOutcome:
+    """What the file at Claude's user-scope path is, as the guard would treat it."""
+    check_id = "instructions.claude_pointer"
     if str(canon) in content:
         return CheckOutcome(
-            id="instructions.claude_pointer",
+            id=check_id,
             severity=Severity.OK,
-            message=t("~/CLAUDE.md correctly points to the canonical AGENTS.md file"),
+            message=t("~/.claude/CLAUDE.md correctly points to the canonical AGENTS.md file"),
+        )
+    if claude_file.is_symlink():
+        return CheckOutcome(
+            id=check_id,
+            severity=Severity.BROKEN,
+            message=t(
+                "~/.claude/CLAUDE.md is a symlink that does not name the canonical AGENTS.md file.",
+            ),
+            action=t("Run 'agent-sync apply' to put the pointer at that path."),
+        )
+    if is_engine_pointer(content):
+        return CheckOutcome(
+            id=check_id,
+            severity=Severity.BROKEN,
+            message=t("The pointer in ~/.claude/CLAUDE.md names a path that is not the canonical AGENTS.md."),
+            action=t("Run 'agent-sync apply' to refresh the pointer."),
         )
     return CheckOutcome(
-        id="instructions.claude_pointer",
-        severity=Severity.BROKEN,
-        message=t("~/CLAUDE.md does not reference the canonical AGENTS.md file's path (risk of a duplicate copy silently diverging)."),
-        action=t("Replace ~/CLAUDE.md with a pointer referencing {canon}.", canon=canon),
+        id=check_id,
+        severity=Severity.WARN,
+        message=t(
+            "~/.claude/CLAUDE.md holds your own instructions, so Claude Code reads those instead of "
+            "the canonical AGENTS.md. The engine leaves that file alone."
+        ),
+        action=t(
+            "Decide which one Claude Code should read: move your own lines elsewhere and let "
+            "'agent-sync apply' write the pointer to {canon}, or keep this file and accept that "
+            "Claude Code does not load the canonical rules.",
+            canon=canon,
+        ),
     )
 
 

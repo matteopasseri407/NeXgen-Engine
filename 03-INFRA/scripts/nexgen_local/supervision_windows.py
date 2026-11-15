@@ -26,6 +26,7 @@ from typing import Sequence
 
 from nexgen_core.processes import powershell_literal
 
+from . import supervision_job as jobs
 from . import supervision_processes as processes
 from . import supervision_state as state
 from .supervision_state import SupervisionError
@@ -180,6 +181,11 @@ def close_unit_tab(
     the engine's own marker for this task and role and whose command line names this
     unit; a tree that holds the shared `opencode serve` is left open, exactly as in
     `close_tab`, and a process without the marker is never a candidate.
+
+    The unit's job object is ended here too, wherever its work was delivered: a unit
+    that got its brief as a one-shot turn has no tab at all, and its tree would
+    otherwise outlive the decision to stop it. A job that holds the shared server is
+    never ended, for the same reason a tab that holds one is never closed.
     """
     marker = tab_marker(task_id, role)
     wanted = state.slug(unit)
@@ -187,22 +193,31 @@ def close_unit_tab(
         table = (lister or _processes)()
     except (processes.ProcessError, WindowError, OSError, ValueError) as exc:
         return _tab_result(role, [], f"processi non leggibili ({exc})", unit=wanted)
+    job = jobs.job_name(task_id, wanted)
     roots = [row for row in table if _is_tab_shell(row, marker) and unit_of(row) == wanted]
-    if not roots:
-        return _tab_result(role, [], "", unit=wanted)
-    tree = processes.subtree(table, [row["pid"] for row in roots])
+    tree = processes.subtree(table, [row["pid"] for row in roots]) if roots else []
+    held = jobs.held(job)
     shared = [row for _, row in tree if processes.is_shared_server(row)]
+    shared += [row for _, row in processes.subtree(table, held or []) if processes.is_shared_server(row)]
     if shared:
         reason = (
             f"la scheda {role} di {wanted} tiene in piedi il servizio condiviso del harness "
             f"(pid {shared[0]['pid']}): non la chiudo, chiudila a mano"
         )
         state.append_event(task_id, "tab_left_open", role=role, unit=wanted, reason=reason)
-        return _tab_result(role, [], reason, found=True, unit=wanted)
+        return _tab_result(role, [], reason, found=bool(roots), unit=wanted)
+    ended = jobs.terminate(job, table)
+    if not roots:
+        stray = [pid for pid in ended["strays"] if pid != os.getpid()]
+        (killer or _kill)(stray)
+        return _tab_result(role, [], "", unit=wanted, strays=stray)
     pids = [row["pid"] for _, row in tree if row["pid"] != os.getpid()]
-    (killer or _kill)(pids)
-    state.append_event(task_id, "tab_closed", role=role, unit=wanted, pids=pids, why="sostituita")
-    return _tab_result(role, pids, "", found=True, unit=wanted)
+    (killer or _kill)(pids + [pid for pid in ended["strays"] if pid not in pids])
+    state.append_event(
+        task_id, "tab_closed", role=role, unit=wanted, pids=pids, why="sostituita",
+        outside_job=ended["strays"],
+    )
+    return _tab_result(role, pids, "", found=True, unit=wanted, strays=ended["strays"])
 
 
 def close_tab(
@@ -255,13 +270,25 @@ def close_tab(
     return _tab_result(role, pids, "", found=True)
 
 
-def _tab_result(role: str, pids: list[int], reason: str, *, found: bool = False, unit: str = "") -> dict:
-    """What happened, as one dict and one line the verb can print."""
+def _tab_result(
+    role: str, pids: list[int], reason: str, *, found: bool = False, unit: str = "",
+    strays: tuple[int, ...] | list[int] = (),
+) -> dict:
+    """What happened, as one dict and one line the verb can print.
+
+    `strays` are the processes the unit's job object never held: the kernel cannot
+    end those, so they were stopped one by one and the count is said out loud.
+    """
     who = f"{role} di {unit}" if unit else role
     if pids:
         line = f"scheda {who} chiusa ({len(pids)} processi)"
+        if strays:
+            line += f", {len(strays)} fuori dal job"
     elif reason:
         line = f"scheda {who} lasciata aperta: {reason}"
+    elif strays:
+        one = "processo" if len(strays) == 1 else "processi"
+        line = f"nessuna scheda {who} da chiudere, {len(strays)} {one} fuori dal job fermati"
     else:
         line = f"nessuna scheda {who} da chiudere"
     return {"role": role, "found": found, "closed": list(pids), "reason": reason, "line": line}

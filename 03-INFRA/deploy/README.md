@@ -70,51 +70,49 @@ Firecrawl cloud connector (their own key) or with their CLI's native search.
 ## Upgrading the server side
 
 **The VPS is a second install.** Upgrading the engine on your workstation
-(`docs/upgrade.md`) moves that clone only. This directory is engine code
-too, and the VPS keeps running the containers it was last deployed with
-until you come here and say so — a release that changes `vault-mcp`,
-the OCR API, or a compose file changes nothing on the server by itself.
+([`docs/upgrade.md`](../../docs/upgrade.md)) moves that clone only. This directory is engine code too, and the
+containers keep running the code they were last built from until something rebuilds them.
 
-`agent-doctor` on the workstation reports the one skew it can measure:
+Three things now keep that half in step, and they all measure commits rather than versions:
 
-```text
-⚠ vault-mcp on the server is 0.3.0 but this engine ships 0.4.0 —
-  the server half of the upgrade was never deployed
-```
+- The `vault-mcp` image carries the engine commit it was built from (a Docker build argument, baked into the image and
+  labelled `org.opencontainers.image.revision`), and publishes the short commit on its unauthenticated `/healthz`
+  route. Nothing else is published there.
+- `nexgen doctor` prints a `deploy.alignment` line on a machine with the server role or a Cloud-Server install: this
+  engine's commit, the one in `99-INDEX/ENGINE-PIN.txt`, and the one the running server reports. A server built from
+  another commit is reported as a failure with the one command that fixes it.
+- After a successful `nexgen update` on a machine with the server role, if `03-INFRA/deploy/vault-mcp` changed in that
+  release, the update rebuilds that one service. Unattended updates too, so the timer on a headless VPS is enough.
 
-It reads the version the running server reports on its own root route and
-compares it with `vault-mcp/src/vault_mcp_server/__init__.py` in your
-clone. The other stacks have no equivalent probe: if a release touched them,
-`CHANGELOG.md` is the signal.
-
-The upgrade is the deploy, re-run:
+By hand, on the server:
 
 ```bash
-# on the VPS
-cd NeXgen-Engine
-git fetch --tags origin
-git merge <the same tag you moved the workstation to>
-cd 03-INFRA/deploy
-bash bootstrap-vps.sh
+nexgen deploy vault-mcp            # or: --source /path/where/the/container/is/built/from
 ```
 
-`bootstrap-vps.sh` is idempotent — it ends in `docker compose up -d
---build` per stack, so it rebuilds what changed, leaves the rest running,
-and never rotates a secret already present in `.env`. Keep the VPS on the
-same tag as your workstations rather than on `main`: this is the same
-"your `VERSION` moves only when you choose" rule, applied to the half of
-the install that no timer ever touches.
+It backs up the current source under the machine's state directory, keeps the running image as
+`<image>-pre-deploy`, rebuilds **only** the `vault-mcp` service, and probes the result with the two MCP calls a client
+makes (handshake and tool list) over the URL the manifest already has. If the probe fails it puts the previous image
+back, restores the saved source and exits non-zero saying what it did. It never touches n8n or the OCR stack, and it
+prints no secrets.
 
-Two things to know before you run it:
+Two things stay manual:
 
-- **Restarting `vault-mcp` interrupts every agent currently writing to
-  the vault.** Notes are Git-committed per write, so nothing in flight is
-  lost, but an in-progress tool call fails. Deploy when you are not mid-session.
-- **Roll back with the image pin, not with git.** Each `vault-mcp` build
-  is tagged with its own version, so the previous image is still on the
-  VPS: `VAULT_MCP_IMAGE=vault-mcp:0.3.0 docker compose -f
-  vault-mcp/docker-compose.yml --env-file .env up -d --no-build`. See
-  "Backup, restore, rollback" below for volumes.
+- **Restarting `vault-mcp` interrupts every agent currently writing to the vault.** Notes are Git-committed per write,
+  so nothing in flight is lost, but an in-progress tool call fails. Deploy when you are not mid-session.
+- **The OCR API and n8n have no equivalent probe.** A release that touched them is signalled by `CHANGELOG.md`, and the
+  redeploy is `bootstrap-vps.sh`, re-run. It is idempotent, rebuilds what changed, leaves the rest running, and never
+  rotates a secret already present in `.env`.
+
+Keep the VPS on the same tag your workstations are on rather than on `main`: this is the same "your `VERSION` moves
+only when you choose" rule, applied to the half of the install that no workstation controls.
+
+`bootstrap-vps.sh` is still the first-run command, and a stack it builds carries no commit (the build argument is
+`unknown`). The doctor says exactly that once and names `nexgen deploy vault-mcp`, which is the deploy that stamps it.
+
+Rollback by image tag still works for a hand-made deploy: each `vault-mcp` build is tagged with its own version, so the
+previous image is on the VPS, and `nexgen deploy vault-mcp` keeps one more tag (`<image>-pre-deploy`) of its own. See
+"Backup, restore, rollback" below for volumes.
 
 ## Image pins
 

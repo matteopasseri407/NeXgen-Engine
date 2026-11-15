@@ -13,6 +13,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -118,6 +119,22 @@ def no_ollama_probe(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_external_quota_backend(request, monkeypatch):
+    """The optional tokscale backend reads the logins of the machine it runs on: never from a test.
+
+    One run of that binary costs seconds, asks the network, and answers about
+    whoever's accounts are logged in here, so a report built in a test would
+    change with the machine instead of with its fixture. A test that is about
+    that backend replaces `quota_tokscale._invoke` itself.
+    """
+    if request.module.__name__.endswith("test_nexgen_quota_tokscale"):
+        return
+    from nexgen_core import quota_tokscale
+
+    monkeypatch.setattr(quota_tokscale, "_invoke", lambda home=None: ((), "", ""))
+
+
+@pytest.fixture(autouse=True)
 def isolated_runtime_overrides(monkeypatch, tmp_path_factory):
     """No inherited override may redirect a fixture's writes to the host."""
     for key in (
@@ -149,6 +166,14 @@ def isolated_runtime_overrides(monkeypatch, tmp_path_factory):
     # that really wants host mutations has to ask for them.
     monkeypatch.setenv("NEXGEN_DISABLE_HOST_MUTATIONS", "1")
     monkeypatch.setenv("ROUTING_TIERS_PATH", str(tmp_path_factory.getbasetemp() / "no-routing-tiers.yaml"))
+    # The optional quota backend asks each provider's endpoint about whoever is
+    # logged in on this machine and leaves a `.tokscale/` folder behind it. No
+    # test may spawn it or touch the network: a test that is about that backend
+    # replaces its own seams, and the switch here is the same one a person uses.
+    monkeypatch.setenv("NEXGEN_QUOTA_TOKSCALE", "off")
+    # The same for Antigravity's own client: `agy -p /usage` asks Google's quota
+    # service with the login of whoever runs the suite.
+    monkeypatch.setenv("NEXGEN_QUOTA_AGY", "off")
 
 
 @pytest.fixture(autouse=True)
@@ -243,6 +268,11 @@ class Sandbox:
         # running pytest, especially when the test runs on real Windows
         # rather than a simulated environment.
         e["NEXGEN_DISABLE_HOST_MUTATIONS"] = "1"
+        # The optional quota backend reads the logins of whoever is logged in
+        # here and asks the provider's own endpoint: no environment redirect
+        # hides those, so a sandbox silences it the way a person would.
+        e["NEXGEN_QUOTA_TOKSCALE"] = "off"
+        e["NEXGEN_QUOTA_AGY"] = "off"
         # Manual apply now performs a strict readiness classification. Keep
         # sandbox smoke tests deterministic and prevent a real host CLI from
         # being invoked through an inherited PATH.
@@ -511,11 +541,93 @@ def run_agent_doctor(sandbox: Sandbox, *args: str, timeout: int = 60,
 def _leak_scan_paths() -> tuple[Path, Path, Path] | None:
     here = Path(__file__).resolve().parent
     scanner = here.parent / "leak-scan" / "leak_scan.py"
-    patterns = here.parent / "leak-scan" / "leak_patterns.yaml"
+    config = here.parent / "leak-scan" / "gitleaks.toml"
     fixtures = here / "fixtures"
-    if scanner.is_file() and patterns.is_file() and fixtures.is_dir():
-        return scanner, patterns, fixtures
+    if scanner.is_file() and config.is_file() and fixtures.is_dir():
+        return scanner, config, fixtures
     return None
+
+
+#: The real scanner, resolved before any fixture can put a test double on PATH.
+REAL_GITLEAKS = shutil.which("gitleaks")
+
+#: A stand-in used only where the real binary is absent: it applies the engine's own rules (the
+#: `--config` it is handed) to the text on stdin, which is what the Council gates scan, and
+#: answers "nothing found" for the git and directory lanes. `fixtures_carry_no_leaks` reads
+#: REAL_GITLEAKS and never sees this, so a machine without the binary still cannot claim its
+#: fixtures were scanned.
+TEST_SCANNER = '''\
+"""A test double for gitleaks: the engine's rules, applied to the text on stdin."""
+import json, math, re, sys, tomllib
+
+args = sys.argv[1:]
+if not args or args[0] != "stdin":
+    print("[]")
+    raise SystemExit(0)
+config = tomllib.loads(open(args[args.index("--config") + 1], encoding="utf-8").read())
+text = sys.stdin.read()
+
+
+def entropy(value):
+    if not value:
+        return 0.0
+    return -sum(value.count(c) / len(value) * math.log2(value.count(c) / len(value)) for c in set(value))
+
+
+def allowed(secret):
+    for entry in config.get("allowlists", []):
+        if entry.get("paths") or entry.get("commits"):
+            continue
+        if any(re.search(pattern, secret) for pattern in entry.get("regexes", [])):
+            return True
+    return False
+
+
+findings = []
+for rule in config.get("rules", []):
+    if "regex" not in rule:
+        continue
+    group = int(rule.get("secretGroup") or 0)
+    threshold = float(rule.get("entropy") or 0.0)
+    pattern = re.compile(rule["regex"])
+    for line_number, line in enumerate(text.splitlines(), 1):
+        for match in pattern.finditer(line):
+            secret = match.group(group) if group else match.group(0)
+            if threshold and entropy(secret) <= threshold:
+                continue
+            if allowed(secret):
+                continue
+            findings.append({"RuleID": rule["id"], "Description": rule.get("description", ""),
+                             "File": "", "StartLine": line_number, "EndLine": line_number,
+                             "StartColumn": match.start() + 1, "EndColumn": match.end(),
+                             "Match": match.group(0), "Secret": secret})
+print(json.dumps(findings))
+'''
+
+
+@pytest.fixture(scope="session", autouse=True)
+def a_scanner_for_the_in_process_gates(tmp_path_factory) -> None:
+    """Keep the suite runnable on a machine where gitleaks is not installed.
+
+    The engine's gates scan with gitleaks, an external binary, so without it every test that
+    goes through the Council egress and output gates would abort with the install message. The
+    double applies the shipped rules to the text those gates scan, which is the behaviour the
+    tests are about; the repository tree and git lanes report nothing, and
+    `fixtures_carry_no_leaks` refuses to use it.
+    """
+    if REAL_GITLEAKS is not None:
+        return
+    home = tmp_path_factory.mktemp("fake-gitleaks")
+    script = home / "test_scanner.py"
+    script.write_text(TEST_SCANNER, encoding="utf-8")
+    if os.name == "nt":
+        shim = home / "gitleaks.bat"
+        shim.write_text(f'@echo off\r\n"{sys.executable}" "{script}" %*\r\n', encoding="utf-8")
+    else:
+        shim = home / "gitleaks"
+        shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n', encoding="utf-8")
+        shim.chmod(0o755)
+    os.environ["PATH"] = str(home) + os.pathsep + os.environ.get("PATH", "")
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -523,13 +635,18 @@ def fixtures_carry_no_leaks() -> None:
     """Le fixture non devono contenere niente che non possa stare in pubblico.
 
     È bloccante: una fixture che porta un segreto lo porta in ogni clone.
+    Lo scanner è gitleaks, un binario esterno: senza di lui il controllo non gira e lo dice,
+    invece di far saltare ogni test della suite.
     """
     paths = _leak_scan_paths()
     if paths is None:
         pytest.skip("leak-scan non presente in questo albero")
-    scanner, patterns, fixtures = paths
+    scanner, config, fixtures = paths
+    if REAL_GITLEAKS is None:
+        warnings.warn("gitleaks non installato: le fixture non sono state scansionate", stacklevel=1)
+        return
     res = subprocess.run(
-        [sys.executable, str(scanner), "--patterns", str(patterns), "--tree", str(fixtures)],
+        [sys.executable, str(scanner), "--config", str(config), "--tree", str(fixtures)],
         capture_output=True, text=True, check=False, timeout=120,
     )
     if res.returncode != 0:

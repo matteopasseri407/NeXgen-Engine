@@ -5,6 +5,9 @@ before they can say anything useful, and both must be able to say "there is no
 file" and "the file is not JSON" differently. The read lives here once, so the
 two commands cannot disagree about which of those two states the machine is in.
 
+The plugin entry is read here too, for the same reason: `plugins.entries.<id>` is where both the
+engine's own plugin and its switches live, and three modules were each digging it out by hand.
+
 Nothing in this module opens a credential: the configuration is not one.
 """
 from __future__ import annotations
@@ -29,3 +32,15 @@ def read_config(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     if not isinstance(loaded, dict):
         return None, "the file is JSON but not an object"
     return loaded, None
+
+
+def plugin_entry(config: dict[str, Any], plugin_id: str) -> dict[str, Any]:
+    """One plugin's entry in `plugins.entries`, or an empty one.
+
+    OpenClaw hands `plugins.entries.<id>.config` to the plugin itself as `api.pluginConfig`, so
+    this is both the switch that loads the plugin and the home of the switches the engine writes.
+    """
+    plugins = config.get("plugins") if isinstance(config.get("plugins"), dict) else {}
+    entries = plugins.get("entries") if isinstance(plugins.get("entries"), dict) else {}
+    entry = entries.get(plugin_id)
+    return entry if isinstance(entry, dict) else {}

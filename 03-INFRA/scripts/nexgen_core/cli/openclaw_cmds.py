@@ -131,6 +131,14 @@ def _register_upkeep(psub) -> None:
     q.add_argument("--dry-run", action="store_true", help=t("Show what would be compacted, change nothing"))
     q.set_defaults(func=cmd_groom)
 
+    q = psub.add_parser("cost", help=t("What OpenClaw spent, through the optional ccusage binary"))
+    q.add_argument("--json", action="store_true", help=t("Output in JSON format"))
+    q.add_argument("--since", default=None, metavar="DATE",
+                   help=t("Only the days from this date on: 2026-11-14 or 20261114"))
+    q.set_defaults(func=cmd_cost)
+
+    _register_parity(psub)
+
     q = psub.add_parser("rpc", help=t("Interact with OpenClaw Gateway via WebSocket RPC"))
     rpc_sub = q.add_subparsers(dest="rpc_command", metavar="action")
 
@@ -146,6 +154,17 @@ def _register_upkeep(psub) -> None:
     q = psub.add_parser("package", help=t("Build the reproducible plugin tarball for OpenClaw gateways"))
     q.add_argument("--json", action="store_true", help=t("Output in JSON format"))
     q.set_defaults(func=cmd_package)
+
+
+def _register_parity(psub) -> None:
+    """The measurement of what a harness costs inside OpenClaw, and its dry run."""
+    q = psub.add_parser("parity", help=t("Measure what each harness costs natively and inside OpenClaw"))
+    q.add_argument("--lane", default=None, metavar="LANE",
+                   help=t("Measure one lane only: google-antigravity-cli, claude-cli or codex-cli"))
+    q.add_argument("--json", action="store_true", help=t("Output in JSON format"))
+    q.add_argument("--dry-run", action="store_true",
+                   help=t("Print the commands a run would start, and spend nothing"))
+    q.set_defaults(func=cmd_parity)
 
 
 def register(sub) -> None:
@@ -181,14 +200,27 @@ def cmd_setup(args) -> int:
 
 def cmd_doctor(args) -> int:
     from nexgen_core.openclaw import node_approvals, node_checks
+    from nexgen_core.openclaw.automations import read_jobs_with_detail
     from nexgen_core.openclaw.doctor import collect, exit_code, render
     from nexgen_core.openclaw_pairing import listed as gateway_devices
+    from nexgen_core.openclaw_service import extra_services
 
     asked = getattr(args, "nodes", False)
     outcomes = collect(
         node_lister=node_checks.default_node_lister if asked else None,
         node_approvals_reader=node_approvals.default_reader if asked else None,
         pending=gateway_devices,
+        # The heartbeat line is only true if somebody asked the scheduler: this is
+        # the command a person runs, so it asks, and it reads each monitor's payload
+        # as well as its name, because "light or not" is a fact about the payload.
+        automations_reader=read_jobs_with_detail,
+        # What the recent turns cost, from local transcripts: the gateway machine is
+        # where this command is read, and the scheduled doctor reports its own copy.
+        spend=True,
+        # A registration an older release left beside the managed service costs the
+        # whole service inventory to find, so the command a person ran asks for it
+        # and the scheduled `nexgen doctor` never does.
+        second_service_reader=extra_services,
     )
     if getattr(args, "json", False):
         print(json.dumps([outcome.to_dict() for outcome in outcomes], indent=2, ensure_ascii=False))
@@ -232,10 +264,13 @@ def cmd_stop(args) -> int:
 def cmd_groom(args) -> int:
     import sys
 
+    from nexgen_core.megaphone import Megaphone
     from nexgen_core.openclaw.sessions_groom import groom
 
     try:
-        report = groom(dry_run=bool(getattr(args, "dry_run", False)))
+        # The alert channel is handed in here and nowhere else: the hourly job runs with
+        # --no-deliver, so a queue that stopped moving would otherwise reach nobody.
+        report = groom(dry_run=bool(getattr(args, "dry_run", False)), phone=Megaphone())
     except FileNotFoundError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
@@ -248,6 +283,32 @@ def cmd_smoke(args) -> int:
     from nexgen_core.openclaw.smoke import run_smoke
 
     return run_smoke(agent=getattr(args, "agent", "main") or "main")
+
+
+def cmd_cost(args) -> int:
+    """What the bot spent, in the two views the optional backend reads."""
+    from nexgen_core.openclaw.spend import as_dict, read_spend, render
+
+    try:
+        spend = read_spend(since=getattr(args, "since", None))
+    except ValueError as error:
+        print(t("Cannot read the spend: {error}", error=error))
+        return 2
+    if getattr(args, "json", False):
+        print(json.dumps(as_dict(spend), indent=2, ensure_ascii=False))
+    else:
+        print(render(spend))
+    return 0
+
+
+def cmd_parity(args) -> int:
+    from nexgen_core.openclaw.parity import run_parity
+
+    return run_parity(
+        lane=getattr(args, "lane", None),
+        as_json=bool(getattr(args, "json", False)),
+        dry_run=bool(getattr(args, "dry_run", False)),
+    )
 
 
 def cmd_pair(args) -> int:

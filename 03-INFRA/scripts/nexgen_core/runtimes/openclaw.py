@@ -22,10 +22,15 @@ block while the gateway runs breaks it, so enabling the plugin is a separate ste
 (`nexgen openclaw setup`, with the gateway stopped). Here the plugin is deposited -- byte for
 byte, with its sidecars -- and nothing else in OpenClaw's own file is touched.
 
-The posture is not OpenClaw's own schema either: it is written into the engine-owned
-`nexgen.config.json` beside the plugin, in the neutral vocabulary the private manifest speaks
-(`bypass` / `accept-edits` / `ask`), and the plugin renders it. That keeps the switch off
-`openclaw.json`, which is read at gateway start and must not change under a running one.
+The posture is not written either. It used to travel into the engine-owned
+`nexgen.config.json` beside the plugin, in the neutral vocabulary the private manifest speaks;
+the plugin still reads that key when a person sets it there, and otherwise behaves as
+`bypass`.
+
+The engine's switches have two homes for one release: `nexgen.config.json` beside the plugin,
+written here on every guard deposit, and `plugins.entries.nexgen.config`, which the setup writes
+through `conversation_grant.with_engine_plugin` because OpenClaw hands it to the plugin as
+`api.pluginConfig`. `plugin_switches` is the one derivation both read.
 """
 from __future__ import annotations
 
@@ -38,7 +43,6 @@ from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.evidence import evidence_section
 from nexgen_core.paths import openclaw_config, resolve_home, resolve_state_dir
 from nexgen_core.runtimes.base import (
-    EVENT_SINK_NAME,
     GUARDRAIL_CORE_NAME,
     GUARDRAIL_SIDECAR_NAME,
     GuardrailError,
@@ -55,8 +59,8 @@ _PLUGIN_SOURCE_DIRNAME = "openclaw-guardrail-plugin"
 PLUGIN_ID = "nexgen"
 #: The name unit C deposited it under. It is removed on sight: one plugin, one id.
 LEGACY_PLUGIN_ID = "nexgen-guardrail"
-#: The engine-owned switches beside the plugin: briefing, posture, engine, governor, evidence.
-#: Never `openclaw.json`.
+#: The engine-owned switches beside the plugin: briefing, checkpoint, engine, governor,
+#: evidence. Never `openclaw.json`.
 PLUGIN_CONFIG_NAME = "nexgen.config.json"
 #: The briefing text, shared with Claude's checkpoint hook (`hooks/vault-briefing.txt`).
 BRIEFING_NAME = "vault-briefing.txt"
@@ -103,23 +107,17 @@ def engine_deposit() -> dict[str, str]:
         return {}
     return {"command": sys.executable, "entry": str(entry)}
 
-#: Neutral vocabulary -> the word the plugin reads. The mapping is the identity on purpose:
-#: OpenClaw's plugin renders the neutral posture itself, so the engine writes no dialect here.
-_POSTURE_RENDER = {"bypass": "bypass", "accept-edits": "accept-edits", "ask": "ask"}
-
 
 #: Files that stay beside the plugin folder in the engine and land inside it once deposited:
 #: the guardrail core every adapter imports, and the briefing text the plugin reads.
 _ADJACENT_PLUGIN_FILES = (GUARDRAIL_CORE_NAME, BRIEFING_NAME)
 
 #: The sidecar and the switches sit in the plugin's folder but are the engine's own files,
-#: written after the copy, and the event sink is a hook this version no longer ships: none of
-#: them is a plugin source, so copying the folder can never pick one up as if it were.
+#: written after the copy: neither is a plugin source, so copying the folder can never pick
+#: one up as if it were.
 _NOT_PLUGIN_SOURCES = (
     PLUGIN_CONFIG_NAME,
     GUARDRAIL_SIDECAR_NAME,
-    EVENT_SINK_NAME,
-    "events.mjs",
 )
 
 
@@ -172,31 +170,6 @@ class OpenClawRuntime(Runtime):
     def _plugin_config_path(self, home: Path) -> Path:
         return self._plugin_dir(home) / PLUGIN_CONFIG_NAME
 
-    # ---- posture --------------------------------------------------------
-
-    def read_posture(self, home: Path) -> str | None:
-        """The posture the engine last wrote for the plugin, in neutral vocabulary."""
-        value = self._read_plugin_config(home).get("posture")
-        return value if isinstance(value, str) and value in _POSTURE_RENDER else None
-
-    def apply_posture(self, home: Path, posture: str) -> str | None:
-        """Writes the posture where the plugin reads it, never into `openclaw.json`.
-
-        No plugin, no guardrail: like every other adapter, a posture with nothing to hold it
-        is nothing to apply. That is also what keeps a posture from removing prompts on a
-        machine whose guardrail failed to deposit.
-        """
-        if posture not in _POSTURE_RENDER:
-            return None
-        sidecar = self.guardrail_sidecar(home)
-        if sidecar is None or not sidecar.is_file():
-            return None
-        if self.read_posture(home) == posture:
-            return None
-        if not self._write_plugin_config(home, posture=_POSTURE_RENDER[posture]):
-            return None
-        return f"openclaw: posture '{posture}' applied in {self._plugin_config_path(home)}"
-
     # ---- guardrail, briefing, migration ---------------------------------
 
     def guardrail_sidecar(self, home: Path) -> Path | None:
@@ -238,19 +211,11 @@ class OpenClawRuntime(Runtime):
         #    session Claude does not brief, which is exactly the divergence to avoid. The
         #    `engine` section is how `/quota` reaches this very interpreter without a shell.
         #    The `evidence` section names the local models whose answers are checked: derived
-        #    from the configuration in force, so a cloud model is never in it.
+        #    from the configuration in force, so a cloud model is never in it. `plugin_switches`
+        #    is the one derivation: the setup writes the same dict into
+        #    `plugins.entries.nexgen.config`, which is where the host hands it to the plugin.
         config_in_force, _ = read_config(openclaw_config(home))
-        state_dir = resolve_state_dir(home) / "nexgen"
-        changed |= self._write_plugin_config(
-            home,
-            briefing={"enabled": self._briefing_installed(home)},
-            checkpoint={
-                "enabled": self._checkpoint_installed(home),
-                "state_dir": str(state_dir),
-            },
-            engine=engine_deposit(),
-            evidence=evidence_section(config_in_force),
-        )
+        changed |= self._write_plugin_config(home, **self.plugin_switches(home, config_in_force))
 
         if not changed and not migrated:
             return None
@@ -303,35 +268,42 @@ class OpenClawRuntime(Runtime):
         """
         return self._briefing_installed(home)
 
-    # ---- event sink -----------------------------------------------------
+    def plugin_switches(
+        self, home: Path, config: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """The switches the plugin obeys, derived once for its two homes.
 
-    def remove_event_sink(self, home: Path) -> str | None:
-        plugin_dir = self._plugin_dir(home)
-        if not plugin_dir.is_dir():
-            return None  # nothing was ever deposited here: no config to invent
-        removed = self.remove_deployed(plugin_dir / EVENT_SINK_NAME)
-        removed |= self.remove_deployed(plugin_dir / "events.mjs")
-        config = self._read_plugin_config(home)
-        changed_config = False
-        if "events" in config:
-            config.pop("events", None)
-            path = self._plugin_config_path(home)
-            self.atomic_write(path, json.dumps(config, indent=2, sort_keys=True) + "\n")
-            changed_config = True
-        if removed or changed_config:
-            return f"openclaw: event sink removed from {plugin_dir}"
-        return None
+        OpenClaw hands `plugins.entries.nexgen.config` to the plugin as `api.pluginConfig`, and
+        `nexgen.config.json` beside the plugin is what this release still writes and reads: the
+        same dict feeds both, here and in `conversation_grant.with_engine_plugin`, so the setup
+        and a sync can never leave the plugin obeying two different sets of switches. The
+        `governor` section is not here: it is replaced whole from the policy on every sync and
+        stays in the file.
+
+        `config` is the configuration the file will hold, not the one being replaced: the evidence
+        list is derived from the models the proposal writes, so a second setup on the same machine
+        derives the same section and writes nothing. Given the old file it would name the models
+        of the machine before this run, and every run would move it once more.
+        """
+        briefing = self._briefing_installed(home)
+        return {
+            "briefing": {"enabled": briefing},
+            "checkpoint": {
+                "enabled": self._checkpoint_installed(home),
+                "state_dir": str(resolve_state_dir(home) / "nexgen"),
+            },
+            "engine": engine_deposit(),
+            "evidence": evidence_section(config),
+        }
 
     # ---- plugin deposit and its config ----------------------------------
 
     @staticmethod
     def _deploy_plugin(plugin_dir: Path, files: dict[str, Path]) -> bool:
-        """Writes the plugin's public files and purges the obsolete ones; True if anything changed."""
+        """Writes the plugin's public files; True if anything changed."""
         changed = False
         for name, source in files.items():
             changed |= Runtime.deploy_bytes(plugin_dir / name, source.read_bytes())
-        for obsolete in (EVENT_SINK_NAME, "events.mjs"):
-            changed |= Runtime.remove_deployed(plugin_dir / obsolete)
         return changed
 
     def _remove_legacy_plugin(self, home: Path) -> bool:
@@ -358,8 +330,8 @@ class OpenClawRuntime(Runtime):
     def _write_plugin_config(self, home: Path, **sections: Any) -> bool:
         """Merges the named sections into `nexgen.config.json`; True if the file changed.
 
-        One section per job, so a change to the briefing never rewrites the posture and a
-        posture never switches the events off. A scalar replaces its key; a map is merged.
+        One section per job, so a change to the briefing never rewrites the checkpoint and a
+        checkpoint never switches the events off. A scalar replaces its key; a map is merged.
         """
         path = self._plugin_config_path(home)
         current = self._read_plugin_config(home)

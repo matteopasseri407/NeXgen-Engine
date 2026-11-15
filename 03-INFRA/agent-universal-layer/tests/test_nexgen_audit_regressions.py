@@ -7,11 +7,8 @@ process's environment, or on the shape of data the happy path never produced.
 """
 from __future__ import annotations
 
-import importlib.util
 import os
-import random
 import re
-import string
 import subprocess
 import sys
 from pathlib import Path
@@ -21,7 +18,6 @@ import pytest
 from conftest import install_engine_layer
 
 REPO = Path(__file__).resolve().parents[3]
-LEAK_DIR = REPO / "03-INFRA" / "agent-universal-layer" / "leak-scan"
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
@@ -308,14 +304,15 @@ def test_shell_hook_installation_keeps_a_dotfiles_symlink(tmp_path):
 
 
 def test_a_symlinked_instruction_pointer_never_overwrites_the_canonical_file(sandbox):
-    """Guard rail on the fix above: ~/CLAUDE.md is a derivative the engine
+    """Guard rail on the fix above: the Claude pointer is a derivative the engine
     regenerates. If the user made it a symlink to the canonical bootstrap,
     regenerating it must replace the link, never write through it."""
     from nexgen_core.guard import GuardRunner
 
     canon = sandbox.ul / "instructions" / "AGENTS.md"
     original = canon.read_text(encoding="utf-8")
-    claude_md = sandbox.home / "CLAUDE.md"
+    claude_md = sandbox.home / ".claude" / "CLAUDE.md"
+    claude_md.parent.mkdir(parents=True, exist_ok=True)
     claude_md.symlink_to(canon)
 
     GuardRunner(vault_data=sandbox.vault, home=sandbox.home).align_instructions()
@@ -356,64 +353,21 @@ def test_a_relative_xdg_state_home_is_ignored(tmp_path, monkeypatch):
 # ---------------------------------------------------------------- leak scan
 
 
-def _load_leak_scan():
-    spec = importlib.util.spec_from_file_location("leak_scan_under_test", LEAK_DIR / "leak_scan.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def test_a_private_denylist_never_outlives_a_failed_scan(tmp_path, monkeypatch):
+    """The private values travel in a temporary config. A scan that dies must not leave
+    that file behind: the gate would have written real secrets into the temp folder."""
+    from test_nexgen_leak_scan import calls, fake_gitleaks, scan
 
+    home = fake_gitleaks(tmp_path, monkeypatch)
+    (home / "fail.txt").write_text("fatal: not a git repository\n", encoding="utf-8")
+    private = tmp_path / "deny.txt"
+    private.write_text("a" + "-private-" + "value\n", encoding="utf-8")
 
-def _synthetic_tokens() -> dict[str, str]:
-    """Built at runtime: this file must not itself look like a leak."""
-    rng = random.Random(7)
+    done = scan("--tree", str(tmp_path), "--denylist", str(private))
 
-    def body(length: int, alphabet: str = string.ascii_letters + string.digits) -> str:
-        return "".join(rng.choice(alphabet) for _ in range(length))
-
-    url_safe = string.ascii_letters + string.digits + "-_"
-    return {
-        "anthropic": "sk-" + "ant-api03-" + body(93, url_safe),
-        "openai project": "sk-" + "proj-" + body(120, url_safe),
-        "openai service account": "sk-" + "svcacct-" + body(80, url_safe),
-        "github fine-grained": "github" + "_pat_" + body(22) + "_" + body(59),
-        "github user token": "gh" + "u_" + body(36),
-        "age secret key": "AGE-" + "SECRET-KEY-1" + body(58, string.ascii_uppercase + string.digits),
-        "huggingface": "hf" + "_" + body(34),
-        "npm": "npm" + "_" + body(36),
-        "google api key": "AI" + "za" + body(35, url_safe),
-    }
-
-
-@pytest.mark.parametrize("provider", sorted(_synthetic_tokens()))
-@pytest.mark.parametrize("template", ["API_KEY={tok}", '  "token": "{tok}",', "Authorization: Bearer {tok}"])
-def test_leak_scan_recognizes_the_keys_of_common_providers(provider, template):
-    leak_scan = _load_leak_scan()
-    patterns, allow = leak_scan.load_patterns(LEAK_DIR / "leak_patterns.yaml")
-    line = template.format(tok=_synthetic_tokens()[provider])
-    findings = leak_scan.scan_units([leak_scan.Unit("sample", 1, line)], patterns, allow, [])
-    assert any(f.blocking for f in findings), f"{provider} slipped through in: {template}"
-
-
-def test_leak_scan_reads_an_added_line_that_starts_with_plus_signs():
-    """An added line whose content begins with '++' shows in the diff as
-    '+++...'. It is content, not a file header, so it must be scanned and
-    must advance the line counter (the finding has to name its true line)."""
-    leak_scan = _load_leak_scan()
-    patterns, allow = leak_scan.load_patterns(LEAK_DIR / "leak_patterns.yaml")
-    token = _synthetic_tokens()["anthropic"]
-    diff = (
-        "diff --git a/notes.env b/notes.env\n"
-        "new file mode 100644\n"
-        "--- /dev/null\n"
-        "+++ b/notes.env\n"
-        "@@ -0,0 +1,2 @@\n"
-        "+first line\n"
-        f"+++API_KEY={token}\n"
-    )
-    units = leak_scan.parse_added_lines(diff, "")
-    findings = leak_scan.scan_units(units, patterns, allow, [])
-    blocking = [f for f in findings if f.blocking]
-    assert [(f.label, f.lineno) for f in blocking] == [("notes.env", 2)]
+    assert done.returncode != 0
+    argv = calls(home)[0]["argv"]
+    assert not Path(argv[argv.index("--config") + 1]).exists()
 
 
 # --------------------------------------------------------------- whole cycle

@@ -50,7 +50,10 @@ for line in sys.stdin:
     if request_id is None:
         continue
     if method == "initialize":
-        result = {"protocolVersion": "2026-07-28", "capabilities": {"tools": {}},
+        # A legacy server answers with the client's own version: the bridge performs the
+        # handshake through the official SDK client, which asks for a handshake-era one.
+        result = {"protocolVersion": (request.get("params") or {}).get("protocolVersion"),
+                  "capabilities": {"tools": {}},
                   "serverInfo": {"name": "fake", "version": "1.0"}}
     elif method == "tools/list":
         result = {"tools": [{"name": "slow_echo", "inputSchema": {"type": "object"}}]}
@@ -66,23 +69,6 @@ for line in sys.stdin:
 '''
 
 TOKEN = "test-token-6f0c1a2b3c4d5e6f"
-
-
-@pytest.fixture(autouse=True)
-def never_taskkill(monkeypatch):
-    """Closing a fake backend must not run `taskkill` on the machine that runs the suite."""
-    def _kill(proc, *, process_group=None, timeout=5.0):
-        try:
-            proc.kill()
-        except OSError:
-            pass
-        try:
-            proc.wait(timeout=timeout)
-        except Exception:  # noqa: BLE001 - a test double that will not die must not fail the test
-            pass
-        return True
-
-    monkeypatch.setattr("nexgen_core.mcp_bridge_channel.force_stop_process_tree", _kill)
 
 
 @pytest.fixture

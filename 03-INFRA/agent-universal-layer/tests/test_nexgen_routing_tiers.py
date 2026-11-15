@@ -347,6 +347,9 @@ def test_quota_failover_in_run_unit(tmp_path, monkeypatch, tier_env):
     monkeypatch.setattr(state, "unit_record", lambda tid, u: record)
     monkeypatch.setattr(state, "harness_session_record", lambda tid, h: None)
     monkeypatch.setattr(state, "append_event", lambda *a, **kw: None)
+    # The pre-dispatch gauge is not what this test judges: pin it to "no reading",
+    # so the candidate list and the reactive failover are its only variables.
+    monkeypatch.setattr("nexgen_local.supervision_quota.lane_reading", lambda *a, **kw: None)
 
     phone = MagicMock()
     phone.send_alert.return_value = True

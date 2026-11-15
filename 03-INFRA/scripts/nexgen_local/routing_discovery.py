@@ -109,6 +109,7 @@ def _evaluate_fresh(fresh: list[dict[str, str]], data: dict[str, Any],
                     trial_fn: Callable[[str, str], tuple[bool, str]] | None,
                     megaphone: Any) -> list[dict[str, Any]]:
     """Trial the new flat Flash models with known volume and alert on those that pass. Never promotes."""
+    from nexgen_core import alerts
     from nexgen_core.megaphone import Megaphone
     phone = megaphone or Megaphone()
     prefixes = tuple(data.get("flat_prefixes") or DEFAULT_FLAT_PREFIXES)
@@ -121,10 +122,11 @@ def _evaluate_fresh(fresh: list[dict[str, str]], data: dict[str, Any],
         if not is_flat_model(model, prefixes) or model in worker_models or "flash" not in model.lower():
             continue
         if model not in channels_volume:
+            title, message, action = alerts.MODEL_UNKNOWN_VOLUME.say(model=model)
             phone.send_alert(
-                title="Modello scoperto senza volume noto",
-                message=f"Il modello «{model}» è presente ma non ha un volume noto in channels_volume.",
-                action="Compila channels_volume in routing-tiers.yaml",
+                title=title,
+                message=message,
+                action=action,
                 alert_key=f"discover_missing_volume:{model}",
             )
             continue
@@ -132,18 +134,20 @@ def _evaluate_fresh(fresh: list[dict[str, str]], data: dict[str, Any],
             continue
         passed, reason = (trial_fn or trial)(model, harness)
         if passed:
+            title, message, action = alerts.MODEL_PASSED.say(model=model)
             phone.send_alert(
-                title="Nuovo modello valido trovato",
-                message=f"Il modello «{model}» ha superato la prova: per adottarlo nexgen models promote {model}.",
-                action=f"nexgen models promote {model}",
+                title=title,
+                message=message,
+                action=action,
                 alert_key=f"discover_passed:{model}",
             )
             results.append({"model": model, "status": "passed", "harness": harness})
         else:
+            title, message, action = alerts.MODEL_FAILED.say(model=model, reason=reason)
             phone.send_alert(
-                title="Modello scoperto non idoneo",
-                message=f"Il modello «{model}» non ha superato la prova: {reason}.",
-                action=None,
+                title=title,
+                message=message,
+                action=action,
                 alert_key=f"discover_failed:{model}",
             )
             results.append({"model": model, "status": f"failed: {reason}", "harness": harness})

@@ -453,6 +453,13 @@ def run_depwatch(
 
     Resolvers default late (not in the signature) so tests can fake the
     network by patching this module.
+
+    The version of an MCP server is read from npm and nowhere else. The official
+    MCP registry was measured on 2026-11-15 as a source to add beside it and
+    refused: it trails npm (`firecrawl-mcp` 3.25.5 there against 3.40.0 on npm,
+    `@modelcontextprotocol/server-filesystem` never listed under that name), so
+    reading it would have hidden releases the watch exists to report. What it
+    uniquely knew, a withdrawn version, npm's own `deprecated` flag already says.
     """
     git_check = git_ls_remote or _git_ls_remote_head
     npm_check = npm_latest_version or _npm_latest_version

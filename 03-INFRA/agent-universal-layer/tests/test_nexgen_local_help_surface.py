@@ -64,9 +64,9 @@ def test_eval_lists_only_the_surviving_suites(capsys) -> None:
         assert f",{gone}" not in printed
 
 
-def test_retired_run_redirects_to_openclaw(capsys) -> None:
-    rc = cli.main(["run", "question about focus"])
-    assert rc == 0
-    printed = capsys.readouterr().out
-    assert "openclaw" in printed.lower()
-    assert "ritirato" in printed.lower()
+def test_retired_run_is_refused_not_run(capsys) -> None:
+    """The `run` stub is gone: the verb now fails as an unknown command instead of printing a notice."""
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["run", "question about focus"])
+    assert exit_info.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err

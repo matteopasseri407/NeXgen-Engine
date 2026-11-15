@@ -65,8 +65,15 @@ class OpenCodeAdapter(base.Adapter):
         return argv
 
     def send_argv(self, executable: str, session: str, prompt: str, *, model: str = "") -> list[str]:
-        """`opencode run -s <id> [-m <model>] <pointer>`: one turn, no second tab."""
-        argv = [executable, "run", "-s", session]
+        """`opencode run -s <id> [-m <model>] <pointer>`: one turn, no second tab.
+
+        An empty `session` is the headless first turn (`sup run --headless`): `run`
+        opens the session itself in the copy, and the caller attaches the one it
+        finds there afterwards.
+        """
+        argv = [executable, "run"]
+        if session:
+            argv.extend(["-s", session])
         if model:
             argv.extend(["-m", model])
         argv.append(prompt)

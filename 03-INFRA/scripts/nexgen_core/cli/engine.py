@@ -32,8 +32,13 @@ def _all(args) -> list[str]:
 def _register_sync(sub) -> None:
     """Verbi di allineamento: installano, pianificano e applicano."""
     # Listed here for --help only: `nexgen release ...` is handed to the release
-    # rules' own parser before this dispatcher parses anything.
-    sub.add_parser("release", help=t("Maintainers: ship a release in one command ('nexgen release ship --help')"))
+    # rules' own parser before this dispatcher parses anything. It is a maintainer
+    # tool, so an installation that is not registered does not see it in the listing;
+    # the verb still exists there, and the refusal names the reason.
+    from nexgen_core import maintainer
+
+    release_help = {"help": t("Maintainers: ship a release in one command ('nexgen release ship --help')")}
+    sub.add_parser("release", **(release_help if maintainer.tools_available() else {}))
     p = sub.add_parser("sync", aliases=["apply"], help=t("Align this machine now"))
     p.add_argument("--offline", "--allow-offline", dest="allow_offline", action="store_true",
                    help=t("Proceed even without reaching the remote"))
@@ -101,16 +106,12 @@ def _register_doctor(sub) -> None:
 
 
 def _register_info(sub) -> None:
-    """Stato, shell e verbi interni invocati dai timer, non dalle persone."""
+    """Stato e verbi interni invocati dai timer, non dalle persone."""
     p = sub.add_parser("info", aliases=["status"], help=t("Visual system status and architecture dashboard"))
     p.add_argument("--json", action="store_true", help=t("Output in JSON format"))
     p.add_argument("-i", "--interactive", action="store_true", help=t("Launch interactive shell after info"))
     p.add_argument("--all", action="store_true", help=t("List every skill, not only the third-party and the changed ones"))
     p.set_defaults(func=cmd_info)
-
-    notice = t("Notice: shell is retired in favor of OpenClaw TUI")
-    p = sub.add_parser("shell", aliases=["interactive", "repl"], help=notice, description=notice)
-    p.set_defaults(func=cmd_shell)
 
     p = sub.add_parser("update", help=t("Update the engine, with confirmation"))
     p.set_defaults(func=cmd_update)
@@ -125,6 +126,10 @@ def _register_info(sub) -> None:
     p.add_argument("field", choices=["authoritative_remote", "mirrors"])
     p.add_argument("value", nargs="?", default=None, help=t("New value; writes remotes.yaml"))
     p.set_defaults(func=cmd_config)
+
+    p = sub.add_parser("notify", help=t("Show me what an alert looks like on this screen"))
+    p.add_argument("--test", action="store_true", help=t("Send one sample notification now"))
+    p.set_defaults(func=cmd_notify)
 
     # Internal verbs: invoked by timers, not by people.
     p = sub.add_parser("heartbeat", help=t("Liveness beat and maintenance tasks (internal use)"))
@@ -347,35 +352,68 @@ def cmd_heartbeat(args) -> int:
     return 0 if res["liveness_ok"] else 1
 
 
+def cmd_notify(args) -> int:
+    """Sends one sample notification, so a person can see whether it arrives.
+
+    The desktop channel only, with no debounce: the question this verb answers is
+    "does this computer show my alerts", which the alerting path itself cannot
+    answer, because it is allowed to stay quiet and because a delivered alert is
+    never repeated.
+    """
+    from nexgen_core import notify
+    from nexgen_core.alerts import TEST_NOTIFICATION
+
+    title, message, action = TEST_NOTIFICATION.say()
+    if not getattr(args, "test", False):
+        print(f"{title}\n{message}\n{action}")
+        print(t("Add --test to show this on the screen now."))
+        return 0
+    if not notify.desktop_is_available():
+        print(t("This computer has no desktop that can show a notification."), file=sys.stderr)
+        return 1
+    if notify.send_desktop(title, f"{message}\n\n{action}"):
+        print(t("Sent: the notification should be on your screen now."))
+        return 0
+    print(
+        t("The notification could not be shown. Try again from inside the desktop session, then run: nexgen doctor"),
+        file=sys.stderr,
+    )
+    return 1
+
+
 def cmd_notify_failure(args) -> int:
+    from nexgen_core.alerts import UNIT_NOT_STARTED
     from nexgen_core.megaphone import Megaphone
 
     unit = args.unit
-    summary = t(
-        "{unit} did not start, and until it does this machine stops staying aligned. "
-        "Check it with: systemctl --user status {unit}",
-        unit=unit,
-    )
+    title, message, action = UNIT_NOT_STARTED.say()
+    # The unit name stays in the console line, where whoever debugs reads it. What
+    # reaches the screen says what stopped working, not what a `.service` is.
     if not Megaphone().send_alert(
-        title=t("The guard did not start"),
-        message=summary,
-        action=f"systemctl --user status {unit}",
+        title=title,
+        message=message,
+        action=action,
         alert_key=f"notify-failure-{unit}",
     ):
-        print(t("notify-failure: {summary} (no alert channel configured)", summary=summary), file=sys.stderr)
+        print(
+            t("notify-failure: {summary} (no alert channel configured)", summary=f"{unit}: {message}"),
+            file=sys.stderr,
+        )
     return 0
 
 
 def cmd_bootstrap_alerts(args) -> int:
+    from nexgen_core.alerts import MACHINE_PROBLEMS
     from nexgen_core.doctor import Doctor
     from nexgen_core.megaphone import Megaphone
 
     report = Doctor().run_diagnostics(apply_remedies=False)
     if report.has_failures:
+        title, message, action = MACHINE_PROBLEMS.say()
         Megaphone().send_alert(
-            title=t("There are problems on this machine"),
-            message="; ".join(o.message for o in report.broken[:5]),
-            action="nexgen doctor",
+            title=title,
+            message=message,
+            action=action,
             alert_key="bootstrap-alerts-doctor",
         )
     print(t("Diagnostics complete (failures={failures}, ok={ok}).", failures=len(report.broken), ok=report.ok_count))
@@ -405,10 +443,4 @@ def cmd_info(args) -> int:
     print(safe_text(render_info(as_json=as_json, show_all=getattr(args, "all", False))))
     if interactive:
         print(t("The interactive shell has been retired: use 'openclaw tui' or the OpenClaw Dashboard instead."))
-    return 0
-
-
-def cmd_shell(args) -> int:
-    """Guidance for the retired interactive shell, pointing to OpenClaw."""
-    print(t("The interactive shell has been retired: use 'openclaw tui' or the OpenClaw Dashboard instead."))
     return 0

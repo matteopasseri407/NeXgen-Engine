@@ -17,7 +17,7 @@ exactly what each step removes:
    needed.
 2. **Restore or clean per-CLI config** from the `.bak-*` backups next to
    each managed file — safe, no confirmation needed.
-3. **Remove the bootstrap pointer files** (`~/CLAUDE.md`,
+3. **Remove the bootstrap pointer files** (`~/.claude/CLAUDE.md`,
    `~/.codex/AGENTS.md`, `~/.gemini/config/AGENTS.md`) — ask first if the
    user might be using any of them for something unrelated to this
    project.

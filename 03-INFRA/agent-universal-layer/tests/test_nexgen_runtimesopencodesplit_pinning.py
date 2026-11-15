@@ -1,7 +1,7 @@
 """Pinning dello split runtimes/opencode prima del refactor.
 
 Fissa il comportamento attuale (non quello desiderato) con config finte:
-apply_posture su config finta stabile, install_guardrail idempotente,
+install_guardrail e la regola `shell: ask` che rende raggiungibile il plugin,
 firme pubbliche invariate. Solo config finte in tmp_path, mai config vere,
 mai rete.
 """
@@ -34,7 +34,7 @@ def _engine_hooks(tmp_path: Path) -> Path:
     return engine_hooks
 
 
-def test_apply_posture_su_config_finta_stabile(tmp_path: Path, monkeypatch, opencode_dialect) -> None:
+def test_la_regola_shell_su_config_finta_stabile(tmp_path: Path, monkeypatch, opencode_dialect) -> None:
     opencode_dialect("2.2.0")
     home = _fake_home(tmp_path, monkeypatch)
     rt = OpenCodeRuntime()
@@ -47,29 +47,25 @@ def test_apply_posture_su_config_finta_stabile(tmp_path: Path, monkeypatch, open
         }),
         encoding="utf-8",
     )
+    hook_source = tmp_path / "guardrail.mjs"
+    hook_source.write_text("// policy\n", encoding="utf-8")
+    engine_hooks = _engine_hooks(tmp_path)
 
-    action = rt.apply_posture(home, "bypass")
-    assert action is not None and "opencode" in action and "bypass" in action
+    action = rt.install_guardrail(home, hook_source, engine_hooks)
+    assert action is not None and "opencode" in action
 
     data = json.loads(cfg.read_text(encoding="utf-8"))
     assert "permission" not in data
     effects = {(r["action"], r["resource"]): r["effect"] for r in data["permissions"]}
-    assert effects[("edit", "*")] == "allow"
-    assert effects[("shell", "*")] == "allow"
+    assert effects[("shell", "*")] == "ask"
     # Il plugin dell'utente resta dove l'ha messo.
     assert data.get("plugin") == ["some-other-plugin"]
-    assert rt.read_posture(home) == "bypass"
+    sidecar = rt.read_guardrail_sidecar(rt.guardrail_sidecar(home))
+    assert sidecar["autoAllow"] is True and sidecar["strict"] is True
 
     after_first = cfg.read_text(encoding="utf-8")
-    assert rt.apply_posture(home, "bypass") is None
+    assert rt.install_guardrail(home, hook_source, engine_hooks) is None
     assert cfg.read_text(encoding="utf-8") == after_first
-
-    # Postura sconosciuta: skip silenzioso, mai scritture.
-    assert rt.apply_posture(home, "sconosciuta") is None
-    assert cfg.read_text(encoding="utf-8") == after_first
-
-    # Senza config: niente da applicare, mai crash, mai config vere.
-    assert rt.apply_posture(tmp_path / "casa-vuota", "bypass") is None
 
 
 def test_install_guardrail_idempotente(tmp_path: Path, monkeypatch) -> None:
@@ -111,12 +107,6 @@ def test_install_guardrail_idempotente(tmp_path: Path, monkeypatch) -> None:
 
 def test_firme_pubbliche_invariate() -> None:
     assert list(inspect.signature(OpenCodeRuntime.is_installed).parameters) == ["self", "home"]
-    assert list(inspect.signature(OpenCodeRuntime.read_posture).parameters) == ["self", "home"]
-    assert list(inspect.signature(OpenCodeRuntime.apply_posture).parameters) == [
-        "self",
-        "home",
-        "posture",
-    ]
     assert list(inspect.signature(OpenCodeRuntime.guardrail_sidecar).parameters) == ["self", "home"]
     assert list(inspect.signature(OpenCodeRuntime.install_guardrail).parameters) == [
         "self",
@@ -124,7 +114,6 @@ def test_firme_pubbliche_invariate() -> None:
         "hook_source",
         "engine_hooks_dir",
     ]
-    assert list(inspect.signature(OpenCodeRuntime.remove_event_sink).parameters) == ["self", "home"]
     public = {
         name
         for name, value in vars(OpenCodeRuntime).items()
@@ -132,9 +121,6 @@ def test_firme_pubbliche_invariate() -> None:
     }
     assert public == {
         "is_installed",
-        "read_posture",
-        "apply_posture",
         "guardrail_sidecar",
         "install_guardrail",
-        "remove_event_sink",
     }

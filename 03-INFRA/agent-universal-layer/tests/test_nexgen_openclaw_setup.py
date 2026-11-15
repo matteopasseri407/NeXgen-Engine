@@ -27,6 +27,7 @@ from nexgen_core.openclaw.setup import run_setup  # noqa: E402
 from nexgen_core.openclaw.setup_steps import Setup  # noqa: E402
 from nexgen_core.openclaw_service import ProcessInfo, RunResult  # noqa: E402
 from nexgen_core.runtimes.openclaw import PLUGIN_ID  # noqa: E402
+from openclaw_patch_fake import answer_patch  # noqa: E402 - the stand-in for `openclaw config patch`
 
 TESTS_DIR = Path(__file__).resolve().parent
 PIN_FILE = TESTS_DIR.parent / "openclaw" / "pin.json"
@@ -61,10 +62,10 @@ class FakeRunner:
     def __init__(self, onboard=None):
         self.calls: list[tuple[list[str], dict]] = []
         self.onboard = onboard
-        self.fail_validate = False
-        self.validate_outputs: list[tuple[int, str]] = []
+        self.patch_errors: list[str] = []
+        self.patch_while_stopped: list[bool] = []
+        self.patched: list[dict] = []
         self.service: FakeService | None = None
-        self.validate_while_stopped: bool | None = None
         self.node_version = "v24.22.1"
         self.npm_prefix = ""
         self.systemctl_error = ""
@@ -83,15 +84,19 @@ class FakeRunner:
             if self.onboard is not None:
                 self.onboard()
             return RunResult(0, "", "")
-        if verbs == ["config", "validate"]:
-            self.validate_while_stopped = bool(self.service and self.service.stopping)
-            if self.validate_outputs:
-                code, text = self.validate_outputs.pop(0)
-                return RunResult(code, "", text)
-            if self.fail_validate:
-                return RunResult(1, "", "invalid config: agents.entries.sviluppo.runtime.acp is unknown")
-            return RunResult(0, "", "")
+        if verbs == ["config", "patch"]:
+            return self._patch(argv, env or {})
         return RunResult(0, "", "")
+
+    def _patch(self, argv, env):
+        """Answer like OpenClaw, through the shared stand-in, and remember what was applied."""
+        self.patch_while_stopped.append(bool(self.service and self.service.stopping))
+        answer = answer_patch(argv, dict(env or {}), errors=self.patch_errors)
+        if "--dry-run" not in argv and answer.returncode == 0:
+            self.patched.append(json.loads(
+                Path(argv[argv.index("--file") + 1]).read_text(encoding="utf-8")
+            ))
+        return answer
 
     def commands(self) -> list[str]:
         return [" ".join(argv) for argv, _ in self.calls]
@@ -117,6 +122,9 @@ class FakeService:
     def status(self, dry_run: bool = False):
         self.events.append("status")
         return {"installed": self.installed, "mechanism": "vbs" if self.installed else None, "dry_run": dry_run}
+
+    def extra_services(self):
+        return []
 
     def install(self, dry_run: bool = False):
         self.events.append("install")
@@ -261,7 +269,6 @@ class Machine:
             run=self.runner,
             service=self.service,
             out=self.lines.append,
-            stamp="20261023-120000",
             engine_root=ENGINE_ROOT,
             platform=system,
             yes=yes,
@@ -287,7 +294,8 @@ def test_a_fresh_machine_is_installed_configured_and_started(tmp_path):
     assert f"{which_map()['npm']} install -g openclaw@{pinned()} " \
            "--allow-scripts=@google/genai,esbuild,koffi,protobufjs,openclaw" in commands
     assert any(" onboard --non-interactive --accept-risk " in command for command in commands)
-    assert any(" config validate" in command for command in commands)
+    assert any(" config patch " in command and "--dry-run --json" in command for command in commands)
+    assert any(" config patch " in command and "--dry-run" not in command for command in commands)
     assert machine.config.is_file()
     assert machine.service.events[0] == "stop" and "start" in machine.service.events
     assert (machine.home / ".openclaw" / "workspace" / "AGENTS.md").is_file()
@@ -495,7 +503,7 @@ def test_dry_run_writes_nothing_and_runs_nothing(tmp_path):
     assert not (machine.state_dir / "workspace").exists()
     assert "openclaw onboard" in machine.output()
     assert "gateway install" in machine.output()
-    assert "config validate" in machine.output()
+    assert "config patch" in machine.output()
     assert "Dry run" in machine.output()
 
 
@@ -587,6 +595,7 @@ def test_the_engine_plugin_is_enabled_only_when_it_is_deposited(tmp_path):
     written = with_plugin.config_json()
     assert PLUGIN_ID in written["plugins"]["allow"]
     assert written["plugins"]["entries"][PLUGIN_ID]["enabled"] is True
+    assert written["plugins"]["entries"][PLUGIN_ID]["config"]["briefing"] == {"enabled": False}
 
 
 def test_a_plugin_this_run_deposits_is_enabled_in_the_file_it_writes(tmp_path, monkeypatch):
@@ -609,52 +618,71 @@ def test_a_plugin_this_run_deposits_is_enabled_in_the_file_it_writes(tmp_path, m
     plugins = machine.config_json()["plugins"]
     assert PLUGIN_ID in plugins["allow"]
     assert plugins["entries"][PLUGIN_ID]["enabled"] is True
+    # The switches go where OpenClaw reads them and hands them to the plugin as
+    # `api.pluginConfig`: the deposit wrote no briefing text and named no local model.
+    assert plugins["entries"][PLUGIN_ID]["config"] == {
+        "briefing": {"enabled": False},
+        "checkpoint": {"enabled": False, "state_dir": str(machine.home / ".local" / "state" / "nexgen")},
+        "engine": {"command": sys.executable, "entry": str(SCRIPTS_DIR / "nexgen_core" / "cli" / "__init__.py")},
+        "evidence": {"enabled": False, "providers": []},
+    }
 
 
-def test_a_rejected_configuration_puts_the_previous_file_back(tmp_path):
+def test_a_refused_configuration_leaves_the_file_byte_for_byte(tmp_path):
+    """OpenClaw refuses before it commits, so the engine has nothing to restore."""
     machine = Machine(tmp_path)
     machine.config.parent.mkdir(parents=True)
     original = json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}, "mine": 1}, indent=2) + "\n"
     machine.config.write_text(original, encoding="utf-8")
-    machine.runner.fail_validate = True
+    machine.runner.patch_errors = ["agents.entries.sviluppo.runtime.acp is unknown"]
 
     code = machine.run()
 
     assert code == 1
     assert machine.config.read_text(encoding="utf-8") == original
-    backup = machine.state_dir / "openclaw.json.pre-nexgen-20261023-120000"
-    assert backup.is_file()
-    assert backup.read_text(encoding="utf-8") == original
-    assert "rejected the configuration" in machine.output()
-    assert "invalid config" in machine.output()
+    assert not (machine.state_dir / "openclaw.json.bak").exists(), "nothing was written, so there is no copy"
+    assert "would refuse this configuration" in machine.output()
+    assert "agents.entries.sviluppo.runtime.acp is unknown" in machine.output()
+    assert "stop" not in machine.service.events, "the gateway was never stopped for a refused patch"
 
 
-def test_a_state_reader_that_fails_once_does_not_roll_the_file_back(tmp_path):
-    """OpenClaw's own unreadable state is not a verdict on the bytes this run wrote."""
+def test_a_document_openclaw_would_refuse_is_never_written(tmp_path):
+    """The dry run is the gate: it judges the patch before the gateway is disturbed."""
     machine = Machine(tmp_path)
     machine.config.parent.mkdir(parents=True)
     machine.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
-    machine.runner.validate_outputs = [(
-        1,
-        "- <root>: read failed at ~/.openclaw/openclaw.json: Error: SQLite read-only worker "
-        "exited unsuccessfully: spawn /usr/bin/node EACCES",
-    )]
-
-    assert machine.run() == 0
-    assert "agents" in machine.config_json(), "the new file stays: it was never judged"
-    assert "asking once more" in machine.output()
-    assert machine.service.events.count("start") >= 1, "and the gateway comes back up"
-
-
-def test_the_write_happens_between_stop_and_start_even_on_failure(tmp_path):
-    machine = Machine(tmp_path)
-    machine.config.parent.mkdir(parents=True)
-    machine.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
-    machine.runner.fail_validate = True
+    machine.runner.patch_errors = ["models: Unrecognized key: entries"]
 
     assert machine.run() == 1
-    assert machine.service.events == ["stop", "start"]
-    assert machine.runner.validate_while_stopped is True
+    assert machine.runner.patched == [], "no patch was applied"
+    assert "stop" not in machine.service.events
+    assert machine.runner.patch_while_stopped == [False], "only the dry run was asked"
+
+
+def test_a_file_openclaw_cannot_parse_is_not_overwritten(tmp_path):
+    """Native refuses to patch a file it cannot read, so the engine points at its own repair."""
+    machine = Machine(tmp_path)
+    machine.config.parent.mkdir(parents=True)
+    broken = '{"gateway": {"auth": {"mode": "token", "token": "t"'
+    machine.config.write_text(broken, encoding="utf-8")
+
+    code = machine.run()
+
+    assert code == 1
+    assert machine.config.read_text(encoding="utf-8") == broken
+    assert "openclaw doctor --fix" in machine.output()
+    assert "stop" not in machine.service.events
+
+
+def test_the_patch_is_applied_while_the_gateway_is_stopped(tmp_path):
+    """The dry run comes first, with the gateway still up; the write comes between stop and start."""
+    machine = Machine(tmp_path)
+    machine.config.parent.mkdir(parents=True)
+    machine.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
+
+    assert machine.run() == 0
+    assert machine.runner.patch_while_stopped == [False, True]
+    assert machine.runner.patched, "the change was applied"
 
 
 def test_a_second_identical_setup_writes_nothing_and_restarts_nothing(tmp_path):
@@ -845,7 +873,6 @@ def _make_setup_for_service(service: Any, out: Any, tmp_path: Path) -> Setup:
         which=lambda cmd: None,
         run=lambda cmd: RunResult(0, "", ""),
         service=service,
-        stamp="20261024-test",
         platform=sys.platform,
     )
 
@@ -938,6 +965,62 @@ def test_service_step_starts_the_gateway_when_the_install_only_registered_it(tmp
 
     assert "start" in service.events
     assert any("Starting the gateway" in line for line in lines)
+
+
+def test_service_step_reports_a_service_openclaw_refused_to_start(tmp_path):
+    from nexgen_core.openclaw.setup_steps import service_step
+
+    class RefusingStart(FakeService):
+        def __init__(self):
+            super().__init__(installed=True, listening=False)
+
+        def start(self, dry_run: bool = False):
+            self.events.append("start")
+            self.listening = True  # the port comes up anyway: the refusal is still reported
+            return {"ok": False, "commands": [["openclaw", "gateway", "start", "--json"]],
+                    "error": "Gateway service missing."}
+
+    service = RefusingStart()
+    lines: list[str] = []
+    setup = _make_setup_for_service(service, lines.append, tmp_path)
+
+    assert service_step(setup, restarted=False) is True
+
+    assert any("The gateway service did not start: Gateway service missing." in line for line in lines)
+    assert any("The gateway answers on 127.0.0.1:18789" in line for line in lines)
+
+
+def test_service_step_prints_the_step_that_removes_an_older_registration(tmp_path):
+    """A machine that already had a service may have one an older release left behind.
+
+    The engine names it and prints the command; it never removes it, because it did
+    not create it and it may be a second profile somebody wants.
+    """
+    from nexgen_core.openclaw.setup_steps import service_step
+
+    class WithAnOlderRegistration(FakeService):
+        def __init__(self):
+            super().__init__(installed=True, listening=True)
+
+        def extra_services(self):
+            return [{
+                "platform": "win32",
+                "label": "OpenClaw Gateway",
+                "detail": r"startup: C:\Users\user\Startup\OpenClaw Gateway.vbs",
+                "scope": "user",
+            }]
+
+    service = WithAnOlderRegistration()
+    lines: list[str] = []
+    setup = _make_setup_for_service(service, lines.append, tmp_path)
+
+    assert service_step(setup, restarted=False) is True
+
+    assert any("Another registration for the gateway is still on this machine" in line for line in lines)
+    assert any("OpenClaw Gateway.vbs" in line for line in lines)
+    assert any("Remove-Item -LiteralPath" in line for line in lines)
+    assert any("The engine leaves it alone" in line for line in lines)
+    assert "install" not in service.events and "start" not in service.events
 
 
 def test_a_configured_channel_gets_a_binding_without_touching_the_persons(tmp_path):
@@ -1287,7 +1370,6 @@ def test_the_setup_reads_the_default_vault_when_the_caller_passes_none(tmp_path,
         dry_run=True,
         engine_root=ENGINE_ROOT,
         vault_data=None,
-        stamp="20261025-test",
         out=machine.lines.append,
         platform=sys.platform,
     )

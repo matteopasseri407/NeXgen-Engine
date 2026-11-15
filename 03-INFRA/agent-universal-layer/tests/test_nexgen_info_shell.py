@@ -12,7 +12,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.cli import build_parser
-from nexgen_core.cli.engine import cmd_info, cmd_shell  # noqa: E402
+from nexgen_core.cli.engine import cmd_info  # noqa: E402
 from nexgen_core.marks import safe_text  # noqa: E402
 from nexgen_core.tools.info import get_engine_info, render_info
 
@@ -49,28 +49,6 @@ def test_render_info_all_flag():
     assert "MODULES" in text_all
 
 
-def test_retired_shell_prints_openclaw_guidance(capsys):
-    assert cmd_shell(SimpleNamespace()) == 0
-    out = capsys.readouterr().out
-    assert "openclaw tui" in out or "OpenClaw" in out
-    assert "retired" in out.lower() or "ritirata" in out.lower()
-    assert len(out.strip()) > 0
-
-
-def test_retired_shell_points_to_dashboard(capsys):
-    assert cmd_shell(SimpleNamespace(passthrough=[])) == 0
-    out = capsys.readouterr().out
-    assert "Dashboard" in out or "dashboard" in out
-    assert "openclaw" in out.lower()
-
-
-def test_retired_shell_exit_code_is_zero():
-    rc = cmd_shell(SimpleNamespace())
-    assert rc == 0
-    assert isinstance(rc, int)
-    assert rc is not None
-
-
 def test_info_interactive_prints_openclaw_guidance(capsys):
     assert cmd_info(SimpleNamespace(json=False, interactive=True, all=False)) == 0
     out = capsys.readouterr().out
@@ -87,23 +65,14 @@ def test_info_interactive_does_not_crash(capsys):
     assert "openclaw" in out.lower()
 
 
-def test_cli_parser_has_info_and_shell():
+def test_cli_parser_has_info_and_not_the_retired_shell():
     parser = build_parser()
     actions = {a.dest: a for a in parser._subparsers._group_actions}
     choices = actions["command"].choices
     assert "info" in choices
     assert "status" in choices
-    assert "shell" in choices
-    assert "interactive" in choices
-    assert "repl" in choices
-
-
-def test_cli_parser_shell_help_mentions_openclaw():
-    parser = build_parser()
-    actions = {a.dest: a for a in parser._subparsers._group_actions}
-    subparsers = actions["command"].choices
-    shell_parser = subparsers["shell"]
-    assert "openclaw" in shell_parser.format_help().lower()
+    for retired in ("shell", "interactive", "repl"):
+        assert retired not in choices
 
 
 def test_shell_module_is_completely_removed():
@@ -138,6 +107,30 @@ def test_safe_text_keeps_unicode_where_it_fits():
     text = render_info(as_json=False)
     assert safe_text(text, _stream("utf-8")) == text
     assert len(text) > 0
+
+
+def test_the_claude_bootstrap_row_is_the_user_scope_pointer(tmp_path):
+    """`nexgen info` must census the file the guard writes, not the one it removes.
+
+    The pointer moved to `~/.claude/CLAUDE.md` and `~/CLAUDE.md` goes away, so the row kept
+    reporting "absent" on every machine while Claude was reading the pointer fine.
+    """
+    from nexgen_core.tools.info import _bootstrap_targets, _instruction_state
+
+    vault = tmp_path / "vault"
+    canon = vault / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
+    canon.parent.mkdir(parents=True)
+    canon.write_text("# Canonical rules\n", encoding="utf-8")
+    home = tmp_path / "home"
+    pointer = home / ".claude" / "CLAUDE.md"
+    pointer.parent.mkdir(parents=True)
+    pointer.write_text(f"# Claude compatibility pointer\n\n{canon}\n", encoding="utf-8")
+    (home / "CLAUDE.md").write_text("# an old home file\n", encoding="utf-8")
+
+    rows = {label: (path, kind) for label, path, kind in _bootstrap_targets(home)}
+
+    assert rows["claude"][0] == pointer
+    assert _instruction_state(rows["claude"][0], rows["claude"][1], vault) == "pointer"
 
 
 def test_safe_text_degrades_gracefully_on_cp1252():

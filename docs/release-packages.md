@@ -42,6 +42,27 @@ Register a PyPI API token as the repo secret `PYPI_API_TOKEN`, and the "Publish 
 and wheel on every release. Until then `uv tool install nexgen-engine` resolves to nothing, which is why the README
 installs from the git URL.
 
+## Maintainer machines
+
+Some commands publish the engine instead of using it: `nexgen release ...`, the leak gate of the engine's own
+repository, the discipline hooks of that repository, and any private tool the engine launches. They run only on a
+machine registered as maintainer, and a registration is two facts, neither of them in this repository:
+
+- `maintainer: true` in the installation's private config, `sync/remotes.yaml` in the Vault, the file the
+  update-channel gate already reads.
+- a git signing key this machine would sign with (`git config user.signingkey`, or the key its keyring signs with),
+  listed in `03-INFRA/agent-universal-layer/trust/release-signers.txt`.
+
+`nexgen maintainer status` says which half is missing; `nexgen maintainer register` writes the flag into that private
+config and leaves it uncommitted, so publishing it is a separate `nexgen vault push`. The flag on its own authorises
+nothing: without a listed key the installation is not a maintainer, and every gated command says so in one line.
+Everything a person needs stays outside this gate, the discipline workflow in their own projects included.
+
+**This is not a security boundary.** What stops a stranger is GitHub's own permissions: `main` is protected and
+requires the checks to pass, release tags must be signed, and the owner is the only collaborator. The registration
+keeps the publisher's tools out of the way of an installation that has no use for them; a machine that set the flag
+without a listed key would still have nothing to push, tag or release with.
+
 ## Windows: what exists, what is a decision
 
 - `install.ps1 -Check` in the repo root is the Windows path today, versioned with the repo.

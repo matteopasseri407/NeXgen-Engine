@@ -6,7 +6,7 @@ Where NeXgen Engine ends and OpenClaw begins: which capabilities overlap, and wh
 
 ## The boundary
 
-OpenClaw is the harness for user interaction and agent execution. NeXgen Engine keeps:
+OpenClaw is the always-on bot: the chat channels a person writes to, and the agents that answer there while the other machines are off. It sits beside the GUI apps a person works in, which the sync configures like any other runtime. NeXgen Engine keeps:
 
 - **Council**: independent multi-model peer review and advice.
 - **Supervision (`sup`)**: task harness with independent verification and gatekeeping.
@@ -40,10 +40,10 @@ Engine code that duplicates an OpenClaw capability is retired or delegated.
 
 | Engine component | What the engine does | OpenClaw feature | Verdict | Why |
 |---|---|---|---|---|
-| `nexgen shell` / `repl` / `interactive`<br>`03-INFRA/scripts/nexgen_core/tools/shell.py`<br>`03-INFRA/scripts/nexgen_core/cli/engine.py` | Interactive terminal REPL (`cmd.Cmd`) with a numbered menu over engine verbs. | `openclaw tui` (`openclaw/docs/cli/tui.md`, `openclaw/docs/web/tui.md`), Web Dashboard (`openclaw/docs/cli/dashboard.md`), Control UI (`openclaw/docs/web/control-ui.md`). | **retire** | OpenClaw provides the interactive interfaces. The engine REPL was duplicate code and has been removed. |
+| `nexgen shell` / `repl` / `interactive`<br>`03-INFRA/scripts/nexgen_core/cli/engine.py` | Interactive terminal REPL (`cmd.Cmd`) with a numbered menu over engine verbs, then a redirect notice. | `openclaw tui` (`openclaw/docs/cli/tui.md`, `openclaw/docs/web/tui.md`), Web Dashboard (`openclaw/docs/cli/dashboard.md`), Control UI (`openclaw/docs/web/control-ui.md`). | **retired** | OpenClaw provides the interactive interfaces. The REPL went first; the redirect notice and the three command names were removed on 2026-11-14, so `nexgen shell` is now an unknown command. |
 | `nexgen info -i` / `--interactive`<br>`03-INFRA/scripts/nexgen_core/cli/engine.py` | Launches an interactive shell after printing status. | `openclaw tui`, Control UI. | **retire** | `--interactive` used to launch `nexgen shell`. It now prints a line pointing at the OpenClaw TUI. |
 | `nexgen info` / `status`<br>`03-INFRA/scripts/nexgen_core/tools/info.py`<br>`03-INFRA/scripts/nexgen_core/cli/engine.py` | Text dashboard of cross-CLI alignment, sync state and memory health. | `openclaw status` (`openclaw/docs/cli/status.md`), Dashboard (`openclaw/docs/web/dashboard.md`). | **keep** | `nexgen info` monitors the multi-CLI ecosystem (Claude, Codex, Antigravity, OpenCode, OpenClaw). OpenClaw inspects only itself. |
-| `nexgen-local run <question>`<br>`03-INFRA/scripts/nexgen_local/cli.py`<br>`03-INFRA/scripts/nexgen_local/cmds/run.py` | Autonomous query-answering loop with local models. | `openclaw agent` (`openclaw/docs/cli/agent.md`), runtime execution (`openclaw/docs/openclaw-agent-runtime.md`), chat TUI and web. | **retire** | OpenClaw is the harness for chatting with agents and models. The command is retired in favour of `openclaw agent` and `openclaw tui`; `run_lane` stays as the internal evaluation engine for `eval` and `tier evaluate`. |
+| `nexgen-local run <question>`<br>`03-INFRA/scripts/nexgen_local/cli.py`<br>`03-INFRA/scripts/nexgen_local/cmds/run.py` | Autonomous query-answering loop with local models, then a redirect notice. | `openclaw agent` (`openclaw/docs/cli/agent.md`), runtime execution (`openclaw/docs/openclaw-agent-runtime.md`), chat TUI and web. | **retired** | OpenClaw is the harness for chatting with agents and models. The verb left the command list and its redirect notice was removed on 2026-11-14, so `nexgen-local run` is now an unknown command; `run_lane` stays as the internal evaluation engine for `eval` and `tier evaluate`. |
 | Local cage connectors (`calendar.py`, `drive.py`, `gmail.py`, `outlook.py`, `web.py`)<br>`03-INFRA/scripts/nexgen_local/connectors/` | Connectors the local models use inside the containment cage. | Standard MCP servers (`openclaw/docs/cli/mcp.md`) and browser tools (`openclaw/docs/tools/browser/agent-tools.md`). | **keep** | They are internal tools of the cage (`nexgen_local/tools.py`), not an OpenClaw duplicate. Any consolidation is an internal engine matter. |
 | Drive upload and MCP (`drive-propose`, `drive-upload`, `drive-mcp`)<br>`03-INFRA/scripts/nexgen_local/cmds/drive.py`<br>`03-INFRA/scripts/nexgen_local/drive_mcp.py` | Staging, upload and a stdio MCP server for Google Drive. | Native file transfer (`openclaw/docs/cli/file-transfer.md`) or a Google Workspace MCP. | **keep** | `drive-mcp` is an engine MCP server distributed by the canonical library to every runtime. |
 | Guardian timers and heartbeat (`agent-sync.timer`, `agent-heartbeat.timer`)<br>`03-INFRA/scripts/nexgen_core/scheduler.py` | Registers systemd or Scheduled Task timers for fail-closed sync and engine liveness. | `openclaw cron` / automations (`openclaw/docs/cli/cron.md`, `openclaw/docs/automation/cron-jobs.md`). | **keep** | Engine timers keep machines converged and guardians alive even when OpenClaw is stopped or not installed. |
@@ -60,7 +60,7 @@ Engine code that duplicates an OpenClaw capability is retired or delegated.
 | Skill adoption from the Workshop (`nexgen openclaw adopt --skills`)<br>`03-INFRA/scripts/nexgen_core/openclaw/adopt.py`<br>`workshop.mjs` | Adopts skills created in the Skill Workshop into the canonical catalog. | Skill Workshop (`openclaw/docs/tools/skill-workshop/personal-library.md`). | **delegate / keep** | OpenClaw provides the authoring environment; the engine promotes adopted skills to the other runtimes. |
 | Local model measurement and cage (`nexgen-local eval`, `nexgen-local tier`)<br>`03-INFRA/scripts/nexgen_local/cmds/run.py`<br>`03-INFRA/scripts/nexgen_local/cmds/tier.py` | Runs adversarial trap suites (prompt injection, confabulation) to assign containment tiers. | OpenClaw has no adversarial containment suites. | **keep** | Engine domain: the cage and the evidence check. |
 | Doctor and system diagnostics (`nexgen doctor`)<br>`03-INFRA/scripts/nexgen_core/doctor.py` | Verifies cross-CLI alignment, git remotes, MCP drift, invariant rules. | `openclaw doctor` (`openclaw/docs/cli/doctor.md`). | **keep** | Each doctor validates its own domain: `openclaw doctor` checks the OpenClaw installation, `nexgen doctor` checks convergence of the whole multi-CLI ecosystem. |
-| Node and device pairing (`nexgen openclaw pair`, `node`)<br>`03-INFRA/scripts/nexgen_core/cli/openclaw_cmds.py` | Ergonomic wrappers to pair nodes and phones. | `openclaw nodes` (`openclaw/docs/cli/nodes.md`), `openclaw pairing` (`openclaw/docs/cli/pairing.md`), `openclaw devices` (`openclaw/docs/cli/devices.md`). | **delegate** | The engine offers a shortcut; device registration and cryptographic pairing belong to OpenClaw. |
+| Node and device pairing (`nexgen openclaw pair`, `node`)<br>`03-INFRA/scripts/nexgen_core/cli/openclaw_cmds.py` | Ergonomic wrappers to pair nodes and phones. | `openclaw nodes` (`openclaw/docs/cli/nodes.md`), `openclaw pairing` (`openclaw/docs/cli/pairing.md`), `openclaw devices` (`openclaw/docs/cli/devices.md`), `openclaw connect --service --target-file` (`openclaw/docs/cli/connect.md`), `openclaw approvals get --node --json` (`openclaw/docs/cli/approvals.md`). | **delegate** | The engine offers a shortcut; device registration, cryptographic pairing, the node service install and the merged node approvals belong to OpenClaw. |
 | Engine software updates (`nexgen update`)<br>`03-INFRA/scripts/nexgen_core/updater.py` | Updates NeXgen Engine from the source repository or a release. | `openclaw update` (`openclaw/docs/cli/update.md`). | **keep** | Each updater upgrades its own codebase. |
 
 ## Operating decisions for the local `agy` backend
@@ -72,7 +72,7 @@ Engine code that duplicates an OpenClaw capability is retired or delegated.
 | Executor mode | `agy --mode accept-edits` | the plugin owns its own argv |
 | Read-only round | `agy --mode plan` | one turn per message: no scout mode |
 | Model | `agy --model <id>`, from `sup run --model` | the route `google-antigravity-cli/<id>` |
-| MCP servers | `~/.gemini/antigravity-cli/mcp_config.json` | the same file: the plugin starts `agy` in the user's home |
+| MCP servers | `~/.gemini/antigravity-cli/mcp_config.json`, a link to `~/.gemini/config/mcp_config.json` | the same file: the plugin starts `agy` in the user's home |
 
 ### `permissionMode` is not `--mode`
 
@@ -84,7 +84,7 @@ One difference remains, and it is stated rather than hidden. The supervision lan
 
 ### One MCP file, with the gateway left out
 
-`agy` reads `~/.gemini/antigravity-cli/mcp_config.json`, and the engine writes that file from the canonical manifest (`~/.gemini/antigravity/mcp_config.json`, fanned out to the folders Antigravity reads).
+`agy` reads `~/.gemini/antigravity-cli/mcp_config.json`, a link to `~/.gemini/config/mcp_config.json`: the file Google's MCP page names for both the app and the CLI, and the one the engine writes from the canonical manifest. The other folders Antigravity reads (`antigravity`, `antigravity-ide`) hold links to it as well.
 
 When OpenClaw drives the local `agy` backend, the antigravity renderer writes the servers OpenClaw mounts directly and leaves `lazy-mcp` out: the gateway entry belongs to OpenClaw and carries its CLI identity (`LAZY_MCP_CLI=openclaw`), which is not the one `agy` would need, and `agy` reaches those connectors directly through this file. The plugin starts the same CLI from the same home, so one file has to serve both lives. This is the one dialect where a server declared `exposure: lazy` is not served by the gateway: of the two contexts reading the file, the one that cannot use this gateway wins.
 
@@ -97,11 +97,12 @@ When OpenClaw drives the local `agy` backend, the antigravity renderer writes th
 `nexgen shell`, with the aliases `interactive` and `repl`:
 
 - `03-INFRA/scripts/nexgen_core/tools/shell.py` is gone.
-- `nexgen shell` and `nexgen info -i` print a redirect notice: `The interactive shell has been retired: use 'openclaw tui' or the OpenClaw Dashboard instead.`
-- The obsolete internal REPL tests (`test_nexgen_toolshellsplit_pinning.py`) were removed; the redirection and parser tests stay in `test_nexgen_info_shell.py`.
+- The command names are gone too. After a season in which `nexgen shell` printed a redirect notice, the notice and the three names were removed on 2026-11-14 (`cli/engine.py`): `nexgen shell` now fails as an unknown command. The one redirect that remains is `nexgen info -i`, which prints the OpenClaw pointer after the dashboard.
+- The obsolete internal REPL tests (`test_nexgen_toolshellsplit_pinning.py`) were removed; `test_nexgen_info_shell.py` and `test_nexgen_cliengine_pinning.py` now pin that the three names are absent from the parser.
 
 `nexgen-local run <question>`:
 
-- The user-facing command is retired. Invoking it prints `nexgen-local run è stato ritirato: usa 'openclaw agent' o 'openclaw tui' (l'esecuzione degli agenti appartiene a OpenClaw).`
+- The user-facing command is retired, and its redirect notice was removed on 2026-11-14: the verb is no longer intercepted, so `nexgen-local run` fails as an unknown command.
 - `run` left the subcommand list on `nexgen-local --help` (`EXPECTED_COMMANDS` in `test_nexgen_local_help_surface.py`) and is recorded in `RETIRED_COMMANDS`.
+- `cmd_run` in `nexgen_local/cmds/run.py` is now unreachable from the command line; it goes with the rest of the retired lane when that step runs.
 - `run_lane` stays in `nexgen_local/engine.py` as the internal driver for `eval` and `tier evaluate`.

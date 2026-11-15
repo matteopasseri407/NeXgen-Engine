@@ -185,6 +185,9 @@ skills:
     assert (home / ".agents" / "skill-library" / "core-skill").exists()
     assert (home / ".claude" / "skills" / "core-skill").exists()
     assert (home / ".gemini" / "antigravity-cli" / "skills" / "core-skill").exists()
+    # Codex legge `~/.codex/skills` (`codex debug prompt-input`, codex-cli 0.155.1) e
+    # l'app Codex/ChatGPT la cartella condivisa: la vista sta in tutte e due.
+    assert (home / ".agents" / "skills" / "core-skill").exists()
     assert (home / ".codex" / "skills" / "core-skill").exists()
 
 

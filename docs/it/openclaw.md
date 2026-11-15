@@ -1,8 +1,8 @@
-# OpenClaw, l'harness con l'interfaccia
+# OpenClaw, il bot sempre acceso
 
 🇬🇧 [English](../openclaw.md)
 
-OpenClaw (MIT, pacchetto npm `openclaw`) è l'harness ufficiale di NeXgen Engine e il punto d'ingresso con un'interfaccia: un pannello web e un'app per il telefono accoppiata via QR, da cui una persona usa gli abbonamenti flat che già paga e i modelli che girano sulla sua macchina. La sincronizzazione lo scrive anche come quinta CLI, che è la metà minore del suo lavoro.
+OpenClaw (MIT, pacchetto npm `openclaw`) è il bot sempre acceso del motore. Gira sulla macchina che non si spegne mai, è quello che una persona raggiunge dai canali di chat che usa già, Telegram compreso, e porta una squadra di agenti dichiarata in `squad.yaml` con i binding di canale che mandano una chat all'agente giusto. Sta accanto alle app in cui una persona lavora ogni giorno, che configura la sincronizzazione, e non le sostituisce. Il suo pannello web e la sua app per il telefono, accoppiata via QR, usano gli stessi abbonamenti flat che una persona paga già e i modelli che girano sulla sua macchina. La sincronizzazione lo scrive anche come quinta CLI, che è la metà minore del suo lavoro.
 
 Il motore non fa un fork di OpenClaw e non possiede il suo file. Scrive solo le sezioni che servono a OpenClaw per raggiungere gli abbonamenti e il Vault, e lascia tutto il resto a OpenClaw e a chi lo usa.
 
@@ -41,7 +41,11 @@ L'agente di codice riceve anche `CLAUDE.md` e `.claude/settings.json`, così Cla
 
 `nexgen openclaw smoke` è il controllo che un cambio di versione deve: chiede a OpenClaw la versione, valida la configurazione, sonda il gateway, esegue `openclaw mcp doctor`, manda un turno breve a un agente e verifica il budget di contesto del primo prompt. Sei righe, un verdetto, lo stesso comando in un terminale e in un controllo di rilascio.
 
-Il tetto sul primo prompt misura il costo effettivo in token pagato sul primo prompt di una sessione, letto direttamente dalle trascrizioni locali (Claude Code sotto `~/.claude/projects/` e Codex sotto `~/.codex/sessions/`). Se una sessione parte oltre il budget, `smoke` e `nexgen doctor` (`openclaw.context_budget`) falliscono immediatamente. Il tetto predefinito è di 150.000 token (calibrato su misurazioni reali: ~13,5k–78k token con i deny di loopback attivi, contro ~945k senza di essi), sovrascrivibile tramite la variabile d'ambiente `NEXGEN_OPENCLAW_FIRST_PROMPT_BUDGET`. La CLI `agy` non è misurata in token perché non scrive trascrizioni o file d'uso locali di cui fidarsi.
+Il tetto sul primo prompt misura il costo effettivo in token pagato sul primo prompt di una sessione, letto direttamente dalle trascrizioni locali (Claude Code sotto `~/.claude/projects/` o `$CLAUDE_CONFIG_DIR`, Codex sotto `~/.codex/sessions/` o `$CODEX_HOME`). La trascrizione è quella che il turno ha aperto: la data è il suo primo record, quindi una chat che sta scrivendo nello stesso momento è di qualcun altro e non viene mai misurata. Se una sessione parte oltre il budget, `smoke` e `nexgen doctor` (`openclaw.context_budget`) falliscono, mentre un giorno senza sessioni OpenClaw non è un problema da segnalare. Il cancello di versione è l'unico punto in cui questo numero non decide: stampa un avviso, perché una chat grande non dice niente sulla salute di un nuovo OpenClaw e un ritorno alla versione precedente per un conteggio di token non è un verdetto su un rilascio. Il tetto predefinito è di 150.000 token (calibrato su misurazioni reali: ~13,5k-78k token con i deny di loopback attivi, contro ~945k senza di essi), sovrascrivibile tramite la variabile d'ambiente `NEXGEN_OPENCLAW_FIRST_PROMPT_BUDGET`. La CLI `agy` non è misurata in token perché non scrive trascrizioni o file d'uso locali di cui fidarsi.
+
+Il seme non è la bolletta: un turno lo paga a ogni chiamata al modello. Per questo `nexgen doctor` (`openclaw.turn_budget`) raggruppa in turni la sessione più recente di ogni agente configurato e riporta, per turno, quante chiamate al modello ha fatto e quanto sono costate fra input, lettura di cache, scrittura di cache e output. Un turno oltre il tetto per turno (2.000.000 di token, `NEXGEN_OPENCLAW_TURN_BUDGET`) è un avviso che nomina il turno peggiore, il suo numero di chiamate e l'agente, perché una sessione che passa a 78.717 token e poi fa 74 chiamate spende 5,8 M e prima sembrava a posto. Un prompt apre un turno, un risultato di tool no, quindi le 74 chiamate di un turno non vengono lette come 74 turni. Le cartelle vengono dalla configurazione in vigore: un agente ACP è misurato nella `cwd` che dichiara il suo runtime, ogni altro agente nel suo `workspace`, e `agy` resta esente per il motivo qui sopra. Codex è misurato solo sul primo prompt. Lo stesso doctor stampa `openclaw.harness_lane` (su quale corsia gira davvero il turno di ogni agente: `acp`, `cli` o `provider`, con avviso quando un agente raggiunto da un canale spende un piano a pagamento sulla corsia provider) e `openclaw.acp_binding` (un runtime ACP senza binding dietro risponde a una chat diretta con il modello predefinito).
+
+Anche ciò con cui parte una sessione è scritto nero su bianco. `nexgen openclaw setup` propone `agents.defaults.bootstrapMaxChars` 20000, `agents.defaults.bootstrapTotalMaxChars` 60000 e `skills.limits.maxSkillsPromptChars` 18000, i valori predefiniti che OpenClaw 2026.11.2 documenta e distribuisce, e non sovrascrive mai un valore già presente nel file; `openclaw.prompt_budget` avvisa quando un limite è più corto del blocco di puntamento del motore. Altre due righe sorvegliano ciò da cui dipendono le corsie: `openclaw.skills.root` fallisce quando `OPENCLAW_STATE_DIR` porta OpenClaw lontano da `~/.openclaw`, dove lascerebbe fuori da ogni sessione le skill condivise in `~/.agents/skills`, e `openclaw.acp.acpx` legge il plugin `acpx` installato e avvisa quando manca, è più vecchio della release su cui il motore è stato verificato o non ha l'adattatore che serve a un harness in `acp.allowedAgents`. Un nodo tace sulla cartella delle skill, perché il suo indice delle skill appartiene al gateway.
 
 Una macchina gateway preparata a mano registra il suo ruolo con `nexgen role set server`; il setup lo fa da solo con `--server`. Senza quel record il motore non può capire che la macchina è il server, e la copia del Vault che le sta accanto continua a fare commit in un clone da cui nessuno può pushare. `nexgen role` stampa cosa è registrato senza cambiare nulla.
 
@@ -56,6 +60,8 @@ OpenClaw sa già spostare un turno sul modello successivo quando un provider ris
 
 Quando una lettura ha superato la soglia (`block_at`, 95% per impostazione predefinita), il governor restituisce `providerOverride` e `modelOverride` su `before_model_resolve`, così il turno parte sul modello successivo invece di girare, fallire e ricadere. Scrive una riga nel log del gateway con il provider, la finestra e il modello scelto. Non calcola mai una percentuale: il battito lascia i numeri in `<state dir>/extensions/nexgen/nexgen-quota-state.json`, e uno stato più vecchio di `state_max_age_minutes` (180 per impostazione predefinita) non cambia nulla. Una politica assente, illeggibile o vuota non cambia nulla neanche lei.
 
+Una sessione ACP è l'harness che gira come se stesso, quindi le catene di OpenClaw non vengono mai consultate per lei. Una squadra che scrive `acp_admission: true` mette un cancello anche su quella corsia: su `before_agent_reply` lo stesso job legge le stesse letture e, quando il piano che il modello dell'agente nomina è alla soglia o oltre, risponde con una riga che nomina il piano e la finestra invece di far partire il turno dell'harness. Non costa nessuna chiamata al modello, e non succede nulla per una corsia di cui lo stato non ha una lettura. Vedi [squad.md](squad.md#acp_admission-true).
+
 Due regole rendono sicuro lavorare in un file che il motore non possiede:
 
 - una catena scritta a mano in OpenClaw non viene mai rimossa. Il merge tiene le vostre voci per prime e aggiunge solo ciò che manca, e una proposta che non nomina nessuna catena lascia la vostra esattamente com'è;
@@ -64,6 +70,39 @@ Due regole rendono sicuro lavorare in un file che il motore non possiede:
 Il plugin ha bisogno di `plugins.entries.nexgen.hooks.allowConversationAccess: true` perché quell'hook venga registrato, dato che non è un plugin incluso nel pacchetto. Il setup lo scrive insieme al flag di attivazione. OpenClaw lo legge all'avvio del gateway, quindi un cambio lì richiede il riavvio che il setup esegue comunque.
 
 `nexgen doctor` stampa una riga, `openclaw.fallbacks`: se una politica è dichiarata, quanti agenti hanno una catena e quali non ne hanno.
+
+## Quanto ha speso il bot
+
+`nexgen openclaw cost [--json] [--since 2026-11-14]` risponde all'altra metà della domanda sulla spesa: non quanto è costato un turno, ma quanto ha speso il bot per giorno, per sessione e per agente, letto dalle trascrizioni che OpenClaw ha già scritto.
+
+La lettura è [ccusage](https://github.com/ccusage/ccusage) (MIT), un binario opzionale su `PATH`. Unisce il JSONL di ogni messaggio con il file `openclaw-agent.sqlite` di ogni agente che OpenClaw scrive dalla 2026.9.x, dove vive il costo fatturato dal provider, e usa il costo che OpenClaw ha già incorporato: qui non si calcola nessun prezzo e non si tocca né la rete né una credenziale. Una macchina che non ce l'ha vede esattamente quello che vedeva prima.
+
+`daily` e `session` raggruppano solo per data e per id di sessione, quindi la divisione per agente è la metà del lavoro che tocca al motore: un id di sessione viene confrontato con il nome del file che OpenClaw scrive sotto `<state dir>/agents/<agentId>/sessions/`, e la cartella che lo contiene nomina l'agente. Una trascrizione cancellata del tutto viene riportata come non attribuita invece che indovinata. Una sessione conta intera, nel giorno della sua ultima attività, perché la vista per sessione porta due marche di attività e nessuna divisione per giorno; i totali per giorno invece sono esatti.
+
+La risposta viene messa in cache per dieci minuti nella cartella di stato della macchina e l'esecuzione parte da lì, così un comando, un doctor e un secondo comando nello stesso intervallo pagano una sola esecuzione. Un binario assente, un'uscita diversa da zero, un timeout o una forma di output che questo motore non riconosce costano una riga e nient'altro: l'output non ha una versione di schema, quindi una release che rinomina un campo viene rifiutata intera invece di stampare il numero che ha comunque capito. `backends: {ccusage: off}` in `quota.yaml`, oppure `NEXGEN_OPENCLAW_CCUSAGE=off` per una sola esecuzione, lo spengono.
+
+`nexgen openclaw doctor` aggiunge una riga dalla stessa cache, che dice quanto è costato ieri per agente. Non è mai rossa: una bolletta non dice niente sulla salute della macchina, e il `nexgen doctor` schedulato non la chiede, perché una schedulazione non ha da avviare un binario di terzi.
+
+## Quanto costa una harness dentro OpenClaw
+
+Un agente che esegue una harness attraverso OpenClaw deve costare, per singola chiamata al modello, quanto costa la stessa harness eseguita direttamente, più un overhead leggero di OpenClaw. Il proprietario ha fissato la tolleranza a 10.000 token di input per chiamata, e nessuna release parte finché la cosa non è stata misurata e superata. `nexgen openclaw parity [--lane LANE] [--json] [--dry-run]` è la misura.
+
+Legge `openclaw.json` con lo stesso risolutore di corsie che usa il doctor, quindi le corsie che conosce sono esattamente quelle che il file esegue davvero: `google-antigravity-cli` (`agy`), `claude-cli` e `codex-cli`. Le corsie provider non eseguono nessuna harness, e la loro riga dice "non applicabile", come quella di una corsia su cui non gira nessun agente configurato. Nemmeno una sessione ACP viene misurata, perché esegue la harness come se stessa sul proprio prompt invece di aggiungere un secondo prompt alla chiamata della harness.
+
+Si misura un agente per corsia, il primo che il file elenca, e costa due chiamate al modello: per questo niente lancia questa misura da una schedulazione. Il messaggio di prova è lo stesso dai due lati ed è corto apposta (`Rispondi solo con la parola OK.`), il comando nativo gira nella cartella di quell'agente, e il lato OpenClaw chiede una `--session-key` nuova così una chat ripresa non può far sembrare migliore nessuno dei due numeri:
+
+```sh
+agy -p "Rispondi solo con la parola OK." --output-format json --model gemini-3.8-flash
+claude -p "Rispondi solo con la parola OK." --output-format json --model claude-opus-5-5
+codex exec --json --model gpt-5-2-codex "Rispondi solo con la parola OK."
+openclaw agent --agent main --session-key parity-google-antigravity-cli-<epoch> --message "..." --json
+```
+
+Quello che si confronta è l'input **totale** di quella singola chiamata: `input` più la lettura della cache e la scrittura della cache, dai due lati, così un prompt caldo non può passare per uno economico. L'usage in forma Anthropic (Claude e `agy`) tiene la cache fuori da `input_tokens`, quindi si somma; Codex stampa la forma OpenAI, dove `cached_input_tokens` è un sottoinsieme di `input_tokens`, e sommarlo di nuovo darebbe un numero che non è una bolletta. L'overhead è `openclaw - native`, e una corsia passa fino a `PARITY_OVERHEAD_TOKENS` (10.000). La corsia `agy` misurata il 2026-11-15 è stata 18.307 in diretta contro 25.417 attraverso OpenClaw: 7.110 di overhead su OpenClaw 2026.11.2 e `agy` 1.5.9.
+
+Il record è `99-INDEX/OPENCLAW-PARITY.json` nel Vault: il commit del motore, le versioni di OpenClaw e delle harness, quando è stato misurato, e una riga per corsia con i due totali, l'overhead e il verdetto. Viene scritto dove gira la misura e pubblicato da una macchina che può pubblicare il Vault. Il gateway su un server non è quella macchina: il ruolo server legge il Vault, e la vault-library scrive solo note Markdown, quindi un record JSON non passa da quella strada. Lì il comando tiene il record nella cartella di stato della macchina e ne stampa il percorso, e il file viene copiato nel Vault dalla macchina che lo possiede, la stessa regola che `nexgen update` segue per il pin del motore. `--dry-run` stampa i due comandi per corsia e non spende niente.
+
+`nexgen openclaw doctor` lo riporta come `openclaw.parity.tokens`, solo sul gateway: verde con l'età del record e il peggior overhead misurato, un avviso quando il record non c'è, ha più di sette giorni o è stato misurato su un'altra versione di OpenClaw, e rosso quando una corsia è fallita. `release.py preflight`, che `nexgen release ship` esegue da solo, rifiuta una release quando nel Vault il record non c'è, una corsia è fallita, il record ha più di sette giorni, o nomina un commit del motore che non fa parte della release che si sta taggando.
 
 ## Cosa può fare la chat
 
@@ -91,17 +130,17 @@ Niente di tutto questo è una seconda porta nel motore: il plugin avvia la stess
 
 Un council è l'unico lavoro che non risponde nello stesso turno. Dura minuti, quindi `/council` lo avvia staccato e lo dice subito; la fine arriva attraverso il megafono del motore, l'unica superficie autorizzata a parlare con la persona, e la cartella di sessione della corsa conserva l'intera trascrizione.
 
-## L'agente OpenCode, uno a uno
+## Quale corsia esegue un agente
 
-`sviluppo` è OpenCode stesso, avviato via ACP, quindi la stessa CLI, gli stessi login, le stesse skill e lo stesso guardrail valgono sia che una persona apra OpenCode in un terminale sia che scriva all'agente dal telefono.
+`harness` su un agente in `squad.yaml` è l'unico interruttore, ed è opt-in: un agente senza la chiave resta sulla corsia che ha oggi, quindi nessun setup sposta un agente esistente.
 
-Tre impostazioni lo rendono reale, e servono tutte e tre:
+| `harness` | Corsia | Cosa esegue il turno | Quanto costa |
+| --- | --- | --- | --- |
+| assente, oppure `none` | provider | OpenClaw stesso, che chiama l'API del modello di cui ha la chiave | un turno con il prompt di OpenClaw, su quel piano flat o su quella chiave |
+| `opencode`, `claude`, `codex` | sessione ACP | la CLI vera, come agente a sé, nella cartella di lavoro di quell'agente, sul suo login | il contesto dell'harness sul piano dell'harness; OpenClaw tiene canali, consegna e policy |
+| `agy` | backend CLI | la CLI ufficiale `agy`, attraverso il plugin `google-antigravity-cli` | il prompt di OpenClaw più la superficie di strumenti del loopback |
 
-- `runtime.type: "acp"` con `runtime.acp.agent: "opencode"`, `backend: "acpx"` e `mode: "persistent"`;
-- `model.primary` impostato a `opencode-go/deepseek-v4.1-flash`. Per un agente ACP quel campo sceglie il modello dell'harness, e senza di esso OpenClaw esegue quello che l'harness ha come predefinito, che è come un agente una volta ha risposto con il modello sbagliato;
-- `acp.allowedAgents` con la sola lista degli harness che questa macchina può davvero eseguire, scelti tra `claude`, `codex` e `opencode`. `gemini` non viene mai scritto: i termini di Google non permettono il suo client fuori dalle applicazioni di Google.
-
-Il plugin `acpx` va in `plugins.allow` con `permissionMode: "approve-all"` e `nonInteractivePermissions: "deny"`. Una sessione non interattiva non ha modo di cliccare una richiesta di permesso, quindi o procede o nega e continua, e non si blocca mai. `--no-sviluppo` lascia fuori l'agente anche quando entrambi i prerequisiti ci sono.
+Una corsia ACP viene scritta come due metà o non viene scritta: il blocco `agents.entries.<id>.runtime` e una voce `bindings` di `type: "acp"`, così un agente che la chiave nomina ma nessun binding raggiunge resta dov'è invece di rispondere a una chat diretta con il modello predefinito; e `acp.allowedAgents` nomina solo gli harness che questa macchina può davvero eseguire, scelti tra `claude`, `codex` e `opencode` (`gemini` non viene mai scritto: i termini di Google non permettono il suo client fuori dalle applicazioni di Google). Il plugin `acpx` va in `plugins.allow` con `permissionMode: "approve-all"` e `nonInteractivePermissions: "deny"`, perché una sessione non interattiva non ha modo di cliccare una richiesta di permesso e deve o procedere o negare, e `agy` non è mai una sessione ACP: è un backend CLI sul client di Google. `nexgen openclaw plan` nomina ogni caso che non riesce a scrivere, `nexgen openclaw doctor` stampa la corsia di ogni agente, e `--no-sviluppo` lascia fuori l'agente OpenCode anche quando entrambi i prerequisiti ci sono.
 
 ## La gabbia intorno a un modello locale
 
@@ -125,13 +164,51 @@ Prima che l'harness accetti la risposta di un modello locale, il plugin la confr
 
 Una risposta che non sta in piedi sulle sue ricevute riceve un altro passaggio del modello, con l'indicazione esatta di quali affermazioni non hanno prove. Se torna uguale, o se la corsa non può essere riavvolta, la risposta viene consegnata con una nota visibile sotto. Non viene mai scartata in silenzio, e la nota non finisce mai sul messaggio di qualcun altro: va sulla consegna che porta il testo giudicato. Le tabelle delle affermazioni contengono inglese e italiano insieme, senza che una lingua configurata decida quale metà si legge, quindi una risposta inglese senza prove viene trovata esattamente come una italiana e una risposta mista viene giudicata affermazione per affermazione. La nota è in inglese, come ogni altra frase che il plugin produce da solo, perché un file senza locale non può conoscere la lingua di chi legge.
 
-L'interruttore non sta nel plugin: è la sezione `evidence` di `nexgen.config.json` accanto, scritta dal deposito a partire dalla configurazione in vigore. Elenca esattamente i provider locali che questa macchina serve, quindi un modello cloud non viene mai controllato, e una macchina senza modelli locali porta un `off` esplicito.
+L'interruttore non sta nel plugin: è la sezione `evidence`, scritta dal deposito a partire dalla configurazione in vigore. Elenca esattamente i provider locali che questa macchina serve, quindi un modello cloud non viene mai controllato, e una macchina senza modelli locali porta un `off` esplicito. Arriva al plugin da `plugins.entries.nexgen.config` (che OpenClaw consegna come `api.pluginConfig`) e, per un'altra release, dal `nexgen.config.json` accanto; il doctor legge gli stessi due posti nello stesso ordine.
 
 Il controllo legge la conversazione, che OpenClaw nega a ogni plugin non incluso nel pacchetto se `plugins.entries.nexgen.hooks.allowConversationAccess` non è vero. `nexgen openclaw setup` scrive quel permesso, fondendolo nel blocco `hooks` già presente, e `nexgen openclaw doctor` avvisa quando manca. Gli hook stessi vengono consegnati al plugin da OpenClaw, quindi non serve installare altro.
 
 ## I lavori che girano quando nessuno guarda
 
-Dreaming, compaction, il flush della memoria prima di una compaction e la memoria attiva risolvono tutti il loro modello attraverso il modello predefinito degli agenti quando la loro chiave non è impostata. Su una macchina il cui predefinito è un modello locale, la scansione del dreaming alle 03:00, una compaction automatica e un caricamento di recall occupano quel modello mentre nessuno guarda, e su una macchina senza scheda grafica è tutto il computer per minuti. La persona ha scelto un modello locale per una conversazione, non per una scansione.
+Un bot sempre acceso fa girare tre tipi di lavoro che nessuno scrive: i job di automazione, i lavori in background del plugin di memoria e la conversazione stessa. Ognuno dei tre è limitato qui, e ognuno tiene una via di ritorno al comportamento vecchio, più caro.
+
+### Il controllo periodico
+
+Nella release fissata un heartbeat è un normale job di automazione. `agents.defaults.heartbeat` è ritirata: il doctor di OpenClaw converte quella chiave in un job e poi la cancella, e un setup esplicito crea un job **Proactive check** acceso per l'agente proprietario, ogni 30 minuti, nella conversazione principale dell'agente, con consegna al DM del proprietario. Sono 48 chiamate al modello al giorno su tutto quello che quella conversazione è diventata, e l'agente di questa squadra paga 78.717 token per aprirne una (`docs/proposals/daru-burn.md`). Il motore scriveva `every: 0m` e il suo doctor rileggeva quella riga, cioè una riga verde sopra un interruttore che la release non legge: il job parte comunque.
+
+Il setup converge quindi il job, con la CLI supportata, dopo che il gateway è su. Il predefinito tiene la capacità, l'esecuzione e la consegna, e toglie quello che la rende cara:
+
+| Che controllo vuoi | Cosa esegue `nexgen openclaw setup` |
+| --- | --- |
+| economico (il predefinito) | `openclaw automations edit <id> --every 6h --session isolated --light-context --tools "" --model <modello di servizio>` |
+| quello completo | `heartbeat: mode: full` in `squad.yaml`: il job resta come lo prepara OpenClaw, e `every`/`model` vengono applicati se il blocco li nomina |
+| nessuno | `heartbeat: mode: off`: `openclaw automations disable <id>` |
+
+`--light-context` salta i file di bootstrap del workspace ed è documentato solo per i job isolati, ed è per questo che la sessione si sposta con lui: un controllo lasciato nella conversazione principale rimanda tutto quello che quella conversazione è diventata. `--tools ""` toglie ogni strumento dell'agente a quella esecuzione. Il modello è quello di servizio che lo stesso setup scrive qui sotto, così un controllo e il titolo di una chat costano la stessa chiamata economica invece di un turno sul modello primario. Quattro esecuzioni leggere al giorno sono qualche migliaio di token contro 3,8 milioni per 48 esecuzioni da 78.717.
+
+Un controllo tuo è una riga in `squad.yaml`, e il setup converge il job su quella:
+
+```yaml
+heartbeat:
+  mode: full        # light (il predefinito) | full | off
+  every: 6h
+  model: ollama/qwen3:8b
+```
+
+Uno scheduler che non risponde non viene mai dato per convergito: la riga lo dice, e `nexgen openclaw doctor` lo riporta come `unknown` quando nessuno lo ha interrogato. Quando qualcuno lo ha interrogato, il doctor giudica il job e non il suo nome: verde solo per un controllo che gira in una sessione propria, senza i file di avvio e senza strumenti, a quattro esecuzioni al giorno o meno, e un avviso che nomina il costo di 78.717 token quando gira ancora sulla conversazione dell'agente.
+
+### Le chiamate che nessuno scrive
+
+Titoli generati delle sessioni e dei canali, narrazione del progresso, riepiloghi di attività, riassunti dei transcript e side chat sono chiamate al modello separate. Senza `agents.defaults.utilityModel` ognuna viene addebitata al modello primario dell'agente, ed è così che una finestra da cinque ore paga un'etichetta.
+
+Il setup scrive quella chiave sul modello più economico che questa macchina ha, in quest'ordine: un modello locale che serve, poi il modello flash della chiave Go flat, poi Codex. Non propone mai un modello Claude, perché quella finestra è la cosa che si sta proteggendo, e non scrive niente quando il file risponde già, compresa la stringa vuota che spegne l'instradamento del lavoro di servizio. Un backend spento costa un solo nuovo tentativo sul modello primario, che è la regola di OpenClaw quando la catena di servizio è esaurita, quindi un server locale fermo rallenta un titolo e non lo toglie.
+
+
+### Il dreaming
+
+A monte il dreaming gira ogni notte alle 03:00 se qualcuno non lo ferma (`plugins.entries.memory-core.config.dreaming.enabled`, predefinito `true`, cadenza `0 3 * * *`), e una scansione è una fase light, una REM e una deep sulle note e sulle sessioni recenti. Il motore scrive `frequency: "0 3 * * 0"` dove il file non dichiara una cadenza, quindi il consolidamento della memoria avviene lo stesso e si paga una notte su sette. Tenere la scansione notturna è una chiave tua: `enabled: true` con la cadenza di OpenClaw, o una `frequency` qualsiasi che scrivi, non viene mai sovrascritta. `enabled: false` è l'altra risposta, e non toglie nient'altro: il plugin di memoria continua a funzionare.
+
+Compaction, il flush della memoria prima di una compaction e la memoria attiva risolvono il loro modello attraverso il modello predefinito degli agenti quando la loro chiave non è impostata. Su una macchina il cui predefinito è un modello locale, una compaction automatica e un caricamento di recall occupano quel modello mentre nessuno guarda, e su una macchina senza scheda grafica è tutto il computer per minuti. La persona ha scelto un modello locale per una conversazione, non per una scansione.
 
 Quando il predefinito è locale e un agente gira già su un modello cloud, il setup scrive:
 
@@ -145,6 +222,21 @@ Quando il predefinito è locale e un agente gira già su un modello cloud, il se
 Il modello cloud è quello su cui gira già un agente, `main` per primo. `allowedModels` viene fuso come insieme, quindi un'allowlist scritta dalla persona mantiene le sue voci e guadagna questa. Non viene scritto nulla quando il predefinito è già cloud, quando nessun agente ha un modello cloud, o quando la persona ha impostato quella chiave: una chiave presente è della persona, e un `allowModelOverride: false` esplicito si legge come una decisione, non come una lacuna. La memoria attiva viene scritta solo quando quel plugin è acceso.
 
 `nexgen openclaw doctor` dice in una riga quale lavoro sveglierebbe ancora un modello locale.
+
+### Una conversazione che non gira mai su sé stessa
+
+La politica di sessione predefinita di OpenClaw è `reset.mode: none`: i DM condividono la sessione principale dell'agente e l'unico limite è la compaction, che è una chiamata al modello su tutto il contesto ogni volta che parte. Una chat da centomila token fa pagare ogni messaggio come un prompt grande, e il controllo periodico qui sopra lo paga anche lui.
+
+Una macchina che risponde su un canale riceve quindi:
+
+```json5
+{ "session": { "reset": { "mode": "idle", "idleMinutes": 1440 } } }
+```
+
+Un giorno di silenzio, poi il messaggio successivo apre una conversazione nuova dai file di memoria dell'agente, che è dove vive già la metà durevole di una chat. Non è brusco: niente viene buttato mentre qualcuno sta parlando, e le scritture in background (un risveglio cron, un job di automazione) non rinnovano la finestra, quindi un bot fermo non può tenersi aperta una conversazione da solo. Un `reset`, `resetByType` o `resetByChannel` già nel file è della persona e non viene mai sostituito. Una macchina senza canali non riceve nulla: una persona che parla con il proprio assistente non è il costo a cui questo mira. `runtime.dm_scope` in `squad.yaml` separa il DM dal pannello quando i due non devono condividere la stessa conversazione.
+
+Il Tool Search resta acceso, perché è quello che tiene gli schemi dei connettori fuori da ogni richiesta: il motore non scrive mai `tools.toolSearch`, e un `tools.toolSearch: false` lasciato da un setup vecchio viene ritirato alla prima esecuzione. `nexgen openclaw doctor` stampa entrambi i fatti.
+
 
 ## Il watcher, e tutta la home
 
@@ -184,7 +276,7 @@ La fiducia che `agy` chiede per ogni cartella è lavoro dello stesso passo, perc
 
 ## Windows, le trappole che costano un pomeriggio
 
-- `openclaw gateway restart` su Windows non riavvia. Ferma i processi e rilancia il servizio, oppure usa `nexgen openclaw restart`, che fa entrambe le cose e aspetta la porta.
+- `openclaw gateway restart` è l'unica cosa che riavvia il servizio: il motore lo chiama e poi aspetta la porta per conto proprio (`nexgen openclaw restart`), perché su Windows un avvio a freddo dura minuti e il controllo di salute di OpenClaw può arrendersi prima.
 - I plugin non si cambiano a caldo. Dopo una modifica a `plugins`, riavvia, e aspettati che il primo avvio sia lento.
 - Un avvio a freddo richiede circa cinque minuti. Il pannello sembra morto mentre aspetta; non lo è.
 - Un pacchetto OpenClaw preso dal Microsoft Store installa un secondo gateway. Due gateway si contendono la stessa porta e lo stesso stato, e `nexgen openclaw doctor` nomina il pacchetto dello Store quando lo trova. L'app Windows Hub descritta più sotto è un'altra cosa, e il motore la riconosce da solo.
@@ -271,18 +363,18 @@ Il supporto completo, che significa parlare con il gateway attraverso il suo pro
 
 ## Parlare con il gateway
 
-Il client RPC (`nexgen_core.openclaw.gateway_rpc`) implementa il trasporto WebSocket JSON-RPC (protocollo v4), così il motore parla direttamente con il gateway OpenClaw (`ws://127.0.0.1:18789`).
+Le chiamate in `nexgen_core.openclaw.gateway_rpc` passano dalla CLI di OpenClaw (`openclaw gateway call <method> --params <json> --json --timeout <ms>`), così il motore parla con il gateway (`ws://127.0.0.1:18789`) usando lo stesso client, la stessa risoluzione dell'indirizzo e gli stessi scope operatore di ogni altro comando OpenClaw. Il modulo costruisce la chiamata e traduce la risposta della CLI negli errori del motore.
 
-Si autentica come client operatore con il token del gateway stesso, senza mai stamparlo o registrarlo nei log, ed espone una primitiva per operazione:
+Il token resta dove il gateway lo ha configurato. Un token che il chiamante passa esplicitamente arriva alla CLI come suo flag `--token` e non viene mai stampato né registrato; altrimenti è la CLI a risolvere quello configurato e il motore non ne tiene nessuno. Una primitiva per operazione:
 
 - `health()`: lo stato operativo del gateway e i plugin che ha caricato;
 - `config_get()`: l'istantanea della configurazione e l'hash di base che serve al controllo di concorrenza;
 - `config_patch(patch, base_hash)`: un aggiornamento parziale della configurazione, protetto da locking ottimistico;
 - `plugins_install(source)` e `plugins_reload(id)`: installare un plugin e ricaricarlo sul posto.
 
-Con questo client il motore configura OpenClaw e gestisce i suoi plugin qualunque sia l'ambiente di hosting (un gateway nativo Windows, un gateway WSL gestito da OpenClaw Companion, uno Linux o uno remoto): non deve mai entrare in un filesystem isolato, e non deve mai riavviare un processo.
+Con queste chiamate il motore configura OpenClaw e gestisce i suoi plugin qualunque sia l'ambiente di hosting (un gateway nativo Windows, un gateway WSL gestito da OpenClaw Companion, uno Linux o uno remoto): non deve mai entrare in un filesystem isolato, e non deve mai riavviare un processo.
 
-Un comando di sola lettura ispeziona la connessione RPC a mano: `nexgen openclaw rpc health [--json] [--url URL]`.
+Un comando di sola lettura ispeziona la connessione RPC con una chiamata sola: `nexgen openclaw rpc health [--json] [--url URL]`.
 
 ## Il plugin come pacchetto, per i gateway che il motore non raggiunge
 
@@ -310,12 +402,13 @@ Ogni richiesta porta `Authorization: Bearer $NEXGEN_MCP_BRIDGE_TOKEN`. Il token 
 2. **Configurazione iniziale.** Senza `openclaw.json`, `openclaw onboard --non-interactive --accept-risk --skip-health --no-install-daemon` crea la base, e la corsa continua come se il file fosse sempre stato lì. `--skip-health` perché il gateway non è ancora avviato; `--no-install-daemon` perché il servizio lo installa il motore, e due supervisori per un gateway si contendono la stessa porta.
 3. **Piano e conferma.** Stampa esattamente quello che stampa `nexgen openclaw plan`, poi chiede. `--yes` salta la domanda; `--dry-run` si ferma qui dopo aver stampato il piano e i comandi che eseguirebbe.
 4. **Scrittura sicura**, a gateway fermo, perché OpenClaw non ricarica a caldo un blocco `plugins` cambiato:
-   - un backup accanto al file, `openclaw.json.pre-nexgen-<YYYYMMDD-HHMMSS>`;
-   - le sezioni di proprietà del motore fuse nel file in vigore: dizionari fusi ricorsivamente, una chiave che la persona ha scritto fuori dalla proposta mantenuta, `plugins.allow` fuso come unione ordinata, le voci di modello fuse per `id` così un modello scritto a mano non viene perso, e le foglie con lista come `deny` e `allowedModels` fuse come insiemi;
+   - le sezioni di proprietà del motore, decise fondendo la proposta nel file in vigore: dizionari fusi ricorsivamente, una chiave che la persona ha scritto fuori dalla proposta mantenuta, `plugins.allow` fuso come unione ordinata, le voci di modello fuse per `id` così un modello scritto a mano non viene perso, e le foglie con lista come `deny` e `allowedModels` fuse come insiemi. Solo le sezioni che differiscono davvero finiscono in un unico documento di patch, ognuna passata con `--replace-path`, che è ciò che fa uscire davvero dal file una chiave ritirata (`tools.exec.security`/`ask`, `models.entries`, il blocco `runtime` che il pin ignora);
    - i modelli dei lavori in background quando il modello predefinito è locale, e `env.vars.CHOKIDAR_USEPOLLING: "1"` su Windows quando il gateway altrimenti osserverebbe la home, entrambi descritti sopra;
    - il token del gateway generato con `secrets.token_urlsafe(32)` solo quando non ce n'è uno, e mai stampato;
    - il plugin guardrail del motore abilitato solo quando la sua cartella è davvero depositata, e autorizzato con `hooks.allowConversationAccess`, che serve sia al suo hook governor sia al controllo delle prove;
-   - una scrittura atomica, poi `openclaw config validate` sul file appena scritto. Un fallimento rimette il backup, stampa l'errore di OpenClaw e esce con codice diverso da zero;
+   - `openclaw config patch --dry-run --json` mentre il gateway è ancora in esecuzione: una configurazione che OpenClaw rifiuterebbe viene stampata con la sua motivazione, e né il servizio né il file vengono toccati;
+   - poi, a gateway fermo, `openclaw config patch`, che fonde la patch, valida l'intero risultato (schema, SecretRef e riferimenti ai modelli), tiene il file precedente nella propria rotazione accanto (`openclaw.json.bak`, poi `.bak.1` fino a `.bak.4`), pubblica in un solo passo atomico con permessi 0600, e rifiuta senza toccare nulla quando il risultato non gli piace. Un rifiuto stampa l'errore di OpenClaw ed esce con codice diverso da zero, e non c'è niente da rimettere a posto;
+   - un file che OpenClaw non riesce a leggere non viene sovrascritto: il passo lo dice e indica `openclaw doctor --fix`, la riparazione della release, poi il setup si può rilanciare;
    - dopo che OpenClaw ha accettato il file, le catene di riserva arrivano nel `nexgen.config.json` del plugin, che viene letto a ogni turno e non richiede riavvio.
 5. **Cartelle di lavoro degli agenti.** Ogni cartella viene creata quando manca e i manuali vengono scritti solo quando assenti, così un manuale modificato dalla persona non viene mai sovrascritto. L'unica eccezione è una cartella creata dall'onboarding un attimo prima: dentro non può esserci ancora nulla della persona, quindi il manuale del motore sostituisce il segnaposto di OpenClaw e il suo `BOOTSTRAP.md` viene rimosso, perché quel rito di primo avvio ridefinirebbe l'agente.
 6. **Servizio.** Il gateway viene installato come servizio quando non lo è già, avviato quando l'installazione lo ha solo registrato, e la porta viene attesa fino a dieci minuti, con i secondi trascorsi stampati: un avvio a freddo richiede circa cinque minuti.
@@ -358,15 +451,17 @@ openclaw:
 
 È disattivata per impostazione predefinita e viene attivata automaticamente durante `nexgen openclaw setup` quando OpenClaw è installato sulla macchina. Il renderer di OpenClaw la esclude esplicitamente, così OpenClaw non configura mai se stesso come client MCP.
 
-Per tornare indietro, ferma prima il gateway, copia il backup sopra il file, poi lascialo ripartire così i plugin vengono ricaricati:
+Per tornare a una configurazione precedente, ferma prima il gateway, copia sopra il file il backup di OpenClaw, poi lascialo ripartire così i plugin vengono ricaricati:
 
 ```bash
 nexgen openclaw stop
-cp ~/.openclaw/openclaw.json.pre-nexgen-20261023-120000 ~/.openclaw/openclaw.json
+cp ~/.openclaw/openclaw.json.bak ~/.openclaw/openclaw.json
 nexgen openclaw restart
 ```
 
-`nexgen openclaw stop` ferma il gateway e aspetta che processo e porta siano spariti. `nexgen openclaw restart [--timeout SECONDI]` ferma il gateway, lo avvia e aspetta la porta, stampando i secondi impiegati; una porta che non risponde mai è un'uscita con codice diverso da zero, mai un successo silenzioso. Su Windows è l'unica cosa che lo riavvia: il `gateway restart` di OpenClaw non funziona.
+Il passo ne tiene cinque: `openclaw.json.bak` è il più recente, da `.bak.1` a `.bak.4` quelli che OpenClaw aveva ruotato prima, tutti con permessi 0600.
+
+`nexgen openclaw stop` ferma il servizio gateway con `openclaw gateway stop` e nomina i processi ancora vivi quando non ci è riuscito. `nexgen openclaw restart [--timeout SECONDI]` chiede `openclaw gateway restart` e poi aspetta la porta, stampando i secondi impiegati; una porta che non risponde mai è un'uscita con codice diverso da zero, mai un successo silenzioso. Un riavvio che OpenClaw rifiuta viene riportato com'è e non parte niente accanto.
 
 `nexgen openclaw pair` elenca i telefoni in attesa di approvazione. `nexgen openclaw pair --approve <id>` ne approva uno, chiedendo prima a meno che non ci sia `--yes`. Nessun token viene mai stampato: `pending()` elimina ogni campo il cui nome somiglia a un segreto prima che arrivi sullo schermo.
 
@@ -430,7 +525,7 @@ Quando l'app è installata, una riga risponde alle due domande che una persona h
 
 `nexgen openclaw node --host <indirizzo> [--port 18789] [--name <etichetta>] [--apply] [--join-file <percorso>] [--dry-run] [--force]` stampa i comandi che rendono questa macchina un nodo di un gateway altrove: la rotta in un solo incolla di OpenClaw con un codice di join, e la rotta esplicita con le sue due approvazioni. L'indirizzo può essere un nome sulla rete di casa o un nome Tailscale MagicDNS; il secondo non richiede porta nella rotta in un solo incolla e richiede `--port 443 --tls` in quella esplicita. Senza `--apply` non scrive nulla e non esegue nulla, perché `openclaw node install` scrive già il servizio su ogni piattaforma.
 
-`--apply` fa la parte della macchina in quella transizione, nell'unico ordine che funziona su un PC che aveva già un gateway suo. Ferma e rimuove il servizio gateway locale, archivia un drop-in systemd rimasto senza la sua unit, elimina il blocco `auth` del gateway, spegne i canali locali e attiva `nodeHost.workerRuns`. Tutti e tre sono residui che rompono un nodo in modi che nessuna riga del doctor nomina: il token nel file vince sul token di accoppiamento e il gateway centrale risponde `AUTH_TOKEN_MISMATCH`, due gateway che interrogano lo stesso bot si uccidono il poller a vicenda ogni trenta secondi, e un nodo senza worker runs non ospita sessioni. Ogni altra chiave della configurazione resta, e il file viene copiato da parte prima dell'unica scrittura. Poi si registra: con `--join-file` riscatta il link come servizio e aspetta la connessione; senza, esegue `openclaw node install` e `openclaw node start` e lascia le due approvazioni a `nexgen openclaw pair` sul gateway. `--dry-run` stampa lo stesso piano e non cambia nulla, `--force` sposta una macchina che è già nodo di un altro gateway. `install.sh --role node` e `install.ps1 -Role node` eseguono questo stesso ritiro prima di attaccarsi.
+`--apply` fa la parte della macchina in quella transizione, nell'unico ordine che funziona su un PC che aveva già un gateway suo. Ferma e rimuove il servizio gateway locale, archivia un drop-in systemd rimasto senza la sua unit, elimina il blocco `auth` del gateway, spegne i canali locali e attiva `nodeHost.workerRuns`. Tutti e tre sono residui che rompono un nodo in modi che nessuna riga del doctor nomina: il token nel file vince sul token di accoppiamento e il gateway centrale risponde `AUTH_TOKEN_MISMATCH`, due gateway che interrogano lo stesso bot si uccidono il poller a vicenda ogni trenta secondi, e un nodo senza worker runs non ospita sessioni. Ogni altra chiave della configurazione resta, e il file viene copiato da parte prima dell'unica scrittura. Poi si registra: con `--join-file` passa il link a `openclaw connect --service --target-file`, che accoppia la macchina, conferma la prima connessione autenticata e installa il servizio prima di uscire, quindi un'uscita a zero è tutta la prova e non resta niente da attendere; senza, esegue `openclaw node install` e `openclaw node start` e lascia le due approvazioni a `nexgen openclaw pair` sul gateway. `--dry-run` stampa lo stesso piano e non cambia nulla, `--force` sposta una macchina che è già nodo di un altro gateway. `install.sh --role node` e `install.ps1 -Role node` eseguono questo stesso ritiro prima di attaccarsi.
 
 `nexgen openclaw node --use-app [--apply]` è la direzione opposta, per il PC Windows il cui nodo è l'app Companion: legge se il servizio nodo della CLI `OpenClaw Node` è installato e se il nodo dell'app è collegato, e con `--apply` rimuove il servizio con `openclaw node uninstall` e registra il ruolo `node`, ma solo quando il nodo dell'app è collegato. Mentre l'app ha la modalità nodo attiva e il suo nodo non è su, `--apply` rifiuta e stampa i tre passi nell'unico ordine che funziona. Non scrive mai sotto le cartelle dell'app e non avvia mai l'app; la sezione sull'app Companion dice cosa serve ancora all'app stessa.
 
@@ -452,8 +547,19 @@ Il passaggio parte da tre punti, tutti nel plugin che OpenClaw carica già: `/ad
 
 `nexgen openclaw package [--json]` costruisce il tarball npm del plugin nella cartella di stato del motore e stampa il file e il suo sha256, la coppia con cui si verifica un'installazione su un altro gateway. Non installa nulla e non scrive altro; `--json` riporta lo stesso percorso e lo stesso hash con i file dentro.
 
+`nexgen openclaw cost [--json] [--since DATA]` stampa quanto ha speso il bot, per giorno, per sessione e per agente, tramite il binario opzionale [ccusage](https://github.com/ccusage/ccusage) (MIT): le viste daily e session delle trascrizioni di OpenClaw, in cache per dieci minuti, con ogni sessione attribuita alla cartella dell'agente che possiede il suo file e contata intera nel giorno in cui è stata attiva l'ultima volta. Non scrive nulla, stampa una riga invece di un numero quando il binario manca o la forma del suo output non viene capita, e `--json` riporta la stessa lettura come numeri.
+
+`nexgen openclaw parity [--lane LANE] [--json] [--dry-run]` misura quanto costa una harness dentro OpenClaw rispetto a quanto costa eseguita direttamente: un agente per corsia CLI, lo stesso messaggio corto dai due lati, l'input totale dell'unica chiamata al modello e la differenza giudicata contro la tolleranza di 10.000 token del proprietario. Tiene `99-INDEX/OPENCLAW-PARITY.json` nel Vault, oppure nella cartella di stato con il percorso stampato quando questa macchina non può pubblicare lì, e `--dry-run` stampa i comandi e non spende niente. La sezione sopra dice cosa misura e quali corsie non misura.
+
 `nexgen openclaw restart` e `nexgen openclaw pair` riportano su il gateway e lasciano entrare un telefono, o un'altra macchina; sono descritti sopra, con il resto dell'installazione. `nexgen openclaw stop` lo spegne e aspetta che la porta sia libera, che è ciò che serve a una modifica a mano di `openclaw.json`.
 
-`nexgen openclaw rpc health [--json] [--url URL]` ispeziona lo stato operativo del gateway attraverso la chiamata WebSocket `health`, riportando uptime e plugin caricati senza cambiare nulla.
+`nexgen openclaw rpc health [--json] [--url URL]` ispeziona lo stato operativo del gateway attraverso `gateway call health` di OpenClaw, riportando uptime e plugin caricati senza cambiare nulla.
 
-`nexgen openclaw groom [--dry-run]` compatta le chat degli agenti rimaste inattive o cresciute troppo, con un tetto di al massimo una sessione per esecuzione (la più grande tra le idonee, dando priorità a quelle oltre la soglia rigida; sovrascrivibile tramite `NEXGEN_OPENCLAW_MAX_COMPACTIONS`) per mantenere reattivo il gateway a thread singolo.
+`nexgen openclaw groom [--dry-run]` compatta le chat degli agenti rimaste inattive o cresciute troppo, con un tetto di al massimo una sessione per esecuzione (la più grande tra le idonee, dando priorità a quelle oltre la soglia rigida; sovrascrivibile tramite `NEXGEN_OPENCLAW_MAX_COMPACTIONS`, e `0` spegne la compattazione) per mantenere reattivo il gateway a thread singolo. Una chat inattiva viene compattata solo sopra `IDLE_MIN_TOKENS` token (150.000, il budget misurato del primo prompt): riassumerne una più piccola costa più della cache fredda che evita, ed è quel limite a tenere lontana una bolletta oraria da un bot con cui non parla nessuno. Una chat la cui compattazione è fallita non porta via il turno alla successiva e viene lasciata stare per sei ore, così una chat che il gateway rifiuta non può affamare la coda, e un'esecuzione che lascia chat in attesa senza compattarne nessuna alza un avviso sul canale di avvisi del motore. `--dry-run` mostra l'intera coda e dice quante ne prenderebbe un'esecuzione reale. `nexgen openclaw doctor` giudica il job orario stesso (`openclaw.cron.context_guard`): un job assente, spento, o registrato con una modalità di consegna invece di `--no-deliver` è un avviso, perché il secondo fa registrare al gateway ogni esecuzione come consegna fallita.
+
+Quali chat riesce a compattare dipende dalla loro corsia, non dalla loro dimensione.
+Una chat `:harness:` appartiene a un harness nativo (codex, claude-cli, copilot) che dichiara una compattazione propria, quindi `openclaw sessions compact` chiede all'harness e la chat segue la regola dell'inattività come tutte le altre.
+Una chat `:acp:` è legata a un agente esterno tramite l'Agent Client Protocol, la cui superficie di richieste non ha nessuna richiesta di compattazione: OpenClaw può solo riscrivere la propria copia del transcript mentre l'agente riprende la propria conversazione, quindi il messaggio successivo rimanderebbe tutto.
+Quelle chat vengono lasciate stare e nominate invece, da una riga che l'esecuzione stampa e da `openclaw.groom` nel doctor, che elenca ognuna sopra `IDLE_MIN_TOKENS` come non compattata, insieme a ogni chat che un harness ha rifiutato e che la memoria ha poi smesso di ritentare (codex risponde `compacted: false` quando il suo agente ha una lista di strumenti negati).
+Quella riga del doctor è rossa quando il job orario manca, è spento, non ha mai finito un'esecuzione, ha chiuso l'ultima con un errore, o non riesce da tre ore, ed è verde con l'età dell'ultima esecuzione e il numero di chat in attesa.
+L'esecuzione rimette anche la compattazione manuale del plugin Antigravity quando un aggiornamento del plugin l'ha rimossa, perché `agent-sync` allinea solo la release di OpenClaw: senza, ogni chat `agy` veniva saltata in silenzio finché una persona non rilanciava `nexgen openclaw setup`.

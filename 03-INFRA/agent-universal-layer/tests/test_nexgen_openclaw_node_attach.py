@@ -1,13 +1,19 @@
-"""Tests for node attach connection progress monitoring and timeout recovery."""
+"""This machine's side of becoming a node: the protected handoff and its approvals.
+
+What is proved here is the handoff OpenClaw documents: the join target reaches
+`openclaw connect` through a private file rather than its arguments, so a
+single-use code never appears in the process list or in what the engine prints,
+and a refused command is reported instead of being taken for a connection.
+
+There is no wait loop to test: `openclaw connect --service` completes the first
+authenticated connection before it installs the service, so its exit code is the
+answer this engine used to poll for.
+"""
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from nexgen_core.openclaw.node_attach import (
-    check_node_connected,
-    connect_node_service,
-    wait_for_node_connection,
-)
+from nexgen_core.openclaw.node_attach import connect_node_service
 from nexgen_core.openclaw_service import RunResult
 
 
@@ -38,143 +44,50 @@ def test_connect_node_service_uses_target_file_and_protects_secrets() -> None:
         assert secret_join_target not in msg
 
 
-def test_check_node_connected() -> None:
-    runner = MagicMock()
-    # Windows Scheduled Task: running
-    win_running = (
-        '{"service": {"label": "Scheduled Task", "loaded": true, "command": '
-        '{"programArguments": ["node.exe", "index.js", "node", "run", "--host", "gw.tailnet", "--port", "443", "--tls"]}, '
-        '"runtime": {"status": "running"}}}'
-    )
-    runner.return_value = RunResult(0, win_running, "")
-    assert check_node_connected(runner) is True
+def test_a_refused_connect_is_reported_and_is_not_a_connection() -> None:
+    """The exit code is the only proof of attachment there is, so a failure never reads as one."""
+    runner = MagicMock(return_value=RunResult(7, "", "join code not found or expired"))
+    said: list[str] = []
 
-    # Windows Scheduled Task: stopped (real owner machine case)
-    win_stopped = (
-        '{"service": {"label": "Scheduled Task", "loaded": true, "command": '
-        '{"programArguments": ["node.exe", "index.js", "node", "run", "--host", "gw.tailnet", "--port", "443", "--tls"]}, '
-        '"runtime": {"status": "stopped", "state": "Ready"}}}'
-    )
-    runner.return_value = RunResult(0, win_stopped, "")
-    assert check_node_connected(runner) is False
+    assert connect_node_service("https://gw.example.com/j/spent", runner=runner, out=said.append) is False
 
-    # Linux systemd: running
-    linux_running = (
-        '{"service": {"label": "systemd", "loaded": true, "command": '
-        '{"programArguments": ["/usr/bin/node", "index.js", "node", "run", "--host", "gw.tailnet", "--port", "18789"]}, '
-        '"runtime": {"status": "running"}}}'
-    )
-    runner.return_value = RunResult(0, linux_running, "")
-    assert check_node_connected(runner) is True
-
-    # Linux systemd: stopped
-    linux_stopped = (
-        '{"service": {"label": "systemd", "loaded": true, "command": '
-        '{"programArguments": ["/usr/bin/node", "index.js", "node", "run", "--host", "gw.tailnet", "--port", "18789"]}, '
-        '"runtime": {"status": "stopped"}}}'
-    )
-    runner.return_value = RunResult(0, linux_stopped, "")
-    assert check_node_connected(runner) is False
-
-    # No service loaded
-    no_service = '{"service": {"label": "Scheduled Task", "loaded": false, "command": null, "runtime": {"status": "stopped"}}}'
-    runner.return_value = RunResult(0, no_service, "")
-    assert check_node_connected(runner) is False
-
-    # Command execution failure
-    runner.return_value = RunResult(1, "", "daemon inspection failure")
-    assert check_node_connected(runner) is False
+    output = "\n".join(said)
+    assert "Node connect failed (exit code 7)" in output
+    assert "completed" not in output
 
 
-def test_wait_for_node_connection_success() -> None:
-    current_time = 0.0
+def test_the_handoff_file_is_gone_after_a_refused_connect(monkeypatch) -> None:
+    """A spent or refused code must not be left on disk for the next run to redeploy."""
+    from nexgen_core.openclaw import node_attach
 
-    def fake_time() -> float:
-        nonlocal current_time
-        return current_time
+    written: list[object] = []
+    real_write = node_attach.atomic_write_text
 
-    def fake_sleep(duration: float) -> None:
-        nonlocal current_time
-        current_time += duration
+    def remember(path, text, **kwargs):
+        written.append(path)
+        return real_write(path, text, **kwargs)
 
-    calls = 0
+    monkeypatch.setattr(node_attach, "atomic_write_text", remember)
 
-    def probe() -> bool:
-        nonlocal calls
-        calls += 1
-        return calls >= 3
-
-    emitted: list[str] = []
-    connected, elapsed = wait_for_node_connection(
-        probe_fn=probe,
-        node_name="win-desktop",
-        timeout_s=30.0,
-        report_interval_s=1.0,
-        sleeper=fake_sleep,
-        time_provider=fake_time,
-        emit=emitted.append,
+    connect_node_service(
+        "https://gw.example.com/j/spent",
+        runner=MagicMock(return_value=RunResult(1, "", "nope")),
+        out=lambda _line: None,
     )
 
-    assert connected is True
-    assert elapsed >= 0.0
-    assert any("connected to gateway" in line for line in emitted)
+    assert written and written[0].exists() is False
 
 
-def test_wait_for_node_connection_timeout_cites_only_documented_commands() -> None:
-    current_time = 0.0
+def test_connecting_installs_the_service_under_the_long_deadline() -> None:
+    """Connecting pairs and installs, so it gets the install ceiling, not the quick read one."""
+    from nexgen_core.openclaw.node_cli import SERVICE_TIMEOUT_S
 
-    def fake_time() -> float:
-        nonlocal current_time
-        return current_time
+    calls: list[tuple[list[str], float]] = []
 
-    def fake_sleep(duration: float) -> None:
-        nonlocal current_time
-        current_time += duration
-
-    emitted: list[str] = []
-    connected, elapsed = wait_for_node_connection(
-        probe_fn=lambda: False,
-        node_name="win-desktop",
-        timeout_s=10.0,
-        report_interval_s=2.0,
-        sleeper=fake_sleep,
-        time_provider=fake_time,
-        emit=emitted.append,
-    )
-
-    assert connected is False
-    assert elapsed >= 10.0
-    assert any("did not connect within" in line for line in emitted)
-    full_output = " ".join(emitted)
-    assert "Recovery steps" in full_output
-    assert "openclaw node status" in full_output
-    assert "openclaw node restart" in full_output
-    assert "openclaw devices join-code" in full_output
-    # Must NOT cite non-existent openclaw node logs
-    assert "node logs" not in full_output
-
-
-def test_attach_uses_the_service_deadline_to_connect_and_the_read_deadline_to_check() -> None:
-    """Two different jobs, two different ceilings: connecting installs, checking only asks."""
-    from nexgen_core.openclaw.node_cli import READ_TIMEOUT_S, SERVICE_TIMEOUT_S
-
-    attach_calls: list[tuple[list[str], float]] = []
-    probe_calls: list[tuple[list[str], float]] = []
-
-    def attach_runner(argv, timeout):
-        attach_calls.append((list(argv), timeout))
+    def runner(argv, timeout):
+        calls.append((list(argv), timeout))
         return RunResult(0, "connected\n", "")
 
-    def probe_runner(argv, timeout):
-        probe_calls.append((list(argv), timeout))
-        return RunResult(0, (
-            '{"service": {"label": "Scheduled Task", "loaded": true, "command": '
-            '{"programArguments": ["node.exe", "index.js", "node", "run", "--host", "gw.example.com", "--port", "443", "--tls"]}, '
-            '"runtime": {"status": "running"}}}'
-        ), "")
+    assert connect_node_service("https://gw.example.com/j/code", runner=runner, out=lambda _: None) is True
 
-    assert connect_node_service("https://gw.example.com/j/code", runner=attach_runner, out=lambda _: None) is True
-    assert check_node_connected(probe_runner) is True
-
-    assert attach_calls[0][1] == SERVICE_TIMEOUT_S
-    assert probe_calls[0] == (["openclaw", "node", "status", "--json"], READ_TIMEOUT_S)
+    assert calls[0][1] == SERVICE_TIMEOUT_S

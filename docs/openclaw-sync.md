@@ -18,7 +18,8 @@ The state directory is the folder that file lives in: `~/.openclaw` by default, 
 | Instructions | an `AGENTS.md` block in each agent workspace | the guard's instructions phase |
 | Skills | `~/.agents/skills/` (the shared catalog) | the skills phase |
 | The plugin | `<state dir>/extensions/nexgen/` | the guard's permissions phase |
-| Briefing, checkpoint, posture, engine | `<state dir>/extensions/nexgen/nexgen.config.json` | the permissions phase and the module state |
+| Briefing, checkpoint, engine | `plugins.entries.nexgen.config` in `openclaw.json` (OpenClaw hands it to the plugin as `api.pluginConfig`) | the setup, with the gateway stopped |
+| The same switches, for one more release | `<state dir>/extensions/nexgen/nexgen.config.json` | the permissions phase and the module state |
 
 ## MCP connectors
 
@@ -115,18 +116,27 @@ extensions/nexgen/
   sup-tools.mjs                 the supervision an agent may drive, as tools
   evidence.mjs                  a local model's answer, held to its own tool receipts
   engine-run.mjs                how any of them starts the engine: no shell, a deadline
-  engine-config.mjs             reads nexgen.config.json, once for every job that has a switch
+  engine-config.mjs             the switches: api.pluginConfig first, nexgen.config.json second
   session.mjs                   which session a hook event belongs to
   package.json                  openclaw.extensions -> ./index.mjs
-  openclaw.plugin.json          id: nexgen, onStartup, the tool names it owns
+  openclaw.plugin.json          id: nexgen, onStartup, the tool names it owns, the schema of its config
   nexgen-guardrail-core.mjs     the shared core every adapter imports
   nexgen-guardrail.config.json  which guardrail body, with what timeout, the audit file
-  nexgen.config.json            the engine's switches: briefing, checkpoint, posture, engine,
-                                governor, evidence
+  nexgen.config.json            the same switches, written and read for one more release:
+                                briefing, checkpoint, engine, governor, evidence
   nexgen-quota-state.json       what the beat last read, for the governor
   vault-briefing.txt            the briefing text, shared with Claude Code
   hooks/<body>.mjs              the guardrail body (the private policy)
 ```
+
+The switches have one derivation (`OpenClawRuntime.plugin_switches`) and, for this release, two
+homes. OpenClaw reads `plugins.entries.nexgen.config`, validates it against the manifest's
+`configSchema` and hands it to the plugin as `api.pluginConfig`; the setup writes it there with the
+gateway stopped. Every guard deposit also writes the same sections to `nexgen.config.json` beside
+the plugin, and the plugin prefers that file while it exists, because a sync can rewrite the file
+between two setups while `openclaw.json` is only read when the gateway starts. That file, and the
+ancestor search that finds it on a build copy, go away with the release after this one; until then
+`nexgen doctor` says which of the two homes this machine is on.
 
 Two things about enabling it:
 
@@ -190,7 +200,7 @@ An unsupported answer is not dropped and not passed in silence:
 1. the model gets one more pass (`revise`, with `retry.maxAttempts: 1` and a key of the engine's own) and is told which claims have no receipt;
 2. if it comes back unsupported anyway, or a stop hook is already asking for a pass, the answer is delivered with a visible note, `Unverified claims: ...`, under it.
 
-The switch and the providers are not in the plugin. They are the `evidence` section of `nexgen.config.json`, written by the deposit from the configuration in force: `{"enabled": true, "providers": ["llama-cpp", "ollama"]}`. A machine with no local model gets `{"enabled": false, "providers": []}`, and a cloud model is never in the list, so it is never checked.
+The switch and the providers are not in the plugin. They are the `evidence` section, written by the deposit from the configuration in force: `{"enabled": true, "providers": ["llama-cpp", "ollama"]}`. A machine with no local model gets `{"enabled": false, "providers": []}`, and a cloud model is never in the list, so it is never checked. The section reaches the plugin through `plugins.entries.nexgen.config` (what OpenClaw hands over as `api.pluginConfig`) and through `nexgen.config.json` beside it for one more release; the doctor reads the same two places in the same order.
 
 Two limits worth knowing. `revise` needs a finalization integration: the embedded runner and the Codex hook relay have one, the Copilot harness does not, and a run that already had a deterministic side effect is not rewound, which is why the note is the path that does not depend on the harness. The note is added to the delivery that carries the judged text, recognized by its first line: a channel that rewrites the answer beyond recognition gets no note, and no other message of that session is ever annotated in its place. The phrase tables are long and bilingual, not exhaustive: a claim worded in a way neither list carries is still checked where the rule does not depend on a phrase (a cited source, an invented result, facts with nothing retrieved).
 
@@ -202,38 +212,35 @@ Session continuity across CLIs runs through machine-local state and MCP:
 - Claude Code to context. On `SessionStart` (resume or compact), `claude-vault-checkpoint.mjs` stays strictly read-only and never writes. If a recent checkpoint exists (under 12 hours), it appends a guidance note referencing the agent, time and session key, directing the operator to inspect conversation history through the `openclaw` MCP server (`openclaw mcp serve`, made available across harnesses via the MCP bridge).
 - If the checkpoint is missing, older than 12 hours, or unreadable, the hook falls back silently to the briefing text alone.
 
-The checkpoint job is controlled by `checkpoint.enabled` in `nexgen.config.json`, enabled by default like the briefing. Any error during the write is swallowed safely and never breaks OpenClaw sessions.
+The checkpoint job is controlled by `checkpoint.enabled`, enabled by default like the briefing, and read from the same two homes as every other switch. Any error during the write is swallowed safely and never breaks OpenClaw sessions.
 
 ### Posture
 
-The private permission manifest's posture travels into `nexgen.config.json` in the neutral vocabulary, and the plugin renders it there. `openclaw.json` is never rewritten by the permissions phase, because it is read at gateway start and must not change under a running one.
+The engine does not write a posture. The plugin still reads the `posture` key (`bypass`, `accept-edits`, `ask`) when a person sets it in `nexgen.config.json` or in `plugins.entries.nexgen.config`, and behaves as `bypass` when it is absent or unreadable. The permissions phase never writes it and never rewrites `openclaw.json`, because that file is read at gateway start and must not change under a running one.
 
-| Posture | What OpenClaw does |
+| Posture in the file | What OpenClaw does |
 |---|---|
-| `bypass` | the guardrail decides alone: what the body permits runs without a question, what it denies is blocked, a body that asks still asks |
+| `bypass` (default) | the guardrail decides alone: what the body permits runs without a question, what it denies is blocked, a body that asks still asks |
 | `accept-edits` | like `bypass` for file writes; a shell command the body does not deny asks for approval |
 | `ask` | every shell command asks for approval, and a tool that changes files (`write`, `edit`, `apply_patch`) asks too |
 
-Without a posture in the manifest nothing is written, exactly like the other CLIs; the plugin then behaves as `bypass`.
-
 ## Parity with Claude Code
 
-The engine puts the same six layers in both hosts. `nexgen doctor` reports one `openclaw.parity.*` outcome per layer and stays silent on a machine that does not have both CLIs.
+The engine puts the same five layers in both hosts. `nexgen doctor` reports one `openclaw.parity.*` outcome per layer and stays silent on a machine that does not have both CLIs.
 
 | Layer | Claude Code | OpenClaw | Runtime `claude-cli` / `codex` |
 |---|---|---|---|
 | MCP | `mcpServers` in `~/.claude.json` | `mcp.servers` in `openclaw.json` | a `claude-cli` agent reaches them through the `lazy-mcp` entry in OpenClaw's `mcp.servers` (Claude Code's own file is never read there); Codex uses its own rendered config |
-| Instructions | `~/CLAUDE.md` points at the canonical `AGENTS.md` | the managed block in each workspace `AGENTS.md` | the agent's own runtime loads its instructions |
+| Instructions | `~/.claude/CLAUDE.md` points at the canonical `AGENTS.md` | the managed block in each workspace `AGENTS.md` | the agent's own runtime loads its instructions |
 | Skills | `~/.claude/skills` | `~/.agents/skills` (shared catalog) | the agent's own runtime loads its skills |
 | Guardrail | `PreToolUse` → `claude-guardrail-adapter.mjs` | `before_tool_call` in the plugin | Claude Code's or Codex's own guardrail, installed by this engine |
 | Briefing | `SessionStart` → `claude-vault-checkpoint.mjs` | plugin briefing, same `vault-briefing.txt` | Claude Code's own checkpoint hook |
-| Posture | `permissions.defaultMode` | `posture` in `nexgen.config.json` | that CLI's own posture file |
 
 An aligned layer is a PASS; a layer one host has and the other lacks is a WARN that names the gap. The action is almost always `nexgen sync`, the one phase that writes both sides. The MCP layer compares names only, never an `env` block: a token is never read, printed or kept.
 
 ## What this does not cover
 
-The plugin only sees calls that OpenClaw itself executes: the embedded runner, which is what the agents on OpenCode Go and on the local model use. An agent whose runtime is `claude-cli` or `codex` runs its tools inside Claude Code or Codex, where each CLI's own guardrail, briefing and posture, installed by this same engine, are already in charge. Two of each on one call would mean two policies to keep in step; one per call is the point.
+The plugin only sees calls that OpenClaw itself executes: the embedded runner, which is what the agents on OpenCode Go and on the local model use. An agent whose runtime is `claude-cli` or `codex` runs its tools inside Claude Code or Codex, where each CLI's own guardrail and briefing, installed by this same engine, are already in charge. Two of each on one call would mean two policies to keep in step; one per call is the point.
 
 `code_execution` runs Python, not a shell line. It is in the watched set so a `command` field on it would be judged, but its source is not fed to a body that matches shell patterns, where it would match by accident rather than by meaning.
 

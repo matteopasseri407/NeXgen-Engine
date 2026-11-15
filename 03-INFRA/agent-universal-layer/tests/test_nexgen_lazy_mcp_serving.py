@@ -353,3 +353,76 @@ def test_the_two_tools_are_annotated_so_a_cli_can_treat_them_differently(waiter)
     tools = {t["name"]: t["annotations"] for t in w.read()["result"]["tools"]}
     assert tools["lazy_call"]["readOnlyHint"] is True and tools["lazy_call"]["destructiveHint"] is False
     assert tools["lazy_mutate"]["readOnlyHint"] is False and tools["lazy_mutate"]["destructiveHint"] is True
+
+
+# ------------------------------------------------- the arguments are checked before they are paid for
+
+#: A server whose tool has a required argument and no tolerance for extra ones: the shape every n8n
+#: tool has, and the shape the gateway used to forward blind (`workflowId: Required`).
+REQUIRED_SERVER = r"""
+import json, sys
+TOOLS = [
+  {"name": "get_workflow", "description": "reads one workflow", "inputSchema": {
+     "type": "object",
+     "properties": {"workflowId": {"type": "string", "description": "The workflow id"}},
+     "required": ["workflowId"],
+     "additionalProperties": False}},
+]
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    req = json.loads(line)
+    m, rid = req.get("method"), req.get("id")
+    if m in ("initialize", "notifications/initialized", "ping"):
+        continue
+    if m == "tools/list":
+        out = {"jsonrpc": "2.0", "id": rid, "result": {"resultType": "complete", "tools": TOOLS}}
+    elif m == "tools/call":
+        text = "ran " + str(req["params"]["arguments"]["workflowId"])
+        out = {"jsonrpc": "2.0", "id": rid, "result": {"resultType": "complete", "content": [{"type": "text", "text": text}]}}
+    else:
+        out = {"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": "nf"}}
+    sys.stdout.write(json.dumps(out) + "\n")
+    sys.stdout.flush()
+"""
+
+
+def test_a_call_that_skipped_lazy_load_is_refused_with_the_schema_it_missed(waiter):
+    w = waiter({"n8n": {"code": REQUIRED_SERVER, "readonly": True}})
+    w.ask(0, "lazy_list")  # the model saw the index, then guessed instead of loading
+
+    refused = w.ask(1, "lazy_call", server="n8n", tool="get_workflow", arguments={})
+
+    assert refused["isError"] is True
+    text = w.text(refused)
+    assert "missing required argument: workflowId" in text
+    assert "lazy_load" in text
+    assert '"required":["workflowId"]' in text  # the schema, compact, so the next call is right
+    assert "ran " not in text  # the call was never forwarded
+
+
+def test_an_argument_of_the_wrong_type_is_refused_too(waiter):
+    w = waiter({"n8n": {"code": REQUIRED_SERVER, "readonly": True}})
+    w.ask(0, "lazy_list")
+
+    refused = w.ask(1, "lazy_mutate", server="n8n", tool="get_workflow", arguments={"workflowId": 7}, confirm=True)
+
+    assert refused["isError"] is True
+    assert "argument 'workflowId' must be string, got int" in w.text(refused)
+    assert "ran " not in w.text(refused)
+
+
+def test_a_refused_call_is_audited_as_refused_and_a_valid_one_still_runs(waiter):
+    w = waiter({"n8n": {"code": REQUIRED_SERVER, "readonly": True}})
+    w.ask(0, "lazy_list")
+
+    w.ask(1, "lazy_call", server="n8n", tool="get_workflow", arguments={})
+    done = w.ask(2, "lazy_call", server="n8n", tool="get_workflow", arguments={"workflowId": "42"})
+
+    assert w.text(done) == "ran 42"
+    log = [json.loads(line) for line in w.audit.read_text(encoding="utf-8").splitlines() if line]
+    assert [(entry["tool"], entry["action"]) for entry in log] == [
+        ("get_workflow", "refused"),
+        ("get_workflow", "call"),
+    ]

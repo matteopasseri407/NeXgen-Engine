@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -77,6 +79,26 @@ def test_allowlisted_stdio_renders_in_the_classic_desktop_shape(tmp_path):
     assert table["alpha"] == {"command": "/usr/bin/python3", "args": ["-V"], "env": {"MODE": "x"}}
     assert "type" not in table["alpha"]
     assert "mutating" not in table
+
+
+def test_allowlisted_server_keeps_the_state_the_app_set_on_it(tmp_path):
+    """The app writes its own per-server keys beside the launch fields.
+
+    Rendering the entry from scratch switched a server back on after it was
+    disabled in the app's screen, and dropped whatever tool list was set there.
+    """
+    renderer = make_renderer(tmp_path, {
+        "alpha": {"transport": "stdio", "command": "/usr/bin/python3", "args": ["-V"],
+                  "tier": "core", "desktop_allow": True},
+    })
+    cfg = desktop_file(tmp_path)
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(json.dumps({"mcpServers": {"alpha": {
+        "command": "/usr/bin/python3", "args": [], "env": {}, "disabled": True}}}),
+        encoding="utf-8")
+    renderer.render_claude_desktop(write=True)
+    entry = json.loads(cfg.read_text(encoding="utf-8"))["mcpServers"]["alpha"]
+    assert entry == {"disabled": True, "command": "/usr/bin/python3", "args": ["-V"], "env": {}}
 
 
 def test_env_gated_allowlisted_server_is_omitted_without_its_env(tmp_path, monkeypatch):
@@ -269,6 +291,75 @@ def test_bare_commands_resolve_to_absolute_paths(tmp_path):
     assert table["ghost"]["command"] == "definitely-not-a-real-binary-xyz"
 
 
+def _npm_layout(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """The layout npm leaves on Windows: `npx.cmd` in a folder whose name has a space."""
+    nodejs = tmp_path / "Program Files" / "nodejs"
+    shim = nodejs / "npx.cmd"
+    shim.parent.mkdir(parents=True)
+    shim.write_text("@echo off\r\n", encoding="utf-8")
+    entry = nodejs / "node_modules" / "npm" / "bin" / "npx-cli.js"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("// synthetic npm entry\n", encoding="utf-8")
+    node = nodejs / "node.exe"
+    node.write_text("", encoding="utf-8")
+    return shim, entry, node
+
+
+def _npm_which(shim: Path, node: Path):
+    """A `shutil.which` that answers for this synthetic npm tree on any host.
+
+    Keyed on the stem, so it answers `npx` and, on a Windows host that
+    normalises the manifest first, `npx.cmd`. Anything else is a path that
+    exists or nothing, which is what the real lookup says here.
+    """
+    def which(name: str) -> str | None:
+        stem = Path(name).stem.casefold()
+        if stem == "npx":
+            return str(shim)
+        if stem == "node":
+            return str(node)
+        return name if Path(name).is_file() else None
+
+    return which
+
+
+def test_windows_npm_shim_is_written_as_node_and_its_entry(tmp_path, monkeypatch):
+    """Desktop starts `command` itself: the absolute `npx.cmd` under `Program
+    Files` dies at the space in its path there, so the entry carries the
+    shared Windows shim rule instead, node and npm's own JavaScript entry."""
+    from nexgen_core import processes
+
+    shim, entry, node = _npm_layout(tmp_path)
+    monkeypatch.setattr(processes, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(shutil, "which", _npm_which(shim, node))
+    renderer = make_renderer(tmp_path, {
+        "alpha": {"transport": "stdio", "command": "npx", "args": ["-y", "pkg"],
+                  "tier": "core", "desktop_allow": True},
+    })
+    desktop_file(tmp_path).parent.mkdir(parents=True)
+    renderer.render_claude_desktop(write=True)
+    table = json.loads(desktop_file(tmp_path).read_text(encoding="utf-8"))["mcpServers"]
+    assert table["alpha"]["command"] == str(node)
+    assert table["alpha"]["args"] == [str(entry), "-y", "pkg"]
+
+
+def test_the_shim_rule_leaves_a_posix_command_as_it_was_resolved(tmp_path, monkeypatch):
+    from nexgen_core import processes
+
+    shim, _entry, node = _npm_layout(tmp_path)
+    monkeypatch.setattr(processes, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(shutil, "which", _npm_which(shim, node))
+    renderer = make_renderer(tmp_path, {
+        "alpha": {"transport": "stdio", "command": "npx", "args": ["-y", "pkg"],
+                  "tier": "core", "desktop_allow": True},
+    })
+    desktop_file(tmp_path).parent.mkdir(parents=True)
+    renderer.render_claude_desktop(write=True)
+    table = json.loads(desktop_file(tmp_path).read_text(encoding="utf-8"))["mcpServers"]
+    assert table["alpha"]["command"] == str(shim)
+    assert table["alpha"]["args"] == ["-y", "pkg"]
+
+
 def test_windows_paths_honor_appdata_and_fall_back_under_home(tmp_path, monkeypatch):
     import sys as _sys
 
@@ -336,9 +427,10 @@ def test_a_previous_command_is_recognised_the_way_which_found_it(monkeypatch, na
     assert claude_desktop._names_command(f"/x/{name}", "tool", windows=windows) is expected
 
 
-def test_gated_names_leave_out_retired_and_http_entries(tmp_path, monkeypatch):
-    """A retired or HTTP entry is never pending on Desktop: it must not stay in
-    the managed sidecar, nor keep a check undetermined forever."""
+def test_gated_names_leave_out_retired_entries_and_keep_a_pending_remote_one(tmp_path, monkeypatch):
+    """A retired entry is never pending on Desktop, so it must not stay in the
+    managed sidecar. A remote one with an unset `require_env` is pending: the
+    shell writes its bridge entry and the guard must not delete it."""
     from nexgen_core.mcp_render.claude_desktop import gated_desktop_names
 
     monkeypatch.delenv("NEXGEN_TEST_GATE", raising=False)
@@ -356,4 +448,102 @@ def test_gated_names_leave_out_retired_and_http_entries(tmp_path, monkeypatch):
     }))
     home.mkdir()
     renderer = McpRenderer(vault_data=vault, engine_root=tmp_path / "engine", home=home)
-    assert gated_desktop_names(renderer) == {"kept"}
+    assert gated_desktop_names(renderer) == {"kept", "web"}
+
+
+def test_an_allowlisted_http_server_is_mounted_through_the_bridge(tmp_path, monkeypatch):
+    """The app can only be handed a child process, so a remote server reaches it
+    the way it reaches Antigravity: the shared bridge, the URL and the NAME of
+    the bearer variable. The token value stays out of the generated file."""
+    from nexgen_core.paths import antigravity_config
+
+    monkeypatch.setenv("VAULT_TOKEN", "literal-token-value")
+    renderer = make_renderer(tmp_path, {
+        "vault": {"transport": "http", "url": "https://vault.invalid/mcp",
+                  "auth": {"type": "bearer", "env": "VAULT_TOKEN"},
+                  "tier": "core", "desktop_allow": True},
+    })
+    desktop_file(tmp_path).parent.mkdir(parents=True)
+    renderer.render_claude_desktop(write=True)
+    renderer.render_antigravity(write=True)
+    bridge = str(tmp_path / "engine" / "agent-universal-layer" / "mcp" / "mcp-http-bridge.mjs")
+    entry = json.loads(desktop_file(tmp_path).read_text(encoding="utf-8"))["mcpServers"]["vault"]
+    assert entry["args"] == [bridge, "https://vault.invalid/mcp", "VAULT_TOKEN", "mcp-remote@0.1.38"]
+    assert Path(entry["command"]).stem.lower() == "node"
+    assert entry["env"] == {}
+    antigravity_entry = json.loads(
+        antigravity_config(tmp_path / "home").read_text(encoding="utf-8"))["mcpServers"]["vault"]
+    assert entry["args"] == antigravity_entry["args"]
+    assert "literal-token-value" not in desktop_file(tmp_path).read_text(encoding="utf-8")
+
+
+def test_an_http_server_without_the_flag_renders_nothing(tmp_path):
+    """The bridge does not widen the gate: an unflagged remote entry stays out."""
+    renderer = make_renderer(tmp_path, {
+        "vault": {"transport": "http", "url": "https://vault.invalid/mcp",
+                  "auth": {"type": "bearer", "env": "VAULT_TOKEN"}, "tier": "core"},
+    })
+    cfg = desktop_file(tmp_path)
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text("{}", encoding="utf-8")
+    assert allowed_desktop_servers(renderer) == {}
+    renderer.render_claude_desktop(write=True)
+    assert json.loads(cfg.read_text(encoding="utf-8")) == {}
+
+
+def test_the_guard_keeps_a_bridge_entry_it_cannot_resolve(tmp_path, monkeypatch):
+    """The shell writes the bridge entry; the guard runs without the URL
+    variable and must leave that entry alone instead of deleting it."""
+    renderer = make_renderer(tmp_path, {
+        "vault": {"transport": "http", "url": "${VAULT_LIBRARY_URL}",
+                  "auth": {"type": "bearer", "env": "VAULT_LIBRARY_TOKEN"},
+                  "require_env": "VAULT_LIBRARY_URL", "tier": "core", "desktop_allow": True},
+    })
+    desktop_file(tmp_path).parent.mkdir(parents=True)
+    monkeypatch.setenv("VAULT_LIBRARY_URL", "https://vault.invalid/mcp")
+    renderer.render_claude_desktop(write=True)
+    interactive = desktop_file(tmp_path).read_text(encoding="utf-8")
+    assert "vault" in json.loads(interactive)["mcpServers"]
+
+    monkeypatch.delenv("VAULT_LIBRARY_URL")
+    renderer.render_claude_desktop(write=True)
+    assert desktop_file(tmp_path).read_text(encoding="utf-8") == interactive
+
+
+def test_a_preferences_save_landing_mid_render_survives_the_write(tmp_path, monkeypatch):
+    """The app saves preferences and window state into this same file at any
+    moment, including after the render has read it and while the table is still
+    being computed. The render re-reads the file at the last moment and
+    re-applies only `mcpServers`, so such a save is not lost.
+
+    The sidecar path is resolved twice, while the table is built and once after
+    it is computed: the save written from the second call is the one that proves
+    the re-read sits after the table, where the old read-then-compute order left
+    the whole write for it to land in.
+    """
+    from nexgen_core.mcp_render import claude_desktop
+
+    renderer = make_renderer(tmp_path, {
+        "alpha": {"transport": "stdio", "command": "python", "args": ["-V"],
+                  "tier": "core", "desktop_allow": True},
+    })
+    cfg = desktop_file(tmp_path)
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(json.dumps({"preferences": {"sidebarMode": "epitaxy"}}), encoding="utf-8")
+    saved = str(tmp_path / "cowork")
+    real_managed_path = claude_desktop._managed_path
+
+    def app_saves_preferences(cfg_file):
+        live = json.loads(cfg_file.read_text(encoding="utf-8"))
+        live["coworkUserFilesPath"] = saved
+        cfg_file.write_text(json.dumps(live, indent=2), encoding="utf-8")
+        return real_managed_path(cfg_file)
+
+    monkeypatch.setattr(claude_desktop, "_managed_path", app_saves_preferences)
+    ok, _ = renderer.render_claude_desktop(write=True)
+
+    assert ok
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    assert data["coworkUserFilesPath"] == saved
+    assert data["preferences"] == {"sidebarMode": "epitaxy"}
+    assert set(data["mcpServers"]) == {"alpha"}

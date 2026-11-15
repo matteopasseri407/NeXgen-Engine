@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import json
 import sys
 import urllib.request
@@ -10,6 +11,7 @@ from urllib.parse import urlencode, urlparse
 
 import uvicorn
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from starlette.applications import Starlette
@@ -20,6 +22,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
 from . import __version__
+from .buildinfo import engine_commit
 from .config import Settings
 from .note_ref import resolve_note_ref
 from .vault import VaultService
@@ -135,6 +138,43 @@ def _call_semantic(settings: Settings, query: str, limit: int) -> dict[str, Any]
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _note_ref_for_tool(**given: str | None) -> str:
+    """The reference the caller meant, or a `ToolError` the model can read and act on.
+
+    `resolve_note_ref` raises `ValueError` so it stays testable without the
+    MCP runtime, but the SDK answers any other exception with a bare
+    "Error executing tool <name>": the diagnostic reaches the model only as
+    the SDK's `ToolError`.
+    """
+    try:
+        return resolve_note_ref(**given)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+
+
+def _tool_errors(tool):
+    """Answer a vault failure as a `ToolError` the model can read and act on.
+
+    Every message `vault.py` raises already carries the reason and the next
+    step, and it must stay free of the MCP runtime to be testable on its own.
+    The SDK turns any other exception into the bare "Error executing tool
+    <name>", so without this wrapper the model reads a failure it cannot
+    diagnose and pays for a blind retry; a `ToolError`'s text is what it
+    gets instead.
+    """
+
+    @functools.wraps(tool)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return tool(*args, **kwargs)
+        except ToolError:
+            raise
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise ToolError(str(exc)) from exc
+
+    return wrapper
+
+
 def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
     vault = VaultService(settings)
     server_name = "markdown-vault-git-backed" if settings.write_enabled else "markdown-vault-readonly"
@@ -184,45 +224,71 @@ def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
     )
 
     @mcp.tool(annotations=READ_ONLY)
+    @_tool_errors
     def get_start_here() -> dict[str, Any]:
         """Return the vault entry note, usually 00-START-HERE.md."""
 
         return vault.get_start_here()
 
     @mcp.tool(annotations=READ_ONLY)
+    @_tool_errors
     def read_note(
         note_ref: str | None = None,
         path: str | None = None,
         note_path: str | None = None,
         relative_path: str | None = None,
+        max_chars: int | None = None,
+        section: str | None = None,
     ) -> dict[str, Any]:
         """Read a note by relative path, filename, or unique stem.
 
-        Provide `note_ref` or exactly one of its aliases (`path`, `note_path`, `relative_path`).
+        Provide `note_ref`, or one or more aliases carrying the same value
+        (`path`, `note_path`, `relative_path`).
+
+        One call returns at most 40000 characters of text by default
+        (`max_chars` overrides that budget). When the note is longer the
+        result says so in `content_truncated` and lists every section with its
+        `content_hash`; pass `section` (an ATX heading such as "## Deploy") to
+        read only that section, with the hash update_section expects.
         """
         return vault.read_note(
-            resolve_note_ref(note_ref=note_ref, path=path, note_path=note_path, relative_path=relative_path)
+            _note_ref_for_tool(note_ref=note_ref, path=path, note_path=note_path, relative_path=relative_path),
+            max_chars=max_chars,
+            section=section,
         )
 
     @mcp.tool(annotations=READ_ONLY)
+    @_tool_errors
     def search_notes(query: str, limit: int = 10) -> dict[str, Any]:
         """Search note titles, paths, tags, and body text."""
 
         return vault.search_notes(query=query, limit=limit)
 
     @mcp.tool(annotations=READ_ONLY)
-    def list_related(note_ref: str, limit: int = 10) -> dict[str, Any]:
-        """List outgoing links, backlinks, and tag-based related notes."""
+    @_tool_errors
+    def list_related(
+        note_ref: str | None = None,
+        path: str | None = None,
+        note_path: str | None = None,
+        relative_path: str | None = None,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """List outgoing links, backlinks, and tag-based related notes. Takes the same reference names as read_note."""
 
-        return vault.list_related(note_ref=note_ref, limit=limit)
+        return vault.list_related(
+            note_ref=_note_ref_for_tool(note_ref=note_ref, path=path, note_path=note_path, relative_path=relative_path),
+            limit=limit,
+        )
 
     @mcp.tool(annotations=READ_ONLY)
+    @_tool_errors
     def map_overview() -> dict[str, Any]:
         """Token-bounded structural overview of the vault: note/link counts, top hub notes, first broken wikilinks (with relocation hints) and first orphan notes. Use it to orient before broad tasks — the computed map complements get_start_here's curated door. Read-only."""
 
         return vault.map_overview()
 
     @mcp.tool(annotations=READ_ONLY)
+    @_tool_errors
     def recent_activity(limit: int = 15) -> dict[str, Any]:
         """List recently changed notes (path, title, last-change date, and commit message when available). Use to resume context: what was touched recently in the vault."""
 
@@ -231,6 +297,7 @@ def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
     if settings.semantic_enabled and settings.semantic_url:
 
         @mcp.tool(annotations=READ_ONLY)
+        @_tool_errors
         def semantic_search(query: str, limit: int = 5) -> dict[str, Any]:
             """Search the vault by meaning/concept (hybrid semantic + keyword), powered by the embedding sidecar. Use when search_notes misses or you do not know the exact words."""
             capped = max(1, min(limit, settings.semantic_max_limit))
@@ -250,40 +317,85 @@ def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
     if settings.write_enabled:
 
         @mcp.tool(annotations=MUTATING)
-        def create_note(note_path: str, content: str, message: str = "") -> dict[str, Any]:
-            """Create a new Markdown note and commit it to Git. Refuses to overwrite existing notes."""
+        @_tool_errors
+        def create_note(
+            content: str,
+            note_path: str | None = None,
+            note_ref: str | None = None,
+            path: str | None = None,
+            relative_path: str | None = None,
+            message: str = "",
+        ) -> dict[str, Any]:
+            """Create a new Markdown note and commit it to Git. Refuses to overwrite existing notes. Takes the note's relative path under `note_path` or the same names as read_note."""
 
-            return vault.create_note(note_path=note_path, content=content, message=message)
+            return vault.create_note(
+                note_path=_note_ref_for_tool(
+                    note_ref=note_ref, path=path, note_path=note_path, relative_path=relative_path
+                ),
+                content=content,
+                message=message,
+            )
 
         @mcp.tool(annotations=MUTATING)
-        def append_note(note_path: str, content: str, message: str = "") -> dict[str, Any]:
-            """Append Markdown content to a note, or create it if missing, then commit it to Git."""
+        @_tool_errors
+        def append_note(
+            content: str,
+            note_path: str | None = None,
+            note_ref: str | None = None,
+            path: str | None = None,
+            relative_path: str | None = None,
+            message: str = "",
+        ) -> dict[str, Any]:
+            """Append Markdown content to a note, or create it if missing, then commit it to Git. Takes the note under `note_path` or the same names as read_note."""
 
-            return vault.append_note(note_path=note_path, content=content, message=message)
+            return vault.append_note(
+                note_path=_note_ref_for_tool(
+                    note_ref=note_ref, path=path, note_path=note_path, relative_path=relative_path
+                ),
+                content=content,
+                message=message,
+            )
 
         @mcp.tool(annotations=MUTATING)
-        def update_note(note_ref: str, content: str, expected_hash: str, message: str = "") -> dict[str, Any]:
-            """Replace an existing note only when expected_hash matches the current full content hash."""
+        @_tool_errors
+        def update_note(
+            content: str,
+            expected_hash: str,
+            note_ref: str | None = None,
+            path: str | None = None,
+            note_path: str | None = None,
+            relative_path: str | None = None,
+            message: str = "",
+        ) -> dict[str, Any]:
+            """Replace an existing note only when expected_hash matches the current full content hash. Takes the same reference names as read_note."""
 
             return vault.update_note(
-                note_ref=note_ref,
+                note_ref=_note_ref_for_tool(
+                    note_ref=note_ref, path=path, note_path=note_path, relative_path=relative_path
+                ),
                 content=content,
                 expected_hash=expected_hash,
                 message=message,
             )
 
         @mcp.tool(annotations=MUTATING)
+        @_tool_errors
         def update_section(
-            note_ref: str,
             section_heading: str,
             content: str,
             expected_hash: str,
+            note_ref: str | None = None,
+            path: str | None = None,
+            note_path: str | None = None,
+            relative_path: str | None = None,
             message: str = "",
         ) -> dict[str, Any]:
-            """Replace ONE section of a note (its ATX heading plus body and subsections) when expected_hash matches that section's current hash from read_note's `sections`. Prefer this over update_note for surgical edits: smaller diffs, and concurrent edits to other sections stay valid."""
+            """Replace ONE section of a note (its ATX heading plus body and subsections) when expected_hash matches that section's current hash from read_note's `sections`. Prefer this over update_note for surgical edits: smaller diffs, and concurrent edits to other sections stay valid. Takes the same reference names as read_note."""
 
             return vault.update_section(
-                note_ref=note_ref,
+                note_ref=_note_ref_for_tool(
+                    note_ref=note_ref, path=path, note_path=note_path, relative_path=relative_path
+                ),
                 section_heading=section_heading,
                 content=content,
                 expected_hash=expected_hash,
@@ -291,6 +403,22 @@ def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
             )
 
     return mcp, vault
+
+
+def _health_body() -> dict[str, Any]:
+    """Liveness only, and the one identity a deployment is measured by.
+
+    No vault walk here: note_count() on every scrape is both a cost and an
+    unauthenticated disclosure. Orchestrators need up/down, so that is what the
+    route answers, plus the short engine commit the image was built from: the
+    doctor compares that with the engine checkout that describes the deployment,
+    and nothing else about the server is published.
+    """
+    body: dict[str, Any] = {"status": "ok", "version": __version__}
+    commit = engine_commit()
+    if commit:
+        body["engine_commit"] = commit
+    return body
 
 
 def create_app() -> Any:
@@ -314,9 +442,7 @@ def create_app() -> Any:
         )
 
     async def health(_: Request) -> JSONResponse:
-        # No vault walk here: note_count() on every scrape is both a cost
-        # and an unauthenticated disclosure. Orchestrators need up/down only.
-        return JSONResponse({"status": "ok", "version": __version__})
+        return JSONResponse(_health_body())
 
     @asynccontextmanager
     async def lifespan(_: Starlette):

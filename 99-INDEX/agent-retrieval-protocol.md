@@ -46,7 +46,7 @@ Do not fix a universal numerical threshold, because scores depend on the model a
 
 ## How CLI agents read from the vault
 
-Each CLI agent (Claude Code, Codex, OpenCode, etc.) reads the vault through its own pointer file (`~/CLAUDE.md`, `~/.codex/AGENTS.md`, etc.), which points back to this bootstrap.
+Each CLI agent (Claude Code, Codex, OpenCode, etc.) reads the vault through its own pointer file (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, etc.), which points back to this bootstrap.
 
 Recommended flow:
 
