@@ -417,6 +417,29 @@ def test_list_related_over_mcp_takes_the_note_under_every_name(tmp_path: Path):
 
 
 @pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
+def test_append_note_over_mcp_takes_the_note_under_every_name(tmp_path: Path):
+    """Kurisu sent `append_note` the note under `note_ref` and was refused: every name must reach the same note."""
+    settings = _single_line_vault(tmp_path)
+
+    for name in NOTE_NAME_ALIASES:
+        result = _mcp_call(settings, "append_note", {name: "seed.md", "content": f"line from {name}\n"})
+        assert result.structured_content["committed"] is True, name
+
+    text = (settings.vault_root / "seed.md").read_text(encoding="utf-8")
+    assert all(f"line from {name}" in text for name in NOTE_NAME_ALIASES)
+
+
+@pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
+def test_create_note_over_mcp_takes_the_path_under_every_name(tmp_path: Path):
+    settings = _single_line_vault(tmp_path)
+
+    for name in NOTE_NAME_ALIASES:
+        result = _mcp_call(settings, "create_note", {name: f"new-{name}.md", "content": "# new\n"})
+        assert result.structured_content["committed"] is True, name
+        assert (settings.vault_root / f"new-{name}.md").is_file(), name
+
+
+@pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
 def test_update_note_over_mcp_takes_the_note_under_an_alias(tmp_path: Path):
     settings = _single_line_vault(tmp_path)
     note = _mcp_call(settings, "read_note", {"note_ref": "seed.md"}).structured_content

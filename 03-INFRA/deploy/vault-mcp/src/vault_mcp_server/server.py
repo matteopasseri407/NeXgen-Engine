@@ -275,16 +275,42 @@ def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
     if settings.write_enabled:
 
         @mcp.tool(annotations=MUTATING)
-        def create_note(note_path: str, content: str, message: str = "") -> dict[str, Any]:
-            """Create a new Markdown note and commit it to Git. Refuses to overwrite existing notes."""
+        def create_note(
+            content: str,
+            note_path: str | None = None,
+            note_ref: str | None = None,
+            path: str | None = None,
+            relative_path: str | None = None,
+            message: str = "",
+        ) -> dict[str, Any]:
+            """Create a new Markdown note and commit it to Git. Refuses to overwrite existing notes. Takes the note's relative path under `note_path` or the same names as read_note."""
 
-            return vault.create_note(note_path=note_path, content=content, message=message)
+            return vault.create_note(
+                note_path=_note_ref_for_tool(
+                    note_ref=note_ref, path=path, note_path=note_path, relative_path=relative_path
+                ),
+                content=content,
+                message=message,
+            )
 
         @mcp.tool(annotations=MUTATING)
-        def append_note(note_path: str, content: str, message: str = "") -> dict[str, Any]:
-            """Append Markdown content to a note, or create it if missing, then commit it to Git."""
+        def append_note(
+            content: str,
+            note_path: str | None = None,
+            note_ref: str | None = None,
+            path: str | None = None,
+            relative_path: str | None = None,
+            message: str = "",
+        ) -> dict[str, Any]:
+            """Append Markdown content to a note, or create it if missing, then commit it to Git. Takes the note under `note_path` or the same names as read_note."""
 
-            return vault.append_note(note_path=note_path, content=content, message=message)
+            return vault.append_note(
+                note_path=_note_ref_for_tool(
+                    note_ref=note_ref, path=path, note_path=note_path, relative_path=relative_path
+                ),
+                content=content,
+                message=message,
+            )
 
         @mcp.tool(annotations=MUTATING)
         def update_note(
