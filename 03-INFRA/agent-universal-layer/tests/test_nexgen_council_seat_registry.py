@@ -8,6 +8,8 @@ non hanno finito.
 """
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 import threading
 import time
@@ -91,6 +93,23 @@ def clean_registry():
     session._ACTIVE_SESSION_DIR = None
 
 
+def _fake_seat_spawn(monkeypatch, factory) -> None:
+    """Fake the seat's own spawn, and let every other child run for real.
+
+    `subprocess.Popen` is one module for the whole process, so patching it blind also
+    intercepts the leak gate's scanner, which `run_seat` calls on the error text.
+    """
+    real_popen = subprocess.Popen
+
+    def scoped(*args, **kwargs):
+        first = args[0][0] if args and isinstance(args[0], (list, tuple)) else ""
+        if "gitleaks" in os.path.basename(str(first)).lower():
+            return real_popen(*args, **kwargs)
+        return factory(*args, **kwargs)
+
+    monkeypatch.setattr(seat_process.subprocess, "Popen", scoped)
+
+
 def _seat(model: str) -> dict:
     return {"cli": "opencode", "model": model}
 
@@ -108,7 +127,7 @@ def test_cancellation_during_spawn_stops_the_late_process(tmp_path, monkeypatch,
         release.set()
         return proc
 
-    monkeypatch.setattr(seat_process.subprocess, "Popen", factory)
+    _fake_seat_spawn(monkeypatch, factory)
     with pytest.raises(SeatRunError) as error:
         run_seat(_seat("fake/late"), "brief", tmp_path, 10)
     assert error.value.kind == "cancelled"
@@ -128,7 +147,7 @@ def test_overlapping_seats_stay_registered_until_each_finishes(
         created.append(proc)
         return proc
 
-    monkeypatch.setattr(seat_process.subprocess, "Popen", factory)
+    _fake_seat_spawn(monkeypatch, factory)
     answers: dict = {}
     errors: dict = {}
 
@@ -168,7 +187,7 @@ def test_finished_seat_releases_only_itself(
         created.append(proc)
         return proc
 
-    monkeypatch.setattr(seat_process.subprocess, "Popen", factory)
+    _fake_seat_spawn(monkeypatch, factory)
 
     results: dict = {}
 

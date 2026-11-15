@@ -84,6 +84,10 @@ L'analisi del verdetto è posizionale, non una ricerca nel testo: solo l'ultima 
 Uno stadio che cita un `VERDICT: REJECT` precedente mentre arriva a una propria conclusione diversa viene letto come quella conclusione, e un verdetto citato a metà risposta non ferma più il relay.
 Lo fa solo la riga di chiusura autonoma di una seduta.
 
+Per le tre CLI che sanno validare uno schema da sole (`claude --json-schema`, `codex exec --output-schema`, `agy --json-schema`) quella riga di chiusura non è più prosa del modello: alla CLI si chiede un campo `verdict` limitato ad APPROVE, REVISE e REJECT più la revisione come `text`, e Council riscrive il valore validato sulla riga di chiusura prima di passarla allo stadio successivo.
+Un verdetto citato dentro la revisione non può quindi battere il campo, e una risposta che omette il campo è una violazione dello schema segnalata dalla CLI invece di un `(absent)` silenzioso.
+Le sedute la cui CLI non ha quel flag (`opencode`, `dsh`, `ollama`) tengono il contratto posizionale qui sopra, invariato.
+
 ```bash
 council relay \
   "Design a rate limiter for the public API." \
@@ -269,7 +273,7 @@ council clean --all           # removes every kept session now
 
 - **Uscita dei dati**: il brief originale, contesto e diff compresi, viene scansionato alla ricerca di segreti probabili prima che qualsiasi seduta lo riceva. Una corrispondenza ferma la chiamata.
 - **Output generato**: quando una seduta emette un valore che sembra un segreto, Council oscura la riga interessata prima che raggiunga lo stadio successivo del relay o una sessione conservata, e il relay può proseguire con il resto dell'analisi.
-- Entrambi i controlli riusano il modulo condiviso `leak_scan.py` del motore, e sono una protezione separata e sempre attiva per l'utente finale, non la scansione delle fughe della CI che protegge la pubblicazione su GitHub. Vedi [SECURITY.md](../../SECURITY.it.md).
+- Entrambi i controlli riusano il modulo condiviso `leak_scan.py` del motore e le forme del motore in `leak-scan/leak_patterns.yaml`, confrontate dal rilevatore integrato, quindi non serve installare nessun binario: sono una protezione separata e sempre attiva per l'utente finale, non la scansione delle fughe della CI del repo (gitleaks, `leak-scan/gitleaks.toml`) che protegge la pubblicazione su GitHub. Vedi [SECURITY.md](../../SECURITY.it.md).
 - **Zero-retention**: ogni seduta deve dichiarare `zero_retention: true|false`.
   Un valore falso stampa un avviso chiaro nei menu e subito prima che il modello parta.
   È un metadato, non un cancello di esecuzione, e la scansione dei segreti resta bloccante come controllo separato.

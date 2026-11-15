@@ -27,6 +27,7 @@ from pathlib import Path
 from nexgen_core.config import COUNCIL_CLIS
 from routing import _windows_command_argv
 from seat_dsh import DshSeatError, dsh_argv, dsh_credential_env, parse_dsh_result, write_dsh_patch
+from seat_verdict import apply_verdict_schema, claude_answer_text, unwrap_structured_answer
 from session import (
     _force_stop_process_tree,
     _private_mkdir,
@@ -762,7 +763,7 @@ def _parse_claude_result(raw: str, expected_model: str) -> tuple[str, dict]:
             "model_mismatch",
         )
 
-    result = payload.get("result")
+    result = claude_answer_text(payload)
     if not isinstance(result, str) or not result.strip():
         raise SeatRunError(
             "[council] Claude responded but returned no usable result text.",
@@ -886,7 +887,7 @@ def _build_command(
         raise SeatRunError(f"[council] invalid timeout for seat '{model}': {exc}.", "invalid_timeout") from exc
     timeout_label = _format_timeout_seconds(resolved_timeout_seconds)
     registry_epoch = _proc_registry_epoch()
-    invocation = _build_seat_command(seat, prompt, session_dir)
+    invocation = apply_verdict_schema(seat, _build_seat_command(seat, prompt, session_dir), session_dir)
     return _PreparedSeat(
         seat=seat,
         prompt=prompt,
@@ -1225,7 +1226,7 @@ def run_seat(
             # in the finally below is still visible; run_seat never mutates
             # it after returning.
             usage = {**usage, "shutdown_telemetry": runtime.shutdown_telemetry}
-        return answer, usage
+        return unwrap_structured_answer(prepared.cli, answer), usage
     except SeatRunError as exc:
         if runtime.shutdown_telemetry and exc.shutdown_telemetry is None:
             exc.shutdown_telemetry = runtime.shutdown_telemetry

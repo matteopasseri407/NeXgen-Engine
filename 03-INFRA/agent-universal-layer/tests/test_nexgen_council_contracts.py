@@ -170,6 +170,9 @@ def test_paid_brainstorm_refusal_stops_before_next_round(tmp_path, monkeypatch):
     monkeypatch.setattr("builtins.input", lambda _: next(decisions))
     calls = []
     monkeypatch.setattr(verdict, "run_seat", lambda *args: (calls.append(args) or "VERDICT: APPROVE", {}))
+    # The output gate scans with gitleaks, an external binary; this test is about the paid
+    # refusal, so it neutralises the gate the same way it neutralises the egress one.
+    monkeypatch.setattr(verdict, "redact_generated_output", lambda text: (text, False))
     args = SimpleNamespace(seat="paid", timeout_seconds=None, keep_session=True)
     with pytest.raises(SystemExit, match="not confirmed"):
         council._run_mode(

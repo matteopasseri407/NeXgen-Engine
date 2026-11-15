@@ -75,10 +75,10 @@ def test_the_copy_is_gone_when_the_seat_times_out(monkeypatch, tmp_path):
 
 def test_the_real_credentials_are_never_touched(monkeypatch, tmp_path, real_codex_home):
     before = (real_codex_home / "auth.json").read_bytes()
-    empty = tmp_path / "empty-path"
-    empty.mkdir()
-    monkeypatch.setenv("PATH", str(empty))  # the child gets this PATH: no real codex can be found or run
     invocation = _codex_invocation(tmp_path)
+    # The seat cannot even start: its command does not exist. PATH keeps the engine's own
+    # tools (the Council gates scan with gitleaks), so the isolation is the missing binary.
+    invocation.argv[0] = str(tmp_path / "no-such-codex")
     monkeypatch.setattr(seat_process, "_build_seat_command", lambda *args: invocation)
     with pytest.raises(SeatRunError):  # no codex binary here: the seat cannot even start
         run_seat({"cli": "codex", "model": "m"}, "p", tmp_path, 5)

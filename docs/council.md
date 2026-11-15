@@ -84,6 +84,10 @@ Verdict parsing is positional, not a text search: only a response's last non-bla
 A stage that quotes an earlier `VERDICT: REJECT` while reaching its own different conclusion is read as that conclusion, and a verdict cited mid-response no longer stops the relay.
 Only a seat's own standalone closing line does.
 
+For the three CLIs that can validate a schema themselves (`claude --json-schema`, `codex exec --output-schema`, `agy --json-schema`), that closing line is no longer the model's own prose: the CLI is asked for a `verdict` field restricted to APPROVE, REVISE and REJECT plus the review as `text`, and Council restates the validated value on the closing line before the relay hand-off.
+A quoted verdict inside the review therefore cannot outvote the field, and a reply that omits the field is the CLI's schema violation rather than a silent `(absent)`.
+The seats whose CLI has no such flag (`opencode`, `dsh`, `ollama`) keep the positional contract above unchanged.
+
 ```bash
 council relay \
   "Design a rate limiter for the public API." \
@@ -269,7 +273,7 @@ council clean --all           # removes every kept session now
 
 - **Egress**: the original brief, including context and diffs, is scanned for likely secrets before any seat receives it. A match stops the call.
 - **Generated output**: when a seat emits a value that looks like a secret, Council redacts the affected line before it reaches the next relay stage or a kept session, and the relay can continue with the remaining analysis.
-- Both checks reuse the engine's shared `leak_scan.py` module, and they are a separate, always-on end-user protection rather than the repository CI leak scan that guards publishing to GitHub. See [SECURITY.md](../SECURITY.md).
+- Both checks reuse the engine's shared `leak_scan.py` module and the engine's own shapes in `leak-scan/leak_patterns.yaml`, matched by the built-in matcher, so they need no binary installed: they are a separate, always-on end-user protection rather than the repository CI leak scan (gitleaks, `leak-scan/gitleaks.toml`) that guards publishing to GitHub. See [SECURITY.md](../SECURITY.md).
 - **Zero-retention**: every seat must declare `zero_retention: true|false`.
   A false value prints a clear warning in menus and immediately before the model starts.
   It is metadata, not an execution gate, and secret scanning stays blocking as a separate control.
