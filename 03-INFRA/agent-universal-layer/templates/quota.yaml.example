@@ -21,6 +21,13 @@ limits:
   # opencode:
   #   7d: 10.0
 
+# The optional backend that asks each provider for a live percentage, instead of
+# reading it from a local file. `auto` is the shipped behaviour: it is used when
+# the `tokscale` binary is on PATH. Write `off` to silence it without uninstalling
+# anything, for example on a machine whose logins you would rather not query.
+# backends:
+#   tokscale: auto
+
 # What a turn does when a plan runs out. Optional, and empty by default: which
 # providers to pay for and in which order is your rule, not the engine's, so
 # nothing here is filled in for you.

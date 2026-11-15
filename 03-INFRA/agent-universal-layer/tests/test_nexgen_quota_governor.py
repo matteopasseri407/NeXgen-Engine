@@ -398,6 +398,100 @@ def test_a_machine_that_declared_nothing_says_so_instead_of_failing():
     assert outcome.message == "No fallback policy is declared, and no OpenClaw agent has a fallback chain."
 
 
+# ------------------------------------------------------------ the ACP admission
+
+
+def a_harness_config(*agents: str) -> dict:
+    """A configuration where `sviluppo` runs as its own harness, in its own folder."""
+    config = agent_config("main")
+    config["agents"]["entries"]["sviluppo"] = {
+        "model": "opencode-go/deepseek-v4.1-flash",
+        "runtime": {"type": "acp", "acp": {"agent": "opencode", "backend": "acpx",
+                                           "mode": "persistent", "cwd": "/work/sviluppo"}},
+    }
+    return config
+
+
+def test_every_agent_on_a_harness_lane_is_named_with_the_plan_it_spends():
+    assert governor.acp_lanes(a_harness_config()) == {"sviluppo": "opencode-go"}
+
+
+def test_an_agent_on_the_provider_lane_is_not_a_lane_to_refuse():
+    assert governor.acp_lanes(agent_config("main", "capo")) == {}
+
+
+def test_an_agent_whose_model_names_no_plan_is_left_out():
+    config = a_harness_config()
+    config["agents"]["entries"]["sviluppo"]["model"] = "deepseek-v4.1-flash"
+
+    assert governor.acp_lanes(config) == {}
+
+
+def test_the_admission_branch_is_written_only_when_the_squad_asks_for_it():
+    config = a_harness_config()
+
+    assert governor.sidecar_section(quota_policy.Failover(), config) is None
+    assert governor.sidecar_section(quota_policy.Failover(), config, acp_admission=True) == {
+        "block_at": 95.0,
+        "state_max_age_seconds": 10800,
+        "acp": {"agents": {"sviluppo": "opencode-go"}},
+    }
+
+
+def test_the_lanes_join_the_chains_in_one_section():
+    config = governor.with_chains(a_harness_config(), a_policy())
+
+    section = governor.sidecar_section(a_policy(), config, acp_admission=True)
+
+    assert section["agents"] == {
+        "main": ["anthropic/claude-opus-5-5"],
+        "sviluppo": ["anthropic/claude-opus-5-5"],
+    }
+    assert section["acp"] == {"agents": {"sviluppo": "opencode-go"}}
+
+
+def test_the_opt_in_key_is_a_boolean_and_not_a_string(tmp_path):
+    assert governor.admitted({"acp_admission": True}) is True
+    assert governor.admitted({"acp_admission": "true"}) is False
+    assert governor.admitted({}) is False
+    assert governor.admitted(None) is False
+
+
+def test_the_setup_step_writes_the_lanes_the_squad_asked_for(tmp_path):
+    plugin_folder(tmp_path)
+    vault = tmp_path / "KnowledgeVault"
+    vault.mkdir()
+    (vault / "squad.yaml").write_text(
+        "acp_admission: true\nagents:\n  sviluppo:\n    model: \"opencode-go/deepseek-v4.1-flash\"\n",
+        encoding="utf-8",
+    )
+    printed: list[str] = []
+    config = a_harness_config()
+
+    governor_step(a_setup(tmp_path, printed),
+                  type("P", (), {"failover": quota_policy.Failover(), "config": config})())
+
+    written = json.loads((tmp_path / ".openclaw" / "extensions" / "nexgen" / "nexgen.config.json")
+                         .read_text(encoding="utf-8"))
+    assert written["governor"]["acp"] == {"agents": {"sviluppo": "opencode-go"}}
+    assert written["governor"]["block_at"] == 95.0
+    assert "sviluppo" in "\n".join(printed)
+
+
+def test_the_setup_step_writes_no_lane_without_the_squad_key(tmp_path):
+    plugin_folder(tmp_path)
+    vault = tmp_path / "KnowledgeVault"
+    vault.mkdir()
+    (vault / "squad.yaml").write_text("agents:\n  sviluppo:\n    model: \"opencode-go/x\"\n", encoding="utf-8")
+    printed: list[str] = []
+
+    governor_step(a_setup(tmp_path, printed),
+                  type("P", (), {"failover": quota_policy.Failover(), "config": a_harness_config()})())
+
+    assert "no chain was written" in "\n".join(printed)
+    assert not (tmp_path / ".openclaw" / "extensions" / "nexgen" / "nexgen.config.json").exists()
+
+
 def test_a_chain_written_by_hand_is_counted_even_with_no_policy():
     config = {"agents": {"entries": {
         "main": {"model": {"primary": "opencode-go/x", "fallbacks": ["ollama/qwen3:8b"]}},

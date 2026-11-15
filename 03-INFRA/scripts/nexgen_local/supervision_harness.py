@@ -22,6 +22,7 @@ from nexgen_core.processes import no_window_kwargs, windows_command_argv
 from . import supervision_adapters as adapters
 from . import supervision_costs as costs
 from . import supervision_policy as policy
+from . import supervision_quota as quota_gate
 from . import supervision_state as state
 from . import supervision_windows as windows
 from .supervision_prompts import corrections_text, model_note as _model_note, prompt_text
@@ -58,6 +59,7 @@ class SessionLost(HarnessError):
 def run_unit(
     task_id: str, unit: str, *, harness: str = "", opener=None, runner=None, lister=None,
     measure=None, wait_s: float = SESSION_WAIT_S, model: str = "", limited: bool = False, force_new: bool = False,
+    headless: bool = False,
 ) -> dict:
     """Put the unit's work into its harness session, queue it, or open the first tab."""
     from . import routing_tiers
@@ -67,15 +69,22 @@ def run_unit(
     brief = state.open_task(task_id) / f"20-brief-{name}.md"
     if not brief.is_file():
         raise HarnessError(f"brief dell'unità sparito: {brief}")
+    quota_note = ""
     if routing_tiers.routing_tiers_exists():
         model, harness = routing_tiers.resolve_worker_candidate(model, harness, limited=limited)
+        model, harness, quota_note = quota_gate.gate_unit(
+            task_id, name, model, harness, limited=limited, headless=headless,
+        )
     chosen = _resolve(task_id, "esecutore", harness)
     local_notes = _prepare_local(task_id, name, chosen)
+    if quota_note:
+        local_notes.append(quota_note)
     allowed = policy.allowed_models()
     try:
         res = _dispatch_unit_attempt(
             task_id, name, folder, record, brief, chosen, model, allowed, local_notes,
             opener=opener, runner=runner, lister=lister, measure=measure, wait_s=wait_s, force_new=force_new,
+            headless=headless,
         )
         err = res.get("reason") if res.get("mode") == "refused" else None
     except Exception as exc:
@@ -86,7 +95,7 @@ def run_unit(
             return _dispatch_unit_attempt(
                 task_id, name, folder, record, brief, _resolve(task_id, "esecutore", next_c["harness"]),
                 next_c["model"], allowed, local_notes, opener=opener, runner=runner, lister=lister,
-                measure=measure, wait_s=wait_s, force_new=True,
+                measure=measure, wait_s=wait_s, force_new=True, headless=headless,
             )
     if res is None:
         raise err
@@ -97,6 +106,7 @@ def _dispatch_unit_attempt(
     task_id: str, name: str, folder: Path, record: dict, brief: Path,
     chosen: str, model: str, allowed: tuple[str, ...], local_notes: list[str],
     *, opener, runner, lister, measure, wait_s: float, force_new: bool = False,
+    headless: bool = False,
 ) -> dict:
     """Perform one delivery or tab open attempt for a unit."""
     adapter = _adapter(chosen)
@@ -116,6 +126,7 @@ def _dispatch_unit_attempt(
         opened = _open_first_tab(
             task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
             adapter=adapter, measure=measure, allowed=allowed, runner=runner, model=model, reason=reason,
+            headless=headless,
         )
     else:
         opened = _deliver(
@@ -143,6 +154,7 @@ def _resolve_unit_session(task_id: str, unit: str, chosen: str, record: dict, fo
 def _handle_foreign_session(
     task_id: str, name: str, folder: Path, prompt: str, previous: dict, chosen: str,
     round_no: int, *, adapter, opener, lister, wait_s: float, measure, allowed,
+    model: str = "",
 ) -> dict:
     """Rework whose last task session belongs to another copy: queue while it is not known free.
 
@@ -150,6 +162,11 @@ def _handle_foreign_session(
     one the engine cannot verify, leave the round in `unit_queued` so `--resend`
     delivers it later: a tab opened on work that may still be running is the second
     worker in one copy this engine exists to prevent.
+
+    The new tab carries a model: the one the owner named for this round, or the one the
+    journal recorded for the session it replaces. A harness that cannot report a
+    session's model (`agy`) is refused a tab without one, so leaving this empty turned
+    every correction round into a refusal once the old session was pruned or moved.
     """
     session = previous["session"]
     try:
@@ -171,7 +188,7 @@ def _handle_foreign_session(
     return _open_first_tab(
         task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
         event="unit_reworked", extra={"round": round_no}, adapter=adapter,
-        measure=measure, allowed=allowed,
+        measure=measure, allowed=allowed, model=model or str(previous.get("model") or ""),
         reason="sessione nata in un'altra copia: scheda nuova nella copia dell'unità",
     )
 
@@ -228,7 +245,7 @@ def send_corrections(
         opened = _handle_foreign_session(
             task_id, name, folder, prompt, previous, chosen, round_no,
             adapter=adapter, opener=opener, lister=lister, wait_s=wait_s,
-            measure=measure, allowed=allowed,
+            measure=measure, allowed=allowed, model=model,
         )
     else:
         opened = _deliver(
@@ -440,7 +457,7 @@ def _open_first_tab(
     task_id: str, unit: str, folder: Path, prompt: str, opener, lister, wait_s: float,
     *, event: str = "unit_started", extra: dict | None = None, adapter=None,
     measure=None, allowed: tuple[str, ...] = (), reason: str = "", runner=None,
-    model: str = "",
+    model: str = "", headless: bool = False,
 ) -> dict:
     """No session for this harness yet: open the tab and bind the session it creates.
 
@@ -453,17 +470,29 @@ def _open_first_tab(
     `sup run` does not send work into it. A harness that cannot say which session
     a tab opened leaves the attach manual and says so; the id is never invented.
     A model the owner named travels on the tab when the harness accepts one there,
-    and the result says whether it did.
+    and on a headless turn, where the runner passes it to the harness as `-m`, and the result
+    says whether it did.
+
+    `headless` is the owner's explicit "no tab this time": the same detached turn
+    the harnesses without a window already use, started from the copy, bound to the
+    session it creates. It is offered only where a turn can open the session it is
+    about to attach (OpenCode and the local executor); every other harness needs an
+    existing session, so it is refused here rather than failing inside the harness.
     """
     adapter, executable, chosen = _opening(adapter, task_id, unit)
     preflight = _check_tab_model_preflight(adapter, chosen, model, allowed, folder, task_id, unit)
     if preflight is not None:
         return preflight
-    if not adapter.capabilities.window:
+    if headless and adapter.capabilities.window and adapter.name not in _OPENCODE_LIKE:
+        raise HarnessError(
+            f"l'harness {adapter.name} non sa aprire la sua prima sessione senza finestra: "
+            "usa `--harness opencode`, oppure apri la scheda una volta e lascia fare a `sup run`"
+        )
+    if headless or not adapter.capabilities.window:
         return _open_turn(
             task_id, unit, folder, prompt, session=chosen, event=event, extra=extra or {},
             runner=runner or _runner_for(adapter), adapter=adapter, measure=measure,
-            allowed=allowed, lister=lister, wait_s=wait_s, reason=reason,
+            allowed=allowed, lister=lister, wait_s=wait_s, reason=reason, model=model,
         )
     replaced = _replace_previous_tab(task_id, unit)
     started_ms = int(time.time() * 1000)
@@ -520,7 +549,7 @@ def _with_tab(result: dict, replaced: dict) -> dict:
 def _open_turn(
     task_id: str, unit: str, folder: Path, prompt: str, *, session: str, event: str,
     extra: dict, runner, adapter, measure, allowed: tuple[str, ...], lister, wait_s: float,
-    reason: str = "",
+    reason: str = "", model: str = "",
 ) -> dict:
     """Start the first turn of a harness that has no window, and attach the key it used.
 
@@ -528,10 +557,15 @@ def _open_turn(
     carries the brief's pointer, and the session is attached under the key the
     engine chose, so the attach is not a guess made from a clock. A session the
     harness has not listed yet is reported as such, and the journal still says who
-    the work was given to.
+    the work was given to. `sup run --headless` arrives here too, with no key: the
+    session is the one the turn itself opened in the copy.
+
+    `model` is the one the routing tiers, the quota gate or the owner's `-m` chose, and it
+    travels with the turn: dropping it here left the journal naming a model the harness never
+    saw, and made `--limited` a promise with no effect on what ran.
     """
     started_ms = int(time.time() * 1000)
-    proc = runner(session, prompt, folder, "")
+    proc = runner(session, prompt, folder, model)
     pid = getattr(proc, "pid", None)
     state.append_event(
         task_id, event, unit=unit, harness=adapter.name, session=session, mode="turn",
@@ -548,7 +582,7 @@ def _open_turn(
     if allowed and not policy.model_allowed(model, allowed):
         refusal = _record_refusal(task_id, unit, adapter, str(found.get("id") or session), model, allowed, folder, sent=True)
         return {"unit": unit, "mode": "refused", "sent": True, "session": found, "model": model, "reason": refusal}
-    row = _attach(task_id, unit, found, {"title": ""}, adapter.name, folder)
+    row = _attach(task_id, unit, found, {"title": ""}, adapter.name, folder, model=model)
     result = {
         "unit": unit, "mode": "run", "session": str(found.get("id") or session),
         "pid": pid, "row": row, "model": model,

@@ -11,7 +11,10 @@ answer to that, and it is the text `/spend` inside OpenClaw forwards.
 
 No number is computed here: each lane's reader owns its own arithmetic, and this
 module decides only what a person reads. A lane that cannot be read says so, and a
-missing figure is never written as a zero.
+missing figure is never written as a zero. A percentage carries the age of the
+reading behind it, and one that `quota` has already declared too old to describe
+today keeps its age and loses the number, so the two commands cannot start
+disagreeing about the same reading.
 """
 from __future__ import annotations
 
@@ -37,15 +40,32 @@ ANTIGRAVITY_WINDOW = "30d"
 
 @dataclass(frozen=True)
 class Window:
-    """One window of one provider: what was used, in what unit, and what it cannot say."""
+    """One window of one provider: what was used, in what unit, and how old the reading is.
+
+    `state` speaks the same language as `quota.QuotaRow.state`: `ok` while the
+    reading still describes the window it was written for, `stale` when `quota`'s
+    own rule for that provider has already declared it too old. A stale reading
+    keeps the provider's number and loses the claim to be current.
+    """
 
     label: str
     used: float | None = None
     unit: str = ""
     note: str = ""
+    read_at: float | None = None
+    state: str = "ok"
 
     def to_dict(self) -> dict[str, Any]:
-        return {"window": self.label, "used": self.used, "unit": self.unit, "note": self.note}
+        """The window as JSON, with the moment of its reading and whether it still describes today.
+
+        The human line already says how old a percentage is and drops one declared
+        too old; a consumer of `--json` has to be able to make the same distinction,
+        and `quota._iso` is the report's one way of writing a moment.
+        """
+        return {
+            "window": self.label, "used": self.used, "unit": self.unit, "note": self.note,
+            "read_at": quota._iso(self.read_at), "state": self.state,
+        }
 
 
 @dataclass(frozen=True)
@@ -76,7 +96,7 @@ class Usage:
     @property
     def lines(self) -> list[str]:
         """One line per provider: what a person reads, and what a chat forwards."""
-        return [render_provider(provider) for provider in self.providers]
+        return [render_provider(provider, self.read_at) for provider in self.providers]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -93,29 +113,55 @@ def build(home: Path | None = None, now: float | None = None) -> Usage:
     return Usage(read_at=moment, providers=(
         *_harness(home_dir, moment),
         _claude(home_dir, moment),
-        _codex(home_dir),
+        _codex(home_dir, moment),
         _antigravity(home_dir, moment),
     ))
 
 
-def render_provider(provider: Provider) -> str:
+def render_provider(provider: Provider, now: float | None = None) -> str:
     """One provider, on one line, in the terms a person reads."""
     if not provider.windows:
         return f"{provider.name}: {provider.note or t('nothing is readable on this machine')}"
-    line = f"{provider.name}: " + ", ".join(render_window(window) for window in provider.windows)
+    line = f"{provider.name}: " + ", ".join(render_window(window, now) for window in provider.windows)
     return f"{line} ({provider.note})" if provider.note else line
 
 
-def render_window(window: Window) -> str:
-    """One window as the shortest sentence that carries the number and its unit."""
+def render_window(window: Window, now: float | None = None) -> str:
+    """One window as the shortest sentence that carries the number, its unit and its age.
+
+    `now` is the moment a person reads: without it a reading has no age, and the
+    sentence says what was used and nothing more.
+    """
     if window.used is None or not window.unit:
         return window.note or t("not measured")
     if window.unit == "usd":
         return t("{amount} in the last {window}", amount=f"{window.used:.2f} $", window=window.label)
     if window.unit == "tokens":
         return t("{tokens} tokens in the last {window}", tokens=f"{int(window.used):,}", window=window.label)
-    return t("{percent} of the {window} window used", percent=quota.percent_text(window.used),
-             window=window.label)
+    return _percent_line(window, now)
+
+
+def _percent_line(window: Window, now: float | None) -> str:
+    """A percentage with the age of its reading; a stale one keeps the age and loses the number.
+
+    The rule that decides staleness is `quota`'s, the command a handover acts on,
+    so this line repeats that verdict instead of holding a second opinion.
+    """
+    age = _read_age(window, now)
+    if window.state != "stale":
+        line = t("{percent} of the {window} window used", percent=quota.percent_text(window.used),
+                 window=window.label)
+        return f"{line}, " + t("read {age} ago", age=age) if age else line
+    if age is None:  # a stale reading with no moment cannot even be dated
+        return t("not measured")
+    return t("the {window} reading is {age} old, too old to say what is left", window=window.label, age=age)
+
+
+def _read_age(window: Window, now: float | None) -> str | None:
+    """How old a window's reading is, or None when it carries no moment or nobody asked."""
+    if window.read_at is None or now is None:
+        return None
+    return quota.age_text(now - window.read_at)
 
 
 def main(as_json: bool = False) -> int:
@@ -184,23 +230,33 @@ def _claude(home: Path, now: float) -> Provider:
                     note=t("the plan's limit is not readable on this machine"))
 
 
-def _codex(home: Path) -> Provider:
-    """Codex: the percentage each window reports in its own rate-limit event."""
+def _codex(home: Path, now: float) -> Provider:
+    """Codex: the percentage each window reports, with its age and whether it still describes the window."""
     usage = quota_codex.read_usage(codex_home(home))
     if not usage.known:
         return Provider(name="Codex", provider_id="openai", note=usage.note or t("no reading on this machine"))
     windows = tuple(
-        Window(label=quota.window_label(limit.window_minutes), used=limit.used_percent, unit="percent")
+        Window(
+            label=quota.window_label(limit.window_minutes),
+            used=limit.used_percent,
+            unit="percent",
+            read_at=usage.read_at,
+            # A window read before it could have reset no longer describes today:
+            # the rule is `quota`'s, repeated here rather than reworded.
+            state="stale" if quota._expired(usage.read_at, limit.window_minutes, now) else "ok",
+        )
         for limit in (usage.primary, usage.secondary) if limit is not None
     )
     return Provider(name=f"Codex ({usage.plan})" if usage.plan else "Codex", provider_id="openai", windows=windows)
 
 
 def _antigravity(home: Path, now: float) -> Provider:
-    """Antigravity: the prompt-credit percentage its own quota log carries."""
+    """Antigravity: the prompt-credit percentage its own quota log carries, and how old that log is."""
     usage = quota_antigravity.read_usage(home=home, now=now)
     if not usage.known:
         return Provider(name="Antigravity", note=usage.note or t("not measured on this machine"))
+    stale = quota._older_than(usage.read_at, quota.ANTIGRAVITY_MAX_READING_AGE_SECONDS, now)
     return Provider(name="Antigravity", windows=(
-        Window(label=ANTIGRAVITY_WINDOW, used=usage.prompt_credits_used_percent, unit="percent"),
+        Window(label=ANTIGRAVITY_WINDOW, used=usage.prompt_credits_used_percent, unit="percent",
+               read_at=usage.read_at, state="stale" if stale else "ok"),
     ))

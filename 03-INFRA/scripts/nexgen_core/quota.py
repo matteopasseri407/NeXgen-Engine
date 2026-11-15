@@ -9,7 +9,12 @@ percentage at all, because its plan usage is not in any local file.
 No number here is guessed. A paid lane shows a percentage only when a ceiling
 for that window was declared in `quota.yaml`; without one it shows what was
 spent and says the ceiling is missing. A percentage older than the window it
-describes is dropped, because that window has already reset.
+describes is dropped, because that window has already reset. Antigravity's log
+is written only while its IDE runs, so its monthly reading also has to be a day
+old or less: past that it stops describing today, keeps its age, and loses the
+percentage a handover would act on. A live reading a provider refused to refresh
+is treated the same way, by `quota_tokscale`, and reaches this report as
+`STATE_CACHED`: the number, its age, and no percentage.
 
 Each row also carries the model that lane hands over to, when the owner declared
 a fallback policy in the same file: the report is where a person looks to know
@@ -29,7 +34,7 @@ from pathlib import Path
 
 import yaml
 
-from nexgen_core import quota_antigravity, quota_claude, quota_codex, quota_policy
+from nexgen_core import quota_antigravity, quota_claude, quota_codex, quota_policy, quota_tokscale
 from nexgen_core.i18n import t
 from nexgen_core.paths import codex_home, resolve_home, resolve_vault_data
 
@@ -40,8 +45,25 @@ QUOTA_SUBPATH = ("03-INFRA", "agent-universal-layer", "quota.yaml")
 #: and for the doctor, so the two can never disagree about what "high" means.
 ALERT_AT = (80.0, 95.0)
 
+#: The state of a reading a live source could not refresh: the number and its age
+#: are still shown, and the percentage is not, because a handover must not act on
+#: a measurement of a window that may already be over. `quota_tokscale` sets it
+#: for a throttled provider, and `_row_text` is the only place that reads it.
+STATE_CACHED = "cached"
+
+#: How old Antigravity's reading may be before this report stops calling it
+#: current. Its window is a month long, but the log is only rewritten while the
+#: IDE runs, so a percentage that is still inside its own window can be weeks old
+#: and describe a month that started before the last reset. A day is the longest a
+#: person can read here and still be looking at today.
+ANTIGRAVITY_MAX_READING_AGE_SECONDS = 24 * 3600
+
 #: The provider ids the harness archive uses, and the name a person reads.
 PROVIDER_NAMES = {"opencode-go": "OpenCode Go", "opencode": "OpenCode Zen"}
+
+#: The id Claude Code's plan is reached by in a fallback chain, which both the
+#: token rows and the live reading of the same plan carry.
+CLAUDE_PROVIDER_ID = "anthropic"
 
 #: The windows the report shows for the harness archive, in reading order.
 SPEND_WINDOWS = ("5h", "7d", "30d")
@@ -121,13 +143,19 @@ def build_report(*, home: Path | None = None, vault: Path | None = None,
     Claude Code's transcripts are read here and nowhere else: a week of them is
     hundreds of megabytes, which is affordable for a command someone typed and
     not for the hourly beat or the doctor. Those two ask `percentage_rows`.
+
+    The tokens are read only when nothing above already answers that plan: a live
+    reading is the answer for the plan it measured, and counting the same plan's
+    tokens beside it would print one provider twice, from two readers that
+    disagree about what the number means.
     """
     moment = time.time() if now is None else float(now)
     rows, notes = percentage_rows(home=home, vault=vault, now=moment)
-    usage = quota_claude.read_usage(resolve_home(home) / ".claude", now=moment)
-    if usage.note:
-        notes.append(usage.note)
-    rows.extend(_claude_rows(usage, moment))
+    if not any(row.provider_id == CLAUDE_PROVIDER_ID for row in rows):
+        usage = quota_claude.read_usage(resolve_home(home) / ".claude", now=moment)
+        if usage.note:
+            notes.append(usage.note)
+        rows.extend(_claude_rows(usage, moment))
     if not any(row.provider == "Antigravity" for row in rows):
         rows.append(QuotaRow(
             provider="Antigravity", state="unknown",
@@ -151,20 +179,29 @@ def with_handovers(rows: list[QuotaRow], policy: quota_policy.Failover) -> list[
 
 
 def percentage_rows(*, home: Path | None = None, vault: Path | None = None,
-                    now: float | None = None) -> tuple[list[QuotaRow], list[str]]:
+                    now: float | None = None,
+                    backend_max_age: float | None = None) -> tuple[list[QuotaRow], list[str]]:
     """The rows whose percentage is a real number, and why some are missing.
 
     This is the cheap half of the report: Codex reads a few kilobytes from the
     tail of its newest session, the harness archive answers one query. No
-    transcript is opened, so it is safe to call from a timer.
+    transcript is opened, so it is safe to call from a timer. The optional
+    tokscale backend is asked here too, and it answers from a cache that is a few
+    minutes old, because one run of it costs seconds and asks the network.
+
+    `backend_max_age` reads that backend from its last answer only, never from a
+    run: it is what a caller with a deadline of its own states, and a backend
+    whose cache is older than that simply has no rows here.
     """
     moment = time.time() if now is None else float(now)
     rows: list[QuotaRow] = []
     notes: list[str] = []
+    external = quota_tokscale.read_usage(home, config=limits_path(home, vault=vault), now=moment,
+                                         max_age=backend_max_age)
     rows.extend(_codex_rows(home, moment, notes))
     rows.extend(_opencode_rows(home, vault, moment, notes))
     rows.extend(_antigravity_rows(home, moment, notes))
-    return rows, notes
+    return quota_tokscale.report_rows(external, rows, notes), notes
 
 
 def render_row(row: QuotaRow, now: float) -> str:
@@ -182,8 +219,14 @@ def _row_text(row: QuotaRow, now: float) -> str:
     age = age_text(_age_seconds(row.read_at, now) or 0.0)
     if row.state == "stale":
         return t(
-            "{provider}: the {window} reading is {age} old, older than the window itself",
+            "{provider}: the {window} reading is {age} old, too old to say what is left",
             provider=row.provider, window=row.window, age=age,
+        )
+    if row.state == STATE_CACHED:
+        return t(
+            "{provider}: {percent} of the {window} window in the last reading ({age}), and it was not refreshed",
+            provider=row.provider, percent=percent_text(row.used), window=row.window,
+            age=t("read {age} ago", age=age),
         )
     if row.unit == "percent":
         line = t(
@@ -254,7 +297,7 @@ def load_limits(path: Path) -> tuple[dict[str, dict[str, float]], list[str]]:
 
 
 def main(as_json: bool = False) -> int:
-    """Prints the report. Always exit 0: an unreadable source is an answer too."""
+    """Prints the report: a source that cannot be read is an answer here, never an error."""
     report = build_report()
     if as_json:
         print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
@@ -302,8 +345,10 @@ def _opencode_rows(home: Path | None, vault: Path | None, now: float, notes: lis
 
     The arithmetic is the harness lane's own (`supervision_spend`): this module
     decides what a person reads, not how a cost is computed. A checkout without
-    that lane is a real state (it is a separate package inside the engine), and
-    it costs this one source, never the command.
+    that lane is a real state (it is a separate package inside the engine), and it
+    costs this one source, never the command. A session whose `model` names no
+    provider is counted under that lane's own Italian placeholder, translated here
+    like every other word on the row.
     """
     try:
         from nexgen_local import supervision_spend
@@ -319,7 +364,6 @@ def _opencode_rows(home: Path | None, vault: Path | None, now: float, notes: lis
     notes.extend(unusable)
     rows: list[QuotaRow] = []
     for provider, windows in sorted(spend["providers"].items()):
-        name = PROVIDER_NAMES.get(provider, provider)
         declared = limits.get(provider, {})
         for window in SPEND_WINDOWS:
             counted = windows.get(window) or {}
@@ -329,7 +373,7 @@ def _opencode_rows(home: Path | None, vault: Path | None, now: float, notes: lis
             ceiling = declared.get(window)
             percent = round(100.0 * cost / ceiling, 1) if ceiling else None
             rows.append(QuotaRow(
-                provider=name,
+                provider=t("(unknown)") if provider == supervision_spend.UNKNOWN_PROVIDER else PROVIDER_NAMES.get(provider, provider),
                 provider_id=provider,
                 window=window,
                 used=round(cost, 2),
@@ -349,7 +393,7 @@ def _claude_rows(usage: quota_claude.ClaudeUsage, now: float) -> list[QuotaRow]:
     return [
         QuotaRow(
             provider="Claude Code",
-            provider_id="anthropic",
+            provider_id=CLAUDE_PROVIDER_ID,
             window=window,
             used=float(usage.windows.get(window, {}).get("tokens") or 0),
             unit="tokens",
@@ -362,13 +406,12 @@ def _claude_rows(usage: quota_claude.ClaudeUsage, now: float) -> list[QuotaRow]:
 
 
 def _antigravity_rows(home: Path | None, now: float, notes: list[str]) -> list[QuotaRow]:
-    """Antigravity's prompt credits percentage, dropped when older than its 30d window."""
+    """Antigravity's prompt credits, kept only while its log is a day old or less."""
     usage = quota_antigravity.read_usage(home=home, now=now)
     if not usage.known:
         return []
     window = "30d"
-    window_minutes = 30 * 1440
-    stale = _expired(usage.read_at, window_minutes, now)
+    stale = _older_than(usage.read_at, ANTIGRAVITY_MAX_READING_AGE_SECONDS, now)
     return [
         QuotaRow(
             provider="Antigravity",
@@ -398,9 +441,16 @@ def _expired(read_at: float | None, window_minutes: int | None, now: float) -> b
     longer describes what is left today. A reading with no moment of its own
     cannot be trusted with a percentage either.
     """
-    if read_at is None or not window_minutes:
+    if not window_minutes:
         return False
-    return now - read_at > window_minutes * 60
+    return _older_than(read_at, window_minutes * 60, now)
+
+
+def _older_than(read_at: float | None, max_age_seconds: float, now: float) -> bool:
+    """Whether a reading is older than `max_age_seconds`, or carries no moment at all."""
+    if read_at is None:
+        return True
+    return now - read_at > max_age_seconds
 
 
 def percent_text(value: float | None) -> str:

@@ -33,7 +33,7 @@ nexgen-local sup status                                     # every task, one li
 nexgen-local sup status <id>                                # units, states, verdicts, costs
 nexgen-local sup unit <id> <unit> --repo <checkout> --base <ref> --brief <file> \
     --allow 'docs/*.md' [--allow ...] [--verify "<command>"] [--mcp <server>]
-nexgen-local sup run <id> <unit> [--harness <name>]         # the executor's window
+nexgen-local sup run <id> <unit> [--harness <name>] [--headless]   # the executor's window
 nexgen-local sup collect <id> <unit>                        # the tab closes when the turn is over, then the gates and the cost
 nexgen-local sup review <id> <unit> --approve "<why>" [--close]  # one review round, APPROVA
 nexgen-local sup review <id> <unit> --rework <file>         # one review round, RIMANDA
@@ -211,6 +211,24 @@ The adapter owns the lookup: OpenCode lists its session store, Claude Code reads
 A harness that shows its own sessions opens none of the engine's windows (`window=False` in its capability table): `sup run` starts the turn itself, detached, and attaches the session under the key it chose, so the attach is not a guess made from a clock.
 OpenClaw is that harness today.
 
+### A unit with no window: `sup run --headless`
+
+`sup run --headless` starts the same detached turn and opens nothing: no tab, no Windows Terminal, no console.
+The turn runs in the unit's copy under the permission profile written a moment before, and the engine attaches the session that turn opened in that copy, read from the harness's own list as after any new tab.
+The journal records the delivery as `mode: "turn"`, not as a tab, and nothing carries `NEXGEN_SUP_TAB`, so `sup collect`, `sup review` and `sup pulizia` have no tab to close and never look for one.
+What the turn prints on stderr goes to `60-stderr-<session>.log` in the task folder, the file every one-shot turn already writes; a turn whose session does not exist yet appends to `60-stderr-session.log` until its id is known.
+
+This is the door for a supervisor that runs the verbs from an application without a terminal.
+The engine never needs a console inherited from its caller: `wt.exe`, `CREATE_NEW_CONSOLE` or the Linux terminal is started by the engine itself, so a graphical application that can start a process opens the usual `nexgen-sup` tabs.
+What the engine does need is a desktop session, and on Linux it refuses without `DISPLAY` or `WAYLAND_DISPLAY`.
+
+What `--headless` costs is exactly what a window costs: nobody sees the work happen.
+A permission request nobody answers is what the stall detector is for, and the report, the copy, the cost row and every gate are unchanged.
+The flag is accepted by OpenCode and the local executor, the two harnesses whose turn can open the session it is about to attach; for the others the verb refuses by name, because `claude`, `codex` and `agy` resume a session that already exists.
+It also decides only how a unit's first delivery starts: once the task has a session, later deliveries already run without a window, and the one case that opens a tab again is the engine's own `tab_closed`, which a review round treats as a refusal to work unseen.
+`openclaw` needs no flag: it declares `window=False` and is headless already.
+`-m` is refused together with `--headless`: that turn carries the model the routing tiers (or the quota gate) chose, and when there are no tiers it takes the one the harness is configured with.
+
 The journal records the folder with the session (`attached`, `unit_started`, `unit_queued`, `unit_reworked`).
 A unit looks first for the session recorded for that unit; the task's last session for the same harness is a fallback only for a unit that never had one.
 The engine reuses a session only when that folder is the unit's own copy; when it is another unit's copy it writes `harness_session_foreign` with both paths, and it opens a new tab in the right copy only when the harness says that session is free.
@@ -300,6 +318,28 @@ The scheme exists because of a measured run on 2026-10-21: the local model wrote
 Tests written by somebody else and red before the unit starts are the cheapest way to make the claim checkable: `sup collect` runs the same tests, and a green run is a fact, not a sentence.
 
 The model is named in the lane's `local_model.model`, and `sup run --harness local` selects the local adapter for one unit. The journal records the harness, so the review delivery returns to the same session.
+
+## The quota, before dispatch
+
+Before a unit starts, `sup run` reads the cheap quota rows for the plan its executor would spend (`nexgen_core.quota.percentage_rows`: the harness archive, Codex's own rate limits, and the optional backend from the cache it shares with the hourly beat).
+It opens no transcript and starts no model.
+At most it costs one run of that backend per ten minutes, whoever asked last.
+
+When the reading is current and at or above the line the owner declared under `failover.block_at` (95% unless that file says otherwise), the unit does not start there.
+That is the plugin's own number, not a second one: the same file feeds `before_model_resolve`, so a supervisor reading the alert band instead would keep dispatching to a plan the plugin had already stopped using.
+`routing_tiers` picks the next worker candidate, skipping every model of the spent plan, because a provider at that line is spent for everything it serves, and the journal gains one `unit_quota` row naming the reading, the decision and where the unit went:
+
+```
+unità <unit>: quota al 97% (5h): passa a gemini-3.8-flash
+```
+
+A reading that is stale, cached, missing or unreadable never blocks anything: it is recorded as `quota unknown` and the unit starts where it was going to start.
+The engine has never invented a percentage, and a doubt is a worse reason to stop a unit than no reason at all.
+A plan at 97% with nowhere else to go starts anyway, and the same row says so.
+`sup run --headless` never changes harness, because that turn opens its own session and only some harnesses can do it without a window: the move is journaled as not made (`decision="headless"`) instead of failing later in the name of a harness the owner never asked for.
+
+This check needs `routing-tiers.yaml`: without that file the lane has no candidate list to move to, and it runs exactly as its settings say.
+`sup status` does not repeat the reading; the journal is where it lives.
 
 ## Stalled sessions
 
@@ -665,6 +705,8 @@ The local-models bench is not the engine's: no verb stops it except the local un
 - Linux: the first of `x-terminal-emulator`, `gnome-terminal`, `konsole`, `xterm`, each with its own flags, the shell kept alive with `; exec bash`.
   Without `DISPLAY` and without `WAYLAND_DISPLAY` it refuses: a window nobody can see is a hidden process with extra steps.
 - The command is passed as argv, so the quoting rule is the engine's own (`nexgen_core.processes`), not a hand-built string.
+- Nothing here is inherited from the caller: the terminal is started by the engine, so a supervisor that runs the verbs from a graphical application gets the same tabs.
+  A unit that must not have a window goes through `sup run --headless` instead, which is described under "The executor's window".
 
 `sup window-check` is the manual proof on each machine: one window opens, prints `finestra del supervisore OK` and stays open.
 It is never part of a test: the tests substitute `Popen` and `which`, so no suite opens a window.

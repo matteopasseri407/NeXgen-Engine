@@ -123,6 +123,37 @@ def test_a_role_naming_an_unknown_harness_is_refused_before_a_tab_opens(lane):
         policy.roles()
 
 
+def test_a_rework_round_carries_the_model_into_the_new_tab(task, lane, monkeypatch):
+    """A tab reopened for a correction is refused without a model: the journal's one is used.
+
+    The unit's session was born in another copy, which is the documented case that gets one
+    new tab, and neither `review.rework` nor `send_corrections` names a model there.
+    """
+    _unit(lane, task, "prima")
+    other = lane / "altra-copia"
+    other.mkdir()
+    state.append_event(task, "attached", unit="prima", role="esecutore", harness="agy",
+                       session="ses_vecchia", folder=str(other), model="gemini-3.8-flash-high")
+    review = lane / "revisione.md"
+    review.write_text("# correzioni\n", encoding="utf-8")
+    seen: dict = {}
+    monkeypatch.setattr(
+        harness, "_measure_or_lost",
+        lambda *a, **k: SessionFacts(outcome="idle", idle_ms=10, updated_ms=10),
+    )
+
+    def fake_open_first_tab(*args, **kwargs):
+        seen.update(kwargs)
+        return {"mode": "tab", "unit": "prima", "session": "ses_nuova"}
+
+    monkeypatch.setattr(harness, "_open_first_tab", fake_open_first_tab)
+
+    harness.send_corrections(task, "prima", review, 2)
+
+    assert seen["model"] == "gemini-3.8-flash-high"
+    assert seen["reason"].startswith("sessione nata in un'altra copia")
+
+
 def test_the_run_verb_passes_the_chosen_harness_only_when_the_owner_names_it(monkeypatch):
     seen: list[dict] = []
 
@@ -161,6 +192,101 @@ def test_the_run_parser_offers_the_model_flag(capsys):
 
     out = capsys.readouterr().out
     assert "--model" in out
+
+
+def test_headless_run_starts_one_turn_and_leaves_the_window_alone(task, lane, monkeypatch):
+    """`sup run --headless`: nessuna scheda, un turno staccato, la sessione che il turno apre.
+
+    È la via di chi guida il motore da un'app senza terminale. La sessione non si
+    indovina: è quella comparsa nella copia, e il diario la registra come turno e
+    non come scheda, così nessuno la cerca nella tabella dei processi.
+    """
+    folder = _unit(lane, task, "prova")
+    opener = Opener()
+    turns: list[dict] = []
+    sessions = [{"id": "ses_headless", "directory": str(folder), "created": 10**13}]
+
+    def turn(session, prompt, copy, model=""):
+        turns.append({"session": session, "prompt": prompt, "folder": copy, "model": model})
+        return SimpleNamespace(pid=4321)
+
+    monkeypatch.setattr(harness, "_opencode_executable", lambda: "oc-finto")
+    monkeypatch.setattr(harness.costs, "record", lambda *a, **k: {"session": "ses_headless"})
+
+    result = harness.run_unit(
+        task, "prova", headless=True, runner=turn, opener=opener,
+        lister=lambda: sessions, wait_s=0,
+    )
+
+    assert opener.calls == [], "nessuna scheda: la finestra non si apre affatto"
+    assert len(turns) == 1
+    assert turns[0]["session"] == "", "il turno apre la sessione che il motore poi aggancia"
+    assert turns[0]["folder"] == folder
+    assert "contenuto segreto" not in turns[0]["prompt"], "il brief non viaggia nel turno"
+    assert result["mode"] == "run"
+    assert result["session"] == "ses_headless"
+    assert result["pid"] == 4321
+    events = state.read_events(task)
+    assert [row["event"] for row in events] == ["started", "unit_created", "unit_started", "attached"]
+    assert events[-2]["mode"] == "turn", "il diario non deve credere a una scheda che non esiste"
+    assert result["row"] == {"session": "ses_headless"}, "il costo si registra come ogni altro aggancio"
+
+
+def test_a_headless_turn_runs_on_the_model_the_tiers_chose(task, lane, monkeypatch):
+    """Il turno senza finestra non butta via il modello che il diario ha gia' scritto.
+
+    Il modello arriva dai tier, dalla coda quota o da `-m`; lasciarlo fuori dal turno faceva
+    divergere il diario da cio' che l'harness ha davvero usato, e rendeva `--limited` un
+    proposito senza effetto.
+    """
+    folder = _unit(lane, task, "prova")
+    turns: list[str] = []
+    sessions = [{"id": "ses_scelta", "directory": str(folder), "created": 10**13}]
+
+    def turn(session, prompt, copy, model=""):
+        turns.append(model)
+        return SimpleNamespace(pid=99)
+
+    monkeypatch.setattr(harness, "_opencode_executable", lambda: "oc-finto")
+    monkeypatch.setattr(harness.costs, "record", lambda *a, **k: {"session": "ses_scelta"})
+
+    harness.run_unit(
+        task, "prova", headless=True, model="opencode-go/deepseek-v4.1-flash",
+        runner=turn, opener=Opener(), lister=lambda: sessions, wait_s=0,
+    )
+
+    assert turns == ["opencode-go/deepseek-v4.1-flash"]
+
+
+def test_headless_refuses_a_harness_that_needs_an_existing_session(task, lane, monkeypatch):
+    """agy sa solo riaprire una sessione: un primo turno senza finestra non esiste per lui."""
+    _unit(lane, task, "prova")
+    monkeypatch.setattr(harness.shutil, "which", lambda name: f"{name}-finto")
+
+    with pytest.raises(harness.HarnessError, match="non sa aprire la sua prima sessione senza finestra"):
+        harness.run_unit(task, "prova", harness="agy", headless=True, opener=Opener(), wait_s=0)
+
+
+def test_headless_refuses_a_model_it_would_silently_drop():
+    """`-m` su un turno staccato non viaggia: meglio dirlo che perdere il modello in silenzio."""
+    with pytest.raises(harness.HarnessError, match="--headless non applica -m"):
+        sup_cmd._run_unit(SimpleNamespace(id="t", unit="u", harness="", headless=True, model="p/m"))
+
+
+def test_the_run_verb_passes_headless_only_when_the_owner_asks(monkeypatch):
+    seen: list[dict] = []
+
+    def fake_run(task_id, unit, **kwargs):
+        seen.append({"task": task_id, "unit": unit, **kwargs})
+        return {"mode": "run", "session": "ses_x", "pid": 1, "unit": unit}
+
+    monkeypatch.setattr(harness, "run_unit", fake_run)
+
+    sup_cmd._run_unit(SimpleNamespace(id="t", unit="u", harness="", headless=False))
+    sup_cmd._run_unit(SimpleNamespace(id="t", unit="u", harness="", headless=True))
+
+    assert seen[0] == {"task": "t", "unit": "u"}
+    assert seen[1] == {"task": "t", "unit": "u", "headless": True}
 
 
 def test_the_scout_verb_accepts_a_harness_and_resolves_it_before_the_copy(lane):
@@ -234,3 +360,4 @@ def test_a_local_unit_gets_a_step_by_step_plan_and_two_tests_warning(tmp_path):
     assert str(tmp_path / "30-resoconto-prova.md") in local
     assert "piano passo per passo" not in normal
     assert "contenuto segreto" not in local
+

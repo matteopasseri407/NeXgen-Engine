@@ -87,6 +87,33 @@ def test_read_usage_computes_used_percentage_if_missing(tmp_path):
     assert usage.prompt_credits_monthly == 40000
 
 
+def test_read_usage_carries_the_moment_of_the_log_entry(tmp_path):
+    """The age a person reads comes from the entry, not from when this ran."""
+    log_dir = tmp_path / "AppData" / "Roaming" / "Antigravity IDE" / "logs" / "session-old"
+    write_quota_log(log_dir, used_percent=99.0, timestamp="2026-10-04T09:15:00Z")
+    old = datetime(2026, 10, 4, 9, 15, 0, tzinfo=timezone.utc).timestamp()
+
+    usage = quota_antigravity.read_usage(home=tmp_path, now=old + 41 * 86400)
+
+    assert usage.known is True
+    assert usage.read_at == old
+
+
+def test_read_usage_without_an_entry_moment_uses_the_file_write_time(tmp_path):
+    """A payload with no timestamp is dated by its file, never by the moment of the run."""
+    import os
+
+    log_dir = tmp_path / "AppData" / "Roaming" / "Antigravity IDE" / "logs"
+    path = write_quota_log(log_dir, used_percent=42.0, timestamp="")
+    os.utime(path, (1_800_000_000.0, 1_800_000_000.0))
+
+    usage = quota_antigravity.read_usage(home=tmp_path)
+
+    assert usage.known is True
+    assert usage.prompt_credits_used_percent == 42.0
+    assert usage.read_at == 1_800_000_000.0
+
+
 def test_read_usage_missing_dir_or_file(tmp_path):
     usage = quota_antigravity.read_usage(home=tmp_path)
 

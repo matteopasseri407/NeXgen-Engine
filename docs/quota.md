@@ -5,16 +5,21 @@
 No provider offers a local answer to "how much of this plan is left", and the engine does not invent one.
 It reads what the harnesses on this machine have already written about their own usage, repeats the numbers they give, and says plainly which windows cannot be measured from here.
 
+One optional exception exists, and you install it yourself: [tokscale](https://github.com/junhoyeo/tokscale) is a separate MIT binary that reads the logins this machine already stores and asks each provider's own quota endpoint.
+When it is on `PATH`, `nexgen quota` shows its live percentages beside the local ones, and a plan it answers for is shown once, from that number.
+The engine itself still reads no credential file and calls no provider endpoint: see [the optional backend](#the-optional-tokscale-backend).
+
 `nexgen quota` prints one row per provider and window.
 `/quota` prints the same rows inside OpenClaw.
 `nexgen usage` prints the same readings grouped by provider, and `/spend` shows them inside OpenClaw.
 
-## The four surfaces
+## The surfaces
 
 | Surface | What it gives |
 | --- | --- |
 | `nexgen quota` | one line per row: provider, window, what was used, the percentage when it is a real one, the reset when the provider gave it, and how old the reading is |
 | `nexgen quota --json` | the same rows as data, plus `lines`: the text already rendered, in the machine's language |
+| `nexgen quota --line` | one compact line: each plan's worst window, its reset and, past ten minutes, its age. What a session start injects |
 | `/quota` in OpenClaw | the `lines` of the JSON, forwarded to the chat |
 | `nexgen usage` / `nexgen usage --json` | the same readings, one block per provider: the spend of the flat lanes, the tokens Claude Code used, the percentage Codex and Antigravity report, and a sentence where a lane cannot be read |
 | `/spend` in OpenClaw | the `lines` of `nexgen usage`, forwarded to the chat |
@@ -22,6 +27,24 @@ It reads what the harnesses on this machine have already written about their own
 The engine formats the strings once.
 The plugin never turns a number into a sentence and never rounds a percentage, so the chat and the terminal cannot disagree about the same reading.
 The command always exits 0: a source that cannot be read is an answer, not a failure.
+
+## The line a session starts with
+
+Claude Code's `SessionStart` hook injects one compact line, so the first turn of a session already sees what is left instead of the person having to ask:
+
+```
+Quota: Claude 5h 40% (reset 18:00) · Codex 30d 72% · OpenCode Go weekly 0% · Antigravity stale
+```
+
+It is `nexgen quota --line`: the worst window of each plan, the reset the provider gave, and `stale` for a plan whose reading could not be refreshed.
+A plan with no percentage at all — spend without a declared ceiling, or something this machine never measures — is left out rather than guessed at, and the full report is where it appears.
+The hook formats nothing; it prints the engine's own sentence, so the session context and the terminal cannot disagree either.
+The command writes that sentence as UTF-8 whatever code page the console started with, because the hook spawns it with a pipe and decodes it as UTF-8: the `·` between two plans is a character, not a single byte of a Windows code page.
+
+The hook asks for that line with a hard three-second cap and prints nothing at all when the call fails or runs out of time: a session start must never depend on a reading.
+For the same reason the line never buys a run of [the optional backend](#the-optional-tokscale-backend): it shows that backend's last answer while the `failover.state_max_age_minutes` of `quota.yaml` still trusts it, and past the ten minutes every caller shares it says how old the number is (`read 40m ago`).
+A plan the machine has nothing for is left out rather than guessed at.
+The hook's own job is unchanged: the vault briefing still arrives on a resumed or compacted session, and a machine with no engine on `PATH` simply gets no line.
 
 ## Why the chat command is `/spend` and not `/usage`
 
@@ -32,12 +55,20 @@ A plugin command is matched before the built-in ones, so registering `/usage` he
 
 ## What each provider gives
 
-| Provider | Where the reading comes from | Windows | Percentage | Reset |
-| --- | --- | --- | --- | --- |
-| Codex | the last `rate_limits` event in the newest `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | `5h`, `7d`, `30d`, as the event declares them | yes, `used_percent`, repeated as given | yes, `resets_at` |
-| OpenCode Go, OpenCode Zen | the harness archive `~/.local/share/opencode/opencode.db`, spend per session split by the provider that was paid | `5h`, `7d`, `30d` | only when `quota.yaml` declares a ceiling for that window | no |
-| Claude Code | `message.usage` in `~/.claude/projects/*/*.jsonl` | `5h`, `7d` | never, the plan's limit is not in any local file | no |
-| Antigravity | local quota extension logs `*-Antigravity Quota.log` under `%APPDATA%\Antigravity IDE\logs` (prompt credits) | `30d` | yes, when a local log exists; otherwise not measured | no |
+Every plan is read from the best source that can answer for it, and only from
+that one: a live reading from the optional backend first, then this engine's own
+reader, then `not measured`.
+The order is the same for every provider and is never mixed, so no plan is
+printed twice and no row is a guess.
+
+| Provider | Source used | What is shown | Known gaps |
+| --- | --- | --- | --- |
+| Claude Code / Claude Max | tokscale's live session and weekly windows; the `message.usage` counters of `~/.claude/projects/*/*.jsonl` when it has nothing | `Session` and `Weekly` percentages with the reset and the age of the reading; the tokens of the last `5h`/`7d` from the transcripts otherwise | the transcripts hold no plan ceiling, and Anthropic throttles the usage endpoint: while it does, the last good reading is shown without a percentage |
+| ChatGPT / Codex | tokscale's live session, weekly and monthly windows; the last `rate_limits` event of the newest `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` otherwise | `5h`, `7d`, `30d` as the provider declares them, with `resets_at` | the plan name is whatever the logged-in account reports, so a second account on the same machine is a different plan |
+| OpenCode Go, OpenCode Zen | tokscale's rolling, weekly and monthly windows; the harness archive `~/.local/share/opencode/opencode.db` otherwise | the provider's own three percentages; the archived spend per window, with a percentage only when `quota.yaml` declares a ceiling | the archive reports dollars, never a plan ceiling |
+| Google Antigravity | the IDE's own loopback endpoint, through tokscale; the local `*-Antigravity Quota.log` written by its quota extension when that endpoint cannot be reached | `30d` prompt credits, with the age; the log reading is dropped as stale after a day | needs a running language server and, from version 1.5.3, its CSRF token: with neither, the local log is the only source, and a machine that only runs the `agy` CLI writes nothing to disk |
+| GitHub Copilot | only tokscale's live reading | `Chat`, `Completions`, `Premium`, with the reset the provider gives | no local file this engine can read |
+| anything else tokscale learns | only tokscale's live reading | whatever the provider names, at the provider's own percentage | no local reader, and none is invented |
 
 ### Codex
 
@@ -70,8 +101,75 @@ They were 613 MB in eight days on the machine this was written on, which is affo
 ### Antigravity
 
 Antigravity's desktop environment logs prompt credit usage through the `ag-quota` extension into local session logs (`*-Antigravity Quota.log` under `%APPDATA%\Antigravity IDE\logs` or `%APPDATA%\Antigravity\logs`).
-The engine reads the tail of the newest log and extracts the monthly prompt credits used percentage for the `30d` window, dropping it as stale when it is older than 30 days.
+The engine reads the tail of the newest log, extracts the monthly prompt credits used percentage for the `30d` window, and carries the moment the log entry was written, so the row prints how old the reading is like every other row.
+The reading is dropped as stale after a day, not after the 30 days of its window: the extension only writes while the IDE runs, so a percentage that is still inside its monthly window can be weeks old and describe a period that has already reset.
+A stale reading keeps its age, loses its percentage, and never reaches the state the plugin reads before a turn, so an old 99% cannot make the engine block a plan that is fine.
 When no local log exists on disk, such as on a machine that only uses the `agy` CLI, where quota is fetched in memory from the Google Cloud Code API and never written, the row reports `not measured`.
+
+The live source is a different route to the same number, and it is the backend's, not this engine's: tokscale asks the language server the IDE runs over loopback (`RetrieveUserQuotaSummary`), and it finds that server through the `--csrf_token` the process was started with, the port the CLI writes into `cli.log`, or an `ANTIGRAVITY_CSRF_TOKEN` in the environment.
+Since language server 1.5.3 the token is required, so a server started without one is not asked at all, and a machine whose `cli.log` names no port has nothing to probe.
+That is the whole fallback: the live endpoint, then the local log, then `not measured`, never both, and never a second row for the same plan.
+
+## The optional tokscale backend
+
+[tokscale](https://github.com/junhoyeo/tokscale) is an MIT-licensed binary (npm `tokscale`) that does what this engine deliberately does not: it reads the OAuth logins already stored on the machine and asks each provider's own quota endpoint how much of the plan is left.
+Install it with `npm install -g tokscale` and it is used; do nothing and the report is exactly what it was before.
+
+It earns its place with the rows no local file can answer:
+
+- a Claude Code plan, which reports tokens in its transcripts and no ceiling anywhere on disk;
+- Antigravity, whose IDE answers on its own loopback endpoint but writes nothing to disk on a machine that only runs the `agy` CLI;
+- OpenCode Go, rolling, weekly and monthly, as the provider computes them instead of as a declared dollar ceiling;
+- Copilot, and any other plan tokscale learns to read, without this engine growing a reader for each one.
+
+### What it does not change
+
+The local readers stay, and they are the fallback.
+When tokscale answers for a plan the engine also reads locally, the live number is what you see and the local row is hidden, so nothing is printed twice.
+That includes Claude Code's token counts, which are not printed beside a live reading of the same plan: one plan, one row, one meaning.
+When tokscale has nothing for that plan, the local row is printed as it always was, including the Codex percentage from its own rollout, the harness archive's dollars, and Antigravity's log.
+`nexgen usage` still shows the harness archive's spend per provider, so the dollars of OpenCode Go are not lost when a quota percentage replaces them in `nexgen quota`.
+
+### Its ten minutes of memory
+
+One run costs a few seconds and asks the network, and `nexgen quota` is not the only caller: the hourly beat that raises the two alerts, `nexgen doctor` and the supervisor's pre-dispatch check all read the same percentages, while the line a session prints when it starts reads their last answer without buying one of its own.
+The answer is therefore cached for ten minutes under the machine-local state directory (`~/.local/state/nexgen/tokscale-usage.json`, `%USERPROFILE%\.local\state\...` on Windows), one interval in one constant, so the engine never spends more than one run of the binary per ten minutes however many of those callers ask.
+The run itself starts in that same directory: tokscale keeps a `.tokscale/` folder in the working directory it is given, and left to inherit the caller's, it would write that folder into whichever repository, Vault or shell the command happened to be run from.
+Each row says how old its number is.
+The cache holds only what this report reads: provider, provider id, window, percentage, reset, and the moment the number was read. The login, the e-mail and the account id that the binary also prints are never written anywhere.
+
+### When a provider throttles
+
+Anthropic's usage endpoint is rate-limited, and asking it too often is how a machine ends up being told to wait half an hour.
+tokscale records that wait itself, for each login it holds, and the engine reads that record instead of inventing a second schedule: while the wait lasts, no further run is spent, and the rows come from the cache with the age each of them carries.
+
+What the report then says, and why:
+
+- A reading that tokscale could not refresh is dated by the moment it was really taken, not by the moment of this run, and it loses its percentage: `Claude: 34% of the Session window in the last reading (read 40m ago), and it was not refreshed`. The number is real, its age is real, and no handover acts on it.
+- The rows of the other plans keep their percentages while the wait lasts, and their own age is printed on each of them. A cached answer is reused no longer than the age the policy itself trusts (`failover.state_max_age_minutes`, three hours unless the owner declares otherwise), so nothing reaches a turn with an age that policy would have refused; past that age the answer is bought again and comes back as the kept reading it is, without a percentage.
+- One line at the bottom says why, and there is one sentence per age: several plans whose last samples were taken far apart are each described with their own. When the last reading was kept: `tokscale could not refresh Claude, and is rate-limited until 22:41 (10m from now): showing the reading from 40m ago for it.` When nothing could be refreshed at all: `tokscale is rate-limited until 22:41 (10m from now): these readings are from 15m ago.` When tokscale has no sample left and Claude is missing from the answer altogether: `Claude: tokscale is rate-limited until 22:41 (25m from now), so the plan's own windows are not shown.`
+
+The retry time is not in `tokscale usage --json`: the binary prints that sentence on stderr and only in its text view, so a JSON answer from a throttled provider carries the last sample with `freshness.stale` set and no deadline at all.
+The record tokscale leaves beside it is the machine-readable copy of the same deadline, and it agrees with that sentence to the second.
+
+A provider that stops being answered at all keeps the last reading it gave for a day, marked the same way; after that it leaves the report instead of lingering as a number nobody can date.
+
+### When it goes wrong
+
+A missing binary, a non-zero exit, a run that passes twenty seconds, or an answer whose shape this engine does not recognise costs one line at the bottom of the report and nothing else.
+When an earlier run had already answered, its numbers stay on the report beside that line, dated by the moment they were really read and marked as kept, so one timeout does not blank every plan for the ten minutes the failure is remembered.
+The command still exits 0, the local readings still print, and the doctor and the beat carry on.
+The output carries no schema version, so a shape that is not understood is refused whole instead of half-printed: a tokscale release that renames a field is a line that says `tokscale output format not understood`, never two numbers and a guess.
+
+### Turning it off
+
+```yaml
+# 03-INFRA/agent-universal-layer/quota.yaml
+backends:
+  tokscale: off
+```
+
+The switch is per machine and lives beside the ceilings it belongs with. `NEXGEN_QUOTA_TOKSCALE=off` says the same thing for a single run, without editing the file: a scheduled job, a script, or a sandbox that must not read the accounts of whoever is logged in.
 
 ## A percentage needs a ceiling
 
@@ -108,6 +206,7 @@ The megaphone's own four-hour debounce applies on top: one missed repeat is chea
 
 Only the cheap readings are consulted.
 No timer opens the Claude Code transcripts.
+The optional tokscale backend is asked from its ten-minute cache, so an hourly beat pays for at most one run of it per ten minutes.
 
 ## What a plan hands over to
 
@@ -147,11 +246,13 @@ A provider with no chain declared prints its row as it always did, and no handov
 It is `OK` normally and `WARN` when one of them has reached 80%, with the action `Run 'nexgen quota' to see every window.`.
 It never turns red and never changes the exit code: a plan close to its ceiling is a fact to act on, not a broken machine.
 A machine where nothing is readable says so in one sentence instead of an empty line.
+Those percentages may come from the optional tokscale backend, and the doctor asks it from the same ten-minute cache: a doctor run, a beat and a command typed in the same ten minutes pay for one run of it between them, not three.
 
 ## What it deliberately does not do
 
-- It never calls a provider's API. No endpoint publishes what is left, and querying one to find out would be a new way to be wrong.
+- The engine itself never calls a provider's API. No endpoint publishes what is left, and querying one to find out would be a new way to be wrong.
 - It keeps no history and makes no forecast. Every run reads the present.
-- It does not treat a stale reading as a current one, and does not carry the last known percentage forward.
-- It does not read any credential file to obtain a number.
-- It does not call remote quota endpoints, such as Claude Code's plan-usage endpoint or Google Cloud Code's `fetchAvailableModels`, with user credentials to fetch quotas dynamically.
+- It does not treat a stale reading as a current one. A reading a provider refused to refresh keeps its number and its age and loses its percentage, so the last known value is never mistaken for a current one and no handover acts on it.
+- The engine itself reads no credential file to obtain a number. The optional tokscale backend does exactly that, which is why it is a separate binary you install, and why `backends: {tokscale: off}` exists.
+- The engine itself does not call remote quota endpoints, such as Claude Code's plan-usage endpoint or Google Cloud Code's `fetchAvailableModels`, with user credentials. The optional tokscale backend calls them on your behalf with the login already stored on this machine, and its numbers are the provider's own answers, not this engine's arithmetic.
+- No number from the backend is trusted beyond its shape: the fields are validated, the age is printed, and an unrecognised format is refused instead of interpreted.

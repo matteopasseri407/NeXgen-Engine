@@ -55,6 +55,15 @@ today. Add a row here the day one actually does.
 | langchain-ollama (`[local]` extra) | MIT |
 | mcp (`[local]` extra) | Apache-2.0 |
 
+## Optional external tools
+
+These are separate programs the engine calls when they are installed, never
+dependencies of it, and the numbers they produce are theirs:
+
+| Tool | Upstream | License | Purpose |
+|---|---|---|---|
+| **tokscale** | https://github.com/junhoyeo/tokscale | MIT (Copyright 2025 Junho Yeo) | Optional quota backend: reads the logins stored on this machine and reports each provider's own remaining quota to `nexgen quota` |
+
 ## Thanks
 
 This project stands on the shoulders of the open-source and source-available
