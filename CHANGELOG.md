@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-15
+
+### Changed
+
+- NeXgen Engine 3.0: one engine under every harness and flat plan, and inside OpenClaw a harness now costs what it costs run directly, measured on the gateway before every release.
+
 ### Added
 
 - Claude Code can be driven as a native plugin instead of by editing the person's own files, behind an opt-in switch that is off by default (`plugins.claude.enabled` in the installation's private `sync/remotes.yaml`). `nexgen_core/plugin_claude.py` renders one directory under the state folder from the same manifests the engine already reads: `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, the guardrail hook in `hooks/hooks.json` pointing at the fail-closed adapter through `${CLAUDE_PLUGIN_ROOT}`, the servers in `.mcp.json`, and the Claude-targeted skills under `skills/`. The directory is installed by Claude Code's own commands, in this order: `claude plugin validate --json` and nothing else if it refuses, then `claude plugin marketplace add <dir> --scope user`, then `claude plugin install nexgen@nexgen-engine --scope user --json`; the digest of the tree that reached the installer is remembered, so an unchanged directory is not installed twice by a cycle that runs every half hour. A `${VAR}` a server entry would otherwise take from the process environment becomes a `userConfig` option with `"sensitive": true`, so the value lives in the system credential store instead of a configuration file, and the reference is rewritten to `${user_config.VAR}`. The three classic writers stand down only once Claude Code has accepted the generated tree, never merely because the switch is on, so an install that keeps failing costs a warning and never leaves Claude Code without its hook, servers or views: the hook is then removed from `~/.claude/settings.json` (only this engine's own command strings; another tool's handler in the group stays), the servers the plugin mounts are taken out of `~/.claude.json`, and `~/.claude/skills` stops being a view target with its links taken back. Verified with `claude plugin validate` (Claude Code 2.1.323) on a generated directory: `Validation passed`.
