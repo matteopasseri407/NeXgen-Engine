@@ -6,7 +6,7 @@ them in search snippets, and the leak-scan gate blocked them in commits and Coun
 list was written when its author needed it, so each knew a different set of providers: a GitHub
 fine-grained token or an Anthropic key was refused by one and printed by another.
 
-This module is the runtime definition. The leak-scan patterns (`leak-scan/leak_patterns.yaml`) stay
+This module is the runtime definition. The leak-scan rules (`leak-scan/gitleaks.toml`) stay
 what they are, the commit-time gate and its allowlist; a test (`test_nexgen_secret_shapes.py`) feeds
 one corpus of synthetic credentials through every consumer, so a provider added to one place and
 forgotten in another fails the build instead of leaking in production. The vault-mcp container

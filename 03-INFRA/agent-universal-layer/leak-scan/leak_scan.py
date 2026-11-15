@@ -1,64 +1,96 @@
 #!/usr/bin/env python3
-"""Shared anti-leak gate (S0), used by all three layers of defense:
-  - local pre-commit / commit-msg hooks (on the staged diff / commit message)
-  - local maintainer checks (when used outside this repository, on every
-    commit in the range about to be published, plus their messages)
-  - this repo's CI (on every commit in a push or pull request)
+"""The engine's anti-leak gate: one policy file, four modes, gitleaks as the scanner.
+
+gitleaks (MIT, https://github.com/gitleaks/gitleaks) is the maintained engine behind the commit
+gate and owns its matching, its allowlists, its baseline and its modes. This module keeps what is
+this engine's own: the command line its hooks and CI already call, the private deny-list, the
+output shape (one redacted line per finding, silent when clean) and the fail-closed behaviour
+when the scanner is not installed.
+
+gitleaks is a maintainer tool, and only the commit gate runs on the engine's own repository.
+The text of a person's session, the brief about to reach a seat and the output a seat produced,
+is scanned by `scan_text` with the built-in matcher and the forms in `leak_patterns.yaml`: a
+Council that stopped working because a maintainer's binary is not installed would be a product
+regression, and requiring nobody's secret to leave the process is the point of the gate.
+
+Where each mode lands:
+  --tree PATH...           `gitleaks dir PATH` (fixtures, a working tree)
+  --staged                 `gitleaks git --staged --pre-commit REPO` (the pre-commit lane)
+  --message FILE           `gitleaks stdin` reading the file (the commit-msg lane)
+  --commit-range BASE..HEAD
+                           `gitleaks git --log-opts BASE..HEAD REPO`, plus the commit messages
+                           of the same range, which gitleaks attaches to a finding without
+                           scanning them.
+`--baseline` is handed to gitleaks as `--baseline-path` (the commit-range lanes only, exactly
+as the retired exception file was): a finding pinned there is already public, anything else
+blocks.
 
 Two pattern sources, NEVER mixed:
-  --patterns FILE   PUBLIC patterns (leak_hard/leak_allow): forms only, zero
-                     real values. This is the file used by CI.
-  --denylist FILE    Literal real values (plain substring match), one per
-                     line. Only ever used locally by a maintainer's own
-                     tooling; CI never has this file and never needs it.
+  --config FILE    the public rules (`gitleaks.toml`): forms only, zero real values.
+  --denylist FILE  literal real values, one per line, read only on the maintainer's machine.
+                   gitleaks has no secret-free way to match a real value, so they become a
+                   temporary copy of the config with one literal rule per value, deleted when
+                   the scan ends.
 
-Scan modes (pick one):
-  --tree PATH...          scan literal file/directory content (fixtures, working tree)
-  --staged                scan `git diff --cached` in a repo (--repo, default cwd)
-  --message FILE          scan a commit-message file (for the commit-msg hook)
-  --commit-range BASE..HEAD
-                          scan EVERY commit introduced in the range: diff
-                          (added lines only) plus commit message, one by one.
-                          This catches a value that lands in an intermediate
-                          commit and disappears from the final combined diff
-                          but stays in the published history.
-
-Output: silent when clean (exit 0, no stdout). When something is found, print
-one finding per line with the match ALWAYS redacted (never the full value)
-and exit 1. Callers own their own success/failure UX; this script only does
-detection.
+Exit codes: 0 clean (or only soft findings), 1 blocking findings, and also 1 with a clear
+message when gitleaks is missing or the scan could not be trusted: the gate never passes
+because the tool was absent.
 """
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 from typing import NamedTuple
 
-try:
-    import yaml
-except ImportError:
-    sys.exit("[leak-scan] ABORT: PyYAML not available (pip install pyyaml)")
+import yaml
 
-
-class Unit(NamedTuple):
-    label: str      # e.g. "src/foo.py" or "a1b2c3d message"
-    lineno: int
-    text: str
+SCAN_DIR = Path(__file__).resolve().parent
+DEFAULT_CONFIG = SCAN_DIR / "gitleaks.toml"
+DEFAULT_BASELINE = SCAN_DIR / "gitleaks-baseline.json"
+#: The forms the built-in matcher uses, for the gates that must work with no binary installed.
+DEFAULT_PATTERNS = SCAN_DIR / "leak_patterns.yaml"
+#: Rule ids with this prefix warn; every other rule, including the private deny-list, blocks.
+SOFT_RULE_PREFIX = "nexgen-soft-"
+GITLEAKS_MISSING = """[leak-scan] ABORT: gitleaks is not on PATH and it is this gate's scanner.
+  Windows   winget install gitleaks.gitleaks   (or: scoop install gitleaks)
+  macOS     brew install gitleaks
+  Linux     brew install gitleaks, or the release zip below
+  any OS    https://github.com/gitleaks/gitleaks/releases (single binary, MIT)
+Nothing was scanned. The gate fails closed: install it, then run the same command again."""
+SCAN_TIMEOUT_S = 900
 
 
 class Finding(NamedTuple):
     label: str
     lineno: int
-    kind: str       # "pattern:<name>" or "denylist"
+    kind: str
     redacted: str
-    blocking: bool  # True = leak_hard/denylist (blocks); False = leak_soft (warns only)
+    blocking: bool  # True blocks; False is a soft rule, printed as a warning only
+
+
+class Unit(NamedTuple):
+    """One line of text to match: what the finding can point a person at."""
+
+    label: str  # "brief", "generated output", a file path
+    lineno: int
+    text: str
 
 
 def load_patterns(path: Path) -> tuple[list[tuple[str, str, bool]], list[str]]:
+    """The built-in forms: blocking, warning, and the values they agree to ignore.
+
+    `leak_hard` blocks, `leak_soft` warns, `leak_allow` exempts a token a pattern
+    accounts for whole. An empty `leak_hard` is refused rather than read as
+    "nothing is a secret".
+    """
     if not path.is_file():
         sys.exit(f"[leak-scan] ABORT: pattern file not found: {path}")
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -66,280 +98,273 @@ def load_patterns(path: Path) -> tuple[list[tuple[str, str, bool]], list[str]]:
     if not hard:
         sys.exit("[leak-scan] ABORT: leak_hard is empty in the pattern file")
     soft = data.get("leak_soft", [])
-    named = [(f"h{i}", pat, True) for i, pat in enumerate(hard)]
-    named += [(f"s{i}", pat, False) for i, pat in enumerate(soft)]
-    allow = data.get("leak_allow", [])
-    return named, allow
+    named = [(f"h{index}", pattern, True) for index, pattern in enumerate(hard)]
+    named += [(f"s{index}", pattern, False) for index, pattern in enumerate(soft)]
+    return named, data.get("leak_allow", [])
+
+
+def _allowlisted(token: str, allowed: list[re.Pattern[str]]) -> bool:
+    """Whether an allow pattern accounts for the WHOLE flagged token.
+
+    `any(a.search(tok))` used to answer "an allow pattern appears somewhere inside
+    the token", so a real value that merely contained an allowlisted one was waved
+    through with it. `fullmatch` keeps `^`/`$` in the allow entries meaning "this
+    value stands alone" while still judging the true extent of what was flagged.
+    """
+    return any(pattern.fullmatch(token) for pattern in allowed)
+
+
+def scan_units(units: Iterable[Unit], patterns: list[tuple[str, str, bool]], allowed: list[str],
+               denylist: list[str]) -> list[Finding]:
+    """Every match in `units`, redacted, with the private values matched literally."""
+    allow_re = [re.compile(pattern) for pattern in allowed]
+    prepared = [(name, re.compile(pattern), blocking) for name, pattern, blocking in patterns]
+    findings: list[Finding] = []
+    for unit in units:
+        for name, regex, blocking in prepared:
+            for match in regex.finditer(unit.text):
+                token = match.group(0)
+                if _allowlisted(token, allow_re):
+                    continue
+                findings.append(Finding(unit.label, unit.lineno, f"pattern:{name}", redact(token), blocking))
+        for literal in denylist:
+            if literal and literal in unit.text:
+                findings.append(Finding(unit.label, unit.lineno, "denylist", redact(literal), True))
+    return findings
+
+
+def redact(token: str) -> str:
+    """Enough of a value to recognise it, never enough to use it."""
+    if len(token) <= 6:
+        return "*" * len(token)
+    return f"{token[:2]}…{token[-2:]} ({len(token)} chars)"
 
 
 def load_denylist(path: Path | None) -> list[str]:
+    """The private literal values, one per line; blank and `#` lines are ignored."""
     if path is None:
         return []
     if not path.is_file():
         sys.exit(f"[leak-scan] ABORT: denylist given but not found: {path}")
-    out = []
+    values = []
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        out.append(line)
-    return out
+        if line and not line.startswith("#"):
+            values.append(line)
+    return values
 
 
-def redact(tok: str) -> str:
-    if len(tok) <= 6:
-        return "*" * len(tok)
-    return f"{tok[:2]}…{tok[-2:]} ({len(tok)} chars)"
+def gitleaks_binary() -> str:
+    """The installed gitleaks, or a refusal that says how to install it."""
+    binary = shutil.which("gitleaks")
+    if binary is None:
+        sys.exit(GITLEAKS_MISSING)
+    return binary
 
 
-def _allowlisted(tok: str, allow_re: list[re.Pattern[str]]) -> bool:
-    """True only if an allow pattern accounts for the WHOLE flagged token.
+def _tail(text: str, limit: int = 800) -> str:
+    return " | ".join(line.strip() for line in text.splitlines() if line.strip())[-limit:]
 
-    Bug fixed here (leak-scan audit finding 29): the old check was
-    `any(a.search(tok) for a in allow_re)`, which asks "does an allow
-    pattern appear ANYWHERE inside the matched token" rather than "does an
-    allow pattern explain the ENTIRE token". A value that merely *contains*
-    an allowlisted value as a substring used to be waved through with it,
-    even though it is a different, unreviewed value. Concretely (see
-    tests/test_leak_scan.py for worked examples, deliberately not spelled
-    out here in a shape this same scanner would itself flag):
-      - the allowlisted wildcard IPv4 address is a literal substring of
-        other, real addresses that merely share its trailing octets;
-      - the allowlisted generic commit-trailer address is a literal
-        substring of a real address with something else concatenated onto
-        its local part.
-    Both used to clear their whole (single-token) match via `.search()`
-    and vanish from the findings entirely -- "the whole line passes with
-    no signal" is just what that looks like when the token that got
-    wrongly cleared was the only evidence on that line.
 
-    `fullmatch` requires the allow pattern to cover the *entire* span the
-    hard/soft pattern actually flagged (m.start()..m.end(), i.e. the real
-    context the match was found in) instead of letting `.search()` accept
-    any shorter fragment inside it.
+def _run_report(binary: str, command: list[str], config: Path, baseline: Path | None,
+                stdin_text: str | None = None) -> list[dict]:
+    """Run one gitleaks command and return its JSON findings.
 
-    Deliberately NOT implemented as `a.search(u.text, m.start(), m.end())`
-    against the full line text: Python's `^`/`$` anchors (used by two
-    allow entries -- the OCR body-size constant and git's null SHA) only
-    match the real start/end of the given string, never an arbitrary
-    `pos`/`endpos` offset into a longer one. Running them against a sliced
-    position in u.text would silently stop those two entries from ever
-    matching except when the flagged value sits at column 0. Matching
-    against the isolated token keeps `^`/`$` meaning what their authors
-    intended ("this value stands alone") while still checking the true
-    extent of what was flagged, not a `.search()`-shortened fragment of it.
+    A report that cannot be read, or a non-zero exit that is not "leaks found", is a scan
+    nobody can trust: it aborts instead of reporting a clean tree.
     """
-    return any(a.fullmatch(tok) for a in allow_re)
+    argv = [binary, *command, "--config", str(config), "--report-format", "json",
+            "--report-path", "-", "--no-banner", "--log-level", "warn"]
+    if baseline is not None:
+        argv += ["--baseline-path", str(baseline)]
+    done = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          input=stdin_text, timeout=SCAN_TIMEOUT_S, check=False)
+    if done.returncode not in (0, 1):
+        sys.exit(f"[leak-scan] ABORT: gitleaks failed with {done.returncode}: {_tail(done.stderr)}")
+    try:
+        entries = json.loads(done.stdout or "[]")
+    except json.JSONDecodeError:
+        sys.exit(f"[leak-scan] ABORT: gitleaks returned no readable report: {_tail(done.stdout)}")
+    if not isinstance(entries, list):
+        sys.exit("[leak-scan] ABORT: gitleaks returned a report that is not a list of findings")
+    if done.returncode == 1 and not entries:
+        # gitleaks exits 1 for a partial scan too; an empty report there is "unknown", not clean.
+        sys.exit(f"[leak-scan] ABORT: gitleaks could not finish the scan: {_tail(done.stderr)}")
+    return entries
 
 
-def scan_units(units: Iterable[Unit], patterns: list[tuple[str, str, bool]], allow: list[str],
-               denylist: list[str]) -> list[Finding]:
-    allow_re = [re.compile(a) for a in allow]
-    pat_re = [(name, re.compile(p), blocking) for name, p, blocking in patterns]
+def _finding(entry: dict, label: str | None = None) -> Finding:
+    """One gitleaks finding in the engine's shape: where, which rule, redacted value."""
+    rule = str(entry.get("RuleID") or "unknown")
+    secret = str(entry.get("Secret") or entry.get("Match") or "")
+    return Finding(
+        label=label or str(entry.get("File") or "(stdin)"),
+        lineno=int(entry.get("StartLine") or 0),
+        kind=f"rule:{rule}",
+        redacted=redact(secret) if secret else "(empty)",
+        blocking=not rule.startswith(SOFT_RULE_PREFIX),
+    )
+
+
+def _config_with_denylist(config: Path, denylist: list[str]) -> Path | None:
+    """A temporary copy of the public config with one literal rule per private value.
+
+    gitleaks matches forms, so a real value cannot live in the public file. Writing the values
+    into a temporary config keeps them where they already are (a private file, never printed)
+    and lets the same scan cover them in every mode. Returns None when there is no deny-list.
+    """
+    if not denylist:
+        return None
+    rules = "\n".join(
+        f'[[rules]]\nid = "nexgen-private-denylist-{index}"\n'
+        f'description = "a literal value from the private deny-list"\n'
+        f"regex = {json.dumps(re.escape(value))}\n"
+        for index, value in enumerate(denylist, 1)
+    )
+    handle, name = tempfile.mkstemp(prefix="nexgen-denylist-", suffix=".toml")
+    with os.fdopen(handle, "w", encoding="utf-8") as stream:
+        stream.write(config.read_text(encoding="utf-8") + "\n" + rules)
+    return Path(name)
+
+
+def _git(repo: str, *args: str) -> str:
+    done = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=False,
+                          check=False, timeout=120)
+    if done.returncode != 0:
+        err = done.stderr.decode("utf-8", errors="replace")
+        sys.exit(f"[leak-scan] git command failed: git {' '.join(args)}\n{err}")
+    return done.stdout.decode("utf-8", errors="replace")
+
+
+def _message_findings(binary: str, repo: str, range_spec: str, config: Path,
+                      baseline: Path | None) -> list[Finding]:
+    """The commit messages of the range: gitleaks carries one on a finding, never scans it."""
     findings: list[Finding] = []
-    for u in units:
-        for name, rx, blocking in pat_re:
-            for m in rx.finditer(u.text):
-                tok = m.group(0)
-                if _allowlisted(tok, allow_re):
-                    continue
-                findings.append(Finding(u.label, u.lineno, f"pattern:{name}", redact(tok), blocking))
-        for lit in denylist:
-            if lit and lit in u.text:
-                findings.append(Finding(u.label, u.lineno, "denylist", redact(lit), True))
+    for sha in (line for line in _git(repo, "rev-list", "--reverse", range_spec).splitlines() if line):
+        message = _git(repo, "log", "-1", "--format=%B", sha)
+        entries = _run_report(binary, ["stdin"], config, baseline, stdin_text=message)
+        findings += [_finding(entry, label=f"commit {sha[:9]} (message)") for entry in entries]
     return findings
 
 
-# --- collecting "units" to scan, per mode -------------------------------------
-
-def units_from_tree(paths: list[str]) -> list[Unit]:
-    units: list[Unit] = []
-    # Environments and caches, not source: a maintainer running `--tree .`
-    # against a real checkout used to walk straight into `.venv`'s installed
-    # packages (thousands of unrelated matches burying the handful of real
-    # findings) whenever the venv sat inside the scanned tree, because only
-    # VCS/build noise was excluded here.
-    skip_dirs = {
-        ".git", "__pycache__", "node_modules",
-        ".venv", "venv", ".ruff_cache", ".pytest_cache", ".mypy_cache",
-        "dist", "build",
-    }
-    files: list[Path] = []
-    for p in paths:
-        pp = Path(p)
-        if pp.is_dir():
-            for f in pp.rglob("*"):
-                if f.is_file() and not any(part in skip_dirs for part in f.parts):
-                    files.append(f)
-        elif pp.is_file():
-            files.append(pp)
-    for f in sorted(files):
-        try:
-            text = f.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
-            continue
-        for i, line in enumerate(text.splitlines(), 1):
-            units.append(Unit(str(f), i, line))
-    return units
+def _findings_for(args: argparse.Namespace, binary: str, config: Path,
+                  baseline: Path | None) -> list[Finding]:
+    """Collect the findings of the one mode the caller asked for."""
+    if args.tree:
+        findings: list[Finding] = []
+        for path in args.tree:
+            findings += [_finding(entry) for entry in _run_report(binary, ["dir", path], config, None)]
+        return findings
+    if args.staged:
+        entries = _run_report(binary, ["git", "--staged", "--pre-commit", args.repo], config, None)
+        return [_finding(entry) for entry in entries]
+    if args.message:
+        text = Path(args.message).read_text(encoding="utf-8")
+        entries = _run_report(binary, ["stdin"], config, None, stdin_text=text)
+        return [_finding(entry, label="(commit message)") for entry in entries]
+    entries = _run_report(binary, ["git", "--log-opts", args.commit_range, args.repo], config, baseline)
+    return [_finding(entry) for entry in entries] + _message_findings(
+        binary, args.repo, args.commit_range, config, baseline)
 
 
-def parse_added_lines(diff_text: str, label_prefix: str) -> list[Unit]:
-    units: list[Unit] = []
-    cur_file = "?"
-    ln = 0
-    # A "+++ " line is a file header only between files. Inside a hunk it is
-    # added content (an added line "++ ..." shows up as "+++ ..."), so the
-    # hunk state decides: "@@" opens a hunk, "diff " closes it.
-    in_hunk = False
-    for raw in diff_text.splitlines():
-        if raw.startswith("diff "):
-            in_hunk = False
-        if raw.startswith("+++ ") and not in_hunk:
-            cur_file = raw[4:].split("\t")[0]
-            cur_file = cur_file.removeprefix("b/")
-            if cur_file != "/dev/null":
-                label = f"{label_prefix}{cur_file}" if label_prefix else cur_file
-                # the filename itself is new content too (a secret can land in
-                # a name, not just in a line): scan it, not just the diff body.
-                units.append(Unit(f"{label} (filename)", 0, cur_file))
-            continue
-        if raw.startswith("@@"):
-            in_hunk = True
-            m = re.search(r"\+(\d+)", raw)
-            ln = int(m.group(1)) if m else 0
-            continue
-        if raw.startswith("+"):
-            label = f"{label_prefix}{cur_file}" if label_prefix else cur_file
-            units.append(Unit(label, ln, raw[1:]))
-            ln += 1
-        # "-" lines (removals) and context are not NEW content: ignored
-    return units
+def scan_text(text: str, label: str = "text") -> list[Finding]:
+    """Scan a string that is not a file on disk: a Council brief, a seat's generated output.
 
-
-def run_git(repo: str, *args: str) -> str:
-    r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=False, check=False, timeout=120)
-    if r.returncode != 0:
-        err = r.stderr.decode("utf-8", errors="replace")
-        sys.exit(f"[leak-scan] git command failed: git {' '.join(args)}\n{err}")
-    return r.stdout.decode("utf-8", errors="replace")
-
-
-def units_from_staged(repo: str) -> list[Unit]:
-    # --text: without it git prints "Binary files ... differ" and NO "+" lines
-    # for anything it classifies as binary (a NUL byte in the first 8000, or a
-    # .gitattributes rule). This lane is the pre-commit hook, so a secret in
-    # such a file scanned clean and exited 0 in silence.
-    diff = run_git(repo, "diff", "--cached", "--no-color", "--text", "--unified=0")
-    return parse_added_lines(diff, "")
-
-
-def units_from_message(path: str) -> list[Unit]:
-    text = Path(path).read_text(encoding="utf-8")
-    return [Unit("(commit message)", i, line) for i, line in enumerate(text.splitlines(), 1)]
-
-
-def units_from_commit_range(repo: str, range_spec: str) -> list[Unit]:
-    shas = [s for s in run_git(repo, "rev-list", "--reverse", range_spec).splitlines() if s]
-    units: list[Unit] = []
-    for sha in shas:
-        short = sha[:9]
-        # --text for the same reason as units_from_staged: this is the lane CI
-        # runs (--commit-range), so without it a binary-classified blob carrying
-        # a secret passed the publication gate.
-        diff = run_git(repo, "show", "--no-color", "--text", "--unified=0", "-m", "--format=", sha)
-        units.extend(parse_added_lines(diff, f"commit {short}: "))
-        msg = run_git(repo, "log", "-1", "--format=%B", sha)
-        units.extend(
-            Unit(f"commit {short} (message)", i, line)
-            for i, line in enumerate(msg.splitlines(), 1)
-        )
-    return units
-
-
-def load_exceptions(path: Path) -> set[tuple[str, int, str, str]]:
-    """The published findings pinned one by one: (label, line, kind, redacted).
-
-    Each entry names the full commit; the label is rebuilt the way
-    units_from_commit_range writes it, so an entry can only ever match that
-    exact commit, file, line, pattern and value. A malformed entry aborts:
-    a half-read exception file must not quietly let anything through.
+    The built-in matcher, never gitleaks: these two gates run inside a person's own
+    session and must keep working on a machine where no maintainer binary is
+    installed. The text is matched line by line, so a finding still names the line
+    the caller has to redact.
     """
-    if not path.is_file():
-        sys.exit(f"[leak-scan] ABORT: exceptions file not found: {path}")
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    pinned: set[tuple[str, int, str, str]] = set()
-    for entry in data.get("exceptions", []):
-        try:
-            # `rev`, not `commit`: a bare 40-hex value would itself read as a token.
-            commit, rel, line = str(entry["rev"]), str(entry["path"]), int(entry["line"])
-            kind, match, reason = str(entry["kind"]), str(entry["match"]), str(entry["reason"]).strip()
-        except (KeyError, TypeError, ValueError):
-            sys.exit(f"[leak-scan] ABORT: malformed exception entry: {entry!r}")
-        if len(commit) != 40 or not reason:
-            sys.exit(f"[leak-scan] ABORT: an exception needs the full commit and a reason: {entry!r}")
-        pinned.add((f"commit {commit[:9]}: {rel}", line, kind, match))
-    return pinned
+    patterns, allowed = load_patterns(DEFAULT_PATTERNS)
+    units = [Unit(label, number, line) for number, line in enumerate(text.splitlines(), 1)]
+    return scan_units(units, patterns, allowed, [])
 
 
-def main() -> int:
+#: Set by GitHub on its own runners. The lock there is the repository's permissions, not this
+#: machine's flag, and the private config a registration lives in does not exist in a fresh clone.
+CI_ENV = "GITHUB_ACTIONS"
+
+
+def _maintainer_refusal(repo: str) -> str | None:
+    """The refusal when the engine's own commit gate is asked for on an unregistered machine.
+
+    Only the commit lanes are that gate: `--staged` is its pre-commit step and `--commit-range`
+    its pre-push one. `--tree` and `--message` scan whatever text a caller hands them, in any
+    project, and stay open. Outside the engine's own checkout there is nothing to gate.
+    """
+    module = SCAN_DIR.parents[2] / "03-INFRA" / "scripts" / "nexgen_core" / "maintainer.py"
+    if not module.is_file() or os.environ.get(CI_ENV):
+        return None
+    sys.path.insert(0, str(module.parent.parent))  # the scripts directory, where the package root sits
+    from nexgen_core.maintainer import engine_repo_refusal
+
+    return engine_repo_refusal(Path(repo))
+
+
+def _baseline_for(args: argparse.Namespace) -> Path | None:
+    """The published findings pinned for this run: named, or the one shipped beside the rules."""
+    if args.baseline:
+        path = Path(args.baseline)
+        if not path.is_file():
+            sys.exit(f"[leak-scan] ABORT: baseline not found: {path}")
+        return path
+    if args.commit_range and DEFAULT_BASELINE.is_file():
+        return DEFAULT_BASELINE
+    return None
+
+
+def _parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--patterns", required=True, help="public pattern file (leak_hard/leak_allow)")
-    ap.add_argument("--denylist", help="private denylist file (literal values), optional")
+    ap.add_argument("--config", default=str(DEFAULT_CONFIG),
+                    help="public gitleaks rules (default: the gitleaks.toml beside this script)")
+    ap.add_argument("--denylist", help="private deny-list file (literal values), optional")
     ap.add_argument("--repo", default=".", help="git repo to operate on (default: cwd)")
+    ap.add_argument("--baseline", metavar="FILE",
+                    help="already-published findings to ignore (default: the shipped baseline, "
+                         "commit-range only)")
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--tree", nargs="+", metavar="PATH", help="scan literal file/dir content")
     mode.add_argument("--staged", action="store_true", help="scan the staged diff")
     mode.add_argument("--message", metavar="FILE", help="scan a commit-message file")
     mode.add_argument("--commit-range", metavar="BASE..HEAD", help="scan every commit in the range")
-    ap.add_argument("--exceptions", metavar="FILE",
-                    help="already-published findings pinned to their exact commit (commit-range only)")
-    args = ap.parse_args()
-    if args.exceptions and not args.commit_range:
-        sys.exit("[leak-scan] ABORT: --exceptions applies only to --commit-range")
-    beside = Path(args.patterns).with_name("published_exceptions.yaml")
-    if args.commit_range and not args.exceptions and beside.is_file():
-        # Shipped next to the public patterns, so every commit-range scan
-        # (CI included) uses the same pinned list without being told.
-        args.exceptions = str(beside)
+    return ap.parse_args()
 
-    patterns, allow = load_patterns(Path(args.patterns))
-    denylist = load_denylist(Path(args.denylist)) if args.denylist else []
 
-    if args.tree:
-        units = units_from_tree(args.tree)
-    elif args.staged:
-        units = units_from_staged(args.repo)
-    elif args.message:
-        units = units_from_message(args.message)
-    else:
-        units = units_from_commit_range(args.repo, args.commit_range)
-
-    findings = scan_units(units, patterns, allow, denylist)
-    if args.exceptions:
-        pinned = load_exceptions(Path(args.exceptions))
-        known = [f for f in findings if (f.label, f.lineno, f.kind, f.redacted) in pinned]
-        findings = [f for f in findings if f not in known]
-        if known:
-            print(f"[leak-scan] {len(known)} already-published finding(s) pinned in {args.exceptions}")
-    if not findings:
-        return 0
-
-    blocking = [f for f in findings if f.blocking]
-    soft = [f for f in findings if not f.blocking]
-
+def _print_and_exit(findings: list[Finding]) -> int:
+    """The engine's own output contract: silent when clean, redacted findings, soft first."""
+    soft = [finding for finding in findings if not finding.blocking]
+    blocking = [finding for finding in findings if finding.blocking]
     if soft:
         print("[leak-scan] soft warnings (not blocking):")
-        for f in soft:
-            print(f"  ? {f.label}:{f.lineno}  [{f.kind}]  match={f.redacted}")
-
+        for finding in soft:
+            print(f"  ? {finding.label}:{finding.lineno}  [{finding.kind}]  match={finding.redacted}")
     if not blocking:
         return 0
-
     print("[leak-scan] BLOCKING leaks found:")
-    for f in blocking:
-        print(f"  ! {f.label}:{f.lineno}  [{f.kind}]  match={f.redacted}")
+    for finding in blocking:
+        print(f"  ! {finding.label}:{finding.lineno}  [{finding.kind}]  match={finding.redacted}")
     print(f"[leak-scan] total: {len(blocking)} finding(s) — commit/push blocked.")
     return 1
+
+
+def main() -> int:
+    args = _parse_args()
+    if args.staged or args.commit_range:
+        refused = _maintainer_refusal(args.repo)
+        if refused:
+            sys.exit(refused)
+    binary = gitleaks_binary()
+    config = Path(args.config)
+    if not config.is_file():
+        sys.exit(f"[leak-scan] ABORT: rule file not found: {config}")
+    denylist = load_denylist(Path(args.denylist)) if args.denylist else []
+    temporary = _config_with_denylist(config, denylist)
+    try:
+        findings = _findings_for(args, binary, temporary or config, _baseline_for(args))
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    return _print_and_exit(findings)
 
 
 if __name__ == "__main__":

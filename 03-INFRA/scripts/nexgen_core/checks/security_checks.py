@@ -295,28 +295,28 @@ def _normalized(path: Path) -> list[str]:
 
 
 def check_leak_patterns_twin(vault_data: Path, engine_root: Path) -> CheckOutcome | None:
-    """The private Vault keeps a copy of the leak-scan patterns the public engine's CI uses.
+    """The private Vault keeps a copy of the leak-scan rules the public engine's CI uses.
 
-    Two copies kept in step by a person's memory drifted before: the engine gained provider-token patterns
+    Two copies kept in step by a person's memory drifted before: the engine gained provider-token rules
     and the copy the maintainer's own push gate reads did not, so the gate that guards the public repository
     was weaker than the one CI runs. Returns None where there is no Vault copy (every machine but the
     maintainer's), because there is nothing to compare.
     """
-    twin = vault_data / "03-INFRA" / "agent-universal-layer" / "sanitize" / "leak_patterns.yaml"
-    source = engine_root / "agent-universal-layer" / "leak-scan" / "leak_patterns.yaml"
+    twin = vault_data / "03-INFRA" / "agent-universal-layer" / "sanitize" / "gitleaks.toml"
+    source = engine_root / "agent-universal-layer" / "leak-scan" / "gitleaks.toml"
     if not twin.is_file() or not source.is_file():
         return None
     try:
         same = _normalized(twin) == _normalized(source)
     except (OSError, UnicodeDecodeError) as exc:
         return CheckOutcome(id="security.leak_patterns_twin", severity=Severity.UNDETERMINED,
-                            message=t("The leak-scan pattern copies could not be compared: {error}", error=exc))
+                            message=t("The leak-scan rule copies could not be compared: {error}", error=exc))
     if same:
         return CheckOutcome(id="security.leak_patterns_twin", severity=Severity.OK,
-                            message=t("The Vault's leak-scan patterns match the engine's"))
+                            message=t("The Vault's leak-scan rules match the engine's"))
     return CheckOutcome(
         id="security.leak_patterns_twin",
         severity=Severity.WARN,
-        message=t("The Vault's copy of the leak-scan patterns differs from the engine's, so its push gate may be weaker than CI's."),
+        message=t("The Vault's copy of the leak-scan rules differs from the engine's, so its push gate may be weaker than CI's."),
         action=t("Copy {source} over {twin}, then commit it in the Vault.", source=source, twin=twin),
     )

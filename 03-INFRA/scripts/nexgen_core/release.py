@@ -334,6 +334,22 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _maintainer_gate() -> int:
+    """Refuses a person-facing release verb where this installation is not a maintainer.
+
+    The plumbing verbs (`scan-range`, `next-version`, `bump`, `check-version`, `ci-passed`)
+    stay open: the CI runs them on a fresh clone, where no registration exists, and none of
+    them publishes anything.
+    """
+    from nexgen_core import maintainer
+
+    message = maintainer.refusal()
+    if not message:
+        return 0
+    print(message, file=sys.stderr)
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["ship"]:
@@ -344,6 +360,8 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
     if args.command == "preflight":
+        if (refused := _maintainer_gate()):
+            return refused
         return _preflight()
 
     if args.command == "next-version":

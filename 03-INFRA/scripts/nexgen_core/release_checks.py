@@ -30,12 +30,21 @@ CHECK_PENDING = ("QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "REQUESTED", "EX
 
 Runner = Callable[[Sequence[str], Path], "subprocess.CompletedProcess[str]"]
 
+#: The default patience of one `gh` call. `gh pr checks --watch` waits for the
+#: checks themselves, so it gets the ship's own limit instead (see below).
+CALL_TIMEOUT_SECONDS = 300.0
 
-def run_command(argv: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+#: How long `gh pr checks --watch` may block before the caller gives up: the
+#: same hour `release ship` gives its own waits.
+WATCH_TIMEOUT_SECONDS = 3600.0
+
+
+def run_command(argv: Sequence[str], cwd: Path,
+                timeout: float = CALL_TIMEOUT_SECONDS) -> subprocess.CompletedProcess[str]:
     """One command, resolved through PATH(EXT) so `gh.exe` works on Windows too."""
     exe = shutil.which(argv[0]) or argv[0]
     return subprocess.run([exe, *argv[1:]], cwd=cwd, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", check=False, timeout=300)
+                          encoding="utf-8", errors="replace", check=False, timeout=timeout)
 
 
 def _answer(text: str):
@@ -166,6 +175,45 @@ def commit_checks(repo: Path, sha: str, run: Runner = run_command) -> dict[str, 
                            "status": "pending" if state.lower() == "pending" else "completed",
                            "started_at": entry.get("created_at") or ""})
     return by_name(checks)
+
+
+def pr_head_visible(repo: Path, number: int, head: str, run: Runner = run_command) -> bool:
+    """Whether GitHub reports `head` as the pull request's head yet.
+
+    `gh pr checks` answers about whatever head it finds, so watching before the
+    push is visible would judge the previous commit. This is the one question the
+    engine still asks itself before handing the waiting over.
+    """
+    result = run(["gh", "pr", "view", str(number), "--json", "headRefOid"], repo)
+    if result.returncode != 0:
+        return False
+    return (_answer(result.stdout) or {}).get("headRefOid") == head
+
+
+def pr_required_checks(repo: Path, number: int, run: Runner | None = None,
+                       timeout: float = WATCH_TIMEOUT_SECONDS) -> tuple[bool, str]:
+    """Wait for one pull request's required checks with `gh pr checks --required --watch`.
+
+    One job: hand the waiting to the official CLI instead of polling GitHub's
+    own API for it. `--required` asks only for the checks the branch protection
+    requires, `--watch` returns when they finish, and `gh` exits 0 when they all
+    passed, 1 when one failed and 8 when they are still pending.
+
+    The engine keeps the two things the CLI cannot express: that there is a
+    required list at all (with no protection `--required` shows nothing and
+    exits 0, which would read as green), and that GitHub must have seen the head
+    being released. Both are the caller's, in `release_ship.py`.
+    """
+    runner = run or (lambda argv, cwd: run_command(argv, cwd, timeout=timeout))
+    result = runner(["gh", "pr", "checks", str(number), "--required", "--watch", "--fail-fast"], repo)
+    if result.returncode == 0:
+        return True, f"the required checks are green on #{number}"
+    detail = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+    reason = next((line for line in detail if "fail" in line.lower()), detail[-1] if detail else "")
+    if result.returncode == 1:
+        return False, f"failing on #{number}: {reason or 'a required check failed'}"
+    return False, (f"not answered on #{number} (gh exit {result.returncode})"
+                   f"{': ' + reason if reason else ''}")
 
 
 def ci_run_passed(repo: Path, sha: str, run: Runner = run_command, workflow: str = "ci.yml") -> bool:

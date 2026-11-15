@@ -250,12 +250,10 @@ def test_the_unreleased_section_becomes_the_new_version_and_is_left_empty(tmp_pa
     assert expected_body in new_release_body
 
 
-def test_first_push_checks_all_unpublished_commits_and_excludes_published_history(tmp_path):
+def test_first_push_checks_all_unpublished_commits_and_excludes_published_history(tmp_path, monkeypatch):
     import subprocess
     import secrets
-    import runpy
-    scanner = SCRIPTS_DIR.parent / "agent-universal-layer/leak-scan/leak_scan.py"
-    units_from_commit_range = runpy.run_path(str(scanner))["units_from_commit_range"]
+    from test_nexgen_leak_scan import calls, fake_gitleaks, scan
     repo = tmp_path / "repo"
     repo.mkdir()
     def git(*args):
@@ -278,11 +276,16 @@ def test_first_push_checks_all_unpublished_commits_and_excludes_published_histor
     git("commit", "-qm", "second new commit")
     head = git("rev-parse", "HEAD")
     selected = scan_range("push", ZERO_SHA, head, first_push_base=base)
-    units = units_from_commit_range(str(repo), selected)
-    text = "\n".join(unit.text for unit in units)
-    assert marker in text  # a value removed at the tip is still examined
-    assert "clean final state" in text
-    assert "published legacy fixture" not in text
+    # What the gate will look at is gitleaks' `--log-opts`; the fake binary records it.
+    home = fake_gitleaks(tmp_path, monkeypatch)
+    scan("--repo", str(repo), "--commit-range", selected)
+    argv = calls(home)[0]["argv"]
+    patches = git("log", "-p", "--format=", argv[argv.index("--log-opts") + 1])
+    added = "\n".join(line[1:] for line in patches.splitlines()
+                      if line.startswith("+") and not line.startswith("+++"))
+    assert marker in added  # a value removed at the tip is still examined
+    assert "clean final state" in added
+    assert "published legacy fixture" not in added
 
 
 def test_a_bump_with_nothing_to_say_is_refused_before_any_write(tmp_path):

@@ -52,6 +52,9 @@ class FakeWorld:
         #: on it: it is slow and flaky, and CI reports it without blocking a release.
         self.required_checks = ["test"]
         self.check_runs: dict[str, list[dict]] = {}
+        #: What `gh pr checks --required --watch` answers for the release pull
+        #: request: 0 green, 1 a required check failed, 8 still pending.
+        self.pr_checks_exit = 0
         self.ci_on_main = "success"
         self.smoke_fails = False
         self.installed_smoke_fails = False
@@ -189,6 +192,12 @@ class FakeWorld:
             case ("gh", "pr", "view"):
                 rollup = self.rollups.pop(0) if len(self.rollups) > 1 else self.rollups[0]
                 return json.dumps({"headRefOid": RELEASE_HEAD, "statusCheckRollup": rollup}), 0
+            case ("gh", "pr", "checks"):
+                # `--required --watch` is GitHub's own verdict now: this stands in
+                # for the CLI, so the answer is a process result, not a rollup.
+                if self.pr_checks_exit == 0:
+                    return "All required checks passed", 0
+                return "X  ci.yml  failing  1m0s\nsome required check failed", self.pr_checks_exit
             case ("gh", "run", "list") if "ci.yml" in argv:
                 return json.dumps([{"databaseId": 5, "status": "completed", "conclusion": self.ci_on_main}]), 0
             case ("gh", "run", "list"):
@@ -260,7 +269,8 @@ def test_a_release_goes_from_developer_to_a_synced_tag(repo):
 def test_the_ignored_lane_guard_does_not_stop_it_but_a_real_failure_does(repo):
     world = FakeWorld(repo)
     world.rollups = [[{"name": "test", "status": "COMPLETED", "conclusion": "FAILURE"}]]
-    with pytest.raises(ShipStop, match="failing checks: test"):
+    world.pr_checks_exit = 1
+    with pytest.raises(ShipStop, match="failing on #114"):
         _shipper(repo, world).ship("minor")
     assert not any(c[:3] == ("gh", "pr", "merge") for c in world.calls)
 
@@ -457,8 +467,15 @@ def test_it_refuses_to_start_from_a_dirty_tree(repo):
 
 
 def test_waiting_has_a_limit(repo):
+    """The one wait the CLI cannot bound is still bounded here: the checks on main.
+
+    `gh pr checks --watch` gives up on its own; the required checks on the merge
+    commit are still the engine's own poll, and one that never reports stops the
+    release instead of hanging it.
+    """
     world = FakeWorld(repo)
-    world.rollups = [[]]
+    world.merge_tree = "b" * 40  # a different tree, so main's checks are waited for
+    world.check_runs[MERGED] = []
     with pytest.raises(ShipStop, match="gave up waiting"):
         _shipper(repo, world, wait_limit_seconds=3).ship("minor")
 

@@ -26,6 +26,22 @@ def _staged_base(root: Path) -> str:
     return "HEAD" if has_head else resolve_base(root)
 
 
+def _engine_repo_refusal(root: Path) -> int:
+    """Refuses `init` and the pre-push gate inside the engine's own repository.
+
+    The discipline workflow is a product feature in a person's projects, and it stays open
+    there. In the engine's own tree its hooks and gates are the publisher's, so they run only
+    on a machine registered as maintainer: everyone else gets one message naming the check.
+    """
+    from ..maintainer import engine_repo_refusal
+
+    message = engine_repo_refusal(root)
+    if not message:
+        return 0
+    print(message, file=sys.stderr)
+    return 1
+
+
 def _scope(args: argparse.Namespace) -> tuple[Path, Config, str, str | None]:
     root = repo_root(Path.cwd())
     if args.staged:
@@ -43,6 +59,8 @@ def cmd_check(args: argparse.Namespace, per_commit: bool = False) -> int:
 
 
 def cmd_gate(args: argparse.Namespace) -> int:
+    if (refused := _engine_repo_refusal(repo_root(Path.cwd()))):
+        return refused
     return cmd_check(args, per_commit=True)
 
 
@@ -118,7 +136,10 @@ def cmd_smoke(args: argparse.Namespace) -> int:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
-    lines, protected = init_project(repo_root(Path.cwd()), args.smoke)
+    root = repo_root(Path.cwd())
+    if (refused := _engine_repo_refusal(root)):
+        return refused
+    lines, protected = init_project(root, args.smoke)
     print("\n".join(lines))
     return 0 if protected else 1
 

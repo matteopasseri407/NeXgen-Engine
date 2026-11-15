@@ -1,0 +1,233 @@
+# What the engine's anti-leak gate looks for, in gitleaks' own config language.
+#
+# gitleaks (MIT, https://github.com/gitleaks/gitleaks) owns the matching engine, the allowlist
+# rules, the baseline and the four scan modes; this file is the engine's POLICY: the shapes that
+# block a commit and the values already reviewed as harmless. Forms only, never a real value:
+# this file ships in the public repository, and real values belong to the private deny-list that
+# `leak_scan.py --denylist` reads on the maintainer's machine.
+#
+# Translated from the retired `leak_patterns.yaml` (2026-11-15). Three deliberate differences,
+# because gitleaks compiles its regexes with Go's RE2 (no lookbehind, no lookahead, no backrefs):
+#   * the 40+ hex rule no longer excludes a commit pin by lookbehind; the exclusion is an
+#     allowlist tested against the whole line (see the rule below). Slightly wider: a secret on
+#     the same line as a pinned digest would be waved through with it.
+#   * the two "high entropy between quotes / after a label" rules no longer spell out
+#     "has a lowercase, an uppercase and a digit"; they ask for a Shannon entropy above 3.5
+#     instead, which is the same threshold gitleaks' own `generic-api-key` uses.
+#   * a rule whose regex has a capture group reports that group as the secret, so the rules
+#     below capture the token and leave the label (`API_KEY=`, `Bearer `) out of the match.
+
+title = "NeXgen Engine anti-leak rules"
+
+# --- personal data: the engine refuses to publish its owner's identifiers -------------------
+
+[[rules]]
+id = "nexgen-personal-ipv4"
+description = "An IPv4 address is machine or network identifying, not a public example."
+regex = '''\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'''
+
+[[rules]]
+id = "nexgen-personal-home-linux"
+description = "A Linux home path names a real machine account."
+regex = '''/home/[A-Za-z0-9._-]+'''
+
+[[rules]]
+id = "nexgen-personal-home-windows"
+description = "A Windows user profile path names a real machine account."
+regex = '''(?i)[A-Z]:[\\/]Users[\\/][A-Za-z0-9._-]+'''
+
+[[rules]]
+id = "nexgen-personal-email"
+description = "An e-mail address is personal data and belongs in the private Vault."
+regex = '''[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'''
+
+[[rules]]
+id = "nexgen-long-digits"
+description = "A run of seven or more digits is a chat id, a phone number or a project number."
+regex = '''\b\d{7,}\b'''
+
+# --- high entropy: credentials that do not announce a provider ------------------------------
+
+[[rules]]
+id = "nexgen-long-hex"
+description = "A long hex run is a key material candidate; a commit pin or a digest is not."
+regex = '''\b[0-9a-f]{40,}\b'''
+  # `uses: owner/repo@<sha>`, `image@sha256:<digest>` and a `rev: "<sha>"` exception are values
+  # pinned and verified elsewhere, not secrets. This is tested against the line, which is the
+  # widest scope an allowlist has: it is the one place where the translation is not 1:1.
+  [[rules.allowlists]]
+  description = "a verified pin: an action SHA, a container digest, or an exception's rev"
+  regexTarget = "line"
+  regexes = [
+    '''@[0-9a-f]{40,}''',
+    '''sha256:[0-9a-f]{64}''',
+    '''rev: ["\x27][0-9a-f]{40,}''',
+  ]
+
+[[rules]]
+id = "nexgen-high-entropy-quoted"
+description = "A long alphanumeric run between quotes looks like a generated credential."
+regex = '''["']([A-Za-z0-9]{16,})["']'''
+secretGroup = 1
+entropy = 3.5
+  # The retired rule asked for a lowercase, an uppercase AND a digit; RE2 cannot say "and", so
+  # the token that lacks one of the three is released here. Without this, every camelCase
+  # identifier between quotes (`"cacheCreationTokens"`, `"ToastNotificationManager"`) blocked.
+  [[rules.allowlists]]
+  description = "not the Aa0 mix a generated credential has: no digit, no uppercase or no lowercase"
+  regexes = ['''^[A-Za-z]+$''', '''^[a-z0-9]+$''', '''^[A-Z0-9]+$''']
+
+[[rules]]
+id = "nexgen-high-entropy-labelled"
+description = "A long alphanumeric run after '=', 'Bearer ' or 'Name: ' looks like a credential."
+regex = '''(?i)(?:[A-Za-z0-9_]= ?|bearer |: )([A-Za-z0-9]{16,})'''
+secretGroup = 1
+entropy = 3.5
+  [[rules.allowlists]]
+  description = "not the Aa0 mix a generated credential has: no digit, no uppercase or no lowercase"
+  regexes = ['''^[A-Za-z]+$''', '''^[a-z0-9]+$''', '''^[A-Z0-9]+$''']
+
+# --- credentials that announce their provider ------------------------------------------------
+
+[[rules]]
+id = "nexgen-aws-access-key"
+description = "An AWS access key id."
+regex = '''\bAKIA[0-9A-Z]{16}\b'''
+keywords = ["akia"]
+
+[[rules]]
+id = "nexgen-pem-private-key"
+description = "A private key header, with or without an algorithm word."
+regex = '''(?i)-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----'''
+keywords = ["-----begin"]
+
+[[rules]]
+id = "nexgen-github-token"
+description = "A GitHub token: ghp_, gho_, ghu_, ghs_ or ghr_."
+regex = '''\bgh[pousr]_[A-Za-z0-9]{36}\b'''
+
+[[rules]]
+id = "nexgen-github-fine-grained-token"
+description = "A GitHub fine-grained personal access token."
+regex = '''\bgithub_pat_[A-Za-z0-9_]{22,}\b'''
+keywords = ["github_pat_"]
+
+[[rules]]
+id = "nexgen-anthropic-api-key"
+description = "An Anthropic API key."
+regex = '''\bsk-ant-[A-Za-z0-9_-]{20,}\b'''
+keywords = ["sk-ant-"]
+
+[[rules]]
+id = "nexgen-openai-project-key"
+description = "An OpenAI project, service-account or admin key."
+regex = '''\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}\b'''
+keywords = ["sk-proj-", "sk-svcacct-", "sk-admin-"]
+
+[[rules]]
+id = "nexgen-age-secret-key"
+description = "An age identity, which decrypts the engine's own secret store."
+regex = '''\bAGE-SECRET-KEY-1[A-Z0-9]{50,}\b'''
+keywords = ["age-secret-key-1"]
+
+[[rules]]
+id = "nexgen-huggingface-token"
+description = "A Hugging Face token."
+regex = '''\bhf_[A-Za-z0-9]{30,}\b'''
+keywords = ["hf_"]
+
+[[rules]]
+id = "nexgen-npm-token"
+description = "An npm access token."
+regex = '''\bnpm_[A-Za-z0-9]{36}\b'''
+keywords = ["npm_"]
+
+[[rules]]
+id = "nexgen-google-api-key"
+description = "A Google API key."
+regex = '''\bAIza[0-9A-Za-z_-]{35}\b'''
+keywords = ["aiza"]
+
+[[rules]]
+id = "nexgen-openai-style-key"
+description = "An API key in the classic OpenAI/Anthropic sk- shape."
+regex = '''\bsk-[A-Za-z0-9]{20,}\b'''
+keywords = ["sk-"]
+
+[[rules]]
+id = "nexgen-stripe-key"
+description = "A Stripe secret or publishable key."
+regex = '''\b(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{16,}\b'''
+keywords = ["sk_live", "sk_test", "pk_live", "pk_test"]
+
+[[rules]]
+id = "nexgen-jwt"
+description = "A JSON Web Token: header.payload.signature."
+regex = '''\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b'''
+keywords = ["eyj"]
+
+# --- soft: warns, never blocks (the wrapper decides from the rule id prefix) -----------------
+
+[[rules]]
+id = "nexgen-soft-personal-name"
+description = "The owner's first name, a reminder rather than a secret: warns, never blocks."
+regex = '''(?i)\bmatteo\b'''
+
+# --- values already reviewed as harmless -----------------------------------------------------
+#
+# Every regex is anchored, so an allow entry releases the whole flagged token and nothing that
+# merely contains it — the rule the retired scanner spelled out in its own docstring.
+
+[[allowlists]]
+description = "constants, reserved addresses, placeholder identities and fixture values"
+regexes = [
+  # FNV-1a constants the Governor hashes a session id with, and a fixture epoch in ms.
+  '''^(?:2166136261|16777619)$''',
+  '''^1761000000000$''',
+  '''^9999999999$''',
+  # The 15 MiB body-size constant used in the OCR examples.
+  '''^15728640$''',
+  # Loopback, the wildcard bind address, the broadcast address, and git's null SHA.
+  '''^127\.0\.0\.1$''',
+  '''^0\.0\.0\.0$''',
+  '''^255\.255\.255\.255$''',
+  '''^0+$''',
+  # RFC 5737 documentation addresses, and a four-part version number that looks like an address.
+  '''^192\.0\.2\.\d{1,3}$''',
+  '''^198\.51\.100\.\d{1,3}$''',
+  '''^203\.0\.113\.\d{1,3}$''',
+  '''^1\.2\.3\.4$''',
+  # RFC 2606 example domains, the Italian example address kept for an old commit, GitHub's
+  # machine identity for automated commits, and Claude Code's generic co-author trailer.
+  '''^[A-Za-z0-9._%+-]+@example\.(?:com|net|org)$''',
+  '''^[A-Za-z0-9._%+-]+@esempio\.it$''',
+  '''^test@example\.com$''',
+  '''^noreply@anthropic\.com$''',
+  '''^[A-Za-z0-9._%-]+@users\.noreply\.github\.com$''',
+  # A public SSH remote, not a credential.
+  '''^git@github\.com$''',
+  # Placeholder home paths: documentation, the official n8n container, compose service users,
+  # the OpenClaw fixtures, and the same path with the sentence's full stop attached.
+  '''^/home/user$''',
+  '''^/home/node$''',
+  '''^/home/app$''',
+  '''^/home/person$''',
+  '''^/home/(?:app|person|user)\.$''',
+  '''^(?i:[A-Z]:[\\/]Users[\\/]user)$''',
+  # An AAAAMMGG calendar date is a date, not an identifier.
+  '''^20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$''',
+  # Windows ConPTY and job-object struct field names read by ctypes.
+  '''^(?:PerProcessUserTimeLimit|PerJobUserTimeLimit|MinimumWorkingSetSize|MaximumWorkingSetSize|ActiveProcessLimit|ReadOperationCount|WriteOperationCount|OtherOperationCount|ReadTransferCount|WriteTransferCount|OtherTransferCount|BasicLimitInformation|ProcessMemoryLimit|JobMemoryLimit|PeakProcessMemoryUsed|PeakJobMemoryUsed|Win32SessionHost|Win32Host)$''',
+]
+
+[[allowlists]]
+description = "environments and caches are not source: a whole-tree scan used to walk into a venv"
+paths = [
+  '''(?:^|/)(?:\.git|\.venv|venv|node_modules|__pycache__|\.ruff_cache|\.pytest_cache|\.mypy_cache|dist|build)/''',
+]
+
+[[allowlists]]
+description = "the baseline is generated data: a list of findings that are already public by definition"
+paths = [
+  '''gitleaks-baseline\.json$''',
+]
