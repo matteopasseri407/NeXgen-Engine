@@ -58,6 +58,19 @@ def _the_switch_is_this_file(monkeypatch):
     monkeypatch.delenv(quota_tokscale.CONFIG_DIR_ENV, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_real_claude(monkeypatch):
+    """No test may run the `claude` this machine has on PATH.
+
+    A rejected login makes the module ask Claude Code to renew its own token, and
+    on the machine that runs these tests that program exists: leaving it reachable
+    would make a test rewrite the credentials of whoever is logged in, for a
+    backend this suite is supposed to fake. The tests that are about the refresh
+    replace it themselves.
+    """
+    monkeypatch.setattr(quota_tokscale, "_login_binary", lambda: None)
+
+
 def recorded() -> str:
     """The recorded answer, byte for byte."""
     return FIXTURE.read_text(encoding="utf-8")
@@ -101,6 +114,49 @@ def backend(monkeypatch, answer: str = "", *, code: int = 0) -> list[str]:
     monkeypatch.setattr(quota_tokscale, "_binary", lambda: "/usr/bin/tokscale")
     monkeypatch.setattr(quota_tokscale, "_spawn", spawn)
     return runs
+
+
+def backend_answers(monkeypatch, *answers: str) -> list[str]:
+    """A tokscale on `PATH` that answers these in turn, and the runs it was asked for."""
+    runs: list[str] = []
+
+    def spawn(executable: str, cwd: Path) -> tuple[int, str]:
+        runs.append(executable)
+        return 0, answers[(len(runs) - 1) % len(answers)]
+
+    monkeypatch.setattr(quota_tokscale, "_binary", lambda: "/usr/bin/tokscale")
+    monkeypatch.setattr(quota_tokscale, "_spawn", spawn)
+    return runs
+
+
+def claude_answer(used: float = 34.0) -> str:
+    """One answer that carries the plan a refreshed login brings back."""
+    return json.dumps([{"provider": "Claude", "plan": "Max 5x", "metrics": [
+        {"label": "Session", "used_percent": used, "resets_at": None}]}])
+
+
+def login(monkeypatch, *, code: int = 0) -> list[dict]:
+    """A `claude auth status` that answers `code`, and every launch it was asked for.
+
+    Each launch is recorded with the whole keyword set `Popen` received, so a test
+    can see where the command's output was allowed to go.
+    """
+    launched: list[dict] = []
+
+    class _Login:
+        pid = 5252
+
+        def __init__(self, argv, **kwargs):
+            self.argv = argv
+            self.returncode = code
+            launched.append({"argv": list(argv), **kwargs})
+
+        def communicate(self, timeout=None):
+            return None, None
+
+    monkeypatch.setattr(quota_tokscale, "_login_binary", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(quota_tokscale.subprocess, "Popen", _Login)
+    return launched
 
 
 def read(home: Path, config: Path | None = None, now: float = NOW) -> quota_tokscale.TokscaleUsage:
@@ -985,3 +1041,203 @@ def test_the_held_answer_may_not_be_older_than_the_age_the_owner_declares(tmp_pa
     assert {metric.read_at for metric in shipped.metrics} == {NOW}
     assert len(runs) == 2, "una risposta di 40 minuti non è quella di cui una politica di 30 si fida"
     assert {metric.read_at for metric in declared.metrics} == {NOW + 2400}
+
+
+# ------------------------------------------------- the login only Claude can renew
+
+
+def test_a_missing_claude_is_refreshed_and_the_binary_is_asked_again(tmp_path, monkeypatch):
+    """A rejected token makes tokscale omit the plan whole, so its absence is the signal.
+
+    `claude auth status` is the one command that makes Claude Code rewrite its own
+    login, and it costs no model call. One refresh, then one more run of the
+    binary, and the plan is readable again.
+    """
+    runs = backend_answers(monkeypatch, recorded(), claude_answer())
+    launches = login(monkeypatch)
+
+    usage = read(tmp_path)
+
+    assert [launch["argv"][-2:] for launch in launches] == [["auth", "status"]]
+    assert len(runs) == 2
+    assert [(metric.provider, metric.window, metric.used_percent)
+            for metric in usage.metrics if metric.provider == "Claude"] == [("Claude", "Session", 34.0)]
+    assert usage.note == ""
+
+
+def test_a_plan_already_in_the_answer_costs_no_refresh(tmp_path, monkeypatch):
+    runs = backend_answers(monkeypatch, claude_answer())
+    launches = login(monkeypatch)
+
+    usage = read(tmp_path)
+
+    assert launches == []
+    assert len(runs) == 1
+    assert usage.known
+
+
+def test_the_login_is_refreshed_once_per_cache_period(tmp_path, monkeypatch):
+    runs = backend_answers(monkeypatch, recorded(), claude_answer())
+    launches = login(monkeypatch)
+
+    read(tmp_path, now=NOW)
+    second = read(tmp_path, now=NOW + 60)
+
+    assert len(launches) == 1
+    assert len(runs) == 2
+    assert "Claude" in {metric.provider for metric in second.metrics}
+
+
+def test_the_next_cache_period_refreshes_again_and_never_loops(tmp_path, monkeypatch):
+    """One refresh per period, never one per run: two periods are two refreshes."""
+    runs = backend_answers(monkeypatch, recorded(), claude_answer())
+    launches = login(monkeypatch)
+
+    read(tmp_path, now=NOW)
+    read(tmp_path, now=NOW + quota_tokscale.CACHE_TTL_SECONDS)
+
+    assert len(launches) == 2
+    assert len(runs) == 4
+
+
+def test_a_login_that_cannot_be_refreshed_leaves_claude_unknown_and_says_why(tmp_path, monkeypatch):
+    runs = backend_answers(monkeypatch, recorded())
+    login(monkeypatch, code=1)
+
+    usage = read(tmp_path)
+
+    assert len(runs) == 1
+    assert "Claude" not in {metric.provider for metric in usage.metrics}
+    assert usage.note == (
+        "Claude's stored access token was rejected and its login could not be refreshed: "
+        "the plan's own windows are not shown."
+    )
+
+
+def test_a_failed_refresh_is_not_attempted_again_inside_the_same_period(tmp_path, monkeypatch):
+    runs = backend_answers(monkeypatch, recorded())
+    launches = login(monkeypatch, code=1)
+
+    read(tmp_path, now=NOW)
+    second = read(tmp_path, now=NOW + 60)
+
+    assert len(launches) == 1
+    assert len(runs) == 1
+    assert "could not be refreshed" in second.note
+
+
+def test_an_empty_answer_with_a_failed_refresh_is_kept_too(tmp_path, monkeypatch):
+    """Nothing to remember is not true of a refresh that failed: keeping it is what stops the retry."""
+    runs = backend_answers(monkeypatch, "[]")
+    launches = login(monkeypatch, code=1)
+
+    read(tmp_path, now=NOW)
+    second = read(tmp_path, now=NOW + 60)
+
+    assert len(launches) == 1
+    assert len(runs) == 1
+    assert "could not be refreshed" in second.note
+
+
+def test_the_refresh_output_has_nowhere_to_go_and_never_reaches_the_cache(tmp_path, monkeypatch, capsys):
+    """`claude auth status` names the account's e-mail: no pipe, no file, no log, no cache.
+
+    The command's three streams are the null device, so there is nothing this
+    module could remember even if it wanted to, and neither the note nor the cache
+    file may carry the address.
+    """
+    backend_answers(monkeypatch, recorded())
+    launches = login(monkeypatch)
+
+    usage = read(tmp_path)
+
+    launch = launches[0]
+    assert launch["stdout"] is quota_tokscale.subprocess.DEVNULL
+    assert launch["stderr"] is quota_tokscale.subprocess.DEVNULL
+    assert launch["stdin"] is quota_tokscale.subprocess.DEVNULL
+    stored = quota_tokscale.cache_path(tmp_path).read_text(encoding="utf-8")
+    assert "someone@example.com" not in stored
+    assert "someone@example.com" not in usage.note
+    captured = capsys.readouterr()
+    assert (captured.out, captured.err) == ("", "")
+
+
+def test_the_refresh_runs_where_the_engine_runs_it_without_a_console_window(tmp_path, monkeypatch):
+    """The same two promises as a run of tokscale: a machine-local cwd, and no window flashed."""
+    backend_answers(monkeypatch, recorded())
+    launches = login(monkeypatch)
+
+    read(tmp_path)
+
+    launch = launches[0]
+    assert launch["cwd"] == str(quota_tokscale.workdir(tmp_path))
+    assert set(processes.no_window_kwargs()) <= set(launch)
+
+
+def test_a_machine_without_the_claude_command_is_not_refreshed(tmp_path, monkeypatch):
+    runs = backend_answers(monkeypatch, recorded())
+
+    usage = read(tmp_path)
+
+    assert len(runs) == 1
+    assert usage.note == ""
+
+
+def test_a_refresh_that_hangs_is_stopped_and_cost_one_sentence(tmp_path, monkeypatch):
+    backend_answers(monkeypatch, recorded())
+    login(monkeypatch)
+    stopped: list = []
+    monkeypatch.setattr(quota_tokscale.processes, "force_stop_process_tree",
+                        lambda proc, **kwargs: stopped.append(proc) or True)
+
+    class _Hung:
+        pid = 5253
+        returncode = None
+
+        def __init__(self, argv, **kwargs):
+            self.argv = argv
+
+        def communicate(self, timeout=None):
+            raise quota_tokscale.subprocess.TimeoutExpired(self.argv, timeout)
+
+    monkeypatch.setattr(quota_tokscale.subprocess, "Popen", _Hung)
+
+    usage = read(tmp_path)
+
+    assert quota_tokscale.LOGIN_TIMEOUT_SECONDS == 20
+    assert [proc.pid for proc in stopped] == [5253]
+    assert "could not be refreshed" in usage.note
+
+
+def test_a_tokscale_that_fails_does_not_refresh_a_login(tmp_path, monkeypatch):
+    backend(monkeypatch, code=2)
+    launches = login(monkeypatch)
+
+    usage = read(tmp_path)
+
+    assert launches == []
+    assert "exited with code 2" in usage.note
+
+
+def test_a_plan_on_a_recorded_cooldown_is_not_refreshed(tmp_path, monkeypatch):
+    """A throttled plan is missing for another reason, and its token is not the one to renew."""
+    runs = backend_answers(monkeypatch, recorded())
+    launches = login(monkeypatch)
+    cooldown_record(tmp_path, issued=NOW, expires=NOW + 1500)
+
+    usage = read(tmp_path)
+
+    assert launches == []
+    assert len(runs) == 1
+    assert "rate-limited" in usage.note
+
+
+def test_the_refreshed_plan_reaches_the_report_as_a_live_percentage(tmp_path, monkeypatch):
+    backend_answers(monkeypatch, recorded(), claude_answer(used=34.0))
+    login(monkeypatch)
+
+    report = quota.build_report(home=tmp_path, now=NOW)
+
+    assert [(row.window, row.percent, row.state) for row in rows_for(report, "Claude")] == [
+        ("Session", 34.0, "ok")
+    ]

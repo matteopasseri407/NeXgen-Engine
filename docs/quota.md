@@ -81,6 +81,7 @@ After a window has rolled over, the old percentage describes a period that has a
 ### OpenCode
 
 The spend is what the harness archived, split by the provider recorded on each session: `opencode-go` (the flat subscription) and `opencode` (Zen, pay per use).
+The dollars per session come from the optional [ccusage](https://github.com/ccusage/ccusage) binary (MIT) when it is installed, which is what prices a flat subscription's usage instead of reading the zero it stores, and the archive's own `cost` column when it is not.
 A model id ending in `-free` costs zero, so a free lane appears as `0.00 $` instead of disappearing: a plan with no cost is a fact worth one line.
 
 The arithmetic is the harness lane's own, in `nexgen_local/supervision_spend.py`.
@@ -153,6 +154,13 @@ The retry time is not in `tokscale usage --json`: the binary prints that sentenc
 The record tokscale leaves beside it is the machine-readable copy of the same deadline, and it agrees with that sentence to the second.
 
 A provider that stops being answered at all keeps the last reading it gave for a day, marked the same way; after that it leaves the report instead of lingering as a number nobody can date.
+
+### When Claude's token expires
+
+tokscale asks Anthropic with the access token Claude Code stored, and once that token is rejected it omits the plan from an otherwise good answer, so Claude's windows disappear from the report with nothing on it to say why.
+When Claude is missing and `claude` is on `PATH`, the engine runs `claude auth status` once and asks tokscale once more: that command makes Claude Code rewrite its own login, spends no model call and no window of any plan, and its output is discarded unread because it names the account's e-mail, so nothing of it is cached, logged or shown.
+The refresh happens at most once per cache period, so a machine whose login cannot be renewed costs one attempt every ten minutes rather than one per caller, and it is never attempted while tokscale has recorded a cooldown, because a throttled plan is missing for another reason.
+When it fails the report is what it was before, Claude unknown, plus one sentence saying the token was rejected and its login could not be refreshed.
 
 ### When it goes wrong
 

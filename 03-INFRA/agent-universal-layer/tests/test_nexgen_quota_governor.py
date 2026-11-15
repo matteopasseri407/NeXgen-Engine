@@ -338,7 +338,7 @@ def a_setup(tmp_path: Path, out: list[str]) -> Setup:
     return Setup(
         home=tmp_path, env={}, config_path=tmp_path / ".openclaw" / "openclaw.json",
         engine_root=None, vault_data=tmp_path / "KnowledgeVault", pinned=None, dry_run=False,
-        out=out.append, which=lambda _name: None, run=None, service=None, stamp="2026-01-01",
+        out=out.append, which=lambda _name: None, run=None, service=None,
     )
 
 

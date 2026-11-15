@@ -33,6 +33,15 @@ is printed with its true age and without a percentage instead of being dated
 kept with it, and dropped once it is too old to describe anything. When tokscale
 records the moment its own cooldown ends, this module waits for that instead of
 spending another run inside it.
+
+Claude's plan is the one reading that depends on a token another program owns:
+tokscale asks Anthropic with the access token Claude Code stored, and skips the
+plan whole once that token is rejected. The engine cannot mint one and does not
+try: `claude auth status` makes Claude Code rewrite its own login without a model
+call or a spent window, so a missing Claude is answered by one refresh and one
+more run of tokscale, inside the same cache period and never in a loop. What that
+command prints names the account's e-mail, so its output goes to the null device
+and is never read, cached, or put in a note.
 """
 from __future__ import annotations
 
@@ -65,6 +74,19 @@ BINARY = "tokscale"
 #: costs a few seconds on a network that answers; the beat runs hourly and must
 #: never be held by a provider that does not.
 RUN_TIMEOUT_SECONDS = 20
+
+#: The binary whose own login refresh is the cure for a rejected Claude token.
+#: tokscale reads the access token Claude Code stored, and only Claude Code
+#: rewrites it, so this module asks that program rather than minting one.
+LOGIN_BINARY = "claude"
+
+#: The one subcommand that refreshes that token: it reports the login and needs
+#: no model call, so it spends no window of any plan.
+LOGIN_COMMAND = ("auth", "status")
+
+#: How long that refresh may take. The same seconds as a run of tokscale, because
+#: it is the same caller waiting: a command typed in, the hourly beat, a doctor.
+LOGIN_TIMEOUT_SECONDS = 20
 
 #: How long one answer is reused. Short enough that the beat sees a window that
 #: has just reset, long enough that a doctor run, a `/quota`, the line a session
@@ -116,6 +138,7 @@ MISSING = "missing"
 FAILED = "failed"
 TIMEOUT = "timeout"
 FORMAT = "format"
+LOGIN_FAILED = "login"
 
 #: The provider ids the engine's fallback chains already speak, by the name
 #: tokscale prints. `Codex` is reached in OpenClaw as `openai` and `Claude` as
@@ -170,6 +193,7 @@ class _Stored:
     metrics: tuple[Metric, ...] = ()
     error: str = ""
     detail: str = ""
+    login: str = ""
 
 
 def read_usage(home: Path | None = None, *, config: Path | None = None,
@@ -207,9 +231,9 @@ def read_usage(home: Path | None = None, *, config: Path | None = None,
         hold = cooldown_until(home, now=moment)
     if stored.error:
         return TokscaleUsage(read_at=stored.fetched_at, metrics=stored.metrics,
-                             note=_note(stored.error, stored.detail))
+                             note=_with_login_note(_note(stored.error, stored.detail), stored))
     return TokscaleUsage(read_at=stored.fetched_at, metrics=stored.metrics,
-                         note=_answer_note(stored, hold, moment))
+                         note=_with_login_note(_answer_note(stored, hold, moment), stored))
 
 
 def mode(config: Path | None) -> str:
@@ -400,6 +424,11 @@ def _binary() -> str | None:
     return shutil.which(BINARY)
 
 
+def _login_binary() -> str | None:
+    """The executable `claude` on `PATH`, or None: a machine without it has no login to refresh."""
+    return shutil.which(LOGIN_BINARY)
+
+
 def workdir(home: Path | None = None) -> Path:
     """The folder a run executes in: the machine's state dir, never the caller's directory.
 
@@ -432,6 +461,69 @@ def _invoke(home: Path | None = None) -> tuple[tuple[Metric, ...], str, str]:
     if code != 0:
         return (), FAILED, str(code)
     return _parse(text)
+
+
+def _answer(home: Path | None = None, *,
+            refresh_login: bool = True) -> tuple[tuple[Metric, ...], str, str, str]:
+    """One answer, and the reason Claude's rejected login could not be refreshed.
+
+    `tokscale usage --json` omits a provider it has no sample for, so a rejected
+    Claude token is the plan's absence from a good answer rather than an error
+    inside it. Only Claude Code can rewrite that token, so one `claude auth
+    status` runs and the binary is asked exactly once more; this function is
+    called at most once per cache period, which is what keeps the refresh at one
+    per period and out of any loop. `refresh_login` is false while tokscale has
+    recorded a cooldown, because a throttled provider is not re-asked on this
+    engine's schedule and its token is not the reason it is missing.
+    """
+    metrics, error, detail = _invoke(home)
+    executable = _login_binary()
+    if error or _carries_claude(metrics) or not refresh_login or executable is None:
+        return metrics, error, detail, ""
+    if _refresh_login(executable, home):
+        again, error, detail = _invoke(home)
+        return again, error, detail, ""
+    return metrics, error, detail, LOGIN_FAILED
+
+
+def _carries_claude(metrics: tuple[Metric, ...]) -> bool:
+    """Whether this answer already holds the plan a refreshed login would bring back."""
+    return any(metric.provider.strip().casefold() == THROTTLED_PROVIDER.casefold()
+               for metric in metrics)
+
+
+def _start_login(executable: str, cwd: Path) -> subprocess.Popen:
+    """`claude auth status` with no window, no inherited stdin, and nowhere for its output.
+
+    Its standard output and standard error are the null device rather than a pipe
+    or a file: the answer names the account's e-mail, and nothing this module
+    keeps may carry it, so there is nothing to read and nothing to recover later.
+    """
+    return subprocess.Popen(
+        processes.windows_command_argv([executable, *LOGIN_COMMAND]),
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        cwd=str(cwd), **processes.no_window_kwargs(),
+    )
+
+
+def _refresh_login(executable: str, home: Path | None = None) -> bool:
+    """Whether `claude auth status` renewed the stored token, spending no window.
+
+    Claude Code rewrites its own credentials file when it is asked for its auth
+    status, which is what lets the next run of tokscale ask Anthropic again. A
+    binary that cannot start, exits non-zero or outlives the deadline is a login
+    that was not refreshed: the report keeps saying Claude is unknown and adds
+    the one sentence `_login_note` writes.
+    """
+    try:
+        proc = _start_login(executable, workdir(home))
+        proc.communicate(timeout=LOGIN_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:  # nexgen: allow reason="a refresh that outlived its deadline is stopped with the engine's own tree cleanup and reported as a login that was not refreshed"
+        processes.force_stop_process_tree(proc)
+        return False
+    except (OSError, processes.ShimEntryError):  # nexgen: allow reason="a refresh that cannot be started is a login that was not refreshed, which the report says in one sentence: the account behind it is never named"
+        return False
+    return proc.returncode == 0
 
 
 def _spawn(executable: str, cwd: Path) -> tuple[int, str]:
@@ -555,21 +647,24 @@ def _epoch(provider: str, label: str, stamp: str | None) -> float | None:
 
 
 def _store(home: Path | None, moment: float) -> _Stored:
-    """One run of the binary, kept for the next few minutes whatever it answered.
+    """One answer kept for the next few minutes, whatever it said.
 
     The reading this run did not answer for is added back from the last one, so a
     provider that stops answering keeps the number it last gave instead of
     vanishing from the report. An answer with no numbers and no failure is nothing
     to remember: it costs one cheap run more, and a file that says "nothing" is a
-    file the next reader has to reason about for no gain.
+    file the next reader has to reason about for no gain. A login that could not be
+    refreshed is the exception, because keeping it is what stops the next caller
+    from asking Claude Code again inside the same ten minutes.
     """
-    metrics, error, detail = _invoke(home)
+    hold = cooldown_until(home, now=moment)
+    metrics, error, detail, login = _answer(home, refresh_login=hold is None)
     stamped = tuple(metric if metric.read_at is not None else replace(metric, read_at=moment)
                     for metric in metrics)
     stored = _Stored(fetched_at=moment,
                      metrics=stamped + _carried(_payload(home), stamped, moment),
-                     error=error, detail=detail)
-    if stored.metrics or error:
+                     error=error, detail=detail, login=login)
+    if stored.metrics or error or login:
         _write(home, stored)
     return stored
 
@@ -639,6 +734,7 @@ def _stored(data, moment: float, *, lifetime: float = CACHE_TTL_SECONDS) -> _Sto
         metrics=_metrics_from(data),
         error=str(data.get("error") or ""),
         detail=str(data.get("detail") or ""),
+        login=str(data.get("login") or ""),
     )
 
 
@@ -671,6 +767,7 @@ def _write(home: Path | None, stored: _Stored) -> None:
         "fetched_at": stored.fetched_at,
         "error": stored.error,
         "detail": stored.detail,
+        "login": stored.login,
         "metrics": [
             {"provider": metric.provider, "provider_id": metric.provider_id,
              "window": metric.window, "used_percent": metric.used_percent,
@@ -688,6 +785,26 @@ def _write(home: Path | None, stored: _Stored) -> None:
 def _answer_note(stored: _Stored, hold: float | None, moment: float) -> str:
     """The one line the report adds under these numbers, or nothing at all."""
     return _stale_note(stored, hold, moment) or _held_note(stored, hold, moment)
+
+
+def _with_login_note(note: str, stored: _Stored) -> str:
+    """This answer's note, with the sentence a login that stayed stale deserves."""
+    return " ".join(part for part in (note, _login_note(stored)) if part)
+
+
+def _login_note(stored: _Stored) -> str:
+    """Why Claude is still missing after its login was refreshed, without the account.
+
+    One sentence a person can act on: the token tokscale holds was rejected and
+    asking Claude Code did not renew it, so the plan's own windows are not shown
+    and the local token counts are all that remains. It names no e-mail and no
+    account id, because that command's answer carries both and nothing here keeps
+    either.
+    """
+    if stored.login != LOGIN_FAILED or _carries_claude(stored.metrics):
+        return ""
+    return t("Claude's stored access token was rejected and its login could not be refreshed: "
+             "the plan's own windows are not shown.")
 
 
 def _stale_note(stored: _Stored, hold: float | None, moment: float) -> str:

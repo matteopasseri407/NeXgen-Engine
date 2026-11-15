@@ -25,8 +25,14 @@ limits:
 # reading it from a local file. `auto` is the shipped behaviour: it is used when
 # the `tokscale` binary is on PATH. Write `off` to silence it without uninstalling
 # anything, for example on a machine whose logins you would rather not query.
+#
+# `ccusage` is the second optional backend, and it answers a different question:
+# when the binary is on PATH, `nexgen openclaw cost` and one line of
+# `nexgen openclaw doctor` say what the bot itself spent, read from the
+# transcripts OpenClaw already wrote. `off` silences it the same way.
 # backends:
 #   tokscale: auto
+#   ccusage: auto
 
 # What a turn does when a plan runs out. Optional, and empty by default: which
 # providers to pay for and in which order is your rule, not the engine's, so

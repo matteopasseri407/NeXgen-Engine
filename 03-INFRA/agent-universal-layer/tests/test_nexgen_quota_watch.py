@@ -100,9 +100,9 @@ def test_eighty_percent_raises_one_alert_with_the_provider_and_the_window(tmp_pa
     alert = phone.sent[0]
     assert alert["key"] == "quota:Codex (free):12h:80"
     assert alert["title"] == "Quota at 86%: Codex (free)"
-    assert "has used 86% of its 12h window" in alert["message"]
-    assert "it resets in" in alert["message"]
-    assert "nexgen quota" in alert["action"]
+    assert "has used 86% of the 12h allowance" in alert["message"]
+    assert "It resets in" in alert["message"]
+    assert alert["action"] == "nexgen quota"
 
 
 def test_the_band_is_the_highest_threshold_reached(tmp_path):
@@ -163,7 +163,7 @@ def test_an_alert_without_a_reset_time_does_not_invent_one(tmp_path):
 
     quota_watch.check_and_alert(home=tmp_path, megaphone=phone, now=NOW)
 
-    assert phone.sent[0]["message"] == "Codex (free) has used 86% of its 12h window."
+    assert phone.sent[0]["message"] == "Codex (free) has used 86% of the 12h allowance."
 
 
 def test_an_unreadable_machine_is_silence_and_not_a_crash(tmp_path):

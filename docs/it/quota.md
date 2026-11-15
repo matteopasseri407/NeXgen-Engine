@@ -78,6 +78,7 @@ Dopo che una finestra è girata, la vecchia percentuale descrive un periodo già
 ### OpenCode
 
 La spesa è quella che l'harness ha archiviato, divisa per il provider registrato su ogni sessione: `opencode-go` (l'abbonamento flat) e `opencode` (Zen, a consumo).
+I dollari per sessione li dà il binario opzionale [ccusage](https://github.com/ccusage/ccusage) (MIT) quando è installato, che è quello che prezza l'uso di un abbonamento flat invece di leggere lo zero che l'harness registra, e la colonna `cost` dell'archivio quando non lo è.
 Un id di modello che finisce in `-free` costa zero, quindi una corsia gratuita compare come `0.00 $` invece di sparire: un piano a costo zero è un fatto che vale una riga.
 
 L'aritmetica è quella della corsia dell'harness, in `nexgen_local/supervision_spend.py`.
@@ -150,6 +151,13 @@ Il tempo di attesa non sta in `tokscale usage --json`: il binario stampa quella 
 Il registro che tokscale lascia accanto è la copia leggibile da una macchina dello stesso termine, e coincide con quella frase al secondo.
 
 Un provider che smette del tutto di rispondere conserva l'ultima lettura che ha dato per un giorno, marcata allo stesso modo; dopo esce dal report invece di restare come un numero che nessuno sa datare.
+
+### Quando il token di Claude scade
+
+tokscale chiede ad Anthropic con il token di accesso che Claude Code ha salvato, e appena quel token viene rifiutato omette il piano da una risposta per il resto buona, quindi le finestre di Claude spariscono dal report senza che il report dica perché.
+Quando Claude manca e `claude` è nel `PATH`, il motore esegue una volta `claude auth status` e richiede a tokscale una volta sola: quel comando fa riscrivere a Claude Code il proprio accesso, non spende nessuna chiamata al modello e nessuna finestra di nessun piano, e il suo output viene scartato senza leggerlo perché contiene l'indirizzo e-mail dell'account, quindi niente di quell'output finisce in cache, nei log o sullo schermo.
+L'aggiornamento avviene al massimo una volta per periodo di cache, quindi una macchina il cui accesso non si rinnova costa un tentativo ogni dieci minuti e non uno per ogni chiamante, e non viene mai tentato mentre tokscale ha registrato un'attesa, perché un piano limitato manca per un'altra ragione.
+Quando fallisce il report è quello di prima, Claude sconosciuto, più una frase che dice che il token è stato rifiutato e che il suo accesso non è stato rinnovato.
 
 ### Quando qualcosa non va
 
