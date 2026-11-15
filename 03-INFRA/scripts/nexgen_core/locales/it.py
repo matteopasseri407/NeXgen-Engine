@@ -551,6 +551,13 @@ MESSAGES: dict[str, str] = {
         '(qualche minuto, una volta sola per macchina).'
     ),
     (
+        "The engine's environment lacks {names}: installing the engine's dependency list "
+        'into {dir}, then running the command again.'
+    ): (
+        "All'ambiente del motore manca {names}: installo in {dir} le dipendenze del motore, "
+        'poi rilancio il comando.'
+    ),
+    (
         "The role's detailed plan needs the engine's Python environment, which the install "
         "creates first: run it once without --check, then --check shows the whole plan."
     ): (

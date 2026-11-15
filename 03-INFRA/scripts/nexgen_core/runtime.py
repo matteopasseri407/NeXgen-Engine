@@ -48,6 +48,9 @@ ESSENTIAL_IMPORTS: Mapping[str, str] = {
     "langchain_ollama": "langchain-ollama",
     "httpx": "httpx",
     "mcp": "mcp",
+    "filelock": "filelock",
+    "psutil": "psutil",
+    "tomlkit": "tomlkit",
 }
 
 #: Present only when the environment was provisioned and verified. The launchers

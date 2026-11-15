@@ -118,6 +118,11 @@ def main(argv: list[str] | None = None) -> int:
     use_utf8()
     if argv is None:
         argv = sys.argv[1:]
+    from nexgen_core.bootstrap_runtime import heal_running_environment
+
+    healed = heal_running_environment(argv, entry=str(Path(__file__).resolve()))
+    if healed is not None:
+        return healed
     try:
         return _run_cli(argv)
     except KeyboardInterrupt:
