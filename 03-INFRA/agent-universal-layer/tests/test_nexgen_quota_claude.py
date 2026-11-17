@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -64,7 +63,7 @@ def transcript(claude: Path, rows: list, *, project: str = "progetto", name: str
     path = folder / name
     path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
     if age:
-        stamp = time.time() - age
+        stamp = NOW - age  # the same clock read_usage is given, or the test ages with the calendar
         os.utime(path, (stamp, stamp))
     return path
 
