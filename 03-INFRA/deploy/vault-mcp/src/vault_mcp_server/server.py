@@ -273,7 +273,7 @@ def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
         relative_path: str | None = None,
         limit: int = 10,
     ) -> dict[str, Any]:
-        """List outgoing links, backlinks, and tag-based related notes. Takes the same reference names as read_note."""
+        """List outgoing links, backlinks, and tag-based related notes. Takes the same reference names as read_note, and the heading as `section_heading` or, as read_note names it, `section`."""
 
         return vault.list_related(
             note_ref=_note_ref_for_tool(note_ref=note_ref, path=path, note_path=note_path, relative_path=relative_path),
@@ -367,7 +367,7 @@ def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
             relative_path: str | None = None,
             message: str = "",
         ) -> dict[str, Any]:
-            """Replace an existing note only when expected_hash matches the current full content hash. Takes the same reference names as read_note."""
+            """Replace an existing note only when expected_hash matches the current full content hash. Takes the same reference names as read_note, and the heading as `section_heading` or, as read_note names it, `section`."""
 
             return vault.update_note(
                 note_ref=_note_ref_for_tool(
@@ -381,28 +381,45 @@ def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
         @mcp.tool(annotations=MUTATING)
         @_tool_errors
         def update_section(
-            section_heading: str,
             content: str,
             expected_hash: str,
+            section_heading: str | None = None,
+            section: str | None = None,
             note_ref: str | None = None,
             path: str | None = None,
             note_path: str | None = None,
             relative_path: str | None = None,
             message: str = "",
         ) -> dict[str, Any]:
-            """Replace ONE section of a note (its ATX heading plus body and subsections) when expected_hash matches that section's current hash from read_note's `sections`. Prefer this over update_note for surgical edits: smaller diffs, and concurrent edits to other sections stay valid. Takes the same reference names as read_note."""
+            """Replace ONE section of a note (its ATX heading plus body and subsections) when expected_hash matches that section's current hash from read_note's `sections`. Prefer this over update_note for surgical edits: smaller diffs, and concurrent edits to other sections stay valid. Takes the same reference names as read_note, and the heading as `section_heading` or, as read_note names it, `section`."""
 
             return vault.update_section(
                 note_ref=_note_ref_for_tool(
                     note_ref=note_ref, path=path, note_path=note_path, relative_path=relative_path
                 ),
-                section_heading=section_heading,
+                section_heading=_section_for_tool(section_heading, section),
                 content=content,
                 expected_hash=expected_hash,
                 message=message,
             )
 
     return mcp, vault
+
+
+def _section_for_tool(section_heading: str | None, section: str | None) -> str:
+    """`update_section` takes the heading under read_note's name too.
+
+    read_note calls it `section` and update_section `section_heading`, and a model
+    that has just read a section reuses the name it saw: that call used to fail
+    validation (seen on OpenClaw). Both name the same thing; two different values
+    are refused rather than guessed between.
+    """
+    if section_heading and section and section_heading != section:
+        raise ValueError("section_heading and section name different sections: pass one")
+    heading = section_heading or section
+    if not heading:
+        raise ValueError("update_section needs the section's heading: pass section_heading (or section)")
+    return heading
 
 
 def _health_body() -> dict[str, Any]:
