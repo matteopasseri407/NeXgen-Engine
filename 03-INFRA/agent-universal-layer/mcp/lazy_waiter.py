@@ -30,6 +30,22 @@ HINT_KEYS = ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint
 AUDIT_LOCK = threading.Lock()
 
 
+
+def _unknown_server(server: str, servers: dict[str, Any]) -> dict[str, Any]:
+    """The error for a server name that is not in the index, saying what arrived and what exists.
+
+    A model that put the tool's own arguments where the envelope goes sent no server name at all,
+    and "unknown lazy server: " with nothing after the colon sent it looking for a server instead
+    of fixing the call (seen on OpenClaw, right after a /compact dropped the loaded schemas).
+    """
+    known = ", ".join(sorted(servers)) or "none"
+    if not str(server or "").strip():
+        return {"error": (
+            "no server name arrived: pass the envelope {\"server\": ..., \"tool\": ..., \"arguments\": {...}} "
+            f"with the tool's own arguments inside `arguments`. Servers: {known}"
+        )}
+    return {"error": f"unknown lazy server: {server}. Servers: {known}"}
+
 class Waiter:
     """Lazy proxy state: per-server handles, index budget, audit, idle sweep."""
 
@@ -153,7 +169,7 @@ class Waiter:
     def load(self, server: str, tool: str) -> dict[str, Any]:
         servers = self._servers()
         if server not in servers:
-            return {"error": f"unknown lazy server: {server}"}
+            return _unknown_server(server, servers)
         if servers[server].get("_unavailable"):
             return {"error": f"server '{server}' is unavailable: {servers[server]['_unavailable']}"}
         handle = self._handle(server, servers[server])
@@ -187,7 +203,7 @@ class Waiter:
     ) -> dict[str, Any]:
         servers = self._servers()
         if server not in servers:
-            return {"error": f"unknown lazy server: {server}"}
+            return _unknown_server(server, servers)
         if servers[server].get("_unavailable"):
             return {"error": f"server '{server}' is unavailable: {servers[server]['_unavailable']}"}
         handle = self._handle(server, servers[server])
