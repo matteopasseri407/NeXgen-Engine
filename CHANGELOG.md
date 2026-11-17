@@ -10,6 +10,19 @@ of any engine release.
 
 ## [Unreleased]
 
+### Changed
+
+- OpenClaw pin moved to 2026.11.5. Its Claude CLI backend keeps Claude's own `ToolSearch` and defers the bridged MCP schemas behind it (openclaw/openclaw#199837), so a `claude-cli` turn no longer pays every OpenClaw tool schema on every model call; `tools.toolSearch` stays unset, and `false` would turn the deferral off. Measured on the gateway on 2026-11-17 with `nexgen openclaw parity`: Antigravity +6,941 input tokens per call over the native CLI, Claude CLI −7,443 (cheaper than the native run) with the agent's full tool set, so the 40 tools denied to stay under the limit on 2026.11.2 are back. Nothing else the engine writes or calls changed between 2026.11.2 and 2026.11.5; the update needed the state folder wholly owned by the service user.
+
+### Added
+
+- `nexgen doctor` names the MCP servers Claude Desktop runs as installed extensions (`.mcpb`), not only the entries of its `mcpServers` table. The app starts both the same way, but no check read the extension inventory, so eight enabled servers on one machine were invisible to the doctor and one was a second copy of a table entry. `mcp.desktop_extensions` names the enabled extensions as an informational line (they are the app's own installs, not servers the manifest declares); one listed in `orphans_allowlist` as `claude-desktop:<id>` leaves the line, and the check never touches the app.
+
+### Fixed
+
+- A lazy-mcp call without its envelope now says what is missing and which servers exist. A model that put a tool's own arguments where `{server, tool, arguments}` goes read `unknown lazy server: ` with nothing after the colon, and went looking for a server instead of fixing the call (an OpenClaw agent, twice in one evening, once right after a `/compact`).
+- vault-mcp's `update_section` takes the heading under `read_note`'s name, `section`, as well as `section_heading`. A model that had just read a section reused the name it saw and the write failed validation; two different values are refused rather than guessed between.
+
 ## [3.0.0] - 2026-11-15
 
 ### Changed
