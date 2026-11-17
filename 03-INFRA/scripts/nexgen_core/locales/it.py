@@ -3488,4 +3488,12 @@ MESSAGES: dict[str, str] = {
         "Misura una sola corsia: google-antigravity-cli, claude-cli o codex-cli",
     "Print the commands a run would start, and spend nothing":
         "Stampa i comandi che una misura lancia, senza spendere niente",
+    "No Claude Desktop extensions installed here":
+        "Qui Claude Desktop non ha estensioni installate",
+    "Could not read the Claude Desktop extensions: {error}":
+        "Non riesco a leggere le estensioni di Claude Desktop: {error}",
+    "Claude Desktop runs {count} extensions of its own: {names}":
+        "Claude Desktop fa girare {count} estensioni sue: {names}",
+    "Every enabled Claude Desktop extension is acknowledged ({count})":
+        "Ogni estensione attiva di Claude Desktop è dichiarata ({count})",
 }
