@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-11-18
+
+### Changed
+
+- OpenClaw 2026.11.5: Claude CLI turns no longer pay every tool schema; MCP servers lazy everywhere but the vault.
+
 ### Changed
 
 - OpenClaw pin moved to 2026.11.5. Its Claude CLI backend keeps Claude's own `ToolSearch` and defers the bridged MCP schemas behind it (openclaw/openclaw#199837), so a `claude-cli` turn no longer pays every OpenClaw tool schema on every model call; `tools.toolSearch` stays unset, and `false` would turn the deferral off. Measured on the gateway on 2026-11-17 with `nexgen openclaw parity`: Antigravity +6,941 input tokens per call over the native CLI, Claude CLI −7,443 (cheaper than the native run) with the agent's full tool set, so the 40 tools denied to stay under the limit on 2026.11.2 are back. Nothing else the engine writes or calls changed between 2026.11.2 and 2026.11.5; the update needed the state folder wholly owned by the service user.
