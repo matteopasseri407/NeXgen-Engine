@@ -334,6 +334,19 @@ def test_lazy_call_forwards_only_what_the_manifest_declares_read_only(waiter):
     assert "wrote" not in w.text(write_via_call)
 
 
+def test_a_call_without_the_envelope_says_what_is_missing_and_what_exists(waiter):
+    w = waiter({"mixed": {"code": SLOW_SERVER, "readonly_tools": ["sleep"]}})
+
+    # The model put the tool's own arguments where the envelope goes: no server name arrived.
+    bare = w.ask(1, "lazy_call", server="", tool="", arguments={"account_ids": ["a"]})
+    wrong = w.ask(2, "lazy_call", server="nope", tool="sleep", arguments={})
+
+    assert bare["isError"] is True
+    assert "no server name arrived" in w.text(bare) and "arguments" in w.text(bare)
+    assert "mixed" in w.text(bare)  # the servers that do exist
+    assert wrong["isError"] is True and "nope" in w.text(wrong) and "mixed" in w.text(wrong)
+
+
 def test_lazy_mutate_needs_the_acknowledgement_and_is_audited(waiter):
     w = waiter({"mixed": {"code": SLOW_SERVER, "readonly_tools": ["sleep"]}})
 

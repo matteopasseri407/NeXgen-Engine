@@ -477,6 +477,31 @@ def test_update_section_over_mcp_takes_the_note_under_an_alias(tmp_path: Path):
 
 
 @pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
+def test_update_section_takes_the_heading_under_read_notes_name(tmp_path: Path):
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    settings = _single_line_vault(tmp_path)
+    note = _mcp_call(settings, "read_note", {"note_ref": "seed.md"}).structured_content
+
+    # read_note calls the heading `section`; a model that just read one reuses that name
+    result = _mcp_call(
+        settings,
+        "update_section",
+        {
+            "note_ref": "seed.md",
+            "section": "# seed",
+            "content": "# seed\n\nbody\n",
+            "expected_hash": note["sections"][0]["content_hash"],
+        },
+    )
+    assert result.structured_content["action"] == "updated_section"
+
+    with pytest.raises(ToolError) as raised:
+        _mcp_call(settings, "update_section", {"note_ref": "seed.md", "content": "x", "expected_hash": "h"})
+    assert "section_heading" in str(raised.value)
+
+
+@pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
 def test_a_missing_note_reference_reaches_the_model(tmp_path: Path):
     from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
 

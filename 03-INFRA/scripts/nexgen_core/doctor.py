@@ -50,6 +50,7 @@ from nexgen_core.checks.instructions_checks import (  # noqa: E402 - sys.path sh
     check_openclaw_instructions,
     check_opencode_instructions,
 )
+from nexgen_core.checks.desktop_extensions import check_desktop_extensions  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.mcp_checks import (  # noqa: E402 - sys.path shim for cloned checkout
     check_desktop_allowlist,
     check_antigravity_fanout,
@@ -275,6 +276,7 @@ def _mcp_and_module_checks(run, doc: Doctor) -> None:
     run("mcp.commands", lambda: check_mcp_commands(vault, home))
     run("mcp.orphans", lambda: check_mcp_orphans(vault, home))
     run("mcp.desktop_allowlist", lambda: check_desktop_allowlist(vault, home))
+    run("mcp.desktop_extensions", lambda: check_desktop_extensions(vault, home))
     run("mcp.unresolved_refs", lambda: check_mcp_unresolved_refs(vault, home))
     run("mcp.reachability", lambda: check_mcp_reachability(vault, home))
     # The cloud connector has no port to probe: its key decides whether it exists here.
