@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [3.0.2] - 2026-11-18
+
+### Changed
+
+- A server update no longer rolls itself back for a vault-mcp container another user runs.
+
 ### Fixed
 
 - An update on a server no longer undoes itself for a vault-mcp container this engine does not hold. On a VPS where another user started the container from its own copy, the engine's tree has no token for it, so the rebuild after the update could only fail, and the whole update was rolled back: the VPS stayed on 3.0.0 when 3.0.1 shipped. That case is now named in one line with the command to redeploy where the container runs, and the doctor measures the gap; a rebuild that starts and fails still undoes the update whole.
