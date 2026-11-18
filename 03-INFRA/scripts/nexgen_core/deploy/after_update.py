@@ -5,10 +5,11 @@ One job: answer two questions and act on them. Did this update touch a stack
 under `03-INFRA/deploy/`, and is this the machine that runs it? Both yes means
 the container is now the only half of the install on old code.
 
-The failure policy is the point of the module: a deploy that fails leaves the
-container on the code that worked and is reported as one line. The engine
-update is not undone for it, because the engine is not what failed, and the
-doctor now measures the gap it leaves.
+The failure policy is the point of the module: a rebuild that fails is raised,
+so the update is undone whole. A stack this engine does not hold (another user
+started it from its own copy, so there is no compose file or token here) is not
+a failure: it is named in one line and left alone, and the doctor measures the
+gap it leaves.
 """
 from __future__ import annotations
 
@@ -83,12 +84,21 @@ def deploy_after_update(
     stacks = moved_stacks(engine_repo, previous_head, target_rev, run=run_git)
     if not stacks:
         return []
+    done = list(stacks)
     for name in stacks:
         out(t("\n{stack} changed in this update: redeploying it here.", stack=name))
         # The stack's own source moves with the engine, which is already merged:
         # `deploy` reads the new tree and backs up whatever it replaces.
-        vault_mcp.deploy(
-            engine_repo / "03-INFRA",
-            state_dir=state_dir, out=out, runner=runner,
-        )
-    return stacks
+        try:
+            vault_mcp.deploy(
+                engine_repo / "03-INFRA",
+                state_dir=state_dir, out=out, runner=runner,
+            )
+        except vault_mcp.NotDeployedHere as exc:
+            # Another user runs this container from its own copy: a rebuild from
+            # here could only fail, and undoing the whole update for it left the
+            # VPS on the old release (2026-11-18). The doctor measures the gap.
+            out(t("{stack} is not deployed from this engine, so it was left as it is: {reason}", stack=name, reason=exc))
+            out(t("Redeploy it where it runs: nexgen deploy vault-mcp --source <the folder with its compose file>"))
+            done.remove(name)
+    return done

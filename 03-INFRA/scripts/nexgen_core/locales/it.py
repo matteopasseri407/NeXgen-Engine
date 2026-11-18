@@ -3496,4 +3496,8 @@ MESSAGES: dict[str, str] = {
         "Claude Desktop fa girare {count} estensioni sue: {names}",
     "Every enabled Claude Desktop extension is acknowledged ({count})":
         "Ogni estensione attiva di Claude Desktop è dichiarata ({count})",
+    "{stack} is not deployed from this engine, so it was left as it is: {reason}":
+        "{stack} non è installato da questo motore, quindi l'ho lasciato com'è: {reason}",
+    "Redeploy it where it runs: nexgen deploy vault-mcp --source <the folder with its compose file>":
+        "Ricostruiscilo dove gira: nexgen deploy vault-mcp --source <la cartella con il suo compose>",
 }

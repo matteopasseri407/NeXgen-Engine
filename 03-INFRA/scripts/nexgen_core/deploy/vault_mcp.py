@@ -65,6 +65,15 @@ class DeployError(NexgenError, RuntimeError):
     """The rebuild could not be done, with what was restored and what to do next."""
 
 
+class NotDeployedHere(DeployError):
+    """This engine does not hold the stack: no compose file beside the source, or no token for it.
+
+    Raised before anything is touched. On a VPS where another user started the
+    container from its own copy, the engine's tree is not the build context and
+    its `.env` carries no token, so a rebuild from here could only fail.
+    """
+
+
 @dataclass(frozen=True)
 class DeployResult:
     """What a rebuild did, in the order it did it."""
@@ -239,7 +248,7 @@ def _prepare(
     source_path = source_dir(engine_root, source, environ=environ)
     compose_file = source_path / COMPOSE_FILE
     if not compose_file.is_file():
-        raise DeployError(t(
+        raise NotDeployedHere(t(
             "{compose} is missing: the compose file that started this service has to sit beside its source "
             "(pass --source with the directory that holds both)",
             compose=compose_file,
@@ -247,7 +256,7 @@ def _prepare(
     secrets_file = env_file or env_path(engine_root)
     token = secrets.read_env_file(secrets_file).get("VAULT_LIBRARY_TOKEN", "")
     if not token:
-        raise DeployError(t(
+        raise NotDeployedHere(t(
             "no VAULT_LIBRARY_TOKEN in {file}: the service would refuse to start. Run bootstrap-vps.sh first",
             file=secrets_file,
         ))
