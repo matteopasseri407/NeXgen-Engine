@@ -435,6 +435,23 @@ def test_a_server_redeploys_the_stack_the_update_moved(tmp_path: Path, monkeypat
     assert seen == [tmp_path / "03-INFRA"]
 
 
+def test_a_stack_this_engine_does_not_hold_is_named_and_left_alone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from nexgen_core import roles
+
+    monkeypatch.setattr(roles, "declared_role", lambda **_: roles.SERVER_ROLE)
+    lines: list[str] = []
+    # The real preflight on a tree with no compose file and no .env: what a VPS
+    # whose container another user started from its own copy looks like.
+    stacks = after_update.deploy_after_update(
+        engine_repo=tmp_path, vault_data=tmp_path, state_dir=tmp_path, previous_head="a", target_rev="b",
+        out=lines.append, run_git=_listing(["03-INFRA/deploy/vault-mcp/Dockerfile"]),
+    )
+
+    assert stacks == []  # nothing raised, so the update is not undone for it
+    assert any("not deployed from this engine" in line for line in lines)
+    assert any("--source" in line for line in lines)
+
+
 # --- il verbo, e chi può chiederlo ---
 
 
