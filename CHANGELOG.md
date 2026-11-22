@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-11-22
+
+### Changed
+
+- OpenClaw: il capo si organizza una squadra di subagenti con tetti sicuri e solo modelli flat; DeepSeek Harness come sesto runtime MCP
+
 ## [3.0.2] - 2026-11-18
 
 ### Changed
