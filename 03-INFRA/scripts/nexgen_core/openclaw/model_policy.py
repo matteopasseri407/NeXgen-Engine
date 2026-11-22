@@ -3,7 +3,9 @@
 One job: name the model providers this machine can actually run, and write them where
 OpenClaw's picker reads them -- `agents.defaults.modelPolicy.allow` for the override
 allowlist and `agents.defaults.models` for per-model entries -- extending what the file in
-force already says and never narrowing it.
+force already says. The one exception is the owner's `flat_providers` list: when it is
+declared, the allowlist becomes exactly that list, because a picker that still offers a
+provider billed per token is the spend the list exists to stop.
 
 Two documented facts decide the shape:
 
@@ -42,14 +44,14 @@ def _dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _refs(value: Any) -> list[str]:
-    """The model refs in one agent's `model`, as OpenClaw accepts them: a string or per-role keys."""
+def refs(value: Any) -> list[str]:
+    """The model refs in one `model` value, as OpenClaw accepts them: a string or per-role keys."""
     if isinstance(value, str):
         return [value.strip()] if value.strip() else []
     if isinstance(value, dict):
-        return [ref for key in ("primary", "fallbacks") for ref in _refs(value.get(key))]
+        return [ref for key in ("primary", "fallbacks") for ref in refs(value.get(key))]
     if isinstance(value, list):
-        return [ref for item in value for ref in _refs(item)]
+        return [ref for item in value for ref in refs(item)]
     return []
 
 
@@ -93,7 +95,7 @@ def named_providers(config: dict[str, Any] | None) -> list[str]:
     for provider in _dict(_dict(config).get("models")).get("providers", {}):
         found.append(str(provider))
     for entry in _dict(agents.get("entries")).values():
-        found.extend(provider_of(ref) for ref in _refs(_dict(entry).get("model")))
+        found.extend(provider_of(ref) for ref in refs(_dict(entry).get("model")))
     for profile in _dict(_dict(_dict(config).get("auth")).get("profiles")).values():
         found.append(str(_dict(profile).get("provider") or ""))
     return _unique(found)
@@ -173,15 +175,29 @@ def with_models(config: dict[str, Any], refs: Iterable[str]) -> dict[str, Any]:
     return {**config, "agents": {**agents, "defaults": defaults}}
 
 
-def with_reachable(config: dict[str, Any], detected: Any, current: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Every provider this machine can run is selectable, and no provider already named is lost.
+def with_reachable(
+    config: dict[str, Any], detected: Any, current: dict[str, Any] | None = None,
+    *, flat: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """The selectable providers, or exactly the flat list when the owner declared one.
 
     The file in force is read as well as the proposal: that is where the owner's own
     allowlist and any provider they added live, and a setup that dropped either would
-    narrow a selection it was asked to widen.
+    narrow a selection it was asked to widen. `flat` is the other side of that rule:
+    when the Vault declares which providers run on a flat plan, the allowlist is one
+    wildcard per declared provider and nothing else, including nothing the file in
+    force offered, because the person asked for the narrowing by declaring the list.
+    A runtime pin is metadata for a provider the list still names; a pin for one it
+    dropped would register a catalogue the picker no longer offers.
     """
+    declared = _unique(item.strip() for item in (flat or ()) if isinstance(item, str) and item.strip())
+    if declared:
+        pins = {ref: entry for ref, entry in runtime_model_pins(detected).items() if provider_of(ref) in declared}
+        return _with_model_pins(
+            _with_allow(config, [wildcard(provider) for provider in declared]), pins,
+        )
     current = _dict(current)
-    refs = _unique([
+    allow = _unique([
         *allowed(current),
         *reachable_wildcards(detected, current),
         *(wildcard(provider) for provider in named_providers(current)),
@@ -189,8 +205,8 @@ def with_reachable(config: dict[str, Any], detected: Any, current: dict[str, Any
     ])
     # `claude-cli/*` in a file an earlier engine wrote is the legacy shape OpenClaw
     # migrates on every repair: carried forward, the two would rewrite it forever.
-    refs = [ref for ref in refs if ref != wildcard(CLAUDE_CLI_PROVIDER)]
-    return _with_model_pins(_with_allow(config, refs), runtime_model_pins(detected))
+    allow = [ref for ref in allow if ref != wildcard(CLAUDE_CLI_PROVIDER)]
+    return _with_model_pins(_with_allow(config, allow), runtime_model_pins(detected))
 
 
 def with_declared(config: dict[str, Any], refs: Iterable[str]) -> dict[str, Any]:

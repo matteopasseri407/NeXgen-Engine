@@ -19,7 +19,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.checks import reachability_checks  # noqa: E402
-from nexgen_core.config import load_mcp_manifest  # noqa: E402
+from nexgen_core.config import RUNTIMES, load_mcp_manifest  # noqa: E402
 from nexgen_core.mcp_render import openclaw as openclaw_mod  # noqa: E402
 from nexgen_core.paths import (  # noqa: E402
     antigravity_configs,
@@ -33,8 +33,9 @@ from nexgen_core.report import Severity  # noqa: E402
 
 MANIFEST = UL / "mcp" / "manifest.yaml"
 
-#: The five CLIs the manifest targets with the connector.
-CLIS = ("claude", "codex", "antigravity", "opencode", "openclaw")
+#: The CLIs the manifest targets with the connector: the engine's own list of
+#: runtimes, never a copy of it, so a new runtime cannot leave this file behind.
+CLIS = RUNTIMES
 
 #: The key of a machine that never existed: a test that sees this string in a
 #: rendered value has found the real key copied out of the environment.

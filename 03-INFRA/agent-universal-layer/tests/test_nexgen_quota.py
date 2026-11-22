@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -46,14 +47,27 @@ def run_quota(sandbox, *args: str):
     )
 
 
+def _iso_moment(moment: float) -> str:
+    """An epoch second as the stamp Codex writes: UTC, milliseconds, a trailing Z."""
+    return datetime.fromtimestamp(moment, timezone.utc).isoformat(
+        timespec="milliseconds").replace("+00:00", "Z")
+
+
 def codex_reading(home: Path, *, used: float = 59.0, window: int = 43200,
-                  resets: int = RESETS_AT, name: str = "rollout-2026-10-23.jsonl") -> Path:
-    """A Codex session carrying one rate-limit line, where Codex writes it."""
+                  resets: int = RESETS_AT, name: str = "rollout-2026-10-23.jsonl",
+                  read_at: float | None = None) -> Path:
+    """A Codex session carrying one rate-limit line, where Codex writes it.
+
+    The line carries `WHEN` unless `read_at` names another moment: the tests that
+    pin a clock of their own keep the fixed stamp, while the one that runs the
+    verb against this machine's clock needs a reading the real clock still calls
+    current, or its 30d window has rolled over and taken the percentage with it.
+    """
     folder = home / ".codex" / "sessions" / "2026" / "10" / "23"
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / name
     path.write_text(json.dumps({
-        "timestamp": WHEN,
+        "timestamp": WHEN if read_at is None else _iso_moment(read_at),
         "type": "event_msg",
         "payload": {
             "type": "token_count",
@@ -416,7 +430,14 @@ def test_the_verb_answers_on_the_sandbox_engine(sandbox):
 
 
 def test_the_verb_prints_one_line_per_row_without_flags(sandbox):
-    codex_reading(sandbox.home)
+    """The verb reads this machine's clock, so the reading is dated from it.
+
+    A fixture frozen at a fixed moment stops being a 30d reading within a month:
+    the window has reset and the row loses the percentage this test names. Four
+    minutes old, resetting within the hour, is the same row a person would read.
+    """
+    read_at = time.time() - 240
+    codex_reading(sandbox.home, read_at=read_at, resets=int(read_at) + 3600)
 
     done = run_quota(sandbox)
 

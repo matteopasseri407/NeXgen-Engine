@@ -46,6 +46,7 @@ script persists none of your answers. Nothing here needs admin or root.
 | OpenCode v2 | `~/.config/opencode/AGENTS.md`, a symlink to this repo's `AGENTS.md` (V2 accepts the `instructions` array but never resolves it, so it is no longer written; engine-added entries are removed once, user entries stay) | `mcp.servers` in `opencode.jsonc` or `opencode.json`, with the flat V1 layout migrated once, plus the native `plugins` and `permissions` keys (`plugin` and `permission` migrate once, user rules are never overridden) | `~/.config/opencode/skills/` native views and the shared `~/.agents/skills/` catalog, per skill with `opencode` in `targets` |
 | Antigravity | `~/.gemini/config/AGENTS.md` | `~/.gemini/config/mcp_config.json`\* | three folders at once, see below |
 | OpenClaw | the managed block in each agent workspace's `AGENTS.md` (`agents.entries.<id>.workspace`, else `agents.defaults.workspace`, else `<state dir>/workspace`); OpenClaw has no pointer file of its own | `mcp.servers` in `~/.openclaw/openclaw.json`, or the file `OPENCLAW_CONFIG_PATH` names, or `OPENCLAW_STATE_DIR/openclaw.json` | the shared `~/.agents/skills/` catalog, which OpenClaw discovers itself, per skill with `openclaw` in `targets` |
+| DeepSeek Harness | none yet: its instructions handling is a later unit | `mcp-manager.config.servers` in `<dsh_home>/profiles/desktop/cordis.patch.yml`, where `dsh_home` is `$DSH_HOME` or `~/.dsh`; every other entry of that patch is preserved | the shared `~/.agents/skills/` catalog, which DSH discovers itself, per skill with `dsh` in `targets` |
 
 `exposure` does not decide whether a skill gets a view. A declared skill is linked into every runtime named in its
 `targets`, whatever its exposure; `lazy`, the default, `eager`, `manual` and `core` only change how the skill is
@@ -99,6 +100,28 @@ Three rules of its schema silently cost you a connector, so the renderer enforce
 Timeouts are converted from the manifest's seconds to `connectionTimeoutMs` and `requestTimeoutMs`, and a `tools_deny`
 list becomes `"toolFilter": {"exclude": [...]}`. Secrets stay references (`"Authorization": "Bearer ${NAME}`), never
 values.
+
+### DeepSeek Harness: one patch entry, and an environment the harness scrubs
+
+The harness composes a profile from its bundle layers and then applies
+`<dsh_home>/profiles/desktop/cordis.patch.yml`, a YAML array of `- id:` entries that the app's Settings page also
+writes. The engine owns exactly the `mcp-manager` entry and the three privacy switches; every other entry, and every
+key of a server the person added in Settings, is carried over unchanged and in place. Two rules of that file decide
+what the renderer writes:
+
+- An `- id: mcp-manager` entry replaces the whole `servers` map. The renderer therefore reads the live table back,
+  drops only the names this engine owns (`retired_servers`, and a name the engine declared at an earlier render), and
+  mounts the manifest's servers beside everything the person added.
+- A stdio child starts with a scrubbed environment. Every inherited variable whose name contains `KEY`, `PASSWORD`,
+  `SECRET` or `TOKEN` (case-insensitive), and every `DSH_*`, is removed before the entry's own `env` is applied, and the
+  credential provider then resolves `${credential:NAME}` from the host environment. Every such name a server reads is
+  written explicitly as `NAME: ${credential:NAME}`; a server behind `lazy-mcp` brings the names of every lazy server
+  the gateway starts. No credential value is ever written to the patch.
+
+The three privacy switches are written on every render, and an existing hand-written copy is recognized instead of
+duplicated: `session-log-deepseek` with `enabled: false`, `session-telemetry-otel` with `mode: DISABLED`, and
+`plugin-package-inventory-deepseek` with `enabled: false`. A machine without the harness gets no file and no `~/.dsh`,
+and the desktop profile must already exist: the engine patches a profile the app materialized, never invents one.
 
 ### How much of the bootstrap each CLI reads
 

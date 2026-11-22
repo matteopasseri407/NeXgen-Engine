@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Generator and renderer for MCP configurations across the 5 CLIs (Claude, Codex, OpenCode, Antigravity, OpenClaw) plus the Claude Desktop app.
+"""Generator and renderer for MCP configurations across the CLIs (Claude, Codex, OpenCode, Antigravity, OpenClaw, DeepSeek Harness) plus the Claude Desktop app.
 
 Contract order and rules:
 1. Canonical manifest (mcp/manifest.yaml) as the single source of truth.
 2. Resolution of stdio commands (command + expanded args) and HTTP servers with env-ref tokens.
-3. Native support for the 5 CLIs: Claude, Codex (TOML), OpenCode, Antigravity (bridge), OpenClaw (JSON `mcp.servers`); plus Claude Desktop (default-deny allowlist, see mcp_render/claude_desktop).
+3. Native support for the CLIs: Claude, Codex (TOML), OpenCode, Antigravity (bridge), OpenClaw (JSON `mcp.servers`), DeepSeek Harness (YAML profile patch); plus Claude Desktop (default-deny allowlist, see mcp_render/claude_desktop).
 4. Additive preservation of live servers absent from the manifest, with two
    exceptions that always win over it: an exact name in `retired_servers` (a
    user-authorized tombstone), and a name this engine itself declared at an
@@ -412,6 +412,10 @@ class McpRenderer:
         """Writes the connectors into OpenClaw's own config (~/.openclaw/openclaw.json)."""
         return self._render_dialect("openclaw", write, http_servers=http_servers)
 
+    def render_dsh(self, write: bool = False) -> tuple[bool, str]:
+        """Writes the connectors into DSH's desktop profile patch (cordis.patch.yml)."""
+        return self._render_dialect("dsh", write)
+
     def render_all(self, write: bool = False) -> dict[str, bool]:
         """Renders for all targets, each isolated: one corrupt live config must not stall the others.
 
@@ -430,6 +434,7 @@ class McpRenderer:
                 ("opencode", self.render_opencode),
                 ("codex", self.render_codex),
                 ("openclaw", self.render_openclaw),
+                ("dsh", self.render_dsh),
             ):
                 try:
                     ok, _ = method(write=write)

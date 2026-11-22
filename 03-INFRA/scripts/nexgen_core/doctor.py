@@ -66,7 +66,7 @@ from nexgen_core.checks.mcp_checks import (  # noqa: E402 - sys.path shim for cl
 )
 from nexgen_core.checks.maintainer_checks import check_maintainer_registration  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.module_checks import check_modules_catalog, check_modules_ready  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.checks.openclaw_checks import check_openclaw  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.checks.openclaw_checks import check_openclaw, check_openclaw_flat  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.openclaw_parity_checks import check_openclaw_parity  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.opencode_checks import check_opencode_config_dialect  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.quota_checks import check_quota  # noqa: E402 - sys.path shim for cloned checkout
@@ -344,6 +344,9 @@ def _run_harness_checks(run, home: Path, engine_root: Path, vault: Path) -> None
     run("openclaw.parity", lambda: check_openclaw_parity(home, vault))
     # The loopback server a `claude-cli` agent's connectors must not appear on.
     run("openclaw.claude_loopback", lambda: check_claude_loopback(home, vault, engine_root))
+    # The owner's flat provider list: a model ref outside it is a bill the next turn
+    # has not made yet. `nexgen openclaw doctor` prints the same line, from one owner.
+    run("openclaw.flat_models", lambda: check_openclaw_flat(home, vault))
     # Measured token cost of recent OpenClaw harness first prompts.
     run("openclaw.context_budget", lambda: check_context_budget(home))
     # What one turn of the same session spent: the seed is paid on every model call.

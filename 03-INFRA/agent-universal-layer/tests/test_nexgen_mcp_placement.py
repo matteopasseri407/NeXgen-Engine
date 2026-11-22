@@ -247,7 +247,7 @@ def test_the_plan_names_what_changes_for_the_gateway_and_what_is_incoherent(mani
     plan = build(manifest)
     row = {r["server"]: r for r in plan["rows"]}
     assert row["browser"]["cells"] == {c: "direct" for c in mp.CLIS}
-    assert row["mail"]["cells"] == {"claude": "gateway", "codex": "absent", "antigravity": "absent", "opencode": "direct", "openclaw": "absent"}
+    assert row["mail"]["cells"] == {"claude": "gateway", "codex": "absent", "antigravity": "absent", "opencode": "direct", "openclaw": "absent", "dsh": "absent"}
     assert "mail" in plan["changes"]["codex"]["no_longer_served"]
     assert plan["problems"] == []
 
@@ -264,8 +264,8 @@ def test_the_engine_keeps_one_runtime_list_and_the_placement_rule_uses_it():
     """The ordered tuple in config is the only copy: the target sets and this rule's CLIS derive from it."""
     from nexgen_core import config
 
-    assert config.RUNTIMES == ("claude", "codex", "antigravity", "opencode", "openclaw")
-    assert config.RUNTIME_TARGETS == frozenset({"claude", "codex", "antigravity", "opencode", "openclaw"})
+    assert config.RUNTIMES == ("claude", "codex", "antigravity", "opencode", "openclaw", "dsh")
+    assert config.RUNTIME_TARGETS == frozenset({"claude", "codex", "antigravity", "opencode", "openclaw", "dsh"})
     assert config.SKILL_TARGETS == config.RUNTIME_TARGETS
     assert mp.CLIS is config.RUNTIMES
 

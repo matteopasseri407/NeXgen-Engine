@@ -12,6 +12,12 @@ copy's own `pytest.py`, which is the same bypass by another name. `-P` does not
 touch `PYTHONPATH`, so the environment is cleaned as well. The run has a ceiling
 of half an hour, and the engine's own environment can move it
 (`NEXGEN_SUP_VERIFY_TIMEOUT_S`): a real suite on a busy machine is slow, not hung.
+
+A bare `python` in the declared command means the project's own Python, not
+whatever PATH offers first: on Windows that was the Microsoft Store interpreter,
+and `python -m pytest` died on the project's own dependencies (`No module named
+'filelock'`, 2026-11-22). It therefore resolves to the owner's venv when the
+repository has one, and the copy is never the source of that interpreter.
 """
 from __future__ import annotations
 
@@ -24,6 +30,7 @@ from pathlib import Path
 from nexgen_core.processes import no_window_kwargs, split_command_line, windows_command_argv
 
 from . import supervision_pytest as pytest_runs
+from . import supervision_pytest_runs as python_runs
 
 #: The declared budget for one run of the executor's verification command. A suite
 #: of this repository takes six to fifteen minutes on a machine other units are
@@ -66,7 +73,8 @@ def run(folder: Path, command: str) -> tuple[bool, str, str]:
             f"il comando di verifica contiene {', '.join(shell)}: non passa da una shell. "
             "Scrivi uno script o un solo comando"
         ), ""
-    inside = executable_inside(argv, folder)
+    launched = launch_argv(argv, folder)
+    inside = executable_inside(launched, folder)
     if inside is not None:
         return False, (
             f"l'eseguibile `{argv[0]}` della verifica sta dentro la copia dell'unità ({inside}): "
@@ -74,7 +82,7 @@ def run(folder: Path, command: str) -> tuple[bool, str, str]:
         ), ""
     try:
         done = subprocess.run(
-            windows_command_argv(launch_argv(argv)), cwd=folder, capture_output=True, text=True,
+            windows_command_argv(launched), cwd=folder, capture_output=True, text=True,
             encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, env=pytest_runs.cleaned_environment(),
             timeout=budget(), check=False, **no_window_kwargs(),
         )
@@ -88,18 +96,30 @@ def run(folder: Path, command: str) -> tuple[bool, str, str]:
     return True, f"`{command}` esce con 0", output
 
 
-def launch_argv(argv: list[str]) -> list[str]:
-    """The verification argv, with `-P` when it starts a Python interpreter.
+def launch_argv(argv: list[str], folder: Path) -> list[str]:
+    """The verification argv, with `-P` and a bare `python` resolved to the project's own interpreter.
 
     Python 3.11 answers `-P` with "do not prepend the working directory to
     `sys.path`". The engine's own Python requirement is 3.11, so the flag is
     always available where the engine runs.
+
+    A bare `python` is the one name whose meaning the machine decides, and it
+    decided badly: on Windows PATH offered the Microsoft Store interpreter and
+    `python -m pytest` died on the project's own dependencies (`No module named
+    'filelock'`). Writing `python` means the project's Python, so it becomes the
+    owner's venv interpreter when the repository has one, and keeps the declared
+    name when it does not. An explicit path is the owner's own choice and is
+    left untouched.
     """
     if not argv:
         return []
     name = Path(argv[0]).name
-    if PYTHON_EXECUTABLE.match(name) or (os.name == "nt" and PYTHON_LAUNCHER.match(name)):
-        return [argv[0], "-P", *argv[1:]]
+    python = PYTHON_EXECUTABLE.match(name) is not None
+    token = argv[0]
+    if python and len(Path(argv[0]).parts) == 1:  # a bare name asks; a path has already chosen
+        token = python_runs.venv_python(folder) or token
+    if python or (os.name == "nt" and PYTHON_LAUNCHER.match(name)):
+        return [token, "-P", *argv[1:]]
     return list(argv)
 
 

@@ -4,12 +4,21 @@ Qui si prova il modulo da solo: quali cartelle si contano, cosa l'ambiente ripul
 toglie, come si legge il numero che pytest stampa, e che l'albero contato non sia
 un repository. I casi d'attacco completi passano dal cancello, in
 `test_nexgen_supervision_gates.py`.
+
+Il 2026-11-22 il conteggio è caduto su `No module named pytest`: usava il Python
+del runtime del motore, che porta le dipendenze del motore e non quelle del
+progetto. L'interprete giusto è quello del venv del proprietario.
 """
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 from nexgen_local import supervision_pytest as pytest_runs
+from nexgen_local import supervision_pytest_runs as python_runs
 
 from supervision_repo import build, git_in
 
@@ -28,6 +37,94 @@ def test_the_cleaned_environment_drops_what_a_unit_could_fill(monkeypatch):
     assert all(key not in environment for key in pytest_runs.UNTRUSTED_ENV)
     # The user site is outside the copy: forcing it off broke a project's own tests.
     assert "PYTHONNOUSERSITE" not in environment
+
+
+# --- con quale interprete si conta -------------------------------------------
+
+
+def _owner_venv(checkout: Path) -> Path:
+    """A checkout's own `.venv` interpreter: the file the rule looks for, not a Python that runs."""
+    relative = Path("Scripts/python.exe") if os.name == "nt" else Path("bin/python")
+    interpreter = checkout / ".venv" / relative
+    interpreter.parent.mkdir(parents=True, exist_ok=True)
+    interpreter.write_text("", encoding="utf-8")
+    interpreter.chmod(0o755)
+    return interpreter
+
+
+def _worktree(repo, folder: Path, branch: str) -> Path:
+    """A linked worktree of `repo`: the shape of the unit's copy, and of the owner's checkout."""
+    git_in(repo.path, "worktree", "add", "-q", "-b", branch, str(folder))
+    return folder
+
+
+def test_the_copy_counts_with_the_owners_venv(tmp_path):
+    """La copia non ha un venv: quello del checkout da cui è nata sì, ed è quello che ha pytest."""
+    repo = build(tmp_path / "sandbox")
+    copy = _worktree(repo, tmp_path / "copia", "unita")
+    interpreter = _owner_venv(repo.path)
+
+    assert python_runs.venv_python(copy) == str(interpreter)
+    assert python_runs.project_python(copy) == str(interpreter)
+
+
+def test_a_sibling_checkout_supplies_what_the_main_one_lacks(tmp_path):
+    """Motore installato senza venv, sviluppo con venv: sono worktree dello stesso repository."""
+    repo = build(tmp_path / "sandbox")
+    copy = _worktree(repo, tmp_path / "copia", "unita")
+    development = _worktree(repo, tmp_path / "sviluppo", "sviluppo")
+    interpreter = _owner_venv(development)
+
+    assert python_runs.venv_python(copy) == str(interpreter)
+
+
+def test_an_interpreter_inside_the_copy_is_never_used(tmp_path):
+    """L'esecutore non fornisce l'interprete che conta i suoi test: la copia si salta."""
+    repo = build(tmp_path / "sandbox")
+    copy = _worktree(repo, tmp_path / "copia", "unita")
+    _owner_venv(copy)
+
+    assert python_runs.venv_python(copy) == ""
+    assert python_runs.project_python(copy) == sys.executable
+
+
+def test_without_a_venv_the_engine_own_interpreter_counts(tmp_path):
+    """Nessun venv nel repository: resta il comportamento di sempre, l'interprete del motore."""
+    repo = build(tmp_path / "sandbox")
+    copy = _worktree(repo, tmp_path / "copia", "unita")
+
+    assert python_runs.venv_python(copy) == ""
+    assert python_runs.project_python(copy) == sys.executable
+
+
+def test_a_folder_that_is_not_a_repository_falls_back_to_the_engine(tmp_path):
+    assert python_runs.venv_python(tmp_path) == ""
+    assert python_runs.project_python(tmp_path) == sys.executable
+
+
+def test_the_count_launches_the_projects_own_interpreter(tmp_path, monkeypatch):
+    """Il conteggio vero, con l'albero esportato davvero: cambia solo chi esegue pytest."""
+    repo = build(tmp_path / "sandbox")
+    copy = _worktree(repo, tmp_path / "copia", "unita")
+    interpreter = _owner_venv(repo.path)
+    seen: list[list[str]] = []
+    real = pytest_runs.subprocess.run
+
+    def spy(argv, **kwargs):
+        if isinstance(argv, list) and "pytest" in argv:
+            seen.append(list(argv))
+            return subprocess.CompletedProcess(
+                argv, 0, stdout="tests/test_sample.py::test_value\n\n1 test collected in 0.01s\n", stderr="",
+            )
+        return real(argv, **kwargs)
+
+    monkeypatch.setattr(pytest_runs.subprocess, "run", spy)
+
+    before, after = pytest_runs.counts(copy, repo.head(), repo.head(), dirs=["tests"])
+
+    assert [argv[0] for argv in seen] == [str(interpreter)] * 2
+    assert (before.ok, before.tests) == (True, 1)
+    assert (after.ok, after.tests) == (True, 1)
 
 
 def test_the_touched_tests_name_the_test_folder_that_holds_them():

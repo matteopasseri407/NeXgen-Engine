@@ -10,6 +10,8 @@ dialects need live in this `__init__`.
 from __future__ import annotations
 
 import json
+import math
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,36 @@ IS_WINDOWS = sys.platform == "win32"
 
 #: Pinned bridge for CLIs without native remote support.
 MCP_REMOTE_PACKAGE = "mcp-remote@0.1.38"
+
+#: An interpreter a dialect must give a UTF-8 environment to: `python`,
+#: `python3`, `python3.12`, `py`, and the same names as a Windows `.exe`,
+#: including the copy a virtualenv keeps under `Scripts/`.
+_PYTHON_COMMAND = re.compile(r"^(python[0-9.]*|py)(\.exe)?$", re.I)
+
+#: A numeric number of seconds, as YAML hands it over when it was quoted.
+_NUMERIC_SECONDS = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*$")
+
+
+def is_python_command(command: str) -> bool:
+    """Whether this command line starts a Python interpreter."""
+    return bool(_PYTHON_COMMAND.match(Path(command).name))
+
+
+def milliseconds(timeouts: Any, key: str) -> int | None:
+    """A manifest timeout (seconds) as the positive milliseconds a CLI schema wants.
+
+    A value that is not a number is no timeout, never a crash: the field is
+    optional and a broken one must not stop the other servers from mounting.
+    """
+    raw = timeouts.get(key) if isinstance(timeouts, dict) else None
+    match = _NUMERIC_SECONDS.match(raw) if isinstance(raw, str) else None
+    if match:
+        millis = int(float(match.group(1)) * 1000)
+    elif isinstance(raw, (int, float)) and not isinstance(raw, bool) and math.isfinite(raw):
+        millis = int(float(raw) * 1000)
+    else:
+        return None
+    return millis if millis > 0 else None
 
 
 def http_bridge_entry(renderer, srv: dict[str, Any]) -> dict[str, Any]:
