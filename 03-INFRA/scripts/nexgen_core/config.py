@@ -24,7 +24,7 @@ logger = logging.getLogger("nexgen.config")
 #: command-line choices list them. This ordered tuple is the only copy of the
 #: list: the MCP connectors, the skill views and the placement rule all derive
 #: from it, because two hand-kept constants are how the lists drift apart.
-RUNTIMES: tuple[str, ...] = ("claude", "codex", "antigravity", "opencode", "openclaw")
+RUNTIMES: tuple[str, ...] = ("claude", "codex", "antigravity", "opencode", "openclaw", "dsh")
 RUNTIME_TARGETS = frozenset(RUNTIMES)
 SKILL_TARGETS = RUNTIME_TARGETS
 SKILL_ORIGINS = frozenset({"vault", "engine", "github", "installer", "upstream"})

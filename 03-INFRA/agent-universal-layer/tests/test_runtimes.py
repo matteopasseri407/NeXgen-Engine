@@ -430,7 +430,7 @@ def test_apply_all_warns_and_writes_nothing_when_the_guardrail_cannot_install(tm
 
 
 def test_registry_has_one_adapter_per_supported_cli():
-    assert set(REGISTRY) == {"claude", "codex", "opencode", "antigravity", "openclaw"}
+    assert set(REGISTRY) == {"claude", "codex", "opencode", "antigravity", "openclaw", "dsh"}
 
 
 def test_apply_all_reports_a_missing_node_even_when_no_action_says_hook(tmp_path: Path, opencode_dialect):

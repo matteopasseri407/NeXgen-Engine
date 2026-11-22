@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import copy
 import logging
-import math
 import re
 from pathlib import Path
 from typing import Any
@@ -30,8 +29,10 @@ from nexgen_core.i18n import t
 from nexgen_core.mcp_render import (
     IS_WINDOWS,
     MCP_REMOTE_PACKAGE,
+    is_python_command as _is_python,
     load_json_object,
     merge_entry,
+    milliseconds as _millis,
     write_json_config,
 )
 from nexgen_core.openclaw.loopback_guard import apply_loopback_guard, document_connector_names
@@ -47,11 +48,6 @@ _OWNED_KEYS = frozenset({
     "connectionTimeoutMs", "requestTimeoutMs", "toolFilter",
 })
 
-#: An interpreter this module must give a UTF-8 environment to: `python`,
-#: `python3`, `python3.12`, `py`, and the same names as a Windows `.exe`,
-#: including the copy a virtualenv keeps under `Scripts/`.
-_PYTHON_COMMAND = re.compile(r"^(python[0-9.]*|py)(\.exe)?$", re.I)
-
 #: OpenClaw's own name for the transport behind an http MCP endpoint.
 STREAMABLE_HTTP = "streamable-http"
 
@@ -59,11 +55,6 @@ STREAMABLE_HTTP = "streamable-http"
 #: (`nexgen_core.mcp_bridge.TOKEN_ENV`). A bridge entry the engine builds always
 #: says which variable to use; this is the fallback for a hand-written map.
 _BRIDGE_TOKEN_ENV = "NEXGEN_MCP_BRIDGE_TOKEN"
-
-
-def _is_python(command: str) -> bool:
-    """Whether this command line starts a Python interpreter."""
-    return bool(_PYTHON_COMMAND.match(Path(command).name))
 
 
 def _stdio_entry(srv: dict[str, Any], references: dict[str, str] | None = None) -> dict[str, Any]:
@@ -87,27 +78,6 @@ def _stdio_entry(srv: dict[str, Any], references: dict[str, str] | None = None) 
     if env:
         entry["env"] = env
     return entry
-
-
-#: A numeric number of seconds, as YAML hands it over when it was quoted.
-_NUMERIC_SECONDS = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*$")
-
-
-def _millis(timeouts: Any, key: str) -> int | None:
-    """A manifest timeout (seconds) as the positive milliseconds OpenClaw wants.
-
-    A value that is not a number is no timeout, never a crash: the field is
-    optional and a broken one must not stop the other servers from mounting.
-    """
-    raw = timeouts.get(key) if isinstance(timeouts, dict) else None
-    match = _NUMERIC_SECONDS.match(raw) if isinstance(raw, str) else None
-    if match:
-        millis = int(float(match.group(1)) * 1000)
-    elif isinstance(raw, (int, float)) and not isinstance(raw, bool) and math.isfinite(raw):
-        millis = int(float(raw) * 1000)
-    else:
-        return None
-    return millis if millis > 0 else None
 
 
 def _http_entry(srv: dict[str, Any]) -> dict[str, Any]:

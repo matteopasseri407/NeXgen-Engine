@@ -507,6 +507,60 @@ def openclaw_config(home: Path | None = None, env: Mapping[str, str] | None = No
     return _openclaw_config_impl(home, env)
 
 
+def _dsh_home_impl(home: Path | None = None, env: Mapping[str, str] | None = None) -> Path:
+    """Implementation behind :func:`dsh_home`."""
+    values = os.environ if env is None else env
+    override = values.get("DSH_HOME")
+    if override:
+        return Path(override).expanduser()
+    return resolve_home(home) / ".dsh"
+
+
+def dsh_home(home: Path | None = None, env: Mapping[str, str] | None = None) -> Path:
+    """DeepSeek Harness's home: `$DSH_HOME` wins when set, else `~/.dsh` under `home`.
+
+    The harness reads the variable for its own profiles and sessions, so it
+    keeps precedence here too: a session that isolated DSH with `DSH_HOME`
+    must find the same tree this layer writes, never a second one beside it.
+    ``env`` is the environment a caller was given: detection and its tests.
+    """
+    return _dsh_home_impl(home, env)
+
+
+#: Where the Windows installer puts DSH's launcher, relative to `%LOCALAPPDATA%`.
+#: The app ships it inside `resources` and never puts it on the PATH, which is why
+#: the installed-footprint check looks here. The Council seat knows the same
+#: product fact (`council/seat_dsh.py`): this layer cannot import the private
+#: council folder, so the path is stated where the runtime adapter can read it.
+DSH_WINDOWS_LAUNCHER = (
+    Path("Programs") / "DeepSeek Harness" / "resources" / "runtime" / "cli" / "bin" / "dsh.cmd"
+)
+
+
+def _dsh_profile_patch_impl(
+    home: Path | None = None,
+    profile: str = "desktop",
+    env: Mapping[str, str] | None = None,
+) -> Path:
+    """Implementation behind :func:`dsh_profile_patch`."""
+    return dsh_home(home, env) / "profiles" / profile / "cordis.patch.yml"
+
+
+def dsh_profile_patch(
+    home: Path | None = None,
+    profile: str = "desktop",
+    env: Mapping[str, str] | None = None,
+) -> Path:
+    """The harness profile's user patch layer, which also carries the MCP servers.
+
+    It is a top-level YAML array of `- id:` entries applied after every bundle
+    layer. The app's Settings page writes the same document, so this file
+    belongs to the person as much as to the app: the renderer adds and replaces
+    only the entries it owns.
+    """
+    return _dsh_profile_patch_impl(home, profile, env)
+
+
 def is_machine_home(home: Path | None = None) -> bool:
     """Whether this is the home the machine really uses, not a copy beside it.
 
