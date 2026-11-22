@@ -27,6 +27,19 @@ from nexgen_core.openclaw import flat_only
 from nexgen_core.report import CheckOutcome
 
 
+def flat_outcome(
+    home_dir: Path, config: Mapping[str, Any], *, vault: Path | None = None,
+) -> CheckOutcome:
+    """The guard's one line: the list this machine declares, judging `config`.
+
+    One owner for the pair, because two commands print it: `nexgen openclaw doctor`
+    through `outcomes` below, and the scheduled `nexgen doctor`, which runs the
+    reading itself and must not word it differently.
+    """
+    providers, notes = flat_only.load(home_dir, vault=vault)
+    return flat_only.check(config, providers, notes)
+
+
 def outcomes(
     home_dir: Path, config: Mapping[str, Any], values: Mapping[str, str],
 ) -> list[CheckOutcome]:
@@ -41,12 +54,11 @@ def outcomes(
     rather than printed as a permanent "could not be verified": a machine that did
     not chat through a harness today has nothing wrong.
     """
-    providers, notes = flat_only.load(home_dir)
     readings = [
         check_context_budget(home_dir, env=values),
         check_turn_budget(home_dir, config=config, env=values),
     ]
     return [
-        flat_only.check(config, providers, notes),
+        flat_outcome(home_dir, config),
         *(outcome for outcome in readings if outcome is not None),
     ]

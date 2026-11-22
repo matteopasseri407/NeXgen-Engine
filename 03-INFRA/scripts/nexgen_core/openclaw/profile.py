@@ -1,14 +1,15 @@
-"""The configuration the engine owns, derived as a pure function.
+"""The configuration the engine owns, derived from its inputs.
 
 `build_config` takes what was detected, what the person chose and the
 configuration already in force, and returns ONLY the sections the engine owns.
 Everything else in `openclaw.json` — the MCP servers, the channels, the rest of
 OpenClaw's own settings — belongs to OpenClaw and to the person using it.
 
-Nothing in this module reads a file, an environment variable or a clock: the
-same inputs always produce the same dict, which is what lets `nexgen openclaw
-plan` promise it will not write and lets B2 reuse the exact same answer. The
-file in force arrives as a value (`current`), never as a path.
+Nothing in this module reads a file, an environment variable or a clock, except
+the owner's `flat_providers` list, read from the home the caller hands in; every
+other fact arrives as a value (`current`, never a path), which is what lets
+`nexgen openclaw plan` promise it will not write and lets B2 reuse the exact same
+answer.
 
 Four rules are not preferences, and each has its reason where it is applied: no
 Google subscription ever enters OpenClaw (its terms forbid using a Google plan
@@ -34,7 +35,9 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import detect_language
-from nexgen_core.openclaw import agy_backend, background, model_policy, observation, prompt_budget, utility_model
+from nexgen_core.openclaw import (
+    agy_backend, background, flat_only, model_policy, observation, prompt_budget, utility_model,
+)
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
 from nexgen_core.openclaw.acp import acp_block, acpx_entry, sviluppo_enabled
 from nexgen_core.openclaw.channel_bindings import missing_bindings
@@ -421,6 +424,19 @@ def _update_policy() -> dict[str, Any]:
     return {"auto": {"enabled": False}, "checkOnStart": False}
 
 
+def _with_model_policy(
+    config: dict[str, Any], detected: Detection, current: dict[str, Any] | None, home: Path | None,
+) -> dict[str, Any]:
+    """Which providers the pickers offer: everything reachable, or the owner's flat list.
+
+    The list is one key in the Vault's `quota.yaml` and `flat_only` reads it. With no
+    home there is no Vault and nothing is narrowed, the same direction `_add_machine_rules`
+    takes: a proposal built in a test must not change with the machine it runs on.
+    """
+    flat = flat_only.declared(home) if home is not None else ()
+    return model_policy.with_reachable(config, detected, current, flat=flat)
+
+
 def build_config(
     detected: Detection,
     choices: Choices | None = None,
@@ -435,7 +451,7 @@ def build_config(
     the engine wants, only what it must not overwrite: an existing gateway
     token, an existing agent workspace, the fields of a model block that is
     already there. `home` and `platform` are the two facts the watcher decision
-    needs; with no `home` nothing is proposed, which is the safe direction.
+    needs, and the flat list comes from that home; with no `home`, neither is used.
     """
     chosen = choices or Choices()
     models = local_models(detected)
@@ -458,8 +474,8 @@ def build_config(
         "update": _update_policy(),
     }
     # Every model this machine can reach is selectable from any agent's picker; `model`
-    # on an agent is only its default, and this changes none of them.
-    config = model_policy.with_reachable(config, detected, current)
+    # on an agent is only its default. The owner's flat list narrows it when declared.
+    config = _with_model_policy(config, detected, current, home)
     allow_supervisor_tools(config["agents"]["entries"], current)
     acp = acp_block(detected, sviluppo=chosen.sviluppo, acpx=chosen.acpx)
     if acp is not None:
