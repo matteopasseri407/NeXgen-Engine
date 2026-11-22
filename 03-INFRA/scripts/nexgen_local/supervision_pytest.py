@@ -16,13 +16,17 @@ not grant itself permission. Both trees are exported with `git archive` and
 unpacked with no git metadata in them, so the code the collection imports has no
 remote to push to, and the unit's own copy is never run in, so the caches a suite
 leaves behind cannot make it dirty.
+
+The collection runs with the project's own interpreter, not the engine's: the
+engine's runtime carries the engine's dependencies and answered `No module named
+pytest` (2026-11-22), so a head could not be counted at all. Which interpreter
+that is, and why never the copy's, belongs to `supervision_pytest_runs`.
 """
 from __future__ import annotations
 
 import os
 import re
 import subprocess
-import sys
 import tarfile
 import tempfile
 from dataclasses import dataclass
@@ -36,6 +40,7 @@ from nexgen_core.discipline.config import ConfigError
 from nexgen_core.discipline.violations import TEST_PATH
 from nexgen_core.processes import no_window_kwargs
 
+from . import supervision_pytest_runs as python_runs
 from . import supervision_retirement as own_rules
 
 #: The declared budget for one collection: the base and the head have one each.
@@ -200,7 +205,7 @@ def _count_at(repo: Path, sha: str, copy: Path, dirs: list[str], timeout: float)
     targets = [name for name in dirs if (copy / name).exists()]
     if dirs and not targets:
         return Count(True)
-    return _collect(copy, targets, timeout)
+    return _collect(copy, targets, timeout, python_runs.project_python(repo))
 
 
 def _export(repo: Path, sha: str, copy: Path, timeout: float) -> str:
@@ -237,9 +242,9 @@ def _export(repo: Path, sha: str, copy: Path, timeout: float) -> str:
     return ""
 
 
-def _collect(folder: Path, targets: list[str], timeout: float) -> Count:
-    """pytest's own answer, run by the engine's interpreter with `-P` and a cleaned environment."""
-    argv = [sys.executable, "-P", "-m", "pytest", "--collect-only", "-q", *targets]
+def _collect(folder: Path, targets: list[str], timeout: float, python: str) -> Count:
+    """pytest's own answer, run by the project's interpreter with `-P` and a cleaned environment."""
+    argv = [python, "-P", "-m", "pytest", "--collect-only", "-q", *targets]
     try:
         done = subprocess.run(
             argv, cwd=folder, capture_output=True, text=True, encoding="utf-8", errors="replace",
