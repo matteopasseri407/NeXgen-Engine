@@ -21,6 +21,17 @@ limits:
   # opencode:
   #   7d: 10.0
 
+# The plans this machine pays for as a subscription, or runs as models of its own.
+# Optional and empty by default: without it every provider this machine can reach
+# stays selectable, and a machine that pays per token never needs this key.
+# Declared with a list, `nexgen openclaw setup` offers exactly those providers in
+# the pickers and `nexgen doctor` fails a model ref outside the list.
+#
+# Name a provider here only if this machine already pays for it that way: the same
+# provider is often both a plan and a meter, and `opencode` (Zen) is the metered
+# side of `opencode-go`. Remove the key to go back to every reachable provider.
+# flat_providers: [opencode-go, anthropic, openai, ollama]
+
 # The optional backend that asks each provider for a live percentage, instead of
 # reading it from a local file. `auto` is the shipped behaviour: it is used when
 # the `tokscale` binary is on PATH. Write `off` to silence it without uninstalling
