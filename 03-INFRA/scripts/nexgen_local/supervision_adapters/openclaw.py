@@ -12,11 +12,15 @@ Two facts decide the shape of this adapter, both read from the installed
 documentation and the installed code:
 
 - `openclaw agent` takes `--agent`, `--session-key` and `--message`, and has no
-  `--cwd`: a gateway-backed turn runs in the workspace the owner configured for
-  that agent. The unit's copy therefore has to be inside that workspace, and
-  `check_folder` refuses before anything starts when it is not. A missing
-  `--admin` scope is the reason an arbitrary folder cannot be forced, and the
-  refusal names the clean way instead of pretending the turn happened elsewhere.
+  `--cwd`: a gateway-backed turn runs its tools in the agent's task directory when
+  the owner declared one (`agents.entries.<id>.cwd`, or `agents.defaults.cwd`) and
+  in its workspace otherwise. The unit's copy therefore has to be under one of
+  those two roots, and `check_folder` refuses before anything starts when it is
+  not, naming both keys instead of one: repointing `cwd` leaves AGENTS.md, memory
+  and the bootstrap in the workspace. A missing `--admin` scope is the reason an
+  arbitrary folder cannot be forced, and the refusal names the clean ways instead
+  of pretending the turn happened elsewhere. A failed read never widens the
+  answer: an unreadable `cwd` is not a declared one.
 - The turn's numbers are not in the session list: the list carries tokens, model
   and the clock, and the per-run cost comes from the `--json` envelope. The
   engine redirects that envelope into `turn_log`, one line per turn, and
@@ -66,7 +70,8 @@ class OpenClawAdapter(base.Adapter):
         deny_push="pushurl bloccata della copia; OpenClaw non ha un profilo di progetto che il motore scriva",
         limits=(
             "nessuna finestra propria: il turno si guarda nella Control UI; l'agente gira nel suo "
-            "workspace, quindi la copia deve starci dentro"
+            "workspace o nella `cwd` che il proprietario gli dichiara, quindi la copia deve stare "
+            "dentro una delle due"
         ),
     )
 
@@ -116,27 +121,73 @@ class OpenClawAdapter(base.Adapter):
         return key
 
     def check_folder(self, folder: Path) -> None:
-        """Refuse a copy outside the agent's workspace, and name the clean way.
+        """Refuse a copy no turn of this agent could work in, and name every clean way.
 
-        The gateway runs a turn in the workspace configured for the agent; the
-        documented CLI offers no flag for another folder, and a host path outside
-        the configured workspaces needs `operator.admin`. Forcing it would leave
-        a session that looks like work in the unit and is not, so the copy either
-        is inside the workspace or the turn does not start.
+        A gateway turn's tools run in the agent's task directory when the owner
+        declared one (`agents.entries.<id>.cwd`, or `agents.defaults.cwd`) and in
+        its workspace otherwise: those are the two folders a copy may live under.
+        The documented CLI has no per-turn folder flag, and a host path outside
+        both needs `operator.admin`. Forcing it would leave a session that looks
+        like work in the unit and is not, so the copy is either under one of the
+        two roots or the turn does not start. An answer that cannot be read is
+        not a declared folder: the check falls back to the workspace and refuses.
+        A copy already under the workspace never costs a second question.
         """
         agent = self.agent()
         workspace = self.workspace_of(agent)
-        wanted = base.normal_path(folder)
-        root = base.normal_path(workspace)
-        if wanted == root or wanted.startswith(root + "/"):
+        if _under(folder, workspace):
             return
-        raise base.AdapterError(
-            f"la copia {folder} è fuori dal workspace dell'agente OpenClaw {agent} ({workspace}): "
-            "il turno girerebbe lì e non nell'unità. Strada pulita: punta "
-            f"`agents.entries.{agent}.workspace` sulla cartella del compito, oppure lascia che la "
-            "scheda del Workboard avvii il turno (`openclaw workboard dispatch`, `--admin` per una "
-            "cartella fuori dai workspace configurati)"
+        task_dir = self.cwd_of(agent)
+        if _under(folder, task_dir):
+            return
+        raise base.AdapterError(self._outside_message(agent, folder, workspace, task_dir))
+
+    def _outside_message(self, agent: str, folder: Path, workspace: Path, task_dir: Path | None) -> str:
+        """The refusal: where the turn would have run, and the two keys that change that."""
+        where = f"la copia {folder} è fuori dal workspace dell'agente OpenClaw {agent} ({workspace})"
+        if task_dir is not None:
+            where += f" e dalla sua cartella del compito ({task_dir})"
+        return (
+            f"{where}: il turno girerebbe lì e non nell'unità. Strade pulite: dichiara "
+            f"`agents.entries.{agent}.cwd` (o `agents.defaults.cwd`) su una cartella che contenga le "
+            "copie, così AGENTS.md e la memoria restano nel workspace; oppure punta "
+            f"`agents.entries.{agent}.workspace` sulla cartella del compito. Una cartella fuori da "
+            "ogni radice richiede `openclaw workboard dispatch --admin`"
         )
+
+    def cwd_of(self, agent: str = "") -> Path | None:
+        """The task directory this agent's tools run in, when the owner declared one.
+
+        `agents.entries.<id>.cwd` wins over `agents.defaults.cwd`, as OpenClaw
+        resolves it: the bootstrap stays in the workspace and coding tools work in
+        this folder. Nothing declared is `None` and the workspace is what is left,
+        because an unreadable value must never turn a refusal into an acceptance.
+        """
+        wanted = (agent or self.agent()).strip()
+        entry = self._config_value(f"agents.entries.{wanted}")
+        declared = _folder_of(entry.get("cwd") if isinstance(entry, dict) else None)
+        if declared is not None:
+            return declared
+        return _folder_of(self._config_value("agents.defaults.cwd"))
+
+    def _config_value(self, key: str):
+        """One authored configuration value, asked through the harness's own CLI, or None.
+
+        An unset key is the documented "this path applies no default", and the CLI
+        exits 1 on it: neither that nor an answer that is not JSON declares a
+        folder, so both leave the workspace as the only root.
+        """
+        argv = [self.executable, "config", "get", key, "--json"]
+        try:
+            done = processes.captured(argv, timeout=LIST_TIMEOUT_S)
+        except processes.ProcessError:  # nexgen: allow reason="una configurazione che non risponde non dichiara una cartella: resta il workspace"
+            return None
+        if done.returncode:
+            return None
+        try:
+            return json.loads(done.stdout or "null")
+        except ValueError:  # nexgen: allow reason="una risposta illeggibile non è una cartella dichiarata"
+            return None
 
     def workspace_of(self, agent: str = "") -> Path:
         """The folder OpenClaw says this agent works in, asked to the harness itself."""
@@ -316,6 +367,32 @@ class OpenClawAdapter(base.Adapter):
             return json.loads(done.stdout or "null")
         except ValueError as exc:
             raise base.AdapterError(f"`{' '.join(argv[:2])}` non è JSON") from exc
+
+
+def _folder_of(value) -> Path | None:
+    """A folder as the configuration declares it, or None when the value says nothing.
+
+    `~` is expanded here because OpenClaw expands it too, and an empty or
+    non-string value is not a folder: a missing key stays missing.
+    """
+    text = value.strip() if isinstance(value, str) else ""
+    return Path(text).expanduser() if text else None
+
+
+def _under(folder: Path, *roots: Path | None) -> bool:
+    """Whether this copy is under one of these folders, compared by path segments.
+
+    `normal_path` already collapses case, separators and a trailing slash; the
+    `+ "/"` is what keeps `<root>-2` from counting as `<root>`.
+    """
+    wanted = base.normal_path(folder)
+    for root in roots:
+        if root is None:
+            continue
+        text = base.normal_path(root)
+        if wanted == text or wanted.startswith(text + "/"):
+            return True
+    return False
 
 
 def _created_ms(row: dict) -> int:

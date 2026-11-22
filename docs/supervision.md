@@ -141,8 +141,17 @@ The agent is `sviluppo` unless the lane names another one:
 }
 ```
 
-**The folder is the honest limit.** A gateway-backed turn runs in the workspace the owner configured for that agent, and the documented CLI has no flag for another folder; a host path outside the configured workspaces needs `operator.admin`.
-So the engine checks, before anything starts, that the unit's copy is inside that workspace, and refuses with the clean way out when it is not: point `agents.entries.<agent>.workspace` at the task folder, or let the Workboard card start the turn (`openclaw workboard dispatch`, with `--admin` for a folder outside the configured workspaces).
+**The folder is the honest limit.** A gateway-backed turn runs its tools in the agent's task directory when the owner declared one (`agents.entries.<agent>.cwd`, or `agents.defaults.cwd`) and in its workspace otherwise; the documented CLI has no flag for another folder, and a host path outside both roots needs `operator.admin`.
+So the engine asks OpenClaw for both folders before anything starts, accepts the unit's copy when it is under either one, and refuses with both clean ways out when it is not:
+
+```bash
+openclaw config set agents.entries.<agent>.cwd '~/.local/state/nexgen/local-lane/supervision'
+```
+
+Every task folder and its `23-unita-<unit>/` copy then sit under that root, and the agent's bootstrap (`AGENTS.md`, `SOUL.md`, memory) stays where it is, which is why `cwd` is the smaller change: pointing `agents.entries.<agent>.workspace` at the task folder moves all of that too.
+The third way is `openclaw workboard dispatch --admin`, for a folder outside every configured root.
+Two limits come with the first one: a distinct `cwd` needs an unsandboxed run (`agents.entries.<agent>.sandbox.mode: off`), because a sandboxed turn rejects a working directory other than its workspace, and the tools' folder is the task root, not the copy, so every path in the brief is written absolute.
+An unreadable configuration is not a declared folder: the check falls back to the workspace and refuses, so a failed read never becomes a permission.
 A turn that looks like work in the unit and is not is the failure this refusal exists to prevent.
 
 **Where the numbers come from.** `openclaw sessions --json` carries the tokens, the model and the clock.
