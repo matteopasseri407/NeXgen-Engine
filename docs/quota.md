@@ -250,6 +250,29 @@ A provider with no chain declared prints its row as it always did, and no handov
 `nexgen openclaw setup` carries the chains to OpenClaw: see [the OpenClaw page](openclaw.md#the-fallback-chain).
 `nexgen doctor` prints one line, `openclaw.fallbacks`, with how many agents carry a chain and which ones carry none.
 
+## Subscriptions only (optional)
+
+Nothing on this page is needed by a machine that pays per token, and no part of the engine asks you to switch. This section is for one case: every plan you run is flat, a subscription or a model on this machine, and you want the engine to stop offering the rest.
+
+The key is one line in the same `quota.yaml` that holds the ceilings:
+
+```yaml
+# 03-INFRA/agent-universal-layer/quota.yaml
+flat_providers: [opencode-go, anthropic, openai, ollama]
+```
+
+Each entry is a provider id, written the way a model ref names it before the slash. With the key declared:
+
+- `nexgen openclaw setup` writes `agents.defaults.modelPolicy.allow` with one wildcard per declared provider and nothing else, so every agent's picker offers `opencode-go/*`, `anthropic/*`, `openai/*` and `ollama/*` and no metered plan. Without the key the same setup writes one wildcard per reachable provider, as it always did.
+- `nexgen openclaw plan` shows the allowlist that setup would write before any file is touched.
+- `nexgen doctor` and `nexgen openclaw doctor` print one line, `openclaw.flat_models`. A model ref outside the list is a `FAIL` that names where it was read and which model it is: an agent's `model`, a link of its fallback chain, or a `subagents.model`. Both commands exit non-zero on it, because a turn on a metered provider spends money nobody approved.
+
+The list is a policy, not a rewrite: the setup changes which models the pickers offer and touches no agent's `model`, so a file that already names a provider outside the list keeps it, is reported, and stays yours to change.
+
+A provider belongs in the list only if that is how this machine reaches it. The same provider is often both a plan and a meter: `anthropic` is a Claude subscription through Claude Code and also a paid API key, `openai` is a ChatGPT plan through Codex and also per-token usage, and OpenCode's `opencode` (Zen) is metered while `opencode-go` is the flat one. The list names the provider, not the account, so an entry there says "on this machine, that provider is already paid for". An entry for a provider this machine has no login for is written as declared and simply offers nothing: the example above is a shape to copy, not a list to paste whole.
+
+Going back is deleting the key: the next `nexgen openclaw setup` writes the reachable wildcards again and the doctor line has nothing left to refuse. An entry that is not a provider id is ignored and named in one line, like a ceiling that cannot be used; a value that is not a list at all costs the whole guard, and the line says so instead of reading as "nothing to restrict".
+
 ## The doctor line
 
 `nexgen doctor` prints one line, `quota.known`, listing every percentage that is a real number.

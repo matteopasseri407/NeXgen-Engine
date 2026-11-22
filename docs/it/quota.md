@@ -247,6 +247,29 @@ Un provider senza catena dichiarata stampa la sua riga come ha sempre fatto, e n
 `nexgen openclaw setup` è ciò che porta le catene dentro OpenClaw: vedi [la pagina OpenClaw](openclaw.md#la-catena-di-riserva).
 `nexgen doctor` stampa una riga, `openclaw.fallbacks`, con quanti agenti portano una catena e quali non ne portano nessuna.
 
+## Solo abbonamenti (facoltativo)
+
+Niente di questa pagina serve a una macchina che paga a consumo, e nessuna parte del motore ti chiede di cambiare. Questa sezione serve a un caso solo: ogni piano che usi è flat, un abbonamento o un modello su questa macchina, e vuoi che il motore smetta di offrirti il resto.
+
+La chiave è una riga nello stesso `quota.yaml` che contiene i tetti:
+
+```yaml
+# 03-INFRA/agent-universal-layer/quota.yaml
+flat_providers: [opencode-go, anthropic, openai, ollama]
+```
+
+Ogni voce è un id di provider, scritto come lo nomina un riferimento di modello prima della barra. Con la chiave dichiarata:
+
+- `nexgen openclaw setup` scrive `agents.defaults.modelPolicy.allow` con un carattere jolly per ogni provider dichiarato e nient'altro, quindi il selettore di ogni agente offre `opencode-go/*`, `anthropic/*`, `openai/*` e `ollama/*` e nessun piano a consumo. Senza la chiave lo stesso setup scrive un carattere jolly per ogni provider raggiungibile, come ha sempre fatto.
+- `nexgen openclaw plan` mostra la lista che il setup scriverebbe prima che un file venga toccato.
+- `nexgen doctor` e `nexgen openclaw doctor` stampano una riga, `openclaw.flat_models`. Un riferimento di modello fuori dalla lista è un `FAIL` che nomina dove è stato letto e quale modello è: il `model` di un agente, un anello della sua catena di riserva, o un `subagents.model`. Entrambi i comandi escono con un codice diverso da zero, perché un turno su un provider a consumo spende soldi che nessuno ha approvato.
+
+La lista è una politica, non una riscrittura: il setup cambia quali modelli offrono i selettori e non tocca il `model` di nessun agente, quindi un file che nomina già un provider fuori dalla lista lo conserva, viene segnalato, e resta una cosa che cambi tu.
+
+Un provider va nella lista solo se è così che questa macchina lo raggiunge. Lo stesso provider è spesso insieme un piano e un contatore: `anthropic` è un abbonamento Claude tramite Claude Code e anche una chiave API a pagamento, `openai` è un piano ChatGPT tramite Codex e anche consumo per token, e l'`opencode` di OpenCode (Zen) è a consumo mentre `opencode-go` è quello flat. La lista nomina il provider, non l'account, quindi una voce lì dentro dice "su questa macchina quel provider è già pagato". Una voce per un provider su cui questa macchina non ha nessun accesso viene scritta come dichiarata e semplicemente non offre nulla: l'esempio qui sopra è una forma da copiare, non una lista da incollare intera.
+
+Tornare indietro è cancellare la chiave: il `nexgen openclaw setup` successivo riscrive i caratteri jolly raggiungibili e alla riga del doctor non resta niente da rifiutare. Una voce che non è un id di provider viene ignorata e nominata in una riga, come un tetto che non si può usare; un valore che non è una lista costa l'intero controllo, e la riga lo dice invece di leggersi come "niente da limitare".
+
 ## La riga del doctor
 
 `nexgen doctor` stampa una riga, `quota.known`, che elenca ogni percentuale che è un numero vero.
