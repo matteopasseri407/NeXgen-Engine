@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [3.1.1] - 2026-11-22
+
+### Changed
+
+- Documentata la modalita' facoltativa solo abbonamenti (flat_providers)
+
 ## [3.1.0] - 2026-11-22
 
 ### Changed
