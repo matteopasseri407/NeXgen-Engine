@@ -1,8 +1,11 @@
 """Il ritiro smaltisce l'istanza della copia prima di toglierla dal disco.
 
-L'endpoint non è inventato: `@opencode-ai/sdk/dist/v2/gen/sdk.gen.js`, classe
-`Instance`, `POST /instance/dispose` con `directory` nella query. Questi test
-leggono l'ordine delle chiamate e non avviano OpenCode né toccano un processo.
+In OpenCode 2.3.2 lo smaltimento non è più un endpoint separato: il documento
+`GET /openapi.json` del servizio in esecuzione non ha nessun percorso
+`/instance/dispose`, e `DELETE /api/debug/location` (`debug.location.evict`) è
+descritto lì come "Dispose the requested location's cached services so its next
+use boots them fresh". Questi test leggono la forma e l'ordine delle chiamate e
+non avviano OpenCode né toccano un processo.
 """
 from __future__ import annotations
 
@@ -45,7 +48,8 @@ def _answers(returncodes: dict[str, int]):
     return run, seen
 
 
-def test_the_folder_instance_is_disposed_before_its_location_is_evicted(tmp_path, monkeypatch):
+def test_the_eviction_is_the_only_call_that_disposes_the_copy(tmp_path, monkeypatch):
+    """In 2.3.2 lo smaltimento è lo sfrattamento della posizione, non un endpoint a parte."""
     run, seen = _answers({})
     monkeypatch.setattr(opencode.subprocess, "run", run)
     monkeypatch.setattr(opencode, "DISPOSE_WAIT_S", 0)
@@ -54,21 +58,23 @@ def test_the_folder_instance_is_disposed_before_its_location_is_evicted(tmp_path
     worked, reason = opencode.OpenCodeAdapter().dispose_location(tmp_path)
 
     assert worked is True
-    assert "instance/dispose" in seen[0] and f"directory={tmp_path}" in seen[0]
-    evict_at = next(index for index, line in enumerate(seen) if "debug.location.evict" in line)
-    assert evict_at > 0, "la cartella si libera dopo lo smaltimento dell'istanza"
+    calls = [line for line in seen if "/api/info" not in line]
+    assert len(calls) == 1, calls
+    assert "debug.location.evict" in calls[0]
+    assert f"location[directory]={tmp_path}" in calls[0]
+    assert "instance" not in calls[0], "l'endpoint /instance/dispose non esiste più nella 2.3.2"
 
 
-def test_a_refused_instance_is_a_note_and_the_eviction_still_answers(tmp_path, monkeypatch):
-    run, _ = _answers({"instance/dispose": 4})
+def test_a_refused_eviction_is_reported_with_its_own_answer(tmp_path, monkeypatch):
+    run, _ = _answers({"debug.location.evict": 4})
     monkeypatch.setattr(opencode.subprocess, "run", run)
     monkeypatch.setattr(opencode, "DISPOSE_WAIT_S", 0)
     monkeypatch.setattr(opencode.proces, "rows", lambda: [])
 
     worked, reason = opencode.OpenCodeAdapter().dispose_location(tmp_path)
 
-    assert worked is True, "la liberazione della cartella è riuscita comunque"
-    assert "istanza" in reason and "non smaltita" in reason and "esce con 4" in reason
+    assert worked is False, "senza sfrattamento la copia non è libera e il ritiro lo deve dire"
+    assert "debug.location.evict" in reason and "esce con 4" in reason
 
 
 def test_the_copy_is_disposed_before_it_is_removed(task, tmp_path, monkeypatch):
