@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import detect_language
-from nexgen_core.openclaw import agy_backend, background, flat_only, model_policy, observation, prompt_budget, utility_model
+from nexgen_core.openclaw import agy_backend, background, model_policy, observation, prompt_budget, utility_model
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
 from nexgen_core.openclaw.acp import acp_block, acpx_entry, sviluppo_enabled
 from nexgen_core.openclaw.channel_bindings import missing_bindings
@@ -421,20 +421,6 @@ def _update_policy() -> dict[str, Any]:
     return {"auto": {"enabled": False}, "checkOnStart": False}
 
 
-def _with_model_policy(
-    config: dict[str, Any], detected: Detection, current: dict[str, Any] | None, home: Path | None,
-) -> dict[str, Any]:
-    """Which providers the pickers offer: everything reachable, or the owner's flat list.
-
-    The list is one key in the Vault's `quota.yaml`, and `flat_only` is its owner. With
-    no home there is no Vault to read and nothing is narrowed, the same direction
-    `_add_machine_rules` takes: a proposal built in a test must not change with the
-    machine it runs on.
-    """
-    flat = flat_only.declared(home) if home is not None else ()
-    return model_policy.with_reachable(config, detected, current, flat=flat)
-
-
 def build_config(
     detected: Detection,
     choices: Choices | None = None,
@@ -472,8 +458,8 @@ def build_config(
         "update": _update_policy(),
     }
     # Every model this machine can reach is selectable from any agent's picker; `model`
-    # on an agent is only its default. The owner's flat list narrows it when declared.
-    config = _with_model_policy(config, detected, current, home)
+    # on an agent is only its default, and this changes none of them.
+    config = model_policy.with_reachable(config, detected, current)
     allow_supervisor_tools(config["agents"]["entries"], current)
     acp = acp_block(detected, sviluppo=chosen.sviluppo, acpx=chosen.acpx)
     if acp is not None:

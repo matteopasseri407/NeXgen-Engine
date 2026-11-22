@@ -4,7 +4,8 @@
 `model_policy` sends one list to `agents.defaults.modelPolicy.allow`: the providers a
 person may switch an agent to. A declared flat list replaces "every provider that
 answers" with that list; without one, the list is exactly what it was, because a
-machine that never declared a plan must not be narrowed by an upgrade.
+machine that never declared a plan must not be narrowed by an upgrade. `flat` is
+optional and keyword-only: the call the setup makes today keeps working untouched.
 """
 from __future__ import annotations
 
@@ -19,9 +20,8 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.openclaw import model_policy  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw import flat_only, model_policy  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.detect import Detection, Installation, LocalModels, Login  # noqa: E402 - sys.path shim
-from nexgen_core.openclaw.profile import build_config  # noqa: E402 - sys.path shim for cloned checkout
 
 
 @pytest.fixture(autouse=True)
@@ -86,33 +86,36 @@ def test_an_empty_list_is_no_restriction(tmp_path: Path) -> None:
     assert defaults["modelPolicy"]["allow"] == ["anthropic/*", "openai/*", "opencode-go/*"]
 
 
-def test_the_engine_writes_the_narrowed_allowlist(tmp_path: Path) -> None:
-    """What the proposal carries when the Vault declares the list: the whole point of the key."""
+def test_the_wiring_call_narrows_from_the_declared_file(tmp_path: Path) -> None:
+    """The exact call the connecting unit will make: read the Vault, hand the list over."""
     quota_file(tmp_path, "flat_providers:\n  - opencode-go\n")
 
-    defaults = build_config(machine(tmp_path), home=tmp_path)["agents"]["defaults"]
+    proposed = model_policy.with_reachable(
+        {"agents": {"defaults": {}}}, machine(tmp_path), flat=flat_only.declared(tmp_path),
+    )
 
-    assert defaults["modelPolicy"]["allow"] == ["opencode-go/*"]
-
-
-def test_the_plan_that_writes_the_file_carries_the_narrowed_allowlist(tmp_path: Path) -> None:
-    """`build_plan` is the command's path to the file: the list has to survive it."""
-    from nexgen_core.openclaw.plan import build_plan
-
-    quota_file(tmp_path, "flat_providers:\n  - opencode-go\n")
-
-    plan = build_plan(machine(tmp_path), home=tmp_path, env={}, vault_data=tmp_path / "KnowledgeVault")
-
-    assert plan.config["agents"]["defaults"]["modelPolicy"]["allow"] == ["opencode-go/*"]
+    assert proposed["agents"]["defaults"]["modelPolicy"]["allow"] == ["opencode-go/*"]
+    assert "models" not in proposed["agents"]["defaults"], "a dropped provider keeps no runtime pin"
 
 
-def test_a_proposal_built_with_no_home_reads_no_declaration(tmp_path: Path) -> None:
-    """`home=None` proposes nothing, and reading the host's Vault there would make a test lie."""
-    quota_file(tmp_path, "flat_providers:\n  - opencode-go\n")
+def test_the_wiring_call_with_no_declaration_keeps_every_reachable_provider(tmp_path: Path) -> None:
+    """With no key the setup keeps working untouched, which is the compatibility it must have."""
+    proposed = model_policy.with_reachable(
+        {"agents": {"defaults": {}}}, machine(tmp_path), flat=flat_only.declared(tmp_path),
+    )
 
-    defaults = build_config(machine(tmp_path))["agents"]["defaults"]
+    assert proposed["agents"]["defaults"]["modelPolicy"]["allow"] == [
+        "anthropic/*", "openai/*", "opencode-go/*",
+    ]
 
-    assert "anthropic/*" in defaults["modelPolicy"]["allow"]
+
+def test_a_declared_provider_the_machine_cannot_reach_is_still_written(tmp_path: Path) -> None:
+    """The list is the owner's intent, not an inventory: a missing login is not a reason to drop it."""
+    proposed = model_policy.with_reachable(
+        {"agents": {"defaults": {}}}, machine(tmp_path), flat=["moonshot"],
+    )
+
+    assert proposed["agents"]["defaults"]["modelPolicy"]["allow"] == ["moonshot/*"]
 
 
 def test_a_current_file_that_names_a_metered_provider_does_not_survive_the_narrowing(tmp_path: Path) -> None:
