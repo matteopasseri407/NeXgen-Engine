@@ -45,6 +45,7 @@ Una mappa da id di agente alla sua configurazione:
   - `exec`:
     - `host`: `"node"` o `"gateway"`.
     - `node`: nome della macchina satellite che esegue i comandi per questo agente.
+- `subagents`: blocco facoltativo che nomina gli agenti che questo può creare come figli (`allow`) e il modello su cui girano quei figli (`model`). Vedi [Subagenti](#subagenti).
 
 ### `reportsTo`
 
@@ -287,6 +288,47 @@ agents:
 Una sessione ACP è l'harness che gira come se stesso, quindi le catene di fallback di OpenClaw non vengono mai consultate per lei: senza questo ramo la corsia con più contesto per turno è quella senza nessun cancello. Con questo ramo il plugin legge `nexgen-quota-state.json` (le letture che il battito orario scrive già) prima di un turno, e quando il piano che il modello dell'agente nomina è alla riga `block_at` della tua politica o sopra, risponde con una riga che nomina il piano e la finestra invece di far partire un turno dell'harness.
 
 Non costa nessuna chiamata al modello: la risposta è testo del plugin. Non succede nulla quando lo stato manca, è più vecchio di quanto la politica permette, non ha una lettura per quel piano, o legge sotto la riga; e il ramo viene scritto solo quando `acp_admission: true` è nella squadra, quindi una macchina che non l'ha mai chiesto non rifiuta mai un turno.
+
+## Subagenti
+
+Il capo della squadra può creare uno specialista come figlio, e leggerne il risultato, invece di mandargli un messaggio e tenere tutto il lavoro nella propria conversazione. Due blocchi decidono chi può farlo, su quale modello, e fin dove può arrivare il fan-out; entrambi vengono scritti nelle chiavi che la release fissata documenta (`docs/tools/subagents/nesting.md`, `docs/gateway/config-agents/entries-and-multi-agent.md`).
+
+```yaml
+agents:
+  main:
+    subagents:
+      allow: ["posta", "capo", "automazioni"]
+      model: "opencode-go/deepseek-v4.1-flash"
+
+subagents:
+  maxSpawnDepth: 2
+  maxChildrenPerAgent: 6
+  maxConcurrent: 4
+  runTimeoutSeconds: 900
+```
+
+```json5
+{
+  agents: {
+    entries: { main: { subagents: {
+      allowAgents: ["posta", "capo", "automazioni"],
+      model: "opencode-go/deepseek-v4.1-flash",
+    } } },
+    defaults: { subagents: {
+      maxSpawnDepth: 2, maxChildrenPerAgent: 6,
+      maxConcurrent: 4, runTimeoutSeconds: 900,
+    } },
+  },
+}
+```
+
+`allow` è la lista degli agenti che questo può prendere di mira con `sessions_spawn.agentId`, e diventa `allowAgents`. Senza la chiave OpenClaw ammette solo lo stesso agente, quindi un agente che non dichiara nulla continua a delegare per messaggio, come fa oggi. Ogni id deve essere un agente che la squadra dichiara: un bersaglio che OpenClaw non sa instradare sarebbe uno spawn che fallisce più tardi, in silenzio, e un carattere jolly `["*"]` viene rifiutato di proposito, perché il senso di questa lista è che segue l'organico. Una lista vuota (`allow: []`) viene scritta come dichiarata e vieta gli spawn fra agenti per quell'agente; nominare l'agente stesso (`allow: ["main"]`) è ammesso, visto che OpenClaw vuole l'id del richiedente per uno spawn verso di sé. Un errore di battitura nel blocco è un errore che nomina la chiave, mai una chiave che il gateway ignora.
+
+`model` è il modello su cui gira un figlio di questo agente, per uno spawn che resta sullo stesso agente. Uno spawn verso un altro agente gira sul `model` dell'agente bersaglio, quindi il `subagents.model` di un agente non scavalca quello dello specialista: lo dice `docs/tools/subagents/tool-reference.md` nella release fissata. Se manca, il ripiego è `agents.defaults.subagents.model`, che la chiave `runtime: subagent_model` scrive già.
+
+Il blocco alla radice è il tetto della squadra su tutti gli spawn, e i quattro valori vengono scritti anche quando il file non dice nulla, perché i predefiniti di OpenClaw sono più larghi: profondità 5, cinque figli per sessione, otto esecuzioni concorrenti e nessun timeout. Profondità 2 lascia ai figli del capo la possibilità di creare foglie e niente di più profondo; sei figli limitano un fan-out; quattro esecuzioni concorrenti limitano quante ne avvia insieme un orchestratore; 900 secondi limitano un figlio che non risponde mai. I quattro sono della squadra: un valore già in `openclaw.json` perde contro quello dichiarato e contro il predefinito. I primi due hanno un intervallo documentato (`maxSpawnDepth` 1-5, `maxChildrenPerAgent` 1-20) e il setup rifiuta un valore fuori da lì invece di scrivere una chiave che il gateway limiterebbe o ignorerebbe. `runTimeoutSeconds: 0` viene rifiutato con il motivo: in OpenClaw significa nessun timeout, quindi un figlio che non risponde mai gira finché qualcuno non lo ferma.
+
+Al tetto di profondità un figlio è una foglia: OpenClaw gli toglie gli strumenti di orchestrazione ricorsiva (`sessions_spawn`, `subagents`), quindi la profondità 2 è ciò che impedisce a un fan-out di diventare un albero.
 
 ## Autenticazione sicura dei modelli
 

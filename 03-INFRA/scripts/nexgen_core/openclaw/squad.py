@@ -22,6 +22,7 @@ from nexgen_core.openclaw import agy_backend, agy_prereqs, channels, context_cap
 from nexgen_core.openclaw.claude_cli import CLAUDE_CLI
 from nexgen_core.openclaw.node_agents import NODE_KEY, exec_on_node
 from nexgen_core.openclaw.runtime import apply_runtime
+from nexgen_core.openclaw.subagents_policy import apply as apply_subagents
 from nexgen_core.openclaw.terms import LOCAL_AGY_BACKEND
 from nexgen_core.processes import no_window_kwargs
 
@@ -453,12 +454,14 @@ def apply_squad(
     if isinstance(squad.get("models"), dict):
         _apply_model_entries(target, squad["models"])
 
-    # Two consumption levers, both opt-in per agent and both written where OpenClaw
-    # reads them: the lean tool surface on the model a CLI-backend agent runs, and the
-    # per-call context cap. `tool_surface.apply` runs after `target` carries every
-    # agent, because the supervisor's own set depends on which agent supervises.
+    # Three blocks of policy, each written where OpenClaw reads it: the lean tool
+    # surface on the model a CLI-backend agent runs, the per-call context cap, and
+    # the subagent allowlist with the fan-out ceilings. `tool_surface.apply` runs
+    # after `target` carries every agent, because the supervisor's own set depends
+    # on which agent supervises. The first two are opt-in; the ceilings always land.
     tool_surface.apply(target, squad)
     context_cap.apply(target, squad)
+    apply_subagents(target, squad)
 
     if "bindings" in squad and isinstance(squad["bindings"], list):
         target = channels.with_bindings(target, squad["bindings"])

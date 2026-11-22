@@ -45,6 +45,7 @@ A map of agent ids to their configuration:
   - `exec`:
     - `host`: `"node"` or `"gateway"`.
     - `node`: name of the satellite machine that executes commands for this agent.
+- `subagents`: optional block naming the agents this one may create as children (`allow`) and the model those children run on (`model`). See [Subagents](#subagents).
 
 ### `reportsTo`
 
@@ -287,6 +288,47 @@ agents:
 An ACP session is the harness running as itself, so OpenClaw's fallback chains are never consulted for it: without this branch the lane with the most context per turn is the one with no gate at all. With it, the plugin reads `nexgen-quota-state.json` (the readings the hourly beat already writes) before a turn, and when the plan the agent's model names is at or above the `block_at` line of your policy, it answers with one line naming the plan and the window instead of starting a harness turn.
 
 It costs no model call: the answer is the plugin's own text. Nothing happens when the state is missing, older than the policy allows, has no reading for that plan, or reads below the line; and the branch is written only when `acp_admission: true` is in the squad, so a machine that never asked for it never refuses a turn.
+
+## Subagents
+
+The head of the squad can create a specialist as a child run, and read its result, instead of sending it a message and keeping the whole task in its own conversation. Two blocks decide who may do it, on which model, and how far fan-out may go; both are written to the keys the pinned release documents (`docs/tools/subagents/nesting.md`, `docs/gateway/config-agents/entries-and-multi-agent.md`).
+
+```yaml
+agents:
+  main:
+    subagents:
+      allow: ["posta", "capo", "automazioni"]
+      model: "opencode-go/deepseek-v4.1-flash"
+
+subagents:
+  maxSpawnDepth: 2
+  maxChildrenPerAgent: 6
+  maxConcurrent: 4
+  runTimeoutSeconds: 900
+```
+
+```json5
+{
+  agents: {
+    entries: { main: { subagents: {
+      allowAgents: ["posta", "capo", "automazioni"],
+      model: "opencode-go/deepseek-v4.1-flash",
+    } } },
+    defaults: { subagents: {
+      maxSpawnDepth: 2, maxChildrenPerAgent: 6,
+      maxConcurrent: 4, runTimeoutSeconds: 900,
+    } },
+  },
+}
+```
+
+`allow` is the list of agents this one may target with `sessions_spawn.agentId`, and it becomes `allowAgents`. Without the key OpenClaw allows the same agent only, so an agent that declares nothing keeps delegating by message, as it does today. Every id must be an agent the squad declares: a target OpenClaw cannot route would be a spawn that fails later, silently, and a wildcard `["*"]` is refused on purpose because the point of this list is that it follows the roster. An empty list (`allow: []`) is written as declared and forbids cross-agent spawns for that agent; naming the agent itself (`allow: ["main"]`) is allowed, since OpenClaw wants the requester's id for a self-targeted spawn. A typo in the block is an error that names the key, never a key the gateway ignores.
+
+`model` is the model a child of this agent runs on, for a spawn that stays on the same agent. A cross-agent spawn runs on the target agent's own `model`, so an agent's `subagents.model` does not override the specialist's: `docs/tools/subagents/tool-reference.md` in the pinned release says so. Omitted, the fallback is `agents.defaults.subagents.model`, which the `runtime: subagent_model` key already writes.
+
+The root block is the squad's ceiling on all spawning, and the four values are written even when the file says nothing, because OpenClaw's own defaults are looser: depth 5, five children per session, eight concurrent runs and no timeout at all. Depth 2 lets the head's children create leaves and nothing deeper; six children bound one fan-out; four concurrent runs bound what one orchestrator starts at once; 900 seconds bound a child that never answers. The four are the squad's: a value already in `openclaw.json` loses to the declared one and to the default. The first two have a documented range (`maxSpawnDepth` 1-5, `maxChildrenPerAgent` 1-20) and the setup refuses a value outside it instead of writing a key the gateway would clamp or ignore. `runTimeoutSeconds: 0` is refused with the reason: in OpenClaw it means no timeout, so a child that never answers runs until somebody stops it.
+
+At the depth ceiling a child is a leaf: OpenClaw takes the recursive orchestration tools (`sessions_spawn`, `subagents`) away from it, so depth 2 is what keeps a fan-out from becoming a tree.
 
 ## Secure model authentication
 
