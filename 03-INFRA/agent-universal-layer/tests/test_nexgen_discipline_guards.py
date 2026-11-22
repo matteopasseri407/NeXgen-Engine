@@ -1,6 +1,7 @@
 import subprocess
 
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -265,6 +266,77 @@ def test_parametrize_cases_in_a_named_constant_are_counted_both_ways(repo):
     assert cli.main(["check", "--base", base]) == 0  # three cases kept: only the shape changed
     repo.write("tests/test_x.py", head.format(cases="[1]"))
     assert cli.main(["check", "--base", base]) == 1  # two of the three cases are gone
+
+
+def test_a_parametrize_list_derived_from_an_import_keeps_its_weight(repo):
+    """Deriving the cases from one imported list is not a deletion: count the weight it had.
+
+    The length lives in the other module, so this file cannot show it. Reading the
+    derivation as one case called a test that grew (five runtimes to six) a loss.
+    """
+    literal = textwrap.dedent(
+        """\
+        import pytest
+
+        CASES = [1, 2, 3]
+
+
+        @pytest.mark.parametrize("i", CASES)
+        def test_i(i):
+            assert i
+        """
+    )
+    base = committed_tests(repo, literal)
+    derived = textwrap.dedent(
+        """\
+        from elsewhere import CASES
+
+        import pytest
+
+
+        @pytest.mark.parametrize("i", CASES)
+        def test_i(i):
+            assert i
+        """
+    )
+    repo.write("tests/test_x.py", derived)
+    assert cli.main(["check", "--base", base]) == 0  # three cases kept: only the source of the list changed
+
+
+def test_a_derived_parametrize_list_does_not_hide_a_deleted_test(repo):
+    """The weight it inherits belongs to its own test: a function that disappears still counts."""
+    literal = textwrap.dedent(
+        """\
+        import pytest
+
+        CASES = [1, 2, 3]
+
+
+        @pytest.mark.parametrize("i", CASES)
+        def test_i(i):
+            assert i
+
+
+        def test_gone():
+            assert 0
+        """
+    )
+    base = committed_tests(repo, literal)
+    derived = textwrap.dedent(
+        """\
+        from elsewhere import CASES
+
+        import pytest
+
+
+        @pytest.mark.parametrize("i", CASES)
+        def test_i(i):
+            assert i
+        """
+    )
+    repo.write("tests/test_x.py", derived)
+    assert cli.main(["check", "--base", base]) == 1  # test_gone is still a deletion
+
 
 
 def test_deleting_js_tests_is_flagged_even_if_an_empty_one_is_added(repo):

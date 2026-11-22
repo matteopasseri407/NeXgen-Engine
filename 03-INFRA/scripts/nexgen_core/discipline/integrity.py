@@ -3,7 +3,10 @@
 Counts are totals over the whole change, so moving, splitting or merging tests is fine. A skip
 marker is judged where it sits: one that arrives with a NEW test function gates new work (a
 Windows-only reproduction), while one added to a test the base already had, or outside every
-test function, is still a weakening."""
+test function, is still a weakening. A `parametrize` list read from another module has no length
+in this file, so it keeps the weight the same test had before: deriving a list from one source
+is not a deletion.
+"""
 from __future__ import annotations
 
 import ast
@@ -78,18 +81,32 @@ def _literal_sizes(tree: ast.AST) -> dict[str, int]:
             and isinstance(n.value, (ast.List, ast.Tuple)) for t in n.targets if isinstance(t, ast.Name)}
 
 
-def _cases(func: ast.AST, sizes: dict[str, int]) -> int:
-    """How many test cases a function stands for: a parametrize list (literal or named) counts each entry."""
+def _cases(func: ast.AST, sizes: dict[str, int], known: dict[str, int] | None = None) -> int:
+    """How many test cases a function stands for: a parametrize list (literal or named) counts each entry.
+
+    A literal list is exact, and so is a name this file assigns a literal to. A list
+    read from anywhere else -- an imported constant, the engine's one runtime list --
+    has no length in this file: it keeps the weight the same test had on the other
+    side of the change (`known`), because "not readable here" is not "one case".
+    """
     for deco in getattr(func, "decorator_list", ()):
         if isinstance(deco, ast.Call) and getattr(deco.func, "attr", "") == "parametrize" and len(deco.args) > 1:
             cases = deco.args[1]
-            size = len(cases.elts) if isinstance(cases, (ast.List, ast.Tuple)) else sizes.get(getattr(cases, "id", ""), 1)
-            return max(size, 1)
+            if isinstance(cases, (ast.List, ast.Tuple)):
+                return max(len(cases.elts), 1)
+            declared = sizes.get(getattr(cases, "id", ""))
+            if declared is not None:
+                return max(declared, 1)
+            return (known or {}).get(func.name, 1)
     return 1
 
 
-def test_stats(source: str | None) -> tuple[int, int]:
-    """(test cases, assertions) in a Python test file; assertions in helpers count too. (0, 0) if it does not parse."""
+def test_stats(source: str | None, known: dict[str, int] | None = None) -> tuple[int, int]:
+    """(test cases, assertions) in a Python test file; assertions in helpers count too. (0, 0) if it does not parse.
+
+    `known` is what the other side of the change weighed per test function; it is
+    consulted only where this side's parametrize list cannot be read statically.
+    """
     try:
         tree = ast.parse(source or "")
     except SyntaxError:  # nexgen: allow reason="a file that does not parse has nothing to count"
@@ -100,12 +117,26 @@ def test_stats(source: str | None) -> tuple[int, int]:
     tests = asserts = 0
     for func in ast.walk(tree):
         if isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)) and func.name.startswith("test"):
-            weight = _cases(func, sizes)
+            weight = _cases(func, sizes, known)
             tests += weight
             inside = {id(n) for n in ast.walk(func)} & asserting
             asserts += weight * len(inside)
             asserting -= inside  # helpers outside any test function keep weight 1
     return tests, asserts + len(asserting)
+
+
+def _weights(source: str | None) -> dict[str, int]:
+    """How many cases each test function stood for in this version of the file."""
+    try:
+        tree = ast.parse(source or "")
+    except SyntaxError:  # nexgen: allow reason="a file that does not parse has no tests to weigh"
+        return {}
+    sizes = _literal_sizes(tree)
+    return {
+        func.name: _cases(func, sizes)
+        for func in ast.walk(tree)
+        if isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)) and func.name.startswith("test")
+    }
 
 
 def other_language_tests(source: str | None) -> int:
@@ -153,8 +184,10 @@ def check_test_integrity(changes: list[Change], cfg: Config) -> list[Violation]:
         problems.append("a skip/xfail marker was added")
     py = [c for c in tests if c.path.endswith(".py") or bool(c.old_path and c.old_path.endswith(".py"))]
     counted = [c for c in py if _new_side_is_test(c, cfg)]
-    (t0, a0), (t1, a1) = (tuple(map(sum, zip(*(test_stats(getattr(c, side)) for c in side_list), strict=False))) or (0, 0)
-                          for side, side_list in (("old", py), ("new", counted)))
+    old = [test_stats(c.old) for c in py]
+    new = [test_stats(c.new, known=_weights(c.old)) for c in counted]
+    t0, a0 = sum(stats[0] for stats in old), sum(stats[1] for stats in old)
+    t1, a1 = sum(stats[0] for stats in new), sum(stats[1] for stats in new)
     if t1 < t0:
         problems.append(f"tests went from {t0} to {t1}")
     if a1 < a0:
