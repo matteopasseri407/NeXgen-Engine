@@ -19,7 +19,7 @@ dependencies = [
   # every earlier revision from the same server, so bumping here does not cut
   # off clients that still speak 2025-11-25 or older.
   "mcp>=2.0.0,<3.0.0",
-  "starlette>=0.37.2,<1.0.0",
+  "starlette>=0.37.2,<2.0.0",
   "uvicorn>=0.30.0,<1.0.0",
 ]
 
