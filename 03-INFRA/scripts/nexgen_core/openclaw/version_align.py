@@ -214,7 +214,7 @@ def _upgrade(release: _Release, run: Run, env: dict[str, str], *, windows: bool)
     """Let OpenClaw's updater install the pin, verify it here, and put it back when it does not answer."""
     stopped = False
     if windows and release.role == NODE:
-        problem = _stop_node(release.binary, run, env)
+        problem = align_node.stop(run, release.binary or "openclaw", env)
         if problem is not None:
             return Outcome(FAILED, t(
                 "The node service did not stop, so OpenClaw {pinned} was not installed: {reason}",
@@ -236,12 +236,6 @@ def _upgrade(release: _Release, run: Run, env: dict[str, str], *, windows: bool)
     rollback = _rollback(release, run, env)
     return _remembered(release, t("OpenClaw {pinned} did not work here ({problem}).{rollback}",
                                   pinned=release.pinned, problem=problem, rollback=rollback))
-
-
-def _stop_node(binary: str | None, run: Run, env: dict[str, str]) -> str | None:
-    """`openclaw node stop`, so Windows can replace a package the running node has open."""
-    result = run([binary or "openclaw", "node", "stop"], env)
-    return None if result.returncode == 0 else align_node.tail(result)
 
 
 def _restarted_after(release: _Release, run: Run, env: dict[str, str], stopped: bool,

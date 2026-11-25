@@ -26,6 +26,12 @@ PAUSE_SECONDS = 3.0
 Run = Callable[..., RunResult]
 
 
+def stop(run: Run, binary: str, env: Mapping[str, str]) -> str | None:
+    """`openclaw node stop`, so Windows can replace a package the running node has open."""
+    result = run([binary, "node", "stop"], env)
+    return None if result.returncode == 0 else tail(result)
+
+
 def restart(run: Run, binary: str, env: Mapping[str, str]) -> str | None:
     """`openclaw node restart`, asked again while it fails; the last reason, or None."""
     problem: str | None = None
