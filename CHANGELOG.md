@@ -18,6 +18,7 @@ of any engine release.
 
 ### Fixed
 
+- OpenClaw: the setup now lists OpenClaw 11.10's bundled skill-workshop plugin, so doctor --fix no longer rewrites plugins.allow
 - OpenClaw su Windows: il servizio del nodo si ferma prima dell'aggiornamento e riparte dopo, anche se l'installazione fallisce (niente piu' EPERM sul modulo nativo)
 - OpenClaw: un allineamento fallito riporta il motivo vero invece del solo suggerimento `openclaw doctor`
 - OpenClaw: il controllo proattivo leggero riceve un prompt senza strumenti, quindi non finisce più in "Exec blocked" ogni 6 ore
