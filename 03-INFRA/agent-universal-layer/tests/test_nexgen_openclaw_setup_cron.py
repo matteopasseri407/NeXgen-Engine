@@ -169,6 +169,41 @@ def test_the_proactive_check_is_made_light_by_default(tmp_path: Path) -> None:
     assert "--model" not in edit
 
 
+def test_the_light_check_carries_a_prompt_that_needs_no_tools(tmp_path: Path) -> None:
+    """A tool-free run cannot read the checklist the provisioned prompt asks for.
+
+    Without this the model calls `exec`, the policy blocks it, and every run ends with
+    "Exec blocked" instead of a liveness answer.
+    """
+    calls: list[list[str]] = []
+    heartbeat_job_step(a_setup(tmp_path, [PROACTIVE], calls))
+
+    edit = calls[1]
+    assert "--message" in edit
+    message = edit[edit.index("--message") + 1]
+    assert message == setup_cron.LIGHT_HEARTBEAT_MESSAGE
+    assert "no tools" in message
+    assert "do not try to read" in message
+
+
+def test_a_squad_key_can_set_the_light_check_prompt(tmp_path: Path) -> None:
+    """A person who wants a different question answered writes it in `squad.yaml`."""
+    calls: list[list[str]] = []
+    heartbeat_job_step(a_setup(tmp_path, [PROACTIVE], calls, "heartbeat:\n  message: custom text\n"))
+
+    edit = calls[1]
+    assert edit[edit.index("--message") + 1] == "custom text"
+
+
+def test_a_full_check_keeps_the_prompt_openclaw_provisioned(tmp_path: Path) -> None:
+    """Full mode keeps the conversation and the tools, so its prompt has to stay too."""
+    calls: list[list[str]] = []
+    squad = "heartbeat:\n  mode: full\n  every: 30m\n"
+    heartbeat_job_step(a_setup(tmp_path, [PROACTIVE], calls, squad))
+
+    assert "--message" not in calls[1]
+
+
 def test_the_shipped_example_squad_takes_the_light_check(tmp_path: Path) -> None:
     """A person copies that file: an uncommented `heartbeat:` block would move every install.
 
