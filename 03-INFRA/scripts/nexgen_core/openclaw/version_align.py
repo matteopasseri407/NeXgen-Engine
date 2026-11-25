@@ -14,6 +14,8 @@ The rules that make it safe:
   pinned release; the engine never installs Node;
 - an install only happens when this machine is provably free: an idle gateway inside the
   night window, an idle node service at any hour (`align_window.py` owns that rule);
+- on Windows a node service is stopped before the install and started again after it, because
+  the package replacement cannot rewrite a native module the running node holds open;
 - the install is `openclaw update --tag <pin>` and nothing of the engine's own: that
   command stages the candidate, has it admit the live install, migrates and restarts
   what it owns, verifies process, health and plugins, and can put the previous release
@@ -185,7 +187,7 @@ def _align(
         smoke=smoke or (_gateway_smoke(runner, values, binary) if role == GATEWAY else None),
         memory=memory, moment=moment,
     )
-    return _upgrade(release, runner, values)
+    return _upgrade(release, runner, values, windows=system.startswith("win"))
 
 
 def _not_yet(
@@ -208,16 +210,24 @@ def _not_yet(
     return None
 
 
-def _upgrade(release: _Release, run: Run, env: dict[str, str]) -> Outcome:
+def _upgrade(release: _Release, run: Run, env: dict[str, str], *, windows: bool) -> Outcome:
     """Let OpenClaw's updater install the pin, verify it here, and put it back when it does not answer."""
+    stopped = False
+    if windows and release.role == NODE:
+        problem = _stop_node(release.binary, run, env)
+        if problem is not None:
+            return Outcome(FAILED, t(
+                "The node service did not stop, so OpenClaw {pinned} was not installed: {reason}",
+                pinned=release.pinned, reason=problem))
+        stopped = True
     answer, reason = _native_answer(run(_update_argv(release.binary, release.pinned), env))
     if answer == UPDATE_SKIPPED:
         _remember_failure(release.memory, release.pinned, release.moment)
-        return Outcome(WARN, t("OpenClaw {pinned} was not installed here: {reason}",
-                               pinned=release.pinned, reason=reason))
+        return _restarted_after(release, run, env, stopped, Outcome(
+            WARN, t("OpenClaw {pinned} was not installed here: {reason}", pinned=release.pinned, reason=reason)))
     if answer == UPDATE_FAILED:
-        return _remembered(release, t("Installing OpenClaw {pinned} failed: {reason}",
-                                      pinned=release.pinned, reason=reason))
+        return _restarted_after(release, run, env, stopped, _remembered(
+            release, t("Installing OpenClaw {pinned} failed: {reason}", pinned=release.pinned, reason=reason)))
     problem = (_restart(release.role, release.binary, run, env)
                or _verify(release.role, release.smoke, release.binary, run, env))
     if problem is None:
@@ -226,6 +236,24 @@ def _upgrade(release: _Release, run: Run, env: dict[str, str]) -> Outcome:
     rollback = _rollback(release, run, env)
     return _remembered(release, t("OpenClaw {pinned} did not work here ({problem}).{rollback}",
                                   pinned=release.pinned, problem=problem, rollback=rollback))
+
+
+def _stop_node(binary: str | None, run: Run, env: dict[str, str]) -> str | None:
+    """`openclaw node stop`, so Windows can replace a package the running node has open."""
+    result = run([binary or "openclaw", "node", "stop"], env)
+    return None if result.returncode == 0 else align_node.tail(result)
+
+
+def _restarted_after(release: _Release, run: Run, env: dict[str, str], stopped: bool,
+                     outcome: Outcome) -> Outcome:
+    """Start a node stopped for the install again, even when the install failed."""
+    if not stopped:
+        return outcome
+    problem = align_node.restart(run, release.binary or "openclaw", env)
+    if problem is None:
+        return outcome
+    return Outcome(FAILED, t("{line} The node service did not restart: {reason}",
+                             line=outcome.line, reason=problem))
 
 
 def _remembered(release: _Release, line: str) -> Outcome:
