@@ -117,7 +117,8 @@ class FakeRun:
                  sessions: list[dict] | None = None, sessions_code: int = 0,
                  cron_jobs: list[dict] | None = None, cron_code: int = 0,
                  node_pid: int | None = SERVICE_PID, node_code: int = 0,
-                 restart_failures: int = 0):
+                 restart_failures: int = 0, stop_code: int = 0,
+                 stop_stdout: str = "", stop_stderr: str = ""):
         self.machine = machine
         self.node = node
         self.update_code = update_code
@@ -131,6 +132,9 @@ class FakeRun:
         self.node_pid = node_pid
         self.node_code = node_code
         self.restart_failures = restart_failures
+        self.stop_code = stop_code
+        self.stop_stdout = stop_stdout
+        self.stop_stderr = stop_stderr
         self.calls: list[list[str]] = []
 
     def __call__(self, argv: list[str], env=None) -> RunResult:
@@ -142,6 +146,8 @@ class FakeRun:
             return RunResult(0, self.node, "")
         if program == "openclaw" and argv[1:2] == ["update"]:
             return RunResult(self.update_code, self.update_stdout, self.update_stderr)
+        if program == "openclaw" and argv[1:3] == ["node", "stop"]:
+            return RunResult(self.stop_code, self.stop_stdout, self.stop_stderr)
         if program == "openclaw" and argv[1:3] == ["node", "restart"]:
             if self.restart_failures:
                 self.restart_failures -= 1
@@ -226,6 +232,11 @@ def updates(calls: list[list[str]]) -> list[list[str]]:
 def restarts(calls: list[list[str]]) -> list[list[str]]:
     """Only the `openclaw node restart` calls, in order."""
     return [call for call in calls if call[1:3] == ["node", "restart"]]
+
+
+def stops(calls: list[list[str]]) -> list[list[str]]:
+    """Only the `openclaw node stop` calls, in order."""
+    return [call for call in calls if call[1:3] == ["node", "stop"]]
 
 
 # --------------------------------------------------------------- the decision
@@ -421,6 +432,54 @@ def test_a_node_service_is_restarted_after_the_native_update(tmp_path: Path):
 
     assert outcome.state == version_align.ALIGNED
     assert restarts(fake.calls) == [[str(machine.bin / "openclaw"), "node", "restart"]]
+    assert stops(fake.calls) == []
+
+
+def test_a_windows_node_is_stopped_before_the_install_and_started_again_after_it(tmp_path: Path):
+    """npm cannot replace a native module the running node holds open: stop it around the install."""
+    machine = a_machine(tmp_path)
+    as_node(machine)
+    fake = FakeRun(machine)
+
+    outcome = version_align.align(machine.home, machine.engine, env={}, platform="win32",
+                                 which=lookup(machine), run=fake, clock=lambda: DAY,
+                                 node_children=idle_node)
+
+    assert outcome.state == version_align.ALIGNED
+    stop = fake.calls.index([str(machine.bin / "openclaw"), "node", "stop"])
+    update = fake.calls.index(an_update(machine.bin / "openclaw", PIN))
+    restart = fake.calls.index([str(machine.bin / "openclaw"), "node", "restart"])
+    assert stop < update < restart
+
+
+def test_a_windows_node_that_will_not_stop_is_reported_and_nothing_is_installed(tmp_path: Path):
+    machine = a_machine(tmp_path)
+    as_node(machine)
+    fake = FakeRun(machine, stop_code=1, stop_stderr="Access is denied.")
+
+    outcome = version_align.align(machine.home, machine.engine, env={}, platform="win32",
+                                 which=lookup(machine), run=fake, clock=lambda: DAY,
+                                 node_children=idle_node)
+
+    assert outcome.state == version_align.FAILED
+    assert "did not stop" in outcome.line
+    assert "Access is denied." in outcome.line
+    assert updates(fake.calls) == []
+    assert not (machine.state / version_align.STATE_FILE).exists()
+
+
+def test_a_windows_node_starts_again_when_the_install_fails(tmp_path: Path):
+    """The service was stopped for the install: a failed install must not leave it down."""
+    machine = a_machine(tmp_path)
+    as_node(machine)
+    fake = FakeRun(machine, update_code=1, update_stdout="", update_stderr="npm ERR! EPERM")
+
+    outcome = version_align.align(machine.home, machine.engine, env={}, platform="win32",
+                                 which=lookup(machine), run=fake, clock=lambda: DAY,
+                                 node_children=idle_node)
+
+    assert outcome.state == version_align.FAILED
+    assert restarts(fake.calls) == [[str(machine.bin / "openclaw"), "node", "restart"]]
 
 
 def test_a_node_restart_that_fails_once_is_asked_again(tmp_path: Path):
@@ -487,6 +546,30 @@ def test_a_failed_update_with_no_json_is_reported_from_its_last_line(tmp_path: P
     assert outcome.state == version_align.FAILED
     assert "npm ERR! boom" in outcome.line
     assert updates(fake.calls) == [an_update(machine.bin / "openclaw", PIN)]
+
+
+def test_a_generic_doctor_hint_does_not_hide_the_update_error(tmp_path: Path):
+    """OpenClaw ends a failure with "For help, run `openclaw doctor`": that is not the reason."""
+    machine = a_machine(tmp_path)
+    as_node(machine)
+    fake = FakeRun(
+        machine, update_code=1, update_stdout="",
+        update_stderr="npm ERR! EPERM: operation not permitted\nFor help, run `openclaw doctor`.",
+    )
+
+    outcome = version_align.align(machine.home, machine.engine, env={}, platform="linux",
+                                 which=lookup(machine), run=fake, clock=lambda: NIGHT,
+                                 node_children=idle_node)
+
+    assert outcome.state == version_align.FAILED
+    assert "EPERM" in outcome.line
+    assert "For help" not in outcome.line
+
+
+def test_tail_reports_the_last_meaningful_lines_instead_of_the_hint():
+    result = RunResult(1, "", "first\nsecond\nthird\nfourth\nFor help, run `openclaw doctor`")
+
+    assert align_node.tail(result) == "second third fourth"
 
 
 def test_a_rolled_back_update_is_a_failure_even_when_it_exits_zero(tmp_path: Path):

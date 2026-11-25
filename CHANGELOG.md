@@ -10,6 +10,19 @@ of any engine release.
 
 ## [Unreleased]
 
+## [3.1.2] - 2026-11-25
+
+### Changed
+
+- OpenClaw: pin alzato a 2026.11.10 (corregge il limite sugli archivi di sessione che bloccava il calcolo dei costi e i lock di SQLite durante l'aggiornamento)
+
+### Fixed
+
+- OpenClaw: the setup now lists OpenClaw 11.10's bundled skill-workshop plugin and denies its new `skill_library` tool beside `skill_workshop`, so doctor --fix no longer rewrites plugins.allow or a local model's tools.byProvider deny list
+- OpenClaw su Windows: il servizio del nodo si ferma prima dell'aggiornamento e riparte dopo, anche se l'installazione fallisce (niente piu' EPERM sul modulo nativo)
+- OpenClaw: un allineamento fallito riporta il motivo vero invece del solo suggerimento `openclaw doctor`
+- OpenClaw: il controllo proattivo leggero riceve un prompt senza strumenti, quindi non finisce più in "Exec blocked" ogni 6 ore
+
 ## [3.1.1] - 2026-11-22
 
 ### Changed

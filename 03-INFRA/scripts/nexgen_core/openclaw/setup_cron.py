@@ -46,6 +46,14 @@ def groom_job_step(setup: Setup) -> None:
 #: The cadence a check keeps when somebody asks for one: six hours. A periodic
 #: check answers "is anything wrong", not "what happened this minute".
 HEARTBEAT_EVERY = "6h"
+#: What the light check is asked to do. The prompt OpenClaw provisions tells the model to
+#: read its checklist and session context, which a tool-free run cannot do: the model falls
+#: back to `exec`, the policy blocks it, and every run ends in "Exec blocked".
+LIGHT_HEARTBEAT_MESSAGE = (
+    "Light liveness check. You have no tools in this run: do not try to read files, "
+    "checklists, scratch notes or run commands. Reply with exactly NO_REPLY unless "
+    "something in this message itself needs the owner's attention."
+)
 #: What `squad.yaml` may ask for under `heartbeat.mode`: a cheap check (the default), a
 #: full one, or none at all.
 HEARTBEAT_MODES = ("light", "full", "off")
@@ -63,10 +71,12 @@ def heartbeat_block(setup: Setup) -> dict[str, object]:
           mode: full      # light (default) | full | off
           every: 6h
           model: ollama/llama3.2
+          message: Light liveness check: reply NO_REPLY.
 
     `mode: full` keeps the capability exactly as OpenClaw provisioned it, `mode: off`
-    removes it, and both `every` and `model` are optional. `enabled: true` and
-    `enabled: false` are the older spelling of `light` and `off`, and are still read.
+    removes it, and `every`, `model` and `message` are optional: `message` replaces the
+    prompt the light check is given. `enabled: true` and `enabled: false` are the older
+    spelling of `light` and `off`, and are still read.
     """
     from nexgen_core.openclaw.squad import find_squad_file, load_squad
 
@@ -115,15 +125,18 @@ def _light_edit(binary: str, job: dict[str, object], block: dict[str, object], m
     files and applies to isolated jobs only, which is why the session moves with it, and
     `--tools ""` disables every agent tool for the run. Without the session move the
     check runs in the agent's main conversation and re-sends whatever that conversation
-    has grown to.
+    has grown to. The message moves too: the provisioned prompt asks for the checklist
+    and the session context, which a run without tools cannot read.
     """
     every = block.get("every")
+    message = block.get("message")
     argv = [
         binary, "automations", "edit", automations.job_id(job),
         "--every", every.strip() if isinstance(every, str) and every.strip() else HEARTBEAT_EVERY,
         "--session", "isolated",
         "--light-context",
         "--tools", "",
+        "--message", message.strip() if isinstance(message, str) and message.strip() else LIGHT_HEARTBEAT_MESSAGE,
     ]
     if model:
         argv += ["--model", model]

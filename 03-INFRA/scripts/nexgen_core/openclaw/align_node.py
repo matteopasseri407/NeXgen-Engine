@@ -26,6 +26,12 @@ PAUSE_SECONDS = 3.0
 Run = Callable[..., RunResult]
 
 
+def stop(run: Run, binary: str, env: Mapping[str, str]) -> str | None:
+    """`openclaw node stop`, so Windows can replace a package the running node has open."""
+    result = run([binary, "node", "stop"], env)
+    return None if result.returncode == 0 else tail(result)
+
+
 def restart(run: Run, binary: str, env: Mapping[str, str]) -> str | None:
     """`openclaw node restart`, asked again while it fails; the last reason, or None."""
     problem: str | None = None
@@ -64,9 +70,26 @@ def _status_problem(result: RunResult) -> str | None:
 
 
 def tail(result: RunResult) -> str:
-    """The last line a failed program printed: the reason, not the whole log."""
+    """The last line a failed program printed: the reason, not the whole log.
+
+    A failure ends with a generic hint ("For help, run `openclaw doctor`") while the
+    reason is a few lines above it. Reporting only the hint hid the real cause of an
+    `openclaw update` or node failure until OPENCLAW_DEBUG was set, so when the last
+    line is a hint the last few meaningful lines are reported instead.
+    """
     lines = [line.strip() for line in f"{result.stdout or ''}\n{result.stderr or ''}".splitlines() if line.strip()]
-    return lines[-1] if lines else t("no output")
+    if not lines:
+        return t("no output")
+    if not _hint(lines[-1]):
+        return lines[-1]
+    meaningful = [line for line in lines if not _hint(line)]
+    return " ".join(meaningful[-3:]) if meaningful else lines[-1]
+
+
+def _hint(line: str) -> bool:
+    """A line that only tells where to look next, not what went wrong."""
+    text = line.casefold()
+    return text.startswith("for help") or "openclaw doctor" in text
 
 
 def _pause(seconds: float) -> None:

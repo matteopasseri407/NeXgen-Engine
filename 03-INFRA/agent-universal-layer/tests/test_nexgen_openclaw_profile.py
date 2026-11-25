@@ -26,7 +26,7 @@ from nexgen_core.openclaw.templates import render_workspace  # noqa: E402 - sys.
 
 BASE_PLUGINS = [
     "browser", "canvas", "device-pair", "document-extract", "file-transfer",
-    "web-readability", "talk-voice", "tts-local-cli",
+    "skill-workshop", "web-readability", "talk-voice", "tts-local-cli",
 ]
 
 STATE = Path("/state")
@@ -243,7 +243,7 @@ def test_every_local_model_carries_the_cage():
     assert cage["ollama/one"]["profile"] == "messaging"
     assert cage["ollama/one"]["alsoAllow"] == ["read", "view_image", "pdf", "tts", "memory_search", "memory_get"]
     for pattern in ("group:web", "group:runtime", "write", "edit", "apply_patch", "skill_workshop",
-                    "playwright__*"):
+                    "skill_library", "playwright__*"):
         assert pattern in deny
     assert "lazy-mcp__lazy_mutate" not in deny
     for pattern in ("n8n-mcp__create_*", "n8n-mcp__delete_*", "vault-library__update_section",
