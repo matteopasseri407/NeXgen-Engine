@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [3.1.2] - 2026-11-25
+
 ### Changed
 
 - OpenClaw: pin alzato a 2026.11.10 (corregge il limite sugli archivi di sessione che bloccava il calcolo dei costi e i lock di SQLite durante l'aggiornamento)
