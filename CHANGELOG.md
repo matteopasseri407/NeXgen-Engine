@@ -10,6 +10,10 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- OpenClaw: il controllo proattivo leggero riceve un prompt senza strumenti, quindi non finisce più in "Exec blocked" ogni 6 ore
+
 ## [3.1.1] - 2026-11-22
 
 ### Changed
