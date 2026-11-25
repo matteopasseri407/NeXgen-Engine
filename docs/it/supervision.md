@@ -2,11 +2,14 @@
 
 🇬🇧 [English](../supervision.md)
 
-Un lavoro supervisionato è un obiettivo portato a termine da agenti harness che il proprietario può guardare: un modello frontier scrive il brief, un esecutore lavora in una finestra del proprio harness, e il motore tiene i file, i soldi e il verdetto.
-Questa pagina copre le fasi 1, 2, 3a, 3b e 3c: la cartella del compito, le finestre visibili, il registro dei costi, la copia di lavoro dell'unità, i permessi con cui gira l'esecutore, i cancelli che il motore esegue prima che qualcuno riveda un diff, il giro di revisione, la pubblicazione, il grafo di ripresa, il ricognitore, il rebase, gli adattatori degli harness, l'esecutore locale, OpenClaw come harness con il suo specchio Workboard, e il ritiro di un'unità finita.
+Un lavoro supervisionato è un obiettivo portato a termine da agenti harness che il proprietario può guardare: un modello frontier scrive il brief, un esecutore lavora senza finestra in una sessione del proprio harness, e il motore tiene i file, i soldi e il verdetto.
+Questa pagina copre le fasi 1, 2, 3a, 3b e 3c: la cartella del compito, le finestre visibili quando le chiede `--tab`, il registro dei costi, la copia di lavoro dell'unità, i permessi con cui gira l'esecutore, i cancelli che il motore esegue prima che qualcuno riveda un diff, il giro di revisione, la pubblicazione, il grafo di ripresa, il ricognitore, il rebase, gli adattatori degli harness, l'esecutore locale, OpenClaw come harness con il suo specchio Workboard, l'adattatore DeepSeek Harness, e il ritiro di un'unità finita.
 
 **Stato: anteprima.** I verbi funzionano e sono coperti dai test, ma il supervisore guida ancora ogni passo.
 Leggi "Cosa garantiscono i cancelli, e cosa no" prima di fidarti di un PASS.
+
+`sup` è un supervisore frontier che guida worker economici su abbonamenti flat, scelti per corsia con margine di quota (`nexgen quota`).
+Il brainstorming tra modelli frontier non è `sup`: è il Council (`docs/it/council.md`).
 
 ## Dove vive un compito
 
@@ -22,7 +25,7 @@ Leggi "Cosa garantiscono i cancelli, e cosa no" prima di fidarti di un PASS.
 Un'unità aggiunge `20-brief-<unit>.md` (il brief come scritto), `22-ambiente-<unit>.md` (dove sta la copia, su quale ramo, dentro quale confine), `40-pacchetto-<unit>.md` e `50-gate-<unit>.txt` (il pacchetto di revisione e l'output grezzo dei cancelli), più la propria copia di lavoro in `23-unita-<unit>/`.
 Una revisione aggiunge `45-revisione-<unit>-<round>.md`, e ogni richiesta che il motore rifiuta di eseguire finisce in `07-richieste-proprietario.md`.
 
-Il diario è la verità della macchina. I suoi eventi sono `started`, `unit_created`, `unit_started`, `unit_queued`, `attached`, `harness_session_lost`, `harness_session_foreign`, `unit_reworked`, `unit_model_refused`, `unit_stalled`, `unit_resumed`, `unit_rebased`, `unit_collected`, `report_relocated`, `unit_reviewed`, `unit_published`, `unit_publish_failed`, `unit_retired`, `unit_retire_failed`, `session_closed`, `workboard_card`, `workboard_moved`, `local_server_started`, `local_server_stopped`, e per il ricognitore `scout_opened` e `scout_finished`.
+Il diario è la verità della macchina. I suoi eventi sono `started`, `unit_created`, `unit_started`, `unit_queued`, `attached`, `harness_session_lost`, `harness_session_foreign`, `unit_reworked`, `unit_model_refused`, `unit_stalled`, `unit_resumed`, `unit_rebased`, `unit_collected`, `report_relocated`, `unit_reviewed`, `unit_published`, `unit_publish_failed`, `unit_retired`, `unit_retire_failed`, `session_closed`, `unit_unjobbed`, `turn_reaped`, `turn_unguarded`, `workboard_card`, `workboard_moved`, `local_server_started`, `local_server_stopped`, e per il ricognitore `scout_opened` e `scout_finished`.
 I file Markdown sono quello che una persona legge e scrive, e il motore non li riscrive mai, quindi una modifica non va persa.
 
 ## I verbi
@@ -33,8 +36,8 @@ nexgen-local sup status                                     # every task, one li
 nexgen-local sup status <id>                                # units, states, verdicts, costs
 nexgen-local sup unit <id> <unit> --repo <checkout> --base <ref> --brief <file> \
     --allow 'docs/*.md' [--allow ...] [--verify "<command>"] [--mcp <server>]
-nexgen-local sup run <id> <unit> [--harness <name>] [--headless]  # the executor's window
-nexgen-local sup collect <id> <unit>                        # the tab closes when the turn is over, then the gates and the cost
+nexgen-local sup run <id> <unit> [--harness <name>] [--tab]  # un turno senza finestra; --tab apre una scheda
+nexgen-local sup collect <id> <unit>                        # il turno è finito, poi i cancelli e il costo
 nexgen-local sup review <id> <unit> --approve "<why>" [--close]  # one review round, APPROVA
 nexgen-local sup review <id> <unit> --rework <file>         # one review round, RIMANDA
 nexgen-local sup review <id> <unit> --resend [-m <model>]        # deliver the last round that never arrived
@@ -90,21 +93,23 @@ Un ruolo si configura una volta nella corsia, `supervision.roles`, e una singola
 ```
 
 Quei due valori sono i predefiniti quando la chiave manca.
-Un nome che nessuno ha registrato viene rifiutato prima che si apra una scheda, nominando l'errore di battitura e i nomi che esistono.
+Un nome che nessuno ha registrato viene rifiutato prima che parta un turno, nominando l'errore di battitura e i nomi che esistono.
 `sup run --harness <name>` e `sup scout --harness <name>` usano quell'harness solo per quella run, e il diario registra quale ha davvero eseguito l'unità, così la consegna della revisione torna alla stessa sessione.
 
-| harness | apre una scheda | trova la sessione | invia un turno | stato | costo | token | scrive i permessi | ripresa | ricognizione | libera una cartella | ferma un push | mcp |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `opencode` | sì | sì | sì | sì | sì | sì | sì | sì | sì | sì | profilo di progetto + pushurl bloccata | sì |
-| `local` (OpenCode + provider locale) | sì | sì | sì | sì | sì | sì | sì | sì | sì | sì | profilo di progetto + pushurl bloccata | sì |
-| `claude` | sì | sì | sì | sì | sì | sì | sì (`.claude/settings.json`) | sì | sì | no | profilo di progetto + pushurl bloccata | no |
-| `codex` | sì | sì | sì | sì | no (detto illeggibile) | sì | no (sandbox di avvio) | sì | sì | no | `workspace-write` senza rete + pushurl bloccata | no |
-| `openclaw` | sì (una sessione, non una finestra) | sì | sì | sì | sì (l'involucro del turno) | sì | no | sì | no | no | solo pushurl bloccata | no |
-| `agy` | sì | sì | no | no | no | no | no | sì | sì | no | solo pushurl bloccata | no |
+| harness | apre una scheda | headless | trova la sessione | invia un turno | stato | costo | token | scrive i permessi | ripresa | ricognizione | libera una cartella | ferma un push | mcp |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `opencode` | sì | sì | sì | sì | sì | sì | sì | sì | sì | sì | sì | profilo di progetto + pushurl bloccata | sì |
+| `local` (OpenCode + provider locale) | sì | sì | sì | sì | sì | sì | sì | sì | sì | sì | sì | profilo di progetto + pushurl bloccata | sì |
+| `claude` | sì | sì | sì | sì | sì | sì | sì | sì (`.claude/settings.json`) | sì | sì | no | profilo di progetto + pushurl bloccata | no |
+| `codex` | sì | sì | sì | sì | sì | no (detto illeggibile) | sì | no (sandbox di avvio) | sì | sì | no | `workspace-write` senza rete + pushurl bloccata | no |
+| `openclaw` | sì (una sessione, non una finestra) | sì | sì | sì | sì (l'involucro del turno) | sì | sì | no | sì | no | no | solo pushurl bloccata | no |
+| `agy` | sì | sì | sì | sì | sì (tabella dei processi) | no | no | no | sì | sì | no | solo pushurl bloccata | no |
+| `dsh` | no (sempre headless) | sì | sì (dal NDJSON del turno) | sì (`--session-id`) | sì (tabella dei processi ed evento `final`) | no | sì | no | sì (il turno dopo) | no | no | solo pushurl bloccata (preset workspace-write, approvazioni negate) | no |
 
 La tabella risponde a "questo harness sa farlo", e non promette che ogni operazione sia utile.
 `agy` apre una scheda e scrive il suo resoconto, e trova la sua sessione cercando la cartella della copia o il brief nel database SQLite locale di agy (`~/.gemini/antigravity-cli/conversations/<uuid>.db`) in sola lettura, rifiutando quando è ambiguo.
-Siccome non ha iniezione di turni in background (`send_turn`), le consegne di rimando e rinvio della revisione riaprono una scheda interattiva sulla conversazione dell'unità (`agy --mode accept-edits --conversation <id> --prompt-interactive <pointer>`).
+Ora sa mandare un turno nella conversazione (`agy --mode accept-edits --conversation <id> --print <pointer>`), quindi le correzioni non riaprono una scheda interattiva quando l'unità è partita headless.
+Il suo stato occupato si legge dalla tabella dei processi: un processo `agy` con l'id della conversazione nella riga di comando.
 Codex sa eseguire e riprendere, ma il suo costo non è esposto in una forma che il motore legga, quindi il pacchetto lo dice invece di scrivere zero.
 `openclaw` non apre nessuna finestra propria: la sua sessione è la superficie di lavoro, e la sezione qui sotto dice come viene guidata.
 La colonna "ferma un push" è il vero stop dietro le altre: un harness senza profilo di progetto gira comunque in una copia la cui `pushurl` punta a un URL bloccato.
@@ -141,8 +146,17 @@ L'agente è `sviluppo` a meno che la corsia non ne nomini un altro:
 }
 ```
 
-**La cartella è il limite onesto.** Un turno che passa dal gateway gira nel workspace che il proprietario ha configurato per quell'agente, e la CLI documentata non ha un flag per un'altra cartella; un percorso sull'host fuori dai workspace configurati richiede `operator.admin`.
-Quindi il motore controlla, prima che parta qualcosa, che la copia dell'unità sia dentro quel workspace, e rifiuta indicando la via pulita quando non lo è: punta `agents.entries.<agent>.workspace` alla cartella del compito, oppure lascia che sia la scheda del Workboard ad avviare il turno (`openclaw workboard dispatch`, con `--admin` per una cartella fuori dai workspace configurati).
+**La cartella è il limite onesto.** Un turno che passa dal gateway esegue i suoi tool nella cartella di lavoro dichiarata per quell'agente (`agents.entries.<agent>.cwd`, oppure `agents.defaults.cwd`) e nel suo workspace altrimenti; la CLI documentata non ha un flag per un'altra cartella, e un percorso sull'host fuori da entrambe le radici richiede `operator.admin`.
+Quindi il motore chiede a OpenClaw entrambe le cartelle prima che parta qualcosa, accetta la copia dell'unità quando sta sotto una delle due, e rifiuta indicando entrambe le vie pulite quando non lo è:
+
+```bash
+openclaw config set agents.entries.<agent>.cwd '~/.local/state/nexgen/local-lane/supervision'
+```
+
+Ogni cartella di compito e la sua copia `23-unita-<unit>/` stanno così sotto quella radice, e il bootstrap dell'agente (`AGENTS.md`, `SOUL.md`, memoria) resta dov'è, ed è per questo che `cwd` è il cambiamento più piccolo: puntare `agents.entries.<agent>.workspace` alla cartella del compito sposta anche tutto quello.
+La terza via è `openclaw workboard dispatch --admin`, per una cartella fuori da ogni radice configurata.
+Due limiti arrivano con la prima: un `cwd` distinto richiede una run senza sandbox (`agents.entries.<agent>.sandbox.mode: off`), perché un turno in sandbox rifiuta una cartella di lavoro diversa dal suo workspace, e la cartella dei tool è la radice del compito, non la copia, quindi ogni percorso nel brief va scritto assoluto.
+Una configurazione illeggibile non è una cartella dichiarata: il controllo ripiega sul workspace e rifiuta, così una lettura fallita non diventa mai un permesso.
 Un turno che sembra lavoro nell'unità e non lo è: è il guasto che questo rifiuto esiste per prevenire.
 
 **Da dove vengono i numeri.** `openclaw sessions --json` porta i token, il modello e l'orologio.
@@ -187,59 +201,73 @@ Un remote rimosso, aggiunto o ripuntato è un FAIL che lo nomina, un commit spin
 La copia non deve sopravvivere alla sua unità: la pubblicazione e un'unità approvata e chiusa senza pubblicazione la rimuovono entrambe, e `sup pulizia` elenca ogni copia o ramo che il diario ha già chiuso e il disco ha ancora.
 "La fine del lavoro di un'unità" qui sotto è la regola completa, e il `git worktree remove` manuale è ormai il passo di recupero per una copia che un processo vivo sta tenendo.
 
-## La finestra dell'esecutore
+## Il turno dell'esecutore
 
 Un harness significa una sessione per compito, e la sessione appartiene alla copia in cui è nata: il motore la riusa solo finché la cartella registrata è la copia di quell'unità.
 
 `sup run` cerca la sessione che il compito possiede già.
-Se ce n'è una ed è inattiva (`time.idle` pari o successivo a `time.updated` nell'export dell'harness), il lavoro dell'unità ci entra con `opencode run -s <session> "<pointer>"` e non si apre nessuna scheda nuova.
-Se è occupata, l'unità va in coda: il diario registra `unit_queued` con il motivo, `sup status` mostra `in coda`, e il motore lo dice invece di aprire un'altra finestra.
-Una scheda si apre quando il compito non ha ancora una sessione per quell'harness, o quando la sessione registrata appartiene alla copia di un'altra unità:
+Se ce n'è una ed è inattiva (`time.idle` pari o successivo a `time.updated` nell'export dell'harness), il lavoro dell'unità ci entra con `opencode run -s <session> "<pointer>"` e non si avvia nessun turno nuovo.
+Se è occupata, l'unità va in coda: il diario registra `unit_queued` con il motivo, `sup status` mostra `in coda`, e il motore lo dice invece di avviare un altro turno.
+Un turno nuovo si avvia, senza finestra, quando il compito non ha ancora una sessione per quell'harness, o quando la sessione registrata appartiene alla copia di un'altra unità:
 
 ```
-opencode <worktree> --prompt "Sei l'esecutore dell'unità ... leggi il brief in ..."
+opencode run "<pointer>"
 ```
 
-Il prompt è un puntatore a `20-brief-<unit>.md`, mai il brief stesso, e non viene mai passato un flag `--auto` o `--dangerously-*`: il modello resta quello configurato dal proprietario, e i permessi sono il profilo descritto nella sezione successiva, scritto prima che la scheda si apra.
-La riga di comando della scheda è dell'adattatore: un altro harness apre la propria finestra con i propri flag, e `sup run --harness <name>` ne sceglie uno per questa run senza cambiare il predefinito della corsia.
+Il prompt è un puntatore a `20-brief-<unit>.md`, mai il brief stesso, e non viene mai passato un flag `--auto` o `--dangerously-*`: il modello resta quello configurato dal proprietario, e i permessi sono il profilo descritto nella sezione successiva, scritto prima che il turno parta.
+La riga di comando è dell'adattatore: un altro harness avvia il proprio turno con i propri flag, e `sup run --harness <name>` ne sceglie uno per questa run senza cambiare il predefinito della corsia.
 
-La sessione che apre una scheda nuova si trova in `opencode session list --format json`, che riporta `id`, `created` e `directory`: la sessione più recente la cui `directory` è la copia dell'unità e il cui `created` è pari o successivo al momento in cui la scheda è stata aperta.
+La sessione che apre un turno nuovo si trova in `opencode session list --format json`, che riporta `id`, `created` e `directory`: la sessione più recente la cui `directory` è la copia dell'unità e il cui `created` è pari o successivo al momento in cui il turno è stato avviato.
 Quando nessuna sessione corrisponde entro l'attesa (30 secondi), `sup run` lo dice e l'aggancio resta un `sup attach` manuale: il motore non indovina mai quale sessione appartiene a quale unità.
 Il costo della sessione agganciata finisce in `05-costi.jsonl` come ogni altro aggancio.
-La ricerca è dell'adattatore: OpenCode elenca il proprio archivio di sessioni, Claude Code legge la propria cartella di transcript, Codex legge il proprio archivio di thread, `openclaw` cerca in `openclaw sessions --json` la chiave scelta dal motore, e `agy` dichiara che non gli si può chiedere.
+La ricerca è dell'adattatore: OpenCode elenca il proprio archivio di sessioni, Claude Code legge la propria cartella di transcript, Codex legge il proprio archivio di thread, `openclaw` cerca in `openclaw sessions --json` la chiave scelta dal motore, `agy` legge il proprio database SQLite, e `dsh` legge l'id dal log NDJSON del turno.
 
-Un harness che mostra le proprie sessioni non apre nessuna delle finestre del motore (`window=False` nella sua tabella di capacità): `sup run` avvia il turno da sé, staccato, e aggancia la sessione sotto la chiave che ha scelto, così l'aggancio non è un'induzione fatta da un orologio.
-OpenClaw è oggi quell'harness.
+Un harness che mostra le proprie sessioni non apre nessuna delle finestre del motore (`window=False` nella sua tabella di capacità): `sup run` avvia il turno da sé, staccato, e aggancia la sessione con la chiave che ha scelto o con l'id che il turno riporta, così l'aggancio non è un'induzione fatta da un orologio.
+OpenClaw e `dsh` sono oggi quegli harness.
 
-### Un'unità senza finestra: `sup run --headless`
+### Headless è il predefinito: `sup run` e `--tab`
 
-`sup run --headless` avvia lo stesso turno staccato e non apre niente: nessuna scheda, nessun Windows Terminal, nessuna console.
-Il turno gira nella copia dell'unità sotto il profilo dei permessi scritto un attimo prima, e il motore aggancia la sessione che quel turno ha aperto in quella copia, letta dall'elenco dell'harness come dopo qualsiasi scheda nuova.
+`sup run <id> <unit>` avvia l'unità senza finestra: un turno one-shot senza finestra e senza scheda del terminale, avviato dalla copia dell'unità.
+`--tab` è l'opzione esplicita che apre invece una scheda del terminale, il comportamento delle versioni precedenti.
+`--headless` resta accettato ed è il predefinito.
+
+`-m <model>` viaggia anche sul turno headless; non viene più rifiutato insieme a `--headless`.
+
+Ogni harness ha una forma headless, e i turni dopo vanno nella stessa sessione:
+
+- `opencode`: `opencode run [-m <model>] <pointer>`; poi `opencode run -s <session> ...`.
+- `local`: come `opencode`.
+- `claude`: `claude -p --session-id <uuid scelto dal motore> [--model <m>] --permission-mode acceptEdits <pointer>`; poi `claude -p --resume <id> ...`.
+- `codex`: `codex exec -C <copy> -s workspace-write --add-dir <cartella del compito> --add-dir <git dir> [-m <m>] <pointer>`; poi `codex exec ... resume <id> <pointer>`. Il limite di Codex su Windows (la sandbox gira come utente separato) resta quello già documentato.
+- `agy`: `agy --mode accept-edits [--model <id>] --print <pointer>`; poi `agy --mode accept-edits --conversation <id> --print <pointer>`. `--print` prende il prompt come proprio valore, quindi il prompt sta subito dopo e per ultimo. Verificato dal vivo: il secondo turno con `--conversation` ricorda il primo.
+- `openclaw`: invariato, non ha mai aperto finestre.
+- `dsh`: sempre headless, descritto sotto.
+
 Il diario registra la consegna come `mode: "turn"`, non come scheda, e nessun processo porta `NEXGEN_SUP_TAB`: `sup collect`, `sup review` e `sup pulizia` non hanno schede da chiudere e non ne cercano.
 Quello che il turno scrive su stderr finisce in `60-stderr-<session>.log` nella cartella del compito, il file che ogni turno one-shot già scrive; un turno la cui sessione non esiste ancora accoda in `60-stderr-session.log` finché il suo id non è noto.
 
-È la porta per chi guida i verbi da un'applicazione senza terminale.
-Il motore non ha mai bisogno di una console ereditata da chi lo chiama: `wt.exe`, `CREATE_NEW_CONSOLE` o il terminale Linux li avvia il motore stesso, quindi un'applicazione grafica che sa avviare un processo apre le solite schede `nexgen-sup`.
-Quello che serve al motore è una sessione grafica, e su Linux rifiuta senza `DISPLAY` o `WAYLAND_DISPLAY`.
+Una correzione, una sessione persa o un `--resend` senza sessione aprono la sessione nuova nello stesso modo in cui l'unità era partita: in una scheda solo se l'ultimo avvio dell'unità era una scheda (`mode: "tab"` nel diario), altrimenti headless.
+La riapertura di una scheda dopo `tab_closed` vale solo per le unità partite in scheda.
 
-`--headless` costa esattamente quello che costa una finestra: nessuno vede il lavoro mentre accade.
+La sessione resta visibile dentro l'app del proprio harness: OpenCode (`opencode session list`), Claude Code (`claude --resume`), Codex, agy, DeepSeek Harness (`~/.dsh/sessions`, la stessa cartella che usa la sua app desktop), OpenClaw.
+
+Un turno headless non ha bisogno di una sessione grafica, perché nessun terminale viene avviato: un supervisore che guida i verbi da un'applicazione senza terminale funziona allo stesso modo.
+`--tab` invece la richiede, e su Linux rifiuta senza `DISPLAY` o `WAYLAND_DISPLAY`.
+
+Headless non vuol dire invisibile: nessun terminale mostra il turno, ma la sua sessione è nell'app dell'harness mentre gira e dopo.
 Una richiesta di permesso a cui nessuno risponde è il motivo per cui esiste il rilevatore di stallo, e il resoconto, la copia, la riga di costo e ogni cancello restano identici.
-Il flag lo accettano OpenCode e l'esecutore locale, i due harness il cui turno sa aprire la sessione che sta per agganciare; per gli altri il verbo rifiuta per nome, perché `claude`, `codex` e `agy` riprendono una sessione che esiste già.
-Decide anche solo come parte la prima consegna di un'unità: quando il compito ha già una sessione, le consegne successive girano comunque senza finestra, e l'unico caso che riapre una scheda è il `tab_closed` del motore, che un giro di revisione tratta come un rifiuto a lavorare alla cieca.
-`openclaw` non ha bisogno di nessun flag: dichiara `window=False` ed è già senza finestra.
-`-m` viene rifiutato insieme a `--headless`: quel turno porta il modello scelto dai tier (o dalla coda quota), e quando i tier non ci sono prende quello con cui l'harness è configurato.
 
 Il diario registra la cartella insieme alla sessione (`attached`, `unit_started`, `unit_queued`, `unit_reworked`).
 Un'unità cerca prima la sessione registrata per quell'unità; l'ultima sessione del compito per lo stesso harness è un ripiego solo per un'unità che non ne ha mai avuta una.
-Il motore riusa una sessione solo quando quella cartella è la copia dell'unità stessa; quando è la copia di un'altra unità scrive `harness_session_foreign` con entrambi i percorsi, e apre una scheda nuova nella copia giusta solo quando l'harness dice che quella sessione è libera.
+Il motore riusa una sessione solo quando quella cartella è la copia dell'unità stessa; quando è la copia di un'altra unità scrive `harness_session_foreign` con entrambi i percorsi, e avvia un turno nuovo nella copia giusta solo quando l'harness dice che quella sessione è libera.
 Mentre lavora, o mentre l'harness non riesce a leggerla, un giro di revisione va a `unit_queued` con il suo motivo e `--resend` lo consegna dopo.
 Il guasto del 2026-10-24 sono state quattro chiamate `sup review --rework` a sessioni occupate, ognuna delle quali apriva una scheda nella stessa copia e ripuntava l'unità su quella nuova.
 Il guasto del 2026-10-21 è l'altra metà: la run h5 ha ereditato la sessione inattiva di h4, la cui cartella era già stata rimossa, e l'esecutore ha visto "working directory no longer exists".
 Una riga di diario scritta prima che la cartella fosse registrata non ha cartella, e resta riusabile come prima.
 
 Una sessione che l'harness dichiara sparita, perché l'export dice che non esiste, non è una sessione occupata: mettersi in coda su quella sessione vorrebbe dire aspettare per sempre il nulla.
-Il diario registra `harness_session_lost` con la sessione e il motivo, quella sessione smette di essere la sessione del compito, e il successivo `sup run` o giro di revisione apre l'unica scheda nuova.
-Una scheda si apre comunque una volta per harness, mai per tentativo.
+Il diario registra `harness_session_lost` con la sessione e il motivo, quella sessione smette di essere la sessione del compito, e il successivo `sup run` o giro di revisione avvia l'unico turno nuovo.
+Un turno si avvia comunque una volta per harness, mai per tentativo.
 
 Un timeout, un archivio bloccato o qualsiasi altra lettura fallita non sono lo stesso fatto: il motore ritenta l'export una volta, e se ancora non riesce a leggere la sessione dice `sessione non verificabile, riprova` e non apre nulla.
 Trattare un guasto transitorio come una sessione persa ha lasciato due sessioni al lavoro sullo stesso compito.
@@ -286,7 +314,7 @@ Gli altri harness ricevono la stessa decisione nella propria forma, e nessuno di
   È un ricognitore, la sua modalità plan è di sola lettura, e la `pushurl` bloccata della copia è l'unico stop.
 
 Un harness che non sa negare un push lo dice nella tabella delle capacità invece di essere descritto come sicuro.
-`sup run` scrive il profilo prima che la scheda si apra e rifiuta quando il profilo non si riesce a scrivere, perché un esecutore senza il suo profilo non è l'esecutore che il proprietario ha configurato.
+`sup run` scrive il profilo prima che il turno parta e rifiuta quando il profilo non si riesce a scrivere, perché un esecutore senza il suo profilo non è l'esecutore che il proprietario ha configurato.
 
 `sup permessi <id>` elenca quello che la sessione del compito sta aspettando (`opencode api session.permission.list`) senza cambiare nulla.
 Una richiesta si può rispondere una alla volta con `--allow`, `--always` o `--reject`, oppure tutte insieme con `--per-profilo`, che rifiuta tutto: il profilo ha già deciso, quindi una domanda che compare ancora è fuori da lui.
@@ -319,6 +347,35 @@ Test scritti da qualcun altro e rossi prima che l'unità parta sono il modo più
 
 Il modello è nominato in `local_model.model` della corsia, e `sup run --harness local` seleziona l'adattatore locale per un'unità. Il diario registra l'harness, così la consegna della revisione torna alla stessa sessione.
 
+## L'adattatore DeepSeek Harness (`dsh`)
+
+`dsh`, registrato anche come `deepseek-harness`, è sempre headless (`window=False`) e non apre mai una finestra:
+
+```bash
+dsh --profile headless --patch <file> --permission-mode workspace-write --approval-policy never \
+    --add-dir <cartella del compito> --add-dir <git dir> --json <pointer>
+```
+
+I turni dopo aggiungono `--session-id session-<uuid>`.
+
+Il modello che `sup` chiede passa in una patch YAML scritta per quella chiamata: `agent-default-model` con `provider` e `model`, insieme a `llm-pi-ai` con la variabile della chiave e tre interruttori privacy (il session log verso DeepSeek spento, la telemetria di sessione OTel `DISABLED`, il plugin package inventory verso DeepSeek spento).
+Verificato dal vivo su DeepSeek Harness 0.2.2-rc.5: la patch sovrascrive davvero il modello, e la sessione registra il modello chiesto; un modello che il provider non ha viene rifiutato da dsh con `UNKNOWN_MODEL`, senza ripiego su un altro modello.
+
+Il predefinito è `opencode-go/deepseek-v4.1-flash`.
+Un modello senza `provider/` viene rifiutato prima che il turno parta, e così una corsia senza chiave.
+La chiave si cerca in `OPENCODE_GO_API_KEY` per `opencode-go`, in `OPENCODE_ZEN_API_KEY` per `opencode`, poi in `OPENCODE_API_KEY`, nell'ambiente e nel deposito dei segreti, e viene passata al processo come `OPENCODE_API_KEY`.
+
+Il primo turno lascia l'id della sessione a dsh: il motore lo legge dal primo evento `session` nel log NDJSON del turno (`<lane state>/dsh-turns/*.ndjson`) e lo aggancia.
+Riporta i token (`step_end.usage.totalTokens`), non il denaro, e l'ultimo turno si legge dall'evento `final`.
+Le sessioni restano nello store dell'utente, `~/.dsh/sessions`, quindi l'app desktop le mostra.
+
+Il launcher è `dsh` sul `PATH`, altrimenti `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd`.
+Il codice condiviso con il seggio dsh del Council è `nexgen_core/dsh_cli.py`.
+
+È una developer preview: ogni release candidate può cambiare flag e formato, e l'adattatore rifiuta in modo esplicito le forme che non riconosce invece di indovinare.
+Limite noto, visto dal vivo su Windows con la 0.2.2-rc.5: il sandbox `workspace-write` non lascia scrivere gli oggetti git nel `.git` del checkout nemmeno quando quella cartella è passata con `--add-dir`, quindi i file arrivano nella copia e il commit no.
+Finché l'harness non lo corregge, un'unità `dsh` su Windows va bene per lavoro il cui risultato sono i file, e il commit resta al supervisore.
+
 ## La quota, prima di partire
 
 Prima che un'unità parta, `sup run` legge le righe di quota gratuite del piano che il suo esecutore spenderebbe (`nexgen_core.quota.percentage_rows`: l'archivio dell'harness, i limiti che Codex riporta da solo e il backend opzionale dalla cache che condivide con il beat orario).
@@ -336,7 +393,8 @@ unità <unit>: quota al 97% (5h): passa a gemini-3.8-flash
 Una lettura vecchia, in cache, assente o illeggibile non blocca mai niente: viene registrata come `quota unknown` e l'unità parte dove stava per partire.
 Il motore non ha mai inventato una percentuale, e un dubbio è un motivo peggiore per fermare un'unità di nessun motivo.
 Un piano al 97% senza nessun'altra destinazione parte lo stesso, e la stessa riga lo dice.
-`sup run --headless` non cambia mai harness, perché quel turno apre una sessione propria e solo alcuni harness sanno farlo senza finestra: lo spostamento viene registrato come non fatto (`decision="headless"`) invece di fallire più tardi a nome di un harness che il proprietario non ha chiesto.
+Un'unità che parte headless può spostarsi su un altro harness solo quando quell'harness sa partire senza finestra, cosa che oggi sanno fare tutti gli adattatori: lo spostamento avviene e il diario registra dove è andata l'unità.
+Quando un adattatore non lo sa, lo spostamento viene registrato come non fatto (`decision="headless"`, nota `<harness> non sa partire senza finestra, resto qui`) invece di fallire più tardi a nome di un harness che il proprietario non ha chiesto.
 
 Questo controllo richiede `routing-tiers.yaml`: senza quel file la corsia non ha una lista di candidati verso cui spostarsi, e gira esattamente come dicono le sue impostazioni.
 `sup status` non ripete la lettura; il diario è il posto dove vive.
@@ -365,6 +423,7 @@ Oggi vengono letti tre gruppi, tutti facoltativi:
   "supervision": {
     "allowed_models": ["provider/*", "provider/model"],
     "stall_minutes": 20,
+    "turn_timeout_minutes": 240,
     "roles": {"esecutore": "opencode", "ricognitore": "agy"},
     "local_model": {
       "model": "provider/model",
@@ -379,6 +438,7 @@ Oggi vengono letti tre gruppi, tutti facoltativi:
 ```
 
 `roles` è descritto in "Chi fa cosa".
+`turn_timeout_minutes` è la scadenza di un turno: quando passa, il guardiano chiude il turno e tutto quello che ha lasciato, come descritto in "Chiudere i processi di un turno". È 240 minuti quando non è scritta.
 `local_model` è il server su cui gira un'unità `local`: `command` è l'unico campo senza valore predefinito, `port` costruisce l'URL di health quando `health` manca, e le due soglie sono la memoria libera che il motore richiede prima di avviarlo.
 Quando `vram_free_gb` è zero il controllo della VRAM viene saltato, perché una macchina senza un `nvidia-smi` utilizzabile non è una macchina senza GPU.
 Una soglia che non si riesce a leggere è un rifiuto, mai un via libera.
@@ -431,8 +491,9 @@ Prima di giudicare, `sup collect` cerca un `30-resoconto-<unit>.md` lasciato den
 Un resoconto non tracciato viene spostato nella cartella del compito e lo spostamento viene detto nell'output e nel diario (`report_relocated`).
 È l'abitudine dell'esecutore locale che la run del 2026-10-21 ha esposto, dove il resoconto restava un file non tracciato, faceva fallire `albero pulito` e non arrivava mai al revisore.
 Un resoconto committato sul ramo fa parte del diff dell'unità e non viene spostato: i cancelli devono giudicare quello che dice.
-Quando l'ultimo turno della sessione è finito, `sup collect` chiude la scheda dell'esecutore prima di leggere quel resoconto, perché un harness in sandbox può tenere i file che ha scritto illeggibili al motore finché il suo processo è vivo.
+Quando l'ultimo turno della sessione è finito, `sup collect` chiude la scheda dell'esecutore quando l'unità ne ha una, prima di leggere quel resoconto, perché un harness in sandbox può tenere i file che ha scritto illeggibili al motore finché il suo processo è vivo.
 Se la sessione sta ancora lavorando, la scheda resta aperta e l'output lo dice.
+Un turno headless non ha schede da chiudere: il suo guardiano chiude l'albero quando il turno finisce, come descritto in "Chiudere i processi di un turno".
 
 Il pacchetto nomina anche i test che questa piattaforma ha saltato tra i file di test toccati dall'unità (`pytest -q -rs` su quei file, con `-n 4` quando pytest-xdist è installato e un tetto di cinque minuti): un test saltato su Windows gira sulla CI Linux, e viceversa.
 Un bug solo POSIX della divisione di lazy-mcp è passato su Windows esattamente così, e il revisore ora vede "non verificato su Linux" accanto alla tabella dei cancelli invece di una run verde che non provava nulla.
@@ -488,7 +549,7 @@ La riga di comando porta un puntatore al file di revisione, mai il suo testo.
 Il giro di revisione viene scritto prima della consegna, così le correzioni esistono anche quando la sessione non si raggiunge, e l'errore lo dice.
 
 Il numero di un giro avanza solo quando il giro precedente è stato consegnato.
-Mentre un giro è in coda o non è mai stato inviato, `--rework` viene rifiutato e dice di usare `--resend`: quel comando consegna di nuovo l'ultimo giro non consegnato, nella sessione se è libera, in coda se è occupata, e attraverso l'unica scheda nuova quando il compito non ha ancora una sessione.
+Mentre un giro è in coda o non è mai stato inviato, `--rework` viene rifiutato e dice di usare `--resend`: quel comando consegna di nuovo l'ultimo giro non consegnato, nella sessione se è libera, in coda se è occupata, e avvia l'unico turno nuovo quando il compito non ha ancora una sessione.
 Il file del giro e il suo numero non cambiano.
 
 Una consegna non è il processo: l'harness scrive il suo evento quando `opencode run` parte, e un provider può chiudere quel turno con un errore prima che qualsiasi lavoro arrivi alla copia.
@@ -500,7 +561,7 @@ consegna fallita: provider.content-filter (giro 1, sessione ses_...): le correzi
 
 una volta per guasto (`unit_delivery_failed` nel diario), e `--resend` lo ripropone.
 `--resend -m <model>` manda quella singola consegna a un modello diverso (`opencode run -s <session> -m <model>`; `run` non ha `--variant`), che è la via d'uscita quando il provider rifiuta quello configurato.
-Un rinvio che deve aprire una scheda nuova dice che il modello non è stato applicato: la scheda prende il modello dalla configurazione del proprietario.
+Un rinvio che deve aprire una sessione nuova la avvia nello stesso modo in cui è partita l'unità: quando è una scheda, la scheda prende il modello dalla configurazione del proprietario, quindi il verbo dice che il modello non è stato applicato.
 
 `sup status` mostra, per unità, il giro di revisione, se è approvata, la testa pubblicata con il suo ramo, e i server MCP che il supervisore ha assegnato (`mcp: nessuno` quando non ce ne sono).
 Mostra anche il costo dell'unità e del compito in una forma sola, la stessa frase che stampa `sup collect`:
@@ -515,12 +576,14 @@ Una cifra che non si riesce a leggere si dice a parole, mai scritta come zero.
 ## La fine del lavoro di un'unità
 
 Quando un'unità viene raccolta il motore fa le due cose che un lavoratore finito deve: dice quanto è costato il lavoro e si toglie di mezzo.
-`sup collect` misura la sessione attraverso l'harness, figli compresi, scrive la stessa riga nel diario (`unit_collected` porta i numeri), in `40-pacchetto-<unit>.md` e nel proprio output, e poi chiude la scheda dell'esecutore con le regole della sezione successiva: mai mentre la sessione sta ancora scrivendo, mai mentre un'altra unità del compito può ancora lavorare, mai un albero che tiene il server condiviso.
+`sup collect` misura la sessione attraverso l'harness, figli compresi, scrive la stessa riga nel diario (`unit_collected` porta i numeri), in `40-pacchetto-<unit>.md` e nel proprio output, e poi chiude la scheda dell'esecutore quando l'unità ne ha una, con le regole della sezione sulla pubblicazione: mai mentre la sessione sta ancora scrivendo, mai mentre un'altra unità del compito può ancora lavorare, mai un albero che tiene il server condiviso.
+Un turno headless non ha schede: il suo guardiano chiude l'albero quando il turno finisce, come descritto qui sotto.
 
-Dopo quella chiusura una revisione non deve girare senza una finestra.
+Dopo che una scheda è stata chiusa, una revisione non deve girare senza una finestra.
 `sup review --rework` e `--resend` controllano il diario: quando l'ultima parola del motore sulla scheda è `tab_closed`, le correzioni vanno in una scheda visibile aperta sulla sessione che il compito ha già (`opencode <copy> -s <session> --prompt "<pointer>"`, il flag di ripresa di OpenCode 2), non in un `opencode run` nascosto.
 Quando la scheda è ancora aperta la consegna resta fuori dallo schermo, come prima.
 Un modello nominato con `--resend -m` non può viaggiare dentro una scheda, e il verbo dice che non è stato applicato.
+Un'unità partita headless resta così: una correzione, una sessione persa o un `--resend` senza sessione avviano un solo turno headless nuovo.
 
 Il ritiro è la regola del proprietario "a fine lavoro non resta niente", e gira solo quando il lavoro è da qualche parte in modo permanente:
 
@@ -581,7 +644,7 @@ Il comando dichiarato viene rifiutato prima di partire quando porta una forza in
 Il push va al remote con cui il checkout condivide già la storia, che è quello che `origin` è.
 Un checkout shallow non può inizializzare un altro remote vuoto: git stesso rifiuta (`Failed to traverse parents`, poi `shallow update not allowed`), ed è una proprietà del clone, non del motore.
 
-Una volta applicati i commit, `sup publish` chiude la scheda dell'esecutore, e `sup review ... --approve ... --close` fa lo stesso quando ritira un'unità approvata.
+Una volta applicati i commit, `sup publish` chiude la scheda dell'esecutore quando l'unità ne ha una, e `sup review ... --approve ... --close` fa lo stesso quando ritira un'unità approvata.
 Il motore ha scritto un marcatore nella shell di quella scheda (`NEXGEN_SUP_TAB`), traccia la scheda per titolo (`esecutore · <unità>`) e per il pid registrato all'apertura, e ferma lei e i suoi figli dal più profondo fino alla shell.
 Chiude solo le schede aperte dal motore stesso.
 Unità indipendenti con copie e schede separate hanno la scheda chiusa subito quando finiscono, senza aspettare altre unità.
@@ -589,6 +652,30 @@ Una scheda condivisa da più unità si chiude solo quando l'ultima unità che la
 Due cose fermano la chiusura: se un'altra unità che condivide la scheda è ancora aperta, la scheda resta e `tab_left_open` nomina le unità aperte; e rifiuta quando l'albero tiene un `opencode serve` condiviso, dove chiuderla fermerebbe ogni altro worker.
 Quando si chiude, `tab_closed` registra i pid.
 Una scheda che il proprietario ha già chiuso non è un errore.
+
+Su Windows il turno che il motore avvia per un'unità vive anche dentro un job object con `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, nominato dal compito e dall'unità (`nexgen-sup:<task>:<unit>`).
+Il turno viene adottato appena esiste e riceve un handle per duplicazione, così il job vive esattamente quanto il lavoro, e chiuderlo chiude tutto quell'albero con una sola chiamata al kernel invece di un giro della tabella dei processi che può perdere quello nato mentre veniva letto.
+Un processo che il job non tiene (un discendente che la catena dei job di questa macchina lascia uscire, o uno creato con `Win32_Process.Create`, il cui genitore è il provider e non l'unità) non si può chiudere dal kernel: quelli vengono fermati uno alla volta con psutil e contati nella riga (`3 fuori dal job`) e in `outside_job` di `tab_closed`, che è la differenza tra un job che ha funzionato e un job che non teneva niente.
+Un turno che il kernel non tiene viene consegnato lo stesso, e il diario lo dice con `unit_unjobbed` e il motivo.
+Su POSIX non cambia niente: `start_new_session` e il process group fanno lo stesso lavoro.
+
+### Chiudere i processi di un turno
+
+Ogni turno headless parte staccato e senza finestra: `CREATE_NO_WINDOW` su Windows, e su Linux una sessione e un process group propri con `start_new_session`.
+Su Windows il turno entra anche nel job object dell'unità (`nexgen-sup:<task>:<unit>`, `KILL_ON_JOB_CLOSE`), come descritto sopra.
+
+Ogni turno ha un guardiano, `nexgen_local.supervision_reaper`: un processo Python staccato e senza finestra che aspetta la fine del turno o la sua scadenza, e poi termina tutto quello che il turno ha lasciato.
+Registra i discendenti che vede nascere ogni due secondi, perché su Windows un orfano non è più raggiungibile dal padre morto; su Linux ferma ogni processo del process group del turno, e su Windows i membri del job dell'unità.
+Manda prima `terminate` e, dopo tre secondi, `kill` ai superstiti.
+
+Non tocca mai un pid riciclato (confronta il `create_time` registrato alla partenza, con una tolleranza di 0,5 s), sé stesso, né il server condiviso `opencode serve` e i suoi figli, perché ucciderlo chiuderebbe il lavoro delle altre sessioni.
+Scrive nel diario del compito `turn_reaped` con `reason` (`finito` o `scaduto`), `killed`, `spared` e `refused`.
+Un turno che il guardiano non riesce a sorvegliare è `turn_unguarded` con il motivo, e un turno che il job non tiene resta `unit_unjobbed`.
+
+La scadenza è `supervision.turn_timeout_minutes` nel `config.json` della corsia, 240 minuti quando non è scritta.
+
+Il limite onesto: i processi che il server condiviso `opencode serve --service` avvia per una cartella non sono figli del turno, e `dispose_location` li libera quando l'unità viene ritirata, come descritto sopra.
+Il ramo Linux del guardiano è coperto dai test sul codice ma non è ancora stato provato su una macchina Ubuntu reale.
 
 ## Riprendere un compito
 
@@ -671,7 +758,7 @@ Viene tracciata per titolo (`esecutore · <unità>`) e pid di apertura, chiude s
 
 Un'unità ha una scheda sola.
 Il marcatore nomina il compito e il ruolo, quindi quale unità serve una scheda è quello che dice la sua riga di comando: la copia su cui è stata aperta (`23-unita-<unità>`) e il titolo che il motore le ha dato.
-Quando `sup run`, `sup review --rework` o `--resend` aprono una scheda per un'unità che ne ha già una, la vecchia scheda viene chiusa prima (`close_unit_tab`, stessa regola del marcatore e stesso rifiuto intorno al server condiviso), e il ritiro chiude la scheda dell'unità prima che la copia se ne vada; un'unità la cui scheda non è mai stata registrata non costa nessuna lettura della tabella dei processi.
+Quando `sup run --tab`, `sup review --rework` o `--resend` aprono una scheda per un'unità che ne ha già una, la vecchia scheda viene chiusa prima (`close_unit_tab`, stessa regola del marcatore e stesso rifiuto intorno al server condiviso), e il ritiro chiude la scheda dell'unità prima che la copia se ne vada; un'unità la cui scheda non è mai stata registrata non costa nessuna lettura della tabella dei processi.
 Nove schede dimenticate di unità già pubblicate sono state, misurate sul PC del proprietario, il motivo per cui una pulizia non trovava nulla da raccogliere.
 
 Su Linux la scheda è una finestra di terminale la cui shell è la scheda: l'albero si legge con psutil, dalla riga di comando e dall'ambiente di ogni processo, e si ferma dal più profondo, e la finestra segue la sua shell.
@@ -706,7 +793,7 @@ Il banco dei modelli locali non è del motore: nessun verbo lo ferma tranne l'un
   Senza `DISPLAY` e senza `WAYLAND_DISPLAY` rifiuta: una finestra che nessuno può vedere è un processo nascosto con qualche passaggio in più.
 - Il comando viene passato come argv, quindi la regola di quoting è quella del motore (`nexgen_core.processes`), non una stringa costruita a mano.
 - Niente qui viene ereditato da chi chiama: il terminale lo avvia il motore, quindi un supervisore che lancia i verbi da un'applicazione grafica ottiene le stesse schede.
-  Un'unità che non deve avere una finestra passa da `sup run --headless`, descritto in "La finestra dell'esecutore".
+  Un'unità che non deve avere una finestra è il predefinito: `sup run` avvia un turno headless, e `--tab` è il modo esplicito di vederne uno, come descritto in "Il turno dell'esecutore".
 
 `sup window-check` è la prova manuale su ogni macchina: si apre una finestra, stampa `finestra del supervisore OK` e resta aperta.
 Non fa mai parte di un test: i test sostituiscono `Popen` e `which`, quindi nessuna suite apre una finestra.
@@ -735,7 +822,7 @@ Una misura mancante non viene mai scritta come zero, e `sup costi` dice quante r
 - Nessuna conservazione delle cartelle di compito basata sull'età: la copia e il ramo di un'unità vengono rimossi quando l'unità è ritirata, ma una vecchia cartella di compito e il suo diario restano finché il proprietario non decide altro.
   La conservazione a 30 giorni è la stessa decisione delle sessioni di ricerca e non è implementata; `sup pulizia` è la pulizia manuale per quello che un'unità chiusa ha lasciato sul disco.
 - Il costo si misura solo dove l'harness lo espone.
-  Codex riporta token e nessun denaro; `agy` non riporta né gli uni né l'altro e non si può interrogare sulla sua sessione dopo che la scheda si è aperta, ed è per questo che resta un ricognitore.
+  Codex riporta token e nessun denaro; `agy` non riporta né token né denaro, ed è per questo che resta un ricognitore.
   Il costo di Claude Code viene dal suo transcript, un file che l'harness può ruotare.
 - Nessun tag e nessun rilascio: `sup publish` non ne crea mai, e un commit che tocca `VERSION` o `CHANGELOG.md` viene rifiutato nominandolo.
   Un rilascio resta `nexgen release ship` dal checkout del proprietario.
