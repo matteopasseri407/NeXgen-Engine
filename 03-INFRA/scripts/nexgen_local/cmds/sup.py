@@ -116,15 +116,20 @@ def _register_run(run) -> None:
     )
     run.add_argument(
         "-m", "--model", default="",
-        help="modello di questa scheda, quando l'harness lo accetta sulla riga di comando (agy)",
+        help="modello di questa esecuzione: il turno headless lo passa all'harness; una scheda solo dove l'harness lo accetta (agy)",
     )
     run.add_argument(
         "--limited", action="store_true",
         help="usa i modelli del tier limited (attenzione: mai per finanze, posta, identità, segreti)",
     )
-    run.add_argument(
+    view = run.add_mutually_exclusive_group()
+    view.add_argument(
+        "--tab", action="store_true",
+        help="apri il lavoro in una scheda del terminale invece del turno headless (il default)",
+    )
+    view.add_argument(
         "--headless", action="store_true",
-        help="nessuna scheda: il turno parte staccato e i suoi errori vanno in 60-stderr-*.log",
+        help="il default: turno senza finestra, visibile nell'app dell'harness, chiuso con tutto il suo albero alla fine",
     )
     run.set_defaults(func=cmd_sup_run)
 
@@ -389,13 +394,7 @@ def _run_unit(args: argparse.Namespace) -> dict:
         options["model"] = args.model
     if getattr(args, "limited", False):
         options["limited"] = True
-    if getattr(args, "headless", False):
-        if options.get("model"):
-            raise harness.HarnessError(
-                "--headless non applica -m: quel turno prende il modello scelto dai tier "
-                "(o quello con cui l'harness è configurato)"
-            )
-        options["headless"] = True
+    options["headless"] = not getattr(args, "tab", False)
     return harness.run_unit(args.id, args.unit, **options)
 
 

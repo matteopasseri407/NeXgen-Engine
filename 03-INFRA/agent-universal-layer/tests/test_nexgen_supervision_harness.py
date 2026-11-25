@@ -5,6 +5,8 @@ finisca in una riga di comando, e la ricerca della sessione per cartella e ora.
 """
 from __future__ import annotations
 
+import shutil
+
 import json
 import subprocess
 from pathlib import Path
@@ -90,7 +92,7 @@ def test_run_puts_the_model_the_owner_asked_for_on_the_tab(task, lane, monkeypat
         task, "unit_created", unit="prova", worktree=str(folder), branch=f"sup/{task}/prova",
         base="0" * 40, allow=["docs/*.md"], verify="", repo=str(tmp_path),
     )
-    monkeypatch.setattr(harness.shutil, "which", lambda name: f"{name}-finto")
+    monkeypatch.setattr(shutil, "which", lambda name: f"{name}-finto")
     monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path / "antigravity"))
     opened: list = []
 
@@ -233,6 +235,13 @@ def test_the_prompt_names_where_the_report_goes():
 
 def _attached(task: str, unit: str, session: str) -> None:
     state.append_event(task, "attached", unit=unit, role="esecutore", harness="opencode", session=session)
+
+
+def _started_in_tab(task: str, unit: str, session: str = "ses_libera") -> None:
+    """The journal says this unit was started in a visible tab, which a new session must respect."""
+    state.append_event(
+        task, "unit_started", unit=unit, harness="opencode", session=session, mode="tab",
+    )
 
 
 @pytest.fixture
@@ -392,6 +401,7 @@ def test_a_unit_that_entered_a_session_names_its_harness(task, unit, monkeypatch
 def test_a_session_the_export_says_is_gone_opens_the_one_new_tab(task, unit, monkeypatch):
     """La sessione non esiste più: si scrive nel diario e si apre la scheda, una volta sola."""
     _attached(task, "prima", "ses_sparita")
+    _started_in_tab(task, "prova", "ses_sparita")
     opened: list = []
     sessions = [{"id": "ses_nuova", "directory": str(unit), "created": 10**13}]
     calls: list[str] = []
@@ -420,12 +430,44 @@ def test_a_session_the_export_says_is_gone_opens_the_one_new_tab(task, unit, mon
     assert calls == ["ses_sparita"], "un export che dice «non esiste» non si ritenta"
     events = [row["event"] for row in state.read_events(task)]
     assert events == [
-        "started", "unit_created", "attached", "harness_session_lost", "unit_started", "attached",
+        "started", "unit_created", "attached", "unit_started",
+        "harness_session_lost", "unit_started", "attached",
     ]
     assert state.harness_session(task, "opencode") == "ses_nuova"
     lost = next(row for row in state.read_events(task) if row["event"] == harness.state.LOST_EVENT)
     assert lost["session"] == "ses_sparita"
     assert "non esiste" in lost["reason"]
+
+
+def test_a_lost_session_of_a_headless_unit_gets_a_turn_and_no_window(task, unit, monkeypatch):
+    """Stesso criterio al contrario: chi è partito senza finestra non ne apre una adesso."""
+    _attached(task, "prima", "ses_sparita")
+    opened: list = []
+    turns: list = []
+    sessions = [{"id": "ses_nuova", "directory": str(unit), "created": 10**13}]
+
+    def broken(session):
+        raise harness.costs.SessionMissing("l'export dice che non esiste")
+
+    monkeypatch.setattr(harness, "_opencode_executable", lambda: "opencode-finto")
+    monkeypatch.setattr(
+        harness.costs, "record",
+        lambda task_id, unit_name, role, session_id, **kwargs: {"session": session_id, "unit": unit_name, "cost_usd": 0.0},
+    )
+
+    result = harness.run_unit(
+        task, "prova",
+        opener=lambda *a, **k: opened.append(a) or {"title": "mai"},
+        runner=lambda session, prompt, folder, model="": turns.append(session) or SimpleNamespace(pid=5),
+        measure=broken, lister=lambda: sessions, wait_s=0,
+    )
+
+    assert opened == [], "nessuna scheda: l'unità era partita senza finestra"
+    assert turns == [""], "il turno nuovo apre lui la sessione, come il primo"
+    assert result["mode"] == "run"
+    assert result["session"] == "ses_nuova"
+    started = [row for row in state.read_events(task) if row.get("event") == "unit_started"]
+    assert started[-1]["mode"] == "turn"
 
 
 def test_a_transient_export_failure_is_retried_before_the_session_is_called_lost(task, unit, monkeypatch):
@@ -482,6 +524,7 @@ def test_two_transient_export_failures_open_nothing_and_say_retry(task, unit, mo
 
 def test_corrections_with_a_lost_session_open_the_tab_and_keep_the_round(task, unit, monkeypatch):
     _attached(task, "prima", "ses_sparita")
+    _started_in_tab(task, "prova", "ses_sparita")
     review_file = unit.parent / "45-revisione-prova-2.md"
     review_file.write_text("# Revisione\n\ncorrezioni\n", encoding="utf-8")
     opened: list = []
@@ -507,7 +550,8 @@ def test_corrections_with_a_lost_session_open_the_tab_and_keep_the_round(task, u
     assert str(review_file) in opened[0][3], "la scheda nuova punta al file di revisione"
     events = [row["event"] for row in state.read_events(task)]
     assert events == [
-        "started", "unit_created", "attached", "harness_session_lost", "unit_reworked", "attached",
+        "started", "unit_created", "attached", "unit_started",
+        "harness_session_lost", "unit_reworked", "attached",
     ]
     reworked = next(row for row in state.read_events(task) if row["event"] == "unit_reworked")
     assert reworked["round"] == 2
@@ -583,6 +627,7 @@ def test_corrections_can_be_resent_on_a_model_the_owner_names(task, unit, monkey
 def test_a_delivery_after_the_engine_closed_the_tab_reopens_it_on_that_session(task, unit, monkeypatch):
     """Dopo la chiusura il lavoro non torna invisibile: si riapre una scheda sulla stessa sessione."""
     _attached(task, "prima", "ses_libera")
+    _started_in_tab(task, "prova", "ses_libera")
     state.append_event(task, "tab_closed", role="esecutore", pids=[1])
     review_file = unit.parent / "45-revisione-prova-1.md"
     review_file.write_text("# Revisione\n\ncorrezioni\n", encoding="utf-8")
@@ -776,7 +821,7 @@ def test_a_tab_states_the_model_it_was_asked_for_and_says_so(task, unit, harness
 
 def test_a_harness_without_a_model_on_the_tab_never_claims_it_was_applied(task, unit, harness_cli, monkeypatch):
     """Claude Code sceglie il modello nella configurazione, non sulla scheda: il motore non mente."""
-    monkeypatch.setattr(harness.shutil, "which", lambda name: f"{name}-finto")
+    monkeypatch.setattr(shutil, "which", lambda name: f"{name}-finto")
     result = harness._open_first_tab(
         task, "prova", unit, "prompt",
         opener=lambda title, argv, cwd, marker="": {"title": title, "pid": 12},
@@ -816,8 +861,8 @@ def test_agy_tab_finds_and_attaches_session_after_tab_open(task, unit, tmp_path,
     assert rec["session"] == conv_id
 
 
-def test_rework_delivers_to_agy_by_reopening_interactive_tab(task, unit, monkeypatch, harness_cli):
-    """Agy non sa send_turn: la consegna di correzioni riapre la scheda con resume_argv."""
+def test_rework_delivers_to_agy_as_a_print_turn(task, unit, monkeypatch, tmp_path):
+    """agy sa send_turn: la correzione entra nella conversazione con un turno `--print`, senza scheda."""
     conv_id = "a544d85d-f5b3-4741-bbe2-8044c85b348f"
     state.append_event(
         task, "attached", unit="prova", role="esecutore", harness="agy",
@@ -825,13 +870,55 @@ def test_rework_delivers_to_agy_by_reopening_interactive_tab(task, unit, monkeyp
     )
     review_file = unit.parent / "45-revisione-prova-1.md"
     review_file.write_text("# Revisione\n\ncorrezioni per agy\n", encoding="utf-8")
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path / "nessuna-conversazione"))
+    monkeypatch.setattr(harness, "_executable_for", lambda adapter: "agy-finto")
+    monkeypatch.setattr(harness, "_hold_turn", lambda *a: None)
+    monkeypatch.setattr(
+        harness.costs, "record",
+        lambda task_id, unit_name, role, session_id, **kwargs: {"session": session_id, "unit": unit_name},
+    )
+
+    class FakePopen:
+        def __init__(self, argv, **kwargs):
+            seen["argv"] = list(argv)
+            self.pid = 77
+
+    seen: dict = {}
+    monkeypatch.setattr(harness.launch.subprocess, "Popen", FakePopen)
+
+    result = harness.send_corrections(
+        task, "prova", review_file, 1,
+        opener=lambda *a, **k: pytest.fail("agy sa ricevere un turno: nessuna scheda da riaprire"),
+        measure=lambda session: SimpleNamespace(stopped=True),
+        lister=lambda: [], wait_s=0,
+    )
+
+    assert result["mode"] == "run" and result["pid"] == 77
+    assert seen["argv"][1:] == [
+        "--mode", "accept-edits", "--conversation", conv_id,
+        "--print", harness.corrections_text(task, "prova", review_file, 1),
+    ]
+
+
+def test_rework_reopens_the_agy_tab_when_the_engine_closed_it(task, unit, monkeypatch):
+    """Un'unità partita in scheda la riapre sulla conversazione che ha, e la scheda è un resume."""
+    conv_id = "a544d85d-f5b3-4741-bbe2-8044c85b348f"
+    state.append_event(
+        task, "attached", unit="prova", role="esecutore", harness="agy",
+        session=conv_id, folder=str(unit),
+    )
+    state.append_event(task, "unit_started", unit="prova", harness="agy", session=conv_id, mode="tab")
+    state.append_event(task, "tab_closed", role="esecutore", pids=[1])
+    review_file = unit.parent / "45-revisione-prova-1.md"
+    review_file.write_text("# Revisione\n\ncorrezioni per agy\n", encoding="utf-8")
+    monkeypatch.setattr(harness, "_executable_for", lambda adapter: "agy-finto")
 
     opened: list = []
     result = harness.send_corrections(
         task, "prova", review_file, 1,
-        opener=lambda title, argv, *, cwd, marker="": opened.append((title, argv, cwd)) or {"title": title, "pid": 77},
-        runner=lambda *a: pytest.fail("agy non deve mai ricevere un run invisibile"),
-        measure=lambda session: pytest.fail("agy non ha misura di costo da interrogare"),
+        opener=lambda title, argv, *, cwd, marker="": opened.append((title, argv, cwd)) or {"title": title, "pid": 78},
+        runner=lambda *a: pytest.fail("la scheda chiusa si riapre, non si invia un run invisibile"),
+        measure=lambda session: pytest.fail("una scheda riaperta non interroga la conversazione"),
         lister=lambda: [], wait_s=0,
     )
 

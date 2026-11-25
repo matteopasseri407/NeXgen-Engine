@@ -15,6 +15,8 @@ from pathlib import Path
 
 from nexgen_core.paths import resolve_home
 
+from .. import supervision_processes as processes
+from ..supervision_costs import SessionFacts
 from . import base
 
 SESSION_WAIT_S = 30.0
@@ -107,7 +109,7 @@ class AntigravityAdapter(base.Adapter):
     session_id_pattern = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
     session_id_description = "UUID come 'a544d85d-f5b3-4741-bbe2-8044c85b348f'"
     capabilities = base.Capabilities(
-        open_tab=True, find_session=True, send_turn=False, live_state=False, cost=False,
+        open_tab=True, headless=True, find_session=True, send_turn=True, live_state=True, cost=False,
         tokens=False, write_permissions=False, resume=True, scout=True,
         dispose_location=False, session_model=False, last_turn=False,
         deny_push="solo pushurl bloccata della copia (agy non ha un profilo di progetto)",
@@ -128,6 +130,59 @@ class AntigravityAdapter(base.Adapter):
         if session:
             argv.extend(["--conversation", session])
         argv.extend(["--prompt-interactive", prompt])
+        return argv
+
+    def headless_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "",
+                      model: str = "") -> list[str]:
+        """`agy --mode accept-edits [--model <id>] --print <pointer>`: the first conversation, no tab.
+
+        `--print` takes the prompt as its own value, so the pointer comes last and
+        right after it: anything between them is read as the prompt (agy says so
+        and exits 2). The conversation lands in agy's store, where `find_session`
+        reads it back by the copy's folder.
+        """
+        return self._print_argv(executable, prompt, model=model)
+
+    def send_argv(self, executable: str, session: str, prompt: str, *, model: str = "") -> list[str]:
+        """`agy --mode accept-edits --conversation <id> --print <pointer>`: one more turn, no tab."""
+        return self._print_argv(executable, prompt, model=model, session=session)
+
+    def measure(self, session: str):
+        """Whether a turn of this conversation is still running; agy reports no money here.
+
+        The process table is the only live signal: an `agy` whose command line
+        carries the conversation id is a turn in progress, and sending another one
+        into it would race the first.
+        """
+        running = self.running(session)
+        now = int(time.time() * 1000)
+        return SessionFacts(
+            outcome="working" if running else "idle", updated_ms=now,
+            idle_ms=None if running else now,
+            cost_note="agy non riporta il costo per conversazione",
+        )
+
+    def running(self, session: str) -> bool:
+        """Whether an `agy` process on this machine is working in this conversation."""
+        try:
+            table = processes.rows()
+        except processes.ProcessError:  # nexgen: allow reason="una tabella illeggibile non prova che il turno lavori"
+            return False
+        return any(
+            session in str(row.get("command_line") or "")
+            and Path(str(row.get("name") or "")).name.lower().startswith("agy")
+            for row in table
+        )
+
+    def _print_argv(self, executable: str, prompt: str, *, model: str = "", session: str = "") -> list[str]:
+        """The print-mode command line both turns share, the prompt last as `--print`'s value."""
+        argv = [executable, "--mode", "accept-edits"]
+        target = model_id(model)
+        if target:
+            argv.extend(["--model", target])
+        if session:
+            argv.extend(["--conversation", session])
+        argv.extend(["--print", prompt])
         return argv
 
     def resume_argv(self, executable: str, session: str, folder: Path, prompt: str = "") -> list[str]:

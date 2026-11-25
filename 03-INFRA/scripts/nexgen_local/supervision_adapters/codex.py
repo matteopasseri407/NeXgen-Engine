@@ -43,7 +43,7 @@ class CodexAdapter(base.Adapter):
     session_id_pattern = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
     session_id_description = "UUID come '01a161aa-7ac3-7ab0-8371-e339b5bbc783'"
     capabilities = base.Capabilities(
-        open_tab=True, find_session=True, send_turn=True, live_state=True, cost=False,
+        open_tab=True, headless=True, find_session=True, send_turn=True, live_state=True, cost=False,
         tokens=True, write_permissions=False, resume=True, scout=True,
         session_model=True, last_turn=True,
         deny_push="sandbox workspace-write senza rete, nessuna approvazione, pushurl bloccata della copia",
@@ -87,6 +87,21 @@ class CodexAdapter(base.Adapter):
         if model:
             argv.extend(["-m", model])
         argv.extend(["resume", session, prompt])
+        return argv
+
+    def headless_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "",
+                      model: str = "") -> list[str]:
+        """`codex exec -C <folder> -s workspace-write --add-dir ... <pointer>`: the first thread, no tab.
+
+        The task folder and the git dir travel as writable roots for the same reason
+        they do on the tab; the thread is found afterwards in Codex's own index.
+        """
+        argv = [executable, "exec", "-C", str(folder), "-s", SANDBOX]
+        for root in _extra_roots(folder):
+            argv.extend(["--add-dir", str(root)])
+        if model:
+            argv.extend(["-m", model])
+        argv.append(prompt)
         return argv
 
     def resume_argv(self, executable: str, session: str, folder: Path, prompt: str = "") -> list[str]:
@@ -245,29 +260,8 @@ class CodexAdapter(base.Adapter):
         }
 
 
-def _extra_roots(folder: Path) -> list[Path]:
-    """The task folder and the checkout's git dir: a worktree keeps both outside the copy.
-
-    The brief and the report live one level above the copy, and the objects of a
-    worktree live in the checkout it was cut from. Codex takes the copy as its
-    workspace, so without these roots it refuses the brief and the commit.
-    """
-    roots = [folder.parent]
-    marker = folder / ".git"
-    try:
-        text = marker.read_text(encoding="utf-8").strip()
-    except OSError:  # nexgen: allow reason="una copia senza .git leggibile non aggiunge altre radici"
-        return roots
-    if not text.startswith("gitdir:"):
-        return roots
-    gitdir = Path(text.split(":", 1)[1].strip())
-    if not gitdir.is_absolute():
-        gitdir = (folder / gitdir).resolve()
-    roots.append(gitdir)
-    parts = gitdir.parts
-    if "worktrees" in parts:
-        roots.append(Path(*parts[:parts.index("worktrees")]))
-    return roots
+#: The task folder and the git dir, shared with every adapter that sandboxes the copy.
+_extra_roots = base.writable_roots
 
 
 def _error(raw) -> tuple[str, str]:

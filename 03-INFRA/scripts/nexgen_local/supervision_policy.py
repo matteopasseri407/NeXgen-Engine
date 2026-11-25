@@ -26,6 +26,9 @@ KEY = "allowed_models"
 #: How long an active session may stand still before it is called stalled.
 STALL_KEY = "stall_minutes"
 DEFAULT_STALL_MINUTES = 20.0
+#: How long one turn of a worker may run before its guardian stops its whole tree.
+TURN_TIMEOUT_KEY = "turn_timeout_minutes"
+DEFAULT_TURN_TIMEOUT_MINUTES = 240.0
 #: Which harness takes which role, when the owner writes nothing.
 ROLES_KEY = "roles"
 DEFAULT_ROLES = {"esecutore": "opencode", "ricognitore": "agy"}
@@ -66,6 +69,17 @@ def stall_minutes(path: str | Path | None = None) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
         raise PolicyError(
             f"`{SECTION}.{STALL_KEY}` deve essere un numero di minuti maggiore di zero: {value!r}"
+        )
+    return float(value)
+
+
+def turn_timeout_minutes(path: str | Path | None = None) -> float:
+    """How many minutes one turn may run before its guardian ends it and everything it started."""
+    _target, section = _section(path)
+    value = section.get(TURN_TIMEOUT_KEY, DEFAULT_TURN_TIMEOUT_MINUTES)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise PolicyError(
+            f"`{SECTION}.{TURN_TIMEOUT_KEY}` deve essere un numero di minuti maggiore di zero: {value!r}"
         )
     return float(value)
 

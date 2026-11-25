@@ -6,6 +6,8 @@ ha rotto la corsa h5: la sessione di h4 non deve ricevere il lavoro di h5.
 """
 from __future__ import annotations
 
+import shutil
+
 import json
 from types import SimpleNamespace
 
@@ -166,8 +168,8 @@ def test_the_run_verb_passes_the_chosen_harness_only_when_the_owner_names_it(mon
     sup_cmd._run_unit(SimpleNamespace(id="t", unit="u", harness=""))
     sup_cmd._run_unit(SimpleNamespace(id="t", unit="u", harness="claude"))
 
-    assert seen[0] == {"task": "t", "unit": "u"}
-    assert seen[1] == {"task": "t", "unit": "u", "harness": "claude"}
+    assert seen[0] == {"task": "t", "unit": "u", "headless": True}
+    assert seen[1] == {"task": "t", "unit": "u", "harness": "claude", "headless": True}
 
 
 def test_the_run_verb_passes_the_model_only_when_the_owner_names_it(monkeypatch):
@@ -182,8 +184,10 @@ def test_the_run_verb_passes_the_model_only_when_the_owner_names_it(monkeypatch)
     sup_cmd._run_unit(SimpleNamespace(id="t", unit="u", harness="agy", model=""))
     sup_cmd._run_unit(SimpleNamespace(id="t", unit="u", harness="agy", model="gemini-3.8-flash"))
 
-    assert seen[0] == {"task": "t", "unit": "u", "harness": "agy"}
-    assert seen[1] == {"task": "t", "unit": "u", "harness": "agy", "model": "gemini-3.8-flash"}
+    assert seen[0] == {"task": "t", "unit": "u", "harness": "agy", "headless": True}
+    assert seen[1] == {
+        "task": "t", "unit": "u", "harness": "agy", "model": "gemini-3.8-flash", "headless": True,
+    }
 
 
 def test_the_run_parser_offers_the_model_flag(capsys):
@@ -258,22 +262,33 @@ def test_a_headless_turn_runs_on_the_model_the_tiers_chose(task, lane, monkeypat
     assert turns == ["opencode-go/deepseek-v4.1-flash"]
 
 
-def test_headless_refuses_a_harness_that_needs_an_existing_session(task, lane, monkeypatch):
-    """agy sa solo riaprire una sessione: un primo turno senza finestra non esiste per lui."""
-    _unit(lane, task, "prova")
-    monkeypatch.setattr(harness.shutil, "which", lambda name: f"{name}-finto")
+def test_headless_starts_agy_as_a_print_turn_and_opens_no_tab(task, lane, monkeypatch, tmp_path):
+    """agy sa aprire la sua prima conversazione senza finestra: `--print`, non una scheda."""
+    folder = _unit(lane, task, "prova")
+    monkeypatch.setattr(harness, "_executable_for", lambda adapter: "agy-finto")
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path / "nessuna-conversazione"))
+    monkeypatch.setattr(harness, "_hold_turn", lambda *a: None)
+    seen: dict = {}
 
-    with pytest.raises(harness.HarnessError, match="non sa aprire la sua prima sessione senza finestra"):
-        harness.run_unit(task, "prova", harness="agy", headless=True, opener=Opener(), wait_s=0)
+    class FakePopen:
+        def __init__(self, argv, **kwargs):
+            seen["argv"] = list(argv)
+            self.pid = 4321
+
+    monkeypatch.setattr(harness.launch.subprocess, "Popen", FakePopen)
+
+    result = harness.run_unit(task, "prova", harness="agy", headless=True, opener=Opener(), wait_s=0)
+
+    assert seen["argv"][1:] == ["--mode", "accept-edits", "--print", harness.prompt_text(
+        task, "prova", folder.parent / "20-brief-prova.md", harness="agy",
+    )]
+    assert result["mode"] == "run"
+    assert result["harness"] == "agy"
+    assert result["pid"] == 4321
 
 
-def test_headless_refuses_a_model_it_would_silently_drop():
-    """`-m` su un turno staccato non viaggia: meglio dirlo che perdere il modello in silenzio."""
-    with pytest.raises(harness.HarnessError, match="--headless non applica -m"):
-        sup_cmd._run_unit(SimpleNamespace(id="t", unit="u", harness="", headless=True, model="p/m"))
-
-
-def test_the_run_verb_passes_headless_only_when_the_owner_asks(monkeypatch):
+def test_a_model_named_for_a_headless_run_travels_with_the_turn(monkeypatch):
+    """`-m` viaggia anche sul turno senza finestra: rifiutarlo lascerebbe il diario a mentire."""
     seen: list[dict] = []
 
     def fake_run(task_id, unit, **kwargs):
@@ -282,11 +297,25 @@ def test_the_run_verb_passes_headless_only_when_the_owner_asks(monkeypatch):
 
     monkeypatch.setattr(harness, "run_unit", fake_run)
 
-    sup_cmd._run_unit(SimpleNamespace(id="t", unit="u", harness="", headless=False))
-    sup_cmd._run_unit(SimpleNamespace(id="t", unit="u", harness="", headless=True))
+    sup_cmd._run_unit(SimpleNamespace(id="t", unit="u", harness="", headless=True, model="p/m"))
 
-    assert seen[0] == {"task": "t", "unit": "u"}
-    assert seen[1] == {"task": "t", "unit": "u", "headless": True}
+    assert seen == [{"task": "t", "unit": "u", "model": "p/m", "headless": True}]
+
+
+def test_the_run_verb_passes_headless_unless_the_owner_asks_for_a_tab(monkeypatch):
+    seen: list[dict] = []
+
+    def fake_run(task_id, unit, **kwargs):
+        seen.append({"task": task_id, "unit": unit, **kwargs})
+        return {"mode": "run", "session": "ses_x", "pid": 1, "unit": unit}
+
+    monkeypatch.setattr(harness, "run_unit", fake_run)
+
+    sup_cmd._run_unit(SimpleNamespace(id="t", unit="u", harness="", tab=False))
+    sup_cmd._run_unit(SimpleNamespace(id="t", unit="u", harness="", tab=True))
+
+    assert seen[0] == {"task": "t", "unit": "u", "headless": True}
+    assert seen[1] == {"task": "t", "unit": "u", "headless": False}, "--tab è una scelta esplicita, non l'assenza di una"
 
 
 def test_the_scout_verb_accepts_a_harness_and_resolves_it_before_the_copy(lane):
@@ -317,7 +346,7 @@ def test_agy_as_executor_opens_a_tab_and_says_the_session_stays_manual(task, lan
     """
     _unit(lane, task, "prova")
     opener = Opener()
-    monkeypatch.setattr(harness.shutil, "which", lambda name: f"{name}-finto")
+    monkeypatch.setattr(shutil, "which", lambda name: f"{name}-finto")
     monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path / "antigravity"))
 
     result = harness.run_unit(task, "prova", harness="agy", opener=opener, wait_s=0)
@@ -335,7 +364,7 @@ def test_claude_opens_a_tab_with_the_id_the_engine_itself_chose(task, lane, monk
     _unit(lane, task, "prova")
     opener = Opener()
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config"))
-    monkeypatch.setattr(harness.shutil, "which", lambda name: f"{name}-finto")
+    monkeypatch.setattr(shutil, "which", lambda name: f"{name}-finto")
 
     result = harness.run_unit(task, "prova", harness="claude", opener=opener, wait_s=0)
 

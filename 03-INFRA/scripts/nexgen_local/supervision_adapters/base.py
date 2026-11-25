@@ -10,6 +10,7 @@ lines, read stores and write profiles, and the engine keeps the launch policy.
 from __future__ import annotations
 
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,7 +33,7 @@ class Unsupported(AdapterError):
 
 #: The operations the engine can ask of an adapter, in the order the verbs use them.
 OPERATIONS = (
-    "open_tab", "find_session", "send_turn", "live_state", "cost", "tokens",
+    "open_tab", "headless", "find_session", "send_turn", "live_state", "cost", "tokens",
     "write_permissions", "resume", "scout", "dispose_location", "session_model",
     "last_turn", "mcp",
 )
@@ -48,9 +49,13 @@ class Capabilities:
     adapter that cannot deny it must not claim it did. `window` says whether the
     work shows up in a terminal window of the engine: a harness with its own
     visible sessions answers no, and the engine starts the turn instead of a tab.
+    `headless` says the harness can open the unit's first session as a one-shot
+    turn with no terminal at all, which is how `sup run` starts work by default.
     """
 
     open_tab: bool = True
+    #: Whether the first session can be opened as a one-shot turn, with no window.
+    headless: bool = False
     #: Whether opening work means a window of the engine, or a session inside the harness.
     window: bool = True
     find_session: bool = False
@@ -142,6 +147,24 @@ class Adapter:
         """The command that puts one turn into an existing session without opening a tab."""
         raise Unsupported(self.name, "send_turn")
 
+    def headless_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "",
+                      model: str = "") -> list[str]:
+        """The one-shot command that opens the unit's first session with no window at all.
+
+        `session` is the id `new_session_id` chose, for a harness that takes one;
+        a harness that picks its own id gets an empty string and says which one it
+        opened through `find_session`.
+        """
+        raise Unsupported(self.name, "headless")
+
+    def locate(self) -> str:
+        """This harness's CLI on this machine, or an empty string when it is not installed."""
+        return shutil.which(self.executable) or ""
+
+    def turn_env(self, model: str = "") -> dict[str, str]:
+        """Variables a turn on this model needs on top of the caller's environment; most need none."""
+        return {}
+
     def resume_argv(self, executable: str, session: str, folder: Path, prompt: str = "") -> list[str]:
         """The command that opens a visible tab on the session the task already has."""
         raise Unsupported(self.name, "resume")
@@ -203,6 +226,31 @@ class Adapter:
     def dispose_location(self, folder: Path) -> tuple[bool, str]:
         """Free the harness's servers bound to this folder before the copy is removed."""
         raise Unsupported(self.name, "dispose_location")
+
+
+def writable_roots(folder: Path) -> list[Path]:
+    """The task folder and the checkout's git dir: a worktree keeps both outside the copy.
+
+    The brief and the report live one level above the copy, and the objects of a
+    worktree live in the checkout it was cut from. A harness that sandboxes the copy
+    (Codex, dsh) refuses the brief and the commit without these roots.
+    """
+    roots = [folder.parent]
+    marker = folder / ".git"
+    try:
+        text = marker.read_text(encoding="utf-8").strip()
+    except OSError:  # nexgen: allow reason="una copia senza .git leggibile non aggiunge altre radici"
+        return roots
+    if not text.startswith("gitdir:"):
+        return roots
+    gitdir = Path(text.split(":", 1)[1].strip())
+    if not gitdir.is_absolute():
+        gitdir = (folder / gitdir).resolve()
+    roots.append(gitdir)
+    parts = gitdir.parts
+    if "worktrees" in parts:
+        roots.append(Path(*parts[:parts.index("worktrees")]))
+    return roots
 
 
 def normal_path(value: str | Path) -> str:

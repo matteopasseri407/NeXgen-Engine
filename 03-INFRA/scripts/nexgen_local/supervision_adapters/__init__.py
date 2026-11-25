@@ -11,6 +11,7 @@ from . import base
 from .antigravity import AntigravityAdapter
 from .claude import ClaudeAdapter
 from .codex import CodexAdapter
+from .dsh import DshAdapter
 from .local import LocalAdapter
 from .openclaw import OpenClawAdapter
 from .opencode import OpenCodeAdapter
@@ -20,7 +21,7 @@ _ADAPTERS: dict[str, base.Adapter] = {
     adapter.name: adapter
     for adapter in (
         OpenCodeAdapter(), ClaudeAdapter(), CodexAdapter(), AntigravityAdapter(), LocalAdapter(),
-        OpenClawAdapter(),
+        OpenClawAdapter(), DshAdapter(),
     )
 }
 #: The other spellings an owner may type, mapped to the canonical name.
@@ -32,6 +33,7 @@ ALIASES = {
     "antigravity": "agy",
     "gemini": "agy",
     "local-model": "local",
+    "deepseek-harness": "dsh",
 }
 
 
