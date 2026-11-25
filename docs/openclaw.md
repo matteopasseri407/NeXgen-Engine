@@ -148,7 +148,7 @@ A local model in OpenClaw can reach the same tools as any other, and a 12B model
 
 - `profile: "messaging"`;
 - `alsoAllow`: `read`, `view_image`, `pdf`, `tts`, `memory_search`, `memory_get`;
-- `deny`: the `group:web`, `group:runtime`, `group:ui`, `group:nodes` and `group:automation` families, `write`, `edit`, `apply_patch`, `playwright__*`, `lazy-mcp__lazy_mutate`, and the writing tools of every MCP server that has them.
+- `deny`: the `group:web`, `group:runtime`, `group:ui`, `group:nodes` and `group:automation` families, `write`, `edit`, `apply_patch`, the two skill tools (`skill_workshop` and `skill_library`), `playwright__*`, `lazy-mcp__lazy_mutate`, and the writing tools of every MCP server that has them.
 
 Writing tools are named `server__tool` in OpenClaw, so the deny list comes from one table in `profile.py` rather than being scattered through the code. Today the table covers `n8n-mcp` (create, delete, update, publish, execute, test and the rest), `vault-library` (create, append, update, section), `drive` (the two upload steps) and `firecrawl` (scrape, map, extract, crawl, agent, browser, interact; search and reads stay allowed).
 

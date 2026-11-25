@@ -22,9 +22,12 @@ LOCAL_SAFE_TOOLS = ("read", "view_image", "pdf", "tts", "memory_search", "memory
 
 #: Denied to every local model. The groups are whole families of capability, so
 #: a new tool in one of them is covered before anyone has to notice it exists.
+#: The two skill tools are named rather than grouped because they share no group:
+#: 11.10 ships `skill_library` beside `skill_workshop`, and doctor --fix adds the
+#: second wherever the first is denied, so the engine denies both or fights it.
 LOCAL_DENY = (
     "group:web", "group:runtime", "group:ui", "group:nodes", "group:automation",
-    "write", "edit", "apply_patch", "skill_workshop",
+    "write", "edit", "apply_patch", "skill_workshop", "skill_library",
     "playwright__*",
 )
 

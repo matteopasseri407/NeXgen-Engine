@@ -148,7 +148,7 @@ Un modello locale in OpenClaw può raggiungere gli strumenti di qualsiasi altro,
 
 - `profile: "messaging"`;
 - `alsoAllow`: `read`, `view_image`, `pdf`, `tts`, `memory_search`, `memory_get`;
-- `deny`: le famiglie `group:web`, `group:runtime`, `group:ui`, `group:nodes` e `group:automation`, `write`, `edit`, `apply_patch`, `playwright__*`, `lazy-mcp__lazy_mutate`, e gli strumenti di scrittura di ogni server MCP che ne ha.
+- `deny`: le famiglie `group:web`, `group:runtime`, `group:ui`, `group:nodes` e `group:automation`, `write`, `edit`, `apply_patch`, i due strumenti delle skill (`skill_workshop` e `skill_library`), `playwright__*`, `lazy-mcp__lazy_mutate`, e gli strumenti di scrittura di ogni server MCP che ne ha.
 
 In OpenClaw gli strumenti di scrittura si chiamano `server__tool`, quindi la lista dei divieti viene da un'unica tabella in `profile.py` invece di essere sparsa nel codice. Oggi la tabella copre `n8n-mcp` (create, delete, update, publish, execute, test e il resto), `vault-library` (create, append, update, section), `drive` (i due passi di upload) e `firecrawl` (scrape, map, extract, crawl, agent, browser, interact; search e le letture restano permesse).
 

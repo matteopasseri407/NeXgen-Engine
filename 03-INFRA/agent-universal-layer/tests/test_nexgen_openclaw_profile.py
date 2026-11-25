@@ -243,7 +243,7 @@ def test_every_local_model_carries_the_cage():
     assert cage["ollama/one"]["profile"] == "messaging"
     assert cage["ollama/one"]["alsoAllow"] == ["read", "view_image", "pdf", "tts", "memory_search", "memory_get"]
     for pattern in ("group:web", "group:runtime", "write", "edit", "apply_patch", "skill_workshop",
-                    "playwright__*"):
+                    "skill_library", "playwright__*"):
         assert pattern in deny
     assert "lazy-mcp__lazy_mutate" not in deny
     for pattern in ("n8n-mcp__create_*", "n8n-mcp__delete_*", "vault-library__update_section",
