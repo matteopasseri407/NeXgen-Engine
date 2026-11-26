@@ -83,13 +83,21 @@ class Phone:
         return True
 
 
+class SilentPhone(Phone):
+    """Un telefono senza nessun canale: l'avviso non arriva a destinazione."""
+
+    def send_alert(self, **alert):
+        self.alerts.append(alert)
+        return False
+
+
 def _groom(gateway, monkeypatch, home, phone=None):
     monkeypatch.setattr(sessions_groom.subprocess, "run", gateway)
     return sessions_groom.groom(openclaw="openclaw", now_ms=NOW, emit=lambda _line: None, home=home,
                                 phone=phone)
 
 
-def _command(gateway, monkeypatch, home, phone=None) -> int:
+def _command(gateway, monkeypatch, home, phone=None, dry_run=False) -> int:
     # The real alerter shells out through the same subprocess.run the fake Gateway replaces
     # (PowerShell on Windows), and would notify whoever runs the tests.
     monkeypatch.setattr(megaphone, "Megaphone", lambda: phone or Phone())
@@ -97,7 +105,7 @@ def _command(gateway, monkeypatch, home, phone=None) -> int:
     monkeypatch.setattr(sessions_groom, "_resolve_binary", lambda name="openclaw": "openclaw")
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
-    return openclaw_cmds.cmd_groom(Namespace(dry_run=False))
+    return openclaw_cmds.cmd_groom(Namespace(dry_run=dry_run))
 
 
 def test_an_archived_session_is_never_asked(monkeypatch, tmp_path):
@@ -117,14 +125,33 @@ def test_every_page_of_archived_sessions_is_read(monkeypatch):
 
 
 @pytest.mark.parametrize("broken", ["list", "gateway"])
-def test_a_listing_that_cannot_be_read_fails_the_run_instead_of_saying_nothing_to_do(
+def test_a_listing_that_cannot_be_read_is_alerted_and_no_longer_stops_the_job(
     broken, monkeypatch, tmp_path, capsys
 ):
+    """Lo scheduler spegne un job dopo dieci errori: il giro avvisa invece di morire in silenzio."""
     gateway = Gateway([_idle(LIVE, 200_000)], broken=broken)
+    phone = Phone()
 
-    assert _command(gateway, monkeypatch, tmp_path) == 1
+    assert _command(gateway, monkeypatch, tmp_path, phone) == 0
     assert gateway.compactions == []
+    assert len(phone.alerts) == 1
     assert "gateway closed" in capsys.readouterr().err
+
+
+def test_a_listing_nobody_can_be_told_about_still_fails(monkeypatch, tmp_path):
+    """Se nessun canale porta l'avviso, il guasto esce 1 come prima."""
+    gateway = Gateway([_idle(LIVE, 200_000)], broken="list")
+
+    assert _command(gateway, monkeypatch, tmp_path, SilentPhone()) == 1
+
+
+def test_a_dry_run_never_alerts_and_still_fails(monkeypatch, tmp_path):
+    """La curiosità non manda avvisi: un'anteprima che non legge le chat esce 1."""
+    gateway = Gateway([_idle(LIVE, 200_000)], broken="list")
+    phone = Phone()
+
+    assert _command(gateway, monkeypatch, tmp_path, phone, dry_run=True) == 1
+    assert phone.alerts == []
 
 
 def test_a_refused_chat_is_heard(monkeypatch, tmp_path):

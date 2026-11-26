@@ -63,6 +63,9 @@ MESSAGES: dict[str, str] = {
     "NeXgen: the chats are piling up": "NeXgen: le chat si stanno accumulando",
     "The last tidy-up closed none of them. Chats still waiting: {count}.":
         "L'ultima pulizia non ne ha chiusa nessuna. Chat ancora in attesa: {count}.",
+    "NeXgen: the tidy-up cannot read the chats": "NeXgen: la pulizia non riesce a leggere le chat",
+    "OpenClaw did not say which chats exist, so none of them was compacted.":
+        "OpenClaw non ha detto quali chat esistono, quindi nessuna è stata compattata.",
     "NeXgen: a new model has no known cost": "NeXgen: un modello nuovo non ha un costo noto",
     "The model {model} turned up, but nobody wrote down how much work it gets.":
         "Il modello {model} è comparso, ma nessuno ha scritto quanto lavoro riceve.",

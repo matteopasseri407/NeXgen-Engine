@@ -151,6 +151,26 @@ def test_a_run_that_left_chats_waiting_and_compacted_none_is_a_failure(tmp_path:
     assert "left 2 chats waiting and compacted none" in outcome.message
 
 
+def test_a_run_that_could_not_read_the_chats_is_a_failure(tmp_path: Path):
+    """The command exits 0 once it alerted, so the scheduler's row says ok: the record is the proof."""
+    saved_run(tmp_path, at=NOW - HOUR_MS, error="sessions list: gateway closed")
+
+    outcome = check_groom([guard_job()], tmp_path, NOW)
+
+    assert outcome.severity == Severity.BROKEN
+    assert "could not read the chats" in outcome.message
+    assert "gateway closed" in outcome.message
+
+
+def test_a_failed_record_is_read_even_where_no_scheduler_was_asked(tmp_path: Path):
+    saved_run(tmp_path, at=NOW - HOUR_MS, error="sessions list: gateway closed")
+
+    outcome = check_groom(None, tmp_path, NOW)
+
+    assert outcome.severity == Severity.BROKEN
+    assert "could not read the chats" in outcome.message
+
+
 def test_a_run_that_left_no_record_is_a_warning_not_a_green(tmp_path: Path):
     outcome = check_groom([guard_job()], tmp_path, NOW)
 

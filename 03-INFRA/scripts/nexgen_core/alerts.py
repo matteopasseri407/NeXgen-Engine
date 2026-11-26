@@ -130,6 +130,13 @@ CHATS_PILING_UP = Alert(
     sample={"count": "14"},
 )
 
+#: The tidy-up could not read which chats exist, so it compacted none of them.
+CHATS_UNREADABLE = Alert(
+    title="NeXgen: the tidy-up cannot read the chats",
+    message="OpenClaw did not say which chats exist, so none of them was compacted.",
+    action="nexgen openclaw groom",
+)
+
 #: A model nobody has priced appeared in the inventory.
 MODEL_UNKNOWN_VOLUME = Alert(
     title="NeXgen: a new model has no known cost",

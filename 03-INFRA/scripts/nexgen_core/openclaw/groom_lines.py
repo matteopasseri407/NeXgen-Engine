@@ -1,14 +1,15 @@
-"""What one groom run says, and the one alert it raises.
+"""What one groom run says, and the alerts it raises.
 
 One job: turn a groom decision and its outcome into the line a person reads, say
-how many eligible chats were left for later, and raise the alert of a queue that
-stopped moving. The policy and the gateway call live in `sessions_groom`; what a
-run says is here, so the sentences can be checked without a gateway.
+how many eligible chats were left for later, and raise the alerts of a queue that
+stopped moving and of a listing nobody could read. The policy and the gateway call
+live in `sessions_groom`; what a run says is here, so the sentences can be checked
+without a gateway.
 
 Why this exists: the hourly job runs with `--no-deliver`, so these lines reach
 nobody unless a person types `nexgen openclaw groom`. A run that leaves chats
-waiting while compacting none of them is the one case worth interrupting for, and
-it goes out through the megaphone, which debounces it.
+waiting while compacting none of them, or that cannot read them at all, is the one
+case worth interrupting for, and it goes out through the megaphone, which debounces it.
 """
 from __future__ import annotations
 
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
 DRY_RUN = "dry-run"
 #: The debounce key of the alert a stalled queue raises: one per install, not per chat.
 STALLED_ALERT_KEY = "openclaw:groom:stalled"
+#: Its sibling for a listing the gateway would not answer: one per install too.
+UNREADABLE_ALERT_KEY = "openclaw:groom:unreadable"
 
 
 @dataclass(frozen=True)
@@ -98,6 +101,23 @@ def alert_stalled(count: int, phone: Megaphone) -> bool:
         message=message,
         action=action,
         alert_key=STALLED_ALERT_KEY,
+    )
+
+
+def alert_unreadable(phone: Megaphone) -> bool:
+    """Tell the person that OpenClaw would not say which chats exist.
+
+    This is the failure that used to end the hourly job with no word to anybody: the
+    scheduler switches a job off after ten failures. The same debounced channel as the
+    stalled queue carries it, so the gate stays on and the alarm still arrives once per
+    window instead of once per hour.
+    """
+    title, message, action = alerts.CHATS_UNREADABLE.say()
+    return phone.send_alert(
+        title=title,
+        message=message,
+        action=action,
+        alert_key=UNREADABLE_ALERT_KEY,
     )
 
 

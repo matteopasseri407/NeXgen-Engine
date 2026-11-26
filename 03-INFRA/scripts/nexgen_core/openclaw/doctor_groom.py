@@ -123,6 +123,27 @@ def _unasked(run: Mapping[str, Any] | None, now_ms: float) -> CheckOutcome | Non
     )
 
 
+def _could_not_read(run: Mapping[str, Any] | None) -> CheckOutcome | None:
+    """The failure the run wrote down when OpenClaw would not list the chats.
+
+    A run whose listing failed now exits 0 once its alert was delivered, so the
+    scheduler's row says "ok" and cannot report it. The record it leaves carries the
+    error, and this is where that error reaches a person.
+    """
+    if not isinstance(run, Mapping):
+        return None
+    error = str(run.get("error") or "").strip()
+    if not error:
+        return None
+    return CheckOutcome(
+        id=CHECK_ID,
+        severity=Severity.BROKEN,
+        message=t("The last context guard run could not read the chats, so none was compacted: {error}",
+                  error=error),
+        action=t("Run 'nexgen openclaw groom' and read the reason it prints for each chat."),
+    )
+
+
 def _missing() -> CheckOutcome:
     """No job under the engine's declaration key: nothing compacts a chat that sits idle."""
     return CheckOutcome(
@@ -214,16 +235,20 @@ def check_groom(
     from nexgen_core.openclaw.automations import context_guard_jobs
 
     now = now_ms if now_ms is not None else time.time() * 1000
+    run = groom_run.load(home)
     if jobs is None:
-        return _unasked(groom_run.load(home), now)
+        return _unasked(run, now) or _could_not_read(run)
     guard = context_guard_jobs(jobs)
     if not guard:
         return _missing()
     stopped = _stopped(guard[0], now)
     if stopped is not None:
         return stopped
+    could_not_read = _could_not_read(run)
+    if could_not_read is not None:
+        return could_not_read
     seconds = max(0.0, (now - (_last_run_ms(guard[0]) or now)) / 1000.0)
-    return _judged_run(groom_run.load(home), groom_memory.load_memory(home), seconds)
+    return _judged_run(run, groom_memory.load_memory(home), seconds)
 
 
 def _judged_run(run: Mapping[str, Any] | None, memory: Mapping[str, dict[str, Any]], seconds: float) -> CheckOutcome:

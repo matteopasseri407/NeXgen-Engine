@@ -684,6 +684,9 @@ def test_an_unreadable_listing_does_not_erase_what_is_remembered(monkeypatch, tm
         run_groom(gateway, monkeypatch, tmp_path)
 
     assert "agent:main:main" in load_memory(home=tmp_path)
+    # The command exits 0 once its alert was delivered, so the scheduler's row can no
+    # longer say the run failed: the record is the doctor's only evidence.
+    assert groom_run.load(tmp_path)["error"].endswith("the gateway is not reachable")
 
 
 def test_a_reason_on_stderr_is_read_even_when_stdout_has_chatter(monkeypatch, tmp_path):
@@ -713,7 +716,17 @@ def test_an_attempt_that_times_out_is_a_failure_and_is_retried_later(monkeypatch
 def test_the_command_fails_only_when_the_sessions_cannot_be_listed(monkeypatch, tmp_path):
     from argparse import Namespace
 
+    from nexgen_core import megaphone
     from nexgen_core.cli import openclaw_cmds
+
+    class NoChannel:
+        """No transport can carry the alert: the command must still say it failed."""
+
+        def send_alert(self, **_alert):
+            return False
+
+    # The real alerter would notify whoever runs the tests.
+    monkeypatch.setattr(megaphone, "Megaphone", NoChannel)
 
     def exit_code(sessions, reply, scenario):
         monkeypatch.setenv("AGENT_STATE_DIR", str(tmp_path / scenario))
