@@ -21,7 +21,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core import i18n  # noqa: E402
+from nexgen_core import i18n, megaphone  # noqa: E402
 from nexgen_core.cli import openclaw_cmds  # noqa: E402
 from nexgen_core.openclaw import sessions_archived, sessions_groom  # noqa: E402
 from nexgen_core.openclaw.groom_policy import IDLE_SECONDS  # noqa: E402
@@ -89,7 +89,10 @@ def _groom(gateway, monkeypatch, home, phone=None):
                                 phone=phone)
 
 
-def _command(gateway, monkeypatch, home) -> int:
+def _command(gateway, monkeypatch, home, phone=None) -> int:
+    # The real alerter shells out through the same subprocess.run the fake Gateway replaces
+    # (PowerShell on Windows), and would notify whoever runs the tests.
+    monkeypatch.setattr(megaphone, "Megaphone", lambda: phone or Phone())
     monkeypatch.setattr(sessions_groom.subprocess, "run", gateway)
     monkeypatch.setattr(sessions_groom, "_resolve_binary", lambda name="openclaw": "openclaw")
     monkeypatch.setenv("HOME", str(home))
@@ -136,5 +139,8 @@ def test_a_refused_chat_never_fails_the_job(monkeypatch, tmp_path):
     """La classe del guasto, qualunque sia la prossima causa del rifiuto."""
     gateway = Gateway([_idle("agent:main:refused", 900_000)])
 
-    assert _command(gateway, monkeypatch, tmp_path) == 0
+    phone = Phone()
+
+    assert _command(gateway, monkeypatch, tmp_path, phone) == 0
     assert gateway.compactions == ["agent:main:refused"]
+    assert len(phone.alerts) == 1
