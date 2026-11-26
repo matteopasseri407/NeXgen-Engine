@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [3.1.3] - 2026-11-26
+
 ### Fixed
 
 - OpenClaw: `nexgen openclaw groom` no longer tries to compact sessions OpenClaw has archived. From 2026.11.10 `sessions list` returns them without saying they are archived and `sessions.compact` refuses them, so every hourly run failed and the scheduler switched the job off after ten failures. The groom now reads the archived keys read-only from each agent's SQLite store
