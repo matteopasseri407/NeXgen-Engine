@@ -326,7 +326,7 @@ def _identity_and_secret_checks(run, doc: Doctor) -> None:
     run("identity.agent_self_metadata", lambda: check_agent_self_metadata(vault))
     run("identity.native_memory_boundary", lambda: check_native_memory_boundary(home))
     run("bootstrap.rules_guard", lambda: check_required_rules(vault, engine_root))
-    run("env.tokens_in_env", lambda: check_tokens_in_env(vault))
+    run("env.tokens_in_env", lambda: check_tokens_in_env(vault, home))
     run("security.secrets_materialized", lambda: check_secrets_materialized(home, vault))
     run("security.leak_patterns_twin", lambda: check_leak_patterns_twin(vault, engine_root))
     # Desktop apps that share a config with their CLI.

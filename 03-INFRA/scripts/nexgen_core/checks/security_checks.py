@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 from nexgen_core.config import load_mcp_manifest
 from nexgen_core.deposit_env import read_deposit
 from nexgen_core.i18n import t
 from nexgen_core.mcp_placement import CLIS, DIRECT, place
+from nexgen_core.openclaw.setup_service_env import SERVICE_ENV_COPY
+from nexgen_core.paths import openclaw_config, resolve_home
 from nexgen_core.report import CheckOutcome, Severity
 from nexgen_core.tools.required_rules import DEFAULT_RULES, missing_signatures
 
@@ -89,8 +92,44 @@ def _is_http_server(srv: object) -> bool:
     return srv.get("transport") == "http" or bool(srv.get("url"))
 
 
-def check_tokens_in_env(vault_data: Path) -> CheckOutcome:
-    """Tokens for HTTP servers with bearer auth must be set in env.
+def _openclaw_env_carries(name: str, home: Path | None) -> bool:
+    """Whether the gateway's own environment files carry this token.
+
+    The engine writes them (`setup_service_env`): `$OPENCLAW_STATE_DIR/.env` and the
+    copy the systemd unit loads. A doctor started from a shell that never exported the
+    token is not looking at the environment the gateway starts with, and the value is
+    read only to know it is there, never printed.
+    """
+    state_dir = openclaw_config(resolve_home(home)).parent
+    for filename in (".env", SERVICE_ENV_COPY):
+        try:
+            text = (state_dir / filename).read_text(encoding="utf-8")
+        except OSError:  # nexgen: allow reason="a machine without OpenClaw has no such file, and has nothing to say about a token the gateway would carry"
+            continue
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, _, value = stripped.partition("=")
+            if key.strip() == name and value.strip().strip('"').strip("'").strip():
+                return True
+    return False
+
+
+def _token_present(srv: dict[str, Any], env_name: str, home: Path | None) -> bool:
+    """Whether one active server's bearer token is somewhere this machine gives it from."""
+    if os.environ.get(env_name):
+        return True
+    # Behind the gateway the gateway finds the token in the secrets deposit; direct shell CLIs need os.environ.
+    # OpenClaw is excluded: direct servers read its daemon/.env rather than the shell, checked by openclaw doctor.
+    behind_gateway = all(place(srv, cli).kind != DIRECT for cli in CLIS if cli != "openclaw")
+    if behind_gateway and read_deposit().get(env_name):
+        return True
+    return place(srv, "openclaw").mounted and _openclaw_env_carries(env_name, home)
+
+
+def check_tokens_in_env(vault_data: Path, home: Path | None = None) -> CheckOutcome:
+    """Tokens for HTTP servers with bearer auth must be set in env, or where the gateway keeps them.
 
     Ported from the "Tokens in env" section of the release's doctor. The
     rule isn't "every token must always exist", but "a server the user has
@@ -98,6 +137,10 @@ def check_tokens_in_env(vault_data: Path) -> CheckOutcome:
     checks it) must have its token in env". A server that isn't enabled, by
     `require_env` or by `enabled: false`, is a choice, not an error: the
     renderer doesn't mount it at all, so its token isn't missing.
+
+    `home` is the machine whose OpenClaw environment is read: a server OpenClaw
+    mounts is given its token by the gateway, which starts from that file, not from
+    the shell that runs the doctor.
     """
     manifest_path = vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
     if not manifest_path.is_file():
@@ -129,12 +172,7 @@ def check_tokens_in_env(vault_data: Path) -> CheckOutcome:
         req_env = srv.get("require_env")
         if req_env and not os.environ.get(req_env):
             continue
-        if os.environ.get(env_name):
-            continue
-        # Behind the gateway the gateway finds the token in the secrets deposit; direct shell CLIs need os.environ.
-        # OpenClaw is excluded: direct servers read its daemon/.env rather than the shell, checked by openclaw doctor.
-        behind_gateway = all(place(srv, cli).kind != DIRECT for cli in CLIS if cli != "openclaw")
-        if behind_gateway and read_deposit().get(env_name):
+        if _token_present(srv, env_name, home):
             continue
         missing.append(f"{name} (requires {env_name})")
 

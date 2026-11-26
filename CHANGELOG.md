@@ -17,6 +17,7 @@ of any engine release.
 ### Fixed
 
 - OpenClaw: `nexgen openclaw groom` now raises a megaphone alert when OpenClaw will not say which chats exist, and exits 0 once that alert was delivered (or was already sent inside its debounce window). A gateway that is briefly unreachable no longer lets the scheduler switch the hourly job off after ten failures; when nothing can carry the alert it still exits 1, `--dry-run` still alerts nobody and exits 1, and the failed run is recorded for the doctor
+- Doctor: `env.tokens_in_env` now also looks in the OpenClaw gateway's own environment files (`$OPENCLAW_STATE_DIR/.env` and the unit's `gateway.systemd.env`) for a server OpenClaw mounts, so a token the gateway starts with is not reported missing just because the doctor's shell never exported it. The value is never read out or printed
 
 ## [3.1.4] - 2026-11-26
 
