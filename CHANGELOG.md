@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [3.1.4] - 2026-11-26
+
 ### Fixed
 
 - OpenClaw: a chat OpenClaw refuses to compact no longer fails the whole `nexgen openclaw groom` run, so one chat cannot get the hourly job switched off. The run raises the stalled-queue alert when no due chat gets through, and exits 1 only when the sessions cannot be listed
