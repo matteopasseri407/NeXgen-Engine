@@ -193,3 +193,21 @@ def test_a_job_bigger_than_one_pid_is_read_whole():
         jobs.terminate(name, [])
         for child in children:
             child.kill()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="il job object esiste solo su Windows")
+def test_a_pid_windows_rounds_down_never_adopts_the_process_it_lands_on():
+    """`OpenProcess(4321)` apre il 4320: un pid finto non deve tirare nel job il processo di un altro."""
+    name = jobs.job_name("prova", f"arrotondato-{os.getpid()}")
+    child = subprocess.Popen(
+        SLEEPER, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        assert child.pid % 4 == 0, "Windows assegna pid multipli di 4"
+        assert jobs.adopt(name, child.pid + 1) == ""
+        ended = jobs.terminate(name, [])
+        assert child.pid not in ended["members"]
+        assert child.poll() is None, "il processo vero non è stato toccato"
+    finally:
+        jobs.terminate(name, [])
+        child.kill()
