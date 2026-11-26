@@ -41,8 +41,9 @@ _EXTENDED_LIMIT_INFORMATION = 9
 _BASIC_PROCESS_ID_LIST = 3
 #: `JOB_OBJECT_ALL_ACCESS`: a later command ends a job this one created and closed.
 _JOB_OBJECT_ALL_ACCESS = 0x1F001F
-#: `PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_DUP_HANDLE`: assign, and hand the child a handle.
-_PROCESS_ADOPT = 0x0100 | 0x0001 | 0x0040
+#: `PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_DUP_HANDLE | PROCESS_QUERY_LIMITED_INFORMATION`:
+#: assign, hand the child a handle, and read back which process was really opened.
+_PROCESS_ADOPT = 0x0100 | 0x0001 | 0x0040 | 0x1000
 #: `DUPLICATE_SAME_ACCESS`: the child gets the job handle with the access this one has.
 _DUPLICATE_SAME_ACCESS = 0x00000002
 #: What the kernel answers when the buffer of a query is too small for the job.
@@ -127,6 +128,8 @@ def _declare(kernel) -> None:
     kernel.OpenProcess.restype = _HANDLE
     kernel.OpenProcess.argtypes = [_DWORD, ctypes.c_int, _DWORD]
     kernel.GetCurrentProcess.restype = _HANDLE
+    kernel.GetProcessId.restype = _DWORD
+    kernel.GetProcessId.argtypes = [_HANDLE]
     kernel.DuplicateHandle.restype = ctypes.c_int
     kernel.DuplicateHandle.argtypes = [
         _HANDLE, _HANDLE, _HANDLE, ctypes.POINTER(_HANDLE), _DWORD, ctypes.c_int, _DWORD,
@@ -167,6 +170,10 @@ def adopt(name: str, pid: int | None) -> str:
         return ""
     handle = _create(name)
     process = _kernel32.OpenProcess(_PROCESS_ADOPT, False, int(pid))
+    if process and _kernel32.GetProcessId(process) != int(pid):
+        # Windows drops a pid's two low bits: 4321 opens 4320, someone else's process.
+        _close(process)
+        process = None
     if not process:
         _close(handle)
         return ""
