@@ -62,6 +62,7 @@ from nexgen_core.openclaw.groom_lines import (
     preview_lines,
 )
 from nexgen_core.openclaw.groom_policy import IDLE_MIN_TOKENS, IDLE_SECONDS, plan_groom, priority, unconfirmable
+from nexgen_core.openclaw.sessions_archived import drop_archived
 from nexgen_core.openclaw.sessions_blocked import askable, state_dir_of
 
 if TYPE_CHECKING:
@@ -368,13 +369,15 @@ def groom(
 
     binary = openclaw or _resolve_binary()
     moment = now_ms if now_ms is not None else (clock or _time.time)() * 1000
-    entries = list_sessions(binary)
+    state_dir = state_dir_of(home)
+    # An archived session is not a chat: 2026.11.10 lists it without saying so and refuses to compact it.
+    entries = drop_archived(list_sessions(binary), state_dir)
     memory = groom_memory.load_memory(home)
     # Taken before the plugin fix, because forgetting what a repaired backend was
     # refused for is a change this run has to save, not one to compare away.
     before = dict(memory)
     planned, limit, blocked, stranded = _decide(
-        entries, moment, memory, state_dir_of(home), env, dry_run, emit,
+        entries, moment, memory, state_dir, env, dry_run, emit,
     )
     if dry_run:
         return GroomReport(lines=_preview(entries, planned, limit, moment, blocked, emit), failed=0)
