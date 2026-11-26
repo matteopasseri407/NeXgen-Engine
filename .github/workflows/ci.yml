@@ -583,7 +583,7 @@ jobs:
         env:
           NEXGEN_REQUIRE_OPENCLAW: "1"
         working-directory: 03-INFRA/agent-universal-layer/tests
-        run: python3 -m pytest test_nexgen_openclaw_contract.py -v
+        run: python3 -m pytest test_nexgen_openclaw_contract.py test_nexgen_openclaw_contract_groom.py -v
 
   e2e-install:
     # A clean Ubuntu 24.04 installs the engine (2026-10-30). The first run of

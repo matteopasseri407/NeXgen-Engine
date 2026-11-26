@@ -5,8 +5,10 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
 from nexgen_core.openclaw import agy_compaction, groom_memory, groom_run, sessions_groom, sessions_rows
 from nexgen_core.openclaw.groom_policy import HARD_TOKENS, IDLE_MIN_TOKENS, IDLE_SECONDS, plan_groom
+from nexgen_core.openclaw.sessions_archived import UnreadableSessions
 from nexgen_core.openclaw.sessions_blocked import blocked_runtimes
 
 NOW = 1_800_000_000_000
@@ -326,6 +328,8 @@ class FakeGateway:
         self.argvs: list[list[str]] = []
 
     def __call__(self, argv, **_kwargs):
+        if argv[1] == "gateway":
+            return subprocess.CompletedProcess(argv, 0, '{"sessions": []}', "")
         if argv[2] == "list":
             if self.listing is not None:
                 return subprocess.CompletedProcess(argv, *self.listing)
@@ -676,7 +680,8 @@ def test_an_unreadable_listing_does_not_erase_what_is_remembered(monkeypatch, tm
     run_groom(gateway, monkeypatch, tmp_path)
 
     gateway.listing = (1, "", "Error: the gateway is not reachable")
-    run_groom(gateway, monkeypatch, tmp_path)
+    with pytest.raises(UnreadableSessions):
+        run_groom(gateway, monkeypatch, tmp_path)
 
     assert "agent:main:main" in load_memory(home=tmp_path)
 
@@ -705,7 +710,7 @@ def test_an_attempt_that_times_out_is_a_failure_and_is_retried_later(monkeypatch
     assert gateway.compactions == ["agent:main:main", "agent:main:main"]
 
 
-def test_the_command_fails_only_when_an_attempt_really_failed(monkeypatch, tmp_path):
+def test_the_command_fails_only_when_the_sessions_cannot_be_listed(monkeypatch, tmp_path):
     from argparse import Namespace
 
     from nexgen_core.cli import openclaw_cmds
@@ -718,9 +723,11 @@ def test_the_command_fails_only_when_an_attempt_really_failed(monkeypatch, tmp_p
         return openclaw_cmds.cmd_groom(Namespace(dry_run=False))
 
     huge = session(totalTokens=HARD_TOKENS + 1)
-    assert exit_code([huge], (1, "", "The gateway refused the command."), "failed") == 1
+    assert exit_code([huge], (1, "", "The gateway refused the command."), "failed") == 0
     assert exit_code([huge], (1, "", "Error: Already compacted."), "already") == 0
     assert exit_code([], (0, "", ""), "nothing") == 0
+    monkeypatch.setattr(sessions_groom.subprocess, "run", FakeGateway([], listing=(1, "", "down")))
+    assert openclaw_cmds.cmd_groom(Namespace(dry_run=False)) == 1
 
 
 def test_a_real_run_writes_down_what_it_left_for_the_doctor(monkeypatch, tmp_path):

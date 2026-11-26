@@ -34,8 +34,10 @@ be asked to compact at all, so it is left alone and named by the doctor.
 The cap buys responsiveness from the gateway, not fairness: the queue is walked
 past a chat whose attempt failed, so one chat the gateway refuses cannot starve
 every other, and a failure that is not about quota waits `FAILED_BACKOFF_MS`
-before it is asked again. A run that leaves chats waiting and compacts none of
-them raises one alert, because the hourly job runs with `--no-deliver` and its
+before it is asked again. A refused chat never fails the run: the scheduler
+switches a job off after ten failed runs, and one chat must not cost every other
+its guard. A run fails only when the sessions cannot be listed. A run that gets
+no due chat through raises one alert, because the hourly job runs with `--no-deliver` and its
 output otherwise reaches nobody; only the command hands in that channel, so
 nothing else alerts on the policy's behalf. What the run did is also written down
 (`groom_run`) for the doctor, which cannot ask the scheduler for it.
@@ -62,7 +64,8 @@ from nexgen_core.openclaw.groom_lines import (
     preview_lines,
 )
 from nexgen_core.openclaw.groom_policy import IDLE_MIN_TOKENS, IDLE_SECONDS, plan_groom, priority, unconfirmable
-from nexgen_core.openclaw.sessions_archived import drop_archived
+from nexgen_core.openclaw.node_cli import launch_argv
+from nexgen_core.openclaw.sessions_archived import drop_archived, read_listing
 from nexgen_core.openclaw.sessions_blocked import askable, state_dir_of
 
 if TYPE_CHECKING:
@@ -110,20 +113,22 @@ def _resolve_binary(name: str = "openclaw") -> str:
 
 
 def _run(args: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+    # Windows' npm shim is a batch file, and cmd.exe re-reads the quotes of a JSON argument.
+    if args[0].lower().endswith(".cmd"):
+        args = launch_argv(args) or args
     return subprocess.run(
         args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout
     )
 
 
 def list_sessions(openclaw: str | None = None, timeout: int = 120) -> list[dict[str, Any]]:
-    """Every stored session, across agents, as the CLI reports it."""
+    """Every stored session, across agents, as the CLI reports it.
+
+    A listing that fails raises: read as empty it would say "nothing to compact" for ever.
+    """
     binary = openclaw or _resolve_binary()
     proc = _run([binary, "sessions", "list", "--all-agents", "--json", "--limit", "all"], timeout)
-    if proc.returncode != 0 or not proc.stdout.strip():
-        return []
-    payload = json.loads(proc.stdout)
-    sessions = payload.get("sessions", payload) if isinstance(payload, dict) else payload
-    return list(sessions) if isinstance(sessions, list) else []
+    return list(read_listing(proc, "sessions list")["sessions"])
 
 
 def _classify(proc: subprocess.CompletedProcess[str]) -> Outcome:
@@ -285,6 +290,19 @@ def _compact_queue(
     return lines, attempts, deferred
 
 
+def _failures(
+    attempts: list[tuple[Decision, Outcome]], deferred: list[Decision], phone: Megaphone | None
+) -> int:
+    """How many attempts failed; says so aloud when chats were due and none got through.
+
+    A refusal does not fail the job, so this alert is how it is heard.
+    """
+    failed = sum(1 for _, outcome in attempts if outcome.state == groom_memory.FAILED)
+    if phone is not None and failed == len(attempts) and (failed or deferred):
+        alert_stalled(failed + len(deferred), phone)
+    return failed
+
+
 def _preview(
     entries: list[dict[str, Any]],
     planned: list[Decision],
@@ -371,7 +389,7 @@ def groom(
     moment = now_ms if now_ms is not None else (clock or _time.time)() * 1000
     state_dir = state_dir_of(home)
     # An archived session is not a chat: 2026.11.10 lists it without saying so and refuses to compact it.
-    entries = drop_archived(list_sessions(binary), state_dir)
+    entries = drop_archived(list_sessions(binary), binary, _run)
     memory = groom_memory.load_memory(home)
     # Taken before the plugin fix, because forgetting what a repaired backend was
     # refused for is a change this run has to save, not one to compare away.
@@ -394,11 +412,10 @@ def groom(
         msg = leftover_message(len(deferred))
         lines.append(msg)
         emit(msg)
-        if phone is not None and not any(outcome.state != groom_memory.FAILED for _, outcome in attempts):
-            alert_stalled(len(deferred), phone)
+    failed = _failures(attempts, deferred, phone)
     _remember_run(memory, entries, attempts, _sessions_after(binary, attempts), moment)
     groom_memory.save_changed(memory, before, home)
     groom_run.save(groom_run.record(
         at_ms=moment, cap=limit, waiting=len(deferred), attempts=attempts, stranded=stranded,
     ), home)
-    return GroomReport(lines=lines, failed=sum(1 for _, o in attempts if o.state == groom_memory.FAILED))
+    return GroomReport(lines=lines, failed=failed)
