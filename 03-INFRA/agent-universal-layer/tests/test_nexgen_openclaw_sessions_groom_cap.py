@@ -60,6 +60,8 @@ class FakeGateway:
 
     def __call__(self, argv, **_kwargs):
         self.calls.append(list(argv))
+        if argv[1] == "gateway":
+            return subprocess.CompletedProcess(argv, 0, '{"sessions": []}', "")
         if len(argv) > 2 and argv[2] == "list":
             if self.listing is not None:
                 return subprocess.CompletedProcess(argv, *self.listing)
@@ -247,7 +249,7 @@ def test_a_stalled_queue_raises_one_alert(monkeypatch, tmp_path):
     run_groom(gateway, monkeypatch, tmp_path, phone=phone)
 
     assert [alert["alert_key"] for alert in phone.alerts] == ["openclaw:groom:stalled"]
-    assert phone.alerts[0]["message"] == "The last tidy-up closed none of them. Chats still waiting: 1."
+    assert phone.alerts[0]["message"] == "The last tidy-up closed none of them. Chats still waiting: 3."
 
 
 def test_a_run_that_compacted_something_raises_no_alert(monkeypatch, tmp_path):

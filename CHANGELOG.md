@@ -10,6 +10,18 @@ of any engine release.
 
 ## [Unreleased]
 
+## [3.1.4] - 2026-11-26
+
+### Fixed
+
+- OpenClaw: a chat OpenClaw refuses to compact no longer fails the whole `nexgen openclaw groom` run, so one chat cannot get the hourly job switched off. The run raises the stalled-queue alert when no due chat gets through, and exits 1 only when the sessions cannot be listed
+- OpenClaw: a session listing that fails is an error. It used to read as "No agent chat needs compacting"
+- OpenClaw: archived sessions are asked of the Gateway (`sessions.list` with `archived: true`) instead of being read from each agent's SQLite store
+
+### Added
+
+- CI: `openclaw-contract` now starts a real Gateway and checks that every chat the groom would ask can be asked to compact, on the pinned OpenClaw and nightly on the latest. A change of behaviour with the same commands and fields no longer passes unseen
+
 ## [3.1.3] - 2026-11-26
 
 ### Fixed

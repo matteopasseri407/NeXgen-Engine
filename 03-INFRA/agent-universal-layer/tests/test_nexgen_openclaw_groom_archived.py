@@ -1,19 +1,18 @@
-"""Il groom non chiede mai di compattare una sessione che OpenClaw ha archiviato.
+"""Il groom non chiede di compattare una sessione archiviata, e un rifiuto non gli spegne il job.
 
 nexgen: one-job reason="riprodurre il guasto di OpenClaw 2026.11.10: le archiviate nella lista, il rifiuto di compact, il job spento"
 
 Da 2026.11.10 `openclaw sessions list --all-agents --json` elenca anche le
-sessioni archiviate senza dirlo, e `sessions.compact` le rifiuta con
-"changed before compaction. Retry.": ogni giro falliva su una e lo scheduler
-ha spento il job dopo dieci. Lo store SQLite qui è vero, con lo schema letto
-sulla 2026.11.10; il gateway è finto.
+sessioni archiviate senza dirlo, e `sessions.compact` le rifiuta. Quali siano
+lo dice il Gateway. Qui il Gateway è finto; il comportamento vero lo giudica
+`test_nexgen_openclaw_contract_groom.py`.
 """
 from __future__ import annotations
 
 import json
-import sqlite3
 import subprocess
 import sys
+from argparse import Namespace
 from pathlib import Path
 
 import pytest
@@ -22,16 +21,14 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core import i18n  # noqa: E402
+from nexgen_core import i18n, megaphone  # noqa: E402
+from nexgen_core.cli import openclaw_cmds  # noqa: E402
 from nexgen_core.openclaw import sessions_archived, sessions_groom  # noqa: E402
 from nexgen_core.openclaw.groom_policy import IDLE_SECONDS  # noqa: E402
 
 NOW = 200_000.0 * 1000.0
 ARCHIVED = "agent:capo:parity-vecchia"
 LIVE = "agent:main:main"
-#: La risposta di `openclaw sessions compact --json` 2026.11.10 su una sessione archiviata.
-REFUSAL = json.dumps({"ok": False, "error": {
-    "code": "INVALID_REQUEST", "message": f"Session {ARCHIVED} changed before compaction. Retry."}})
 
 
 @pytest.fixture(autouse=True)
@@ -41,17 +38,6 @@ def _english_lines():
     i18n.set_language(None)
 
 
-def _store(home: Path, agent: str, rows: list[tuple[str, int | None]], *, schema: str = "") -> Path:
-    """Lo store di un agente dove OpenClaw lo tiene, con le sole colonne che il filtro legge."""
-    path = home / ".openclaw" / "agents" / agent / "agent" / "openclaw-agent.sqlite"
-    path.parent.mkdir(parents=True)
-    with sqlite3.connect(path) as db:
-        db.execute(schema or "CREATE TABLE session_nodes (session_key TEXT PRIMARY KEY, archived_at INTEGER)")
-        if not schema:
-            db.executemany("INSERT INTO session_nodes VALUES (?, ?)", rows)
-    return path
-
-
 def _idle(key: str, tokens: int) -> dict:
     agent = key.split(":")[1]
     return {"key": key, "agentId": agent, "totalTokens": tokens, "updatedAt": NOW,
@@ -59,73 +45,102 @@ def _idle(key: str, tokens: int) -> dict:
 
 
 class Gateway:
-    """La CLI come la vede il groom: elenca anche le archiviate e rifiuta di compattarle."""
+    """La CLI come la vede il groom: elenca tutto, dice a parte le archiviate e le rifiuta."""
 
-    def __init__(self, sessions):
+    def __init__(self, sessions, archived=(), *, page=1000, broken=""):
         self.sessions = sessions
+        self.archived = list(archived)
+        self.page = page
+        self.broken = broken
         self.compactions: list[str] = []
 
     def __call__(self, argv, **_kwargs):
-        if argv[2] == "list":
+        verb = argv[1] if argv[1] == "gateway" else argv[2]
+        if verb == self.broken:
+            return subprocess.CompletedProcess(argv, 1, "", "gateway closed")
+        if verb == "list":
             return subprocess.CompletedProcess(argv, 0, json.dumps({"sessions": self.sessions}), "")
+        if verb == "gateway":
+            offset = json.loads(argv[argv.index("--params") + 1])["offset"]
+            end = offset + self.page
+            rows = [{"key": key} for key in self.archived[offset:end]]
+            more = end < len(self.archived)
+            answer = {"sessions": rows, "hasMore": more, "nextOffset": end if more else None}
+            return subprocess.CompletedProcess(argv, 0, json.dumps(answer), "")
         self.compactions.append(argv[3])
-        if argv[3] == ARCHIVED:
-            return subprocess.CompletedProcess(argv, 1, REFUSAL, "")
+        if argv[3] in self.archived or argv[3].endswith("refused"):
+            refusal = {"ok": False, "error": {"message": f"Session {argv[3]} changed before compaction. Retry."}}
+            return subprocess.CompletedProcess(argv, 1, json.dumps(refusal), "")
         return subprocess.CompletedProcess(argv, 0, '{"ok": true, "compacted": true}', "")
 
 
-def _groom(gateway, monkeypatch, home):
+class Phone:
+    def __init__(self):
+        self.alerts: list[dict] = []
+
+    def send_alert(self, **alert):
+        self.alerts.append(alert)
+        return True
+
+
+def _groom(gateway, monkeypatch, home, phone=None):
     monkeypatch.setattr(sessions_groom.subprocess, "run", gateway)
-    return sessions_groom.groom(openclaw="openclaw", now_ms=NOW, emit=lambda _line: None, home=home)
+    return sessions_groom.groom(openclaw="openclaw", now_ms=NOW, emit=lambda _line: None, home=home,
+                                phone=phone)
 
 
-def test_an_archived_session_is_never_asked_and_the_run_does_not_fail(monkeypatch, tmp_path):
-    _store(tmp_path, "capo", [(ARCHIVED, 1_700_000_000_000)])
-    _store(tmp_path, "main", [(LIVE, None)])
-    gateway = Gateway([_idle(ARCHIVED, 900_000), _idle(LIVE, 200_000)])
+def _command(gateway, monkeypatch, home, phone=None) -> int:
+    # The real alerter shells out through the same subprocess.run the fake Gateway replaces
+    # (PowerShell on Windows), and would notify whoever runs the tests.
+    monkeypatch.setattr(megaphone, "Megaphone", lambda: phone or Phone())
+    monkeypatch.setattr(sessions_groom.subprocess, "run", gateway)
+    monkeypatch.setattr(sessions_groom, "_resolve_binary", lambda name="openclaw": "openclaw")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    return openclaw_cmds.cmd_groom(Namespace(dry_run=False))
+
+
+def test_an_archived_session_is_never_asked(monkeypatch, tmp_path):
+    gateway = Gateway([_idle(ARCHIVED, 900_000), _idle(LIVE, 200_000)], [ARCHIVED])
 
     report = _groom(gateway, monkeypatch, tmp_path)
 
     assert gateway.compactions == [LIVE], "la grande archiviata passava davanti e veniva rifiutata"
-    assert report.failed == 0, "un giro fallito per un'archiviata è ciò che ha spento il job"
+    assert report.failed == 0
 
 
-def test_without_the_filter_the_same_listing_is_the_outage(monkeypatch, tmp_path):
-    """La prova che il test sopra riproduce il guasto e non un caso più comodo."""
-    monkeypatch.setattr(sessions_groom, "drop_archived", lambda entries, state_dir: list(entries))
-    gateway = Gateway([_idle(ARCHIVED, 900_000), _idle(LIVE, 200_000)])
+def test_every_page_of_archived_sessions_is_read(monkeypatch):
+    keys = [f"agent:capo:old-{number}" for number in range(5)]
+    monkeypatch.setattr(sessions_groom.subprocess, "run", Gateway([], keys, page=2))
 
-    report = _groom(gateway, monkeypatch, tmp_path)
-
-    assert gateway.compactions[0] == ARCHIVED
-    assert report.failed == 1, "un fallimento basta all'exit code 1 che lo scheduler conta"
+    assert sessions_archived.archived_keys("openclaw", sessions_groom._run) == set(keys)
 
 
-def test_the_archived_keys_come_from_every_agent_store(tmp_path):
-    _store(tmp_path, "capo", [(ARCHIVED, 1), ("agent:capo:main", None)])
-    _store(tmp_path, "main", [("agent:main:parity-2", 2), (LIVE, None)])
+@pytest.mark.parametrize("broken", ["list", "gateway"])
+def test_a_listing_that_cannot_be_read_fails_the_run_instead_of_saying_nothing_to_do(
+    broken, monkeypatch, tmp_path, capsys
+):
+    gateway = Gateway([_idle(LIVE, 200_000)], broken=broken)
 
-    found = sessions_archived.archived_keys(tmp_path / ".openclaw")
-
-    assert found == {ARCHIVED, "agent:main:parity-2"}
-
-
-def test_a_missing_store_or_state_keeps_the_listing_whole(tmp_path):
-    rows = [_idle(LIVE, 1)]
-    assert sessions_archived.drop_archived(rows, None) == rows
-    assert sessions_archived.drop_archived(rows, tmp_path / "nessuna") == rows
+    assert _command(gateway, monkeypatch, tmp_path) == 1
+    assert gateway.compactions == []
+    assert "gateway closed" in capsys.readouterr().err
 
 
-def test_a_store_of_another_shape_keeps_the_listing_whole(tmp_path):
-    """Una release che rinomina la colonna non nasconde niente: torna il comportamento di prima."""
-    _store(tmp_path, "capo", [], schema="CREATE TABLE session_nodes (key TEXT)")
-    rows = [_idle(ARCHIVED, 1)]
-    assert sessions_archived.drop_archived(rows, tmp_path / ".openclaw") == rows
+def test_a_refused_chat_is_heard(monkeypatch, tmp_path):
+    phone = Phone()
+
+    report = _groom(Gateway([_idle("agent:main:refused", 900_000)]), monkeypatch, tmp_path, phone=phone)
+
+    assert report.failed == 1 and len(phone.alerts) == 1
 
 
-def test_the_store_is_opened_read_only(tmp_path):
-    store = _store(tmp_path, "capo", [(ARCHIVED, 1)])
-    before = store.read_bytes()
-    sessions_archived.archived_keys(tmp_path / ".openclaw")
-    assert store.read_bytes() == before
-    assert not list(store.parent.glob("*-journal")) and not list(store.parent.glob("*-wal"))
+def test_a_refused_chat_never_fails_the_job(monkeypatch, tmp_path):
+    """La classe del guasto, qualunque sia la prossima causa del rifiuto."""
+    gateway = Gateway([_idle("agent:main:refused", 900_000)])
+
+    phone = Phone()
+
+    assert _command(gateway, monkeypatch, tmp_path, phone) == 0
+    assert gateway.compactions == ["agent:main:refused"]
+    assert len(phone.alerts) == 1

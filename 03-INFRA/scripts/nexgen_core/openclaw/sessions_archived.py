@@ -1,62 +1,69 @@
 """Which stored sessions OpenClaw has archived, so the groom never asks to compact one.
 
-One job: read the archived session keys out of every agent's own SQLite store,
-read-only, and drop those rows from a session listing.
+One job: ask the Gateway for its archived sessions and drop those rows from a
+session listing.
 
 Why this exists: from 2026.11.10 `openclaw sessions list --all-agents --json`
-returns archived sessions too (it reads `session_nodes` without the
-`archived_at IS NULL` filter) but its JSON row carries neither `archived` nor
-`archivedAt`. The groom took them for idle chats, and `sessions.compact` refuses
-every archived session with "changed before compaction. Retry.", so each run
-failed on one and the scheduler switched the hourly job off after ten.
+returns archived sessions too, with no field that says so, and `sessions.compact`
+refuses every one of them. The CLI listing is still the one the groom reads,
+because the Gateway's `sessions.list` withholds the token counter of a chat whose
+count is stale, the large chat that most needs compacting. Membership is asked
+where OpenClaw states it: `sessions.list` with `{"archived": true}`.
 
-The CLI offers no flag to leave them out, so the fact is read where OpenClaw
-keeps it: `<state>/agents/<agent>/agent/openclaw-agent.sqlite`, table
-`session_nodes`, whose `session_key` is the same `agent:<id>:...` key the CLI
-prints. A store that is missing, locked, or shaped differently by a later
-release adds nothing: the listing is then kept whole, which is the old
-behaviour, never a guess.
+An answer that cannot be read raises `UnreadableSessions`. Keeping the whole
+listing instead would ask for archived chats again, without anybody knowing.
 """
 from __future__ import annotations
 
-import sqlite3
-from collections.abc import Iterable
-from pathlib import Path
+import json
+import subprocess
+from collections.abc import Callable, Iterable
 from typing import Any
 
-#: Where each agent's store lives under OpenClaw's state folder.
-STORE_GLOB = "agents/*/agent/openclaw-agent.sqlite"
-_QUERY = "SELECT session_key FROM session_nodes WHERE archived_at IS NOT NULL"
+#: Rows asked for per page; the Gateway says `hasMore` when there are others.
+PAGE = 1000
+_RPC_TIMEOUT_MS = 60_000
+
+#: `(argv, timeout) -> CompletedProcess`: the groom's own executor.
+Run = Callable[[list[str], int], "subprocess.CompletedProcess[str]"]
 
 
-def archived_keys(state_dir: Path | None) -> frozenset[str]:
-    """Every session key some agent's store marks as archived; empty when none can be read."""
-    if state_dir is None:
-        return frozenset()
+class UnreadableSessions(ValueError):
+    """OpenClaw did not say which sessions there are, so a run cannot decide anything."""
+
+
+def read_listing(proc: subprocess.CompletedProcess[str], asked: str) -> dict[str, Any]:
+    """The JSON object a listing command printed, with its `sessions` list."""
+    try:
+        payload = json.loads(proc.stdout or "") if proc.returncode == 0 else None
+    except ValueError:  # nexgen: allow reason="reported just below as an unreadable listing"
+        payload = None
+    if not isinstance(payload, dict) or not isinstance(payload.get("sessions"), list):
+        said = (proc.stderr or proc.stdout or "").strip().splitlines()
+        raise UnreadableSessions(f"{asked}: {said[-1] if said else f'exit {proc.returncode}, no output'}")
+    return payload
+
+
+def archived_keys(binary: str, run: Run, timeout: int = 120) -> frozenset[str]:
+    """Every session key the Gateway lists as archived, across agents and pages."""
     found: set[str] = set()
-    for store in sorted(Path(state_dir).glob(STORE_GLOB)):
-        found.update(_store_archived(store))
-    return frozenset(found)
+    offset = 0
+    while True:
+        params = json.dumps({"archived": True, "limit": PAGE, "offset": offset})
+        proc = run([binary, "gateway", "call", "sessions.list", "--params", params, "--json",
+                    "--timeout", str(_RPC_TIMEOUT_MS)], timeout)
+        payload = read_listing(proc, "gateway call sessions.list")
+        found.update(str(row["key"]) for row in payload["sessions"] if row.get("key"))
+        following = payload.get("nextOffset")
+        if not payload.get("hasMore") or not isinstance(following, int) or following <= offset:
+            return frozenset(found)
+        offset = following
 
 
-def _store_archived(store: Path) -> set[str]:
-    """The archived keys of one store, read without ever writing to it."""
-    try:
-        connection = sqlite3.connect(f"{store.as_uri()}?mode=ro", uri=True, timeout=2.0)
-    except sqlite3.Error:  # nexgen: allow reason="a store that cannot be opened hides nothing: the listing stays whole"
-        return set()
-    try:
-        return {str(row[0]) for row in connection.execute(_QUERY) if row[0]}
-    except sqlite3.Error:  # nexgen: allow reason="a locked store or another schema hides nothing: the listing stays whole"
-        return set()
-    finally:
-        connection.close()
-
-
-def drop_archived(entries: Iterable[dict[str, Any]], state_dir: Path | None) -> list[dict[str, Any]]:
+def drop_archived(entries: Iterable[dict[str, Any]], binary: str, run: Run) -> list[dict[str, Any]]:
     """The listing without the sessions OpenClaw has archived."""
     rows = list(entries)
-    archived = archived_keys(state_dir)
-    if not archived:
+    if not rows:
         return rows
+    archived = archived_keys(binary, run)
     return [entry for entry in rows if str(entry.get("key") or "") not in archived]
