@@ -10,6 +10,11 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- `nexgen release ship` no longer merges on a pull request whose required checks have not all reported yet: `gh pr checks --required --watch` judged only the checks it could see, and a second after a push that was this machine's smoke alone, so the merge hit the branch protection. Every required check must answer on the head being released
+- `nexgen release ship` waits for the required checks on the commit on main before it tags, even when the merge carries the tested tree. The release workflow judges that commit and gives up after fifteen minutes, and `engine-tests-windows` takes about twenty on main, so the first run of the v3.1.5 release workflow failed
+
 ## [3.1.5] - 2026-11-27
 
 ### Added

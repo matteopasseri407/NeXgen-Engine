@@ -394,17 +394,54 @@ def test_a_failing_local_smoke_is_recorded_and_nothing_is_merged(repo):
     assert not any(c[:3] == ("gh", "pr", "merge") for c in world.calls)
 
 
-def test_the_merge_that_carries_the_tested_tree_skips_the_wait_on_main(repo):
-    """GitHub tested the pull request's merge ref. When the merge on main carries that same
-    tree, `pr merge` produced what was tested and there is no second CI to wait for."""
+def test_the_merge_that_carries_the_tested_tree_still_waits_for_main_before_the_tag(repo):
+    """The release workflow judges the tagged commit on main, not the pull request.
+
+    v3.1.5: the merge carried the tested tree, so ship tagged at once; the workflow then
+    gave up after fifteen minutes on `engine-tests-windows`, which takes twenty on main.
+    Ship waits for main's required checks itself, so the workflow finds them answered.
+    """
     world = FakeWorld(repo)
-    world.ci_on_main = "failure"  # the run on main is red: nobody waits for it
     world.check_runs = {MERGED: [{"name": "test", "status": "completed", "conclusion": "failure"}]}
-    assert _shipper(repo, world).ship("minor") == "v2.14.0"
-    assert any(c[:2] == ("git", "push") and c[-1] == "v2.14.0" for c in world.calls)
-    assert not any("/check-runs" in " ".join(c) for c in world.calls), "the checks on main are not even asked for"
-    # The release workflow judges the tagged commit: this machine's proof is recorded there too.
+    with pytest.raises(ShipStop, match="failing required checks on main: test"):
+        _shipper(repo, world).ship("minor")
+    assert not any(c[:2] == ("git", "push") and c[-1] == "v2.14.0" for c in world.calls)
+    # This machine's proof is on the commit the workflow judges, since its tree is the tested one.
     assert any(f"statuses/{MERGED}" in " ".join(status) and "state=success" in status for status in world.statuses)
+
+
+def test_a_required_check_still_running_on_main_holds_the_tag(repo):
+    world = FakeWorld(repo)
+    answers = [[{"name": "test", "status": "in_progress", "conclusion": None}],
+               [{"name": "test", "status": "completed", "conclusion": "success"}]]
+    original = world.api
+
+    def api(url):
+        if url.endswith("/check-runs?per_page=100") and f"/{MERGED}/" in url:
+            return json.dumps({"check_runs": answers.pop(0) if len(answers) > 1 else answers[0]})
+        return original(url)
+
+    world.api = api
+    assert _shipper(repo, world).ship("minor") == "v2.14.0"
+    asked = [i for i, c in enumerate(world.calls) if f"/{MERGED}/check-runs" in " ".join(c)]
+    tagged = next(i for i, c in enumerate(world.calls) if c[:3] == ("git", "tag", "-s"))
+    assert len(asked) >= 2 and max(asked) < tagged
+
+
+def test_a_green_watch_before_the_required_checks_exist_does_not_merge(repo):
+    """v3.1.5: `gh pr checks --required --watch` judges only the required checks it can see.
+
+    A second after the push the new head carried this machine's smoke and nothing else, so
+    the CLI said green; the merge then hit the branch protection. Every required check has
+    to answer on the head being released before the merge.
+    """
+    world = FakeWorld(repo)
+    world.required_checks = ["test", "smoke-local"]
+    smoke = {"context": "smoke-local", "state": "SUCCESS"}
+    world.rollups = [[smoke], [smoke], [smoke, {"name": "test", "status": "COMPLETED", "conclusion": "FAILURE"}]]
+    with pytest.raises(ShipStop, match="test"):
+        _shipper(repo, world).ship("minor")
+    assert not any(c[:3] == ("gh", "pr", "merge") for c in world.calls)
 
 
 def test_a_merge_that_carries_another_tree_waits_for_the_checks_on_main(repo):

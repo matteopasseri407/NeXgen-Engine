@@ -196,10 +196,10 @@ class Shipper:
     def _required_checks(self) -> set[str] | None:
         """The checks main's branch protection requires, or None when GitHub will not say.
 
-        That list is the repository's own answer to "what may block a merge".
-        `engine-tests-windows` is not on it: it is slow and flaky, so CI reports it
-        without a release waiting for it. The rule itself lives in
-        `nexgen_core/release.py`, where release.yml reads the same one.
+        That list is the repository's own answer to "what may block a merge", and
+        whatever is on it (`engine-tests-windows` too, about twenty minutes) is waited
+        for. The rule itself lives in `nexgen_core/release_checks.py`, where
+        release.yml reads the same one.
         """
         return required_checks(self.repo, self.run)
 
@@ -290,8 +290,10 @@ class Shipper:
             if not ok:
                 raise ShipStop(self._step, detail)
             self.log(f"   {detail}")
-        else:
-            self._wait(lambda: self._checks_verdict(number, head), "the pull request checks")
+        # The CLI judges only the required checks it can already see: a moment after the
+        # push the head carries this machine's smoke and nothing else, and it says green
+        # (v3.1.5). Every required check must have answered on this very head.
+        self._wait(lambda: self._checks_verdict(number, head), "the pull request checks")
         tested = self._pull_request_tree(number)  # before the merge: that ref goes with it
         self._enter("merge")
         self._do("gh", "pr", "merge", str(number), "--merge", what="merge")
@@ -319,20 +321,18 @@ class Shipper:
         return commit_checks(self.repo, sha, self.run)
 
     def _wait_main_ci(self, sha: str, tested_tree: str | None = None) -> None:
-        """Wait for the required checks on main, unless that commit carries the tree the checks proved.
+        """Wait for the required checks on the commit on main, the one the tag will name.
 
-        GitHub tested the pull request's merge ref; `pr merge` creates that same
-        merge when main has not moved, so the checks carry over to the commit on
-        main and there is nothing left to wait for. A different tree means they do
-        not, and then the required checks on main are the only proof there is.
+        The release workflow judges that commit, not the pull request, and gives up
+        after fifteen minutes; `engine-tests-windows` takes about twenty on main, so
+        a tag cut at once failed its first run (v3.1.5). Waiting here means the
+        workflow finds every check answered.
         """
         if tested_tree and self._tree_of(sha) == tested_tree:
-            self.log("   the merge carries the tree the checks passed: nothing to wait for on main")
-            # The release workflow judges the tagged commit, not the pull request head:
-            # this machine's proof has to be on it too, or it waits for a status that
-            # never comes (v2.16.4). Same tree, same verdict.
+            self.log("   the merge carries the tree the checks passed")
+            # This machine's proof has to be on the tagged commit too, or the wait is for
+            # a status that never comes (v2.16.4). Same tree, same verdict.
             self._publish_status(sha, "success", "the pull request's tree, whose smoke passed on this machine")
-            return
         self._enter(f"CI on main {sha[:8]}")
         required = self._required_checks()
         if required:
