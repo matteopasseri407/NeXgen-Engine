@@ -12,6 +12,7 @@ import psutil
 import pytest
 
 from nexgen_local import supervision_reaper as reaper
+from nexgen_local import supervision_state as state
 
 _BASE_PYTHON = getattr(sys, "_base_executable", sys.executable)
 
@@ -160,6 +161,130 @@ def test_shared_server_child_is_spared(tmp_path, tracked_procs, monkeypatch):
     assert child_pid not in result["killed"]
     assert not _is_pid_alive(parent.pid)
     assert _is_pid_alive(child_pid)
+
+
+def test_signs_of_life_change_when_the_copy_changes(tmp_path):
+    """Un file scritto nella copia è un segno di vita, anche senza output del processo."""
+    folder = tmp_path / "copia"
+    folder.mkdir()
+    before = reaper.signs_of_life(os.getpid(), folder, [])
+
+    (folder / "resoconto.md").write_text("lavoro\n", encoding="utf-8")
+
+    assert reaper.signs_of_life(os.getpid(), folder, []) != before
+
+
+def test_a_turn_with_no_sign_of_life_is_stopped_for_idleness(tracked_procs):
+    """Una guardia che non vede muoversi niente chiude il turno e il suo albero, come alla scadenza."""
+    sleeper = tracked_procs.proc(
+        reaper._REAL_POPEN(
+            [_BASE_PYTHON, "-c", "import time; time.sleep(60)"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            **({"start_new_session": True} if os.name != "nt" else {}),
+        )
+    )
+    created = psutil.Process(sleeper.pid).create_time()
+
+    result = reaper.reap(
+        sleeper.pid, created, timeout_s=30, poll_s=0.1, grace_s=1.0,
+        idle_s=1.0, progress=lambda: 0, probe_s=0.05,
+    )
+
+    assert result["reason"] == reaper.IDLE_REASON
+    assert result["idle_s"] >= 1.0
+    assert not _is_pid_alive(sleeper.pid)
+
+
+def test_a_turn_that_keeps_moving_runs_until_its_timeout(tracked_procs):
+    """Finché i segni di vita cambiano, l'inattività non chiude il turno: lo chiude la scadenza."""
+    sleeper = tracked_procs.proc(
+        reaper._REAL_POPEN(
+            [_BASE_PYTHON, "-c", "import time; time.sleep(60)"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            **({"start_new_session": True} if os.name != "nt" else {}),
+        )
+    )
+    created = psutil.Process(sleeper.pid).create_time()
+    readings = iter(range(10_000))
+
+    result = reaper.reap(
+        sleeper.pid, created, timeout_s=1.0, poll_s=0.05, grace_s=1.0,
+        idle_s=0.5, progress=lambda: next(readings), probe_s=0.05,
+    )
+
+    assert result["reason"] == "scaduto"
+    assert not _is_pid_alive(sleeper.pid)
+
+
+def test_an_idle_turn_is_retried_once_and_only_then_marked_stalled(tmp_path, monkeypatch):
+    """Il primo silenzio rilancia, il secondo scrive lo stallo e avvisa: nessun harness, nessun megafono vero."""
+    monkeypatch.setattr(state, "lane_state_dir", lambda: tmp_path / "lane")
+    task = state.start("prova inattiva")["id"]
+    calls: list = []
+    alerted: list = []
+
+    def fake_reap(*_args, **_kwargs):
+        return {"reason": reaper.IDLE_REASON, "idle_s": 900.0, "killed": [], "spared": [], "refused": []}
+
+    def fake_relaunch(task_id, unit, launch):
+        calls.append("relaunch")
+        return SimpleNamespace(pid=222)
+
+    def fake_hold(task_id, unit, proc):
+        calls.append(("hold", getattr(proc, "pid", None)))
+
+    def alert(unit, session, minutes):
+        alerted.append((unit, session, minutes))
+
+    reaper.guard(
+        task, "prova", 111, 0.0, timeout_s=1, idle_s=900, launch={"folder": str(tmp_path)},
+        reap_fn=fake_reap, relaunch_fn=fake_relaunch, hold_fn=fake_hold, alert_fn=alert,
+    )
+
+    events = [row["event"] for row in state.read_events(task)]
+    assert calls == ["relaunch", ("hold", 222)]
+    assert "turn_idle" in events and "turn_idle_relaunch" in events
+    assert "unit_stalled" not in events
+    assert alerted == []
+
+    reaper.guard(
+        task, "prova", 222, 0.0, timeout_s=1, idle_s=900, launch={"folder": str(tmp_path)},
+        attempt=2, reap_fn=fake_reap, relaunch_fn=fake_relaunch, hold_fn=fake_hold, alert_fn=alert,
+    )
+
+    events = [row["event"] for row in state.read_events(task)]
+    stalled = [row for row in state.read_events(task) if row["event"] == "unit_stalled"]
+    assert "unit_stalled" in events
+    assert stalled[-1]["reason"] == "inattivita"
+    assert stalled[-1]["threshold"] == 15.0
+    assert alerted == [("prova", "", 15.0)]
+    assert calls == ["relaunch", ("hold", 222)], "il secondo silenzio non rilancia"
+
+
+def test_the_stall_alert_carries_the_measured_minutes(tmp_path, monkeypatch):
+    """L'avviso arriva con i minuti dentro, non con le graffe del modello: un megafono finto, mai quello vero."""
+    from nexgen_core import megaphone as megaphone_mod
+
+    monkeypatch.setattr(state, "lane_state_dir", lambda: tmp_path / "lane")
+    task = state.start("prova inattiva")["id"]
+    sent: list[dict] = []
+
+    class FakeMegaphone:
+        def send_alert(self, **kwargs):
+            sent.append(kwargs)
+            return True
+
+    monkeypatch.setattr(megaphone_mod, "Megaphone", FakeMegaphone)
+    idle = {"reason": reaper.IDLE_REASON, "idle_s": 900.0, "killed": [], "spared": [], "refused": []}
+
+    reaper.guard(
+        task, "prova", 111, 0.0, timeout_s=1, idle_s=900, launch=None, attempt=2,
+        reap_fn=lambda *a, **k: idle,
+    )
+
+    assert sent, "nessun avviso mandato"
+    assert "{" not in sent[0]["message"] and "15" in sent[0]["message"]
+    assert sent[0]["alert_key"] == "turn_idle:prova"
 
 
 def test_watch_ignores_fake_popen_doubles(monkeypatch):

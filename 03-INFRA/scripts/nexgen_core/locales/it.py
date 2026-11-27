@@ -80,6 +80,9 @@ MESSAGES: dict[str, str] = {
     "NeXgen: a task is stuck": "NeXgen: un compito è fermo",
     "One task hit its limit and no other model was free, so it stays stopped.":
         "Un compito ha finito la sua quota e non c'era un altro modello libero, quindi resta fermo.",
+    "NeXgen: a task stopped answering": "NeXgen: un compito non risponde più",
+    "{minutes} minutes without a sign of life, even after a restart, so the engine stopped it.":
+        "{minutes} minuti senza segni di vita, anche dopo un riavvio, quindi il motore lo ha fermato.",
     "NeXgen: a model ran out of quota": "NeXgen: un modello ha esaurito la quota",
     "The model {model} has no allowance left ({reason}). The next one takes over.":
         "Il modello {model} non ha più quota ({reason}). Subentra il successivo.",

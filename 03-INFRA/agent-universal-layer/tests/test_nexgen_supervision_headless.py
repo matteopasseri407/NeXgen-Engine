@@ -106,10 +106,13 @@ def test_a_turn_is_handed_to_its_guardian_with_the_lane_timeout(monkeypatch):
     seen = {}
     monkeypatch.setattr(launch.jobs, "adopt", lambda name, pid: "")
     monkeypatch.setattr(launch.policy, "turn_timeout_minutes", lambda: 30.0)
+    monkeypatch.setattr(launch.policy, "idle_timeout_minutes", lambda: 15.0)
     monkeypatch.setattr(launch.reaper, "watchable", lambda proc: True)
     monkeypatch.setattr(launch.reaper, "watch", lambda task, unit, proc, **kw: seen.update(kw, unit=unit) or "")
     launch.hold_turn("compito", "prova", SimpleNamespace(pid=7))
     assert seen["timeout_s"] == 1800.0
+    assert seen["idle_s"] == 900.0
+    assert seen["attempt"] == 1
     assert seen["unit"] == "prova"
 
 
@@ -117,6 +120,7 @@ def test_a_turn_the_guardian_cannot_watch_is_journalled(monkeypatch):
     events = []
     monkeypatch.setattr(launch.jobs, "adopt", lambda name, pid: "")
     monkeypatch.setattr(launch.policy, "turn_timeout_minutes", lambda: 30.0)
+    monkeypatch.setattr(launch.policy, "idle_timeout_minutes", lambda: 15.0)
     monkeypatch.setattr(launch.reaper, "watchable", lambda proc: True)
     monkeypatch.setattr(launch.reaper, "watch", lambda *a, **k: "python non trovato")
     monkeypatch.setattr(launch.state, "append_event", lambda task, event, **f: events.append((event, f)))

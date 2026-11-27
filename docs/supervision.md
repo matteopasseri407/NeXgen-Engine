@@ -410,6 +410,7 @@ A session the harness reports as stopped is finished, not stalled, and a session
 
 The threshold is `supervision.stall_minutes`, twenty minutes when unwritten.
 One `unit_stalled` row is written per stillness, keyed by unit, session and the session's own last update, so asking again writes nothing; a session that moves and stalls again gets a new row, and a unit that comes back to work gets `unit_resumed`.
+This check runs when `sup status` is asked, and it only reports: the turn itself is closed earlier by its guardian, as described under "Closing the processes of a turn".
 The line reads:
 
 ```
@@ -427,6 +428,7 @@ Three groups are read today, all optional:
     "allowed_models": ["provider/*", "provider/model"],
     "stall_minutes": 20,
     "turn_timeout_minutes": 240,
+    "idle_timeout_minutes": 15,
     "roles": {"esecutore": "opencode", "ricognitore": "agy"},
     "local_model": {
       "model": "provider/model",
@@ -442,6 +444,7 @@ Three groups are read today, all optional:
 
 `roles` is described under "Who does what".
 `turn_timeout_minutes` is the deadline of a turn: when it passes, the guardian ends the turn and everything it left behind, as described under "Closing the processes of a turn". It is 240 minutes when unwritten.
+`idle_timeout_minutes` is how long a turn may show no sign of life before its guardian closes it and retries once. It is 15 minutes when unwritten.
 `local_model` is the server a `local` unit runs on: `command` is the only field without a default, `port` builds the health URL when `health` is absent, and the two thresholds are the free memory the engine requires before starting it.
 When `vram_free_gb` is zero the VRAM check is skipped, because a machine with no usable `nvidia-smi` is not a machine with no GPU.
 A threshold that cannot be read is a refusal, never a pass.
@@ -672,8 +675,21 @@ It records the descendants it sees born every two seconds, because on Windows an
 It sends `terminate` first and, three seconds later, `kill` to what survives.
 
 It never touches a recycled pid (it compares the `create_time` recorded at launch, with a tolerance of 0.5 s), itself, or the shared `opencode serve` and its children, because killing that server would close other sessions' work.
-It writes `turn_reaped` in the task's journal with `reason` (`finito` or `scaduto`), `killed`, `spared` and `refused`.
+It writes `turn_reaped` in the task's journal with `reason` (`finito`, `scaduto` or `inattivo`), `killed`, `spared` and `refused`.
 A turn the guardian cannot watch is `turn_unguarded` with the reason, and a turn the job does not hold stays `unit_unjobbed`.
+
+### A turn that stops giving signs of life
+
+A headless turn can hang before it prints anything or touches a file: the `opencode run` that stayed silent for three hours on 2026-11-27 is the case this guard exists for.
+Every thirty seconds the guardian reads three signs of life: the CPU time of the turn's process tree, the number, newest modification and total size of the files in the working folder, and the size of the turn's own logs.
+When none of them has moved for `supervision.idle_timeout_minutes` (15 minutes when unwritten), the turn is closed exactly like an expired one, with its whole process tree and the same `turn_reaped` row, whose `reason` is `inattivo`.
+
+An idle turn is not abandoned on the first stop: a cold start and a provider that dropped a socket once are common, so the guardian starts the same turn again, on the session the journal now names when it has one, and journals `turn_idle_relaunch`.
+A second idle stop is a real stall: the guardian writes `unit_stalled` with `reason="inattivita"` and the threshold, and sends the `TASK_STALLED` alert through the megaphone, keyed by unit and session so a repeated stop does not notify twice within the debounce window.
+The retry is only made when the guardian has the recipe of the turn it watched: a turn started by something this engine cannot rebuild is marked stalled at once rather than restarted into a different command.
+
+The folder scan reads at most 4000 entries, so it stays cheap on a copy with a large dependency folder; the CPU time catches a turn that is working without writing yet.
+A turn whose harness measurement is the only thing that would move (a model thinking, with no output and no file) is not counted as alive: the signal is the machine's own, never a second harness process spawned by the guardian.
 
 The deadline is `supervision.turn_timeout_minutes` in the lane's `config.json`, 240 minutes when unwritten.
 

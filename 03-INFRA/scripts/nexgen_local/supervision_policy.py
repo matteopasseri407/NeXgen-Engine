@@ -29,6 +29,9 @@ DEFAULT_STALL_MINUTES = 20.0
 #: How long one turn of a worker may run before its guardian stops its whole tree.
 TURN_TIMEOUT_KEY = "turn_timeout_minutes"
 DEFAULT_TURN_TIMEOUT_MINUTES = 240.0
+#: How long a turn may show no sign of life before its guardian stops it and retries once.
+IDLE_TIMEOUT_KEY = "idle_timeout_minutes"
+DEFAULT_IDLE_TIMEOUT_MINUTES = 15.0
 #: Which harness takes which role, when the owner writes nothing.
 ROLES_KEY = "roles"
 DEFAULT_ROLES = {"esecutore": "opencode", "ricognitore": "agy"}
@@ -80,6 +83,17 @@ def turn_timeout_minutes(path: str | Path | None = None) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
         raise PolicyError(
             f"`{SECTION}.{TURN_TIMEOUT_KEY}` deve essere un numero di minuti maggiore di zero: {value!r}"
+        )
+    return float(value)
+
+
+def idle_timeout_minutes(path: str | Path | None = None) -> float:
+    """How many quiet minutes a turn may run before it is closed and retried once."""
+    _target, section = _section(path)
+    value = section.get(IDLE_TIMEOUT_KEY, DEFAULT_IDLE_TIMEOUT_MINUTES)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise PolicyError(
+            f"`{SECTION}.{IDLE_TIMEOUT_KEY}` deve essere un numero di minuti maggiore di zero: {value!r}"
         )
     return float(value)
 

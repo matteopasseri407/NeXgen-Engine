@@ -165,6 +165,14 @@ WORKER_STUCK = Alert(
     message="One task hit its limit and no other model was free, so it stays stopped.",
 )
 
+#: A task produced nothing even after its turn was restarted, so it stays stopped.
+TASK_STALLED = Alert(
+    title="NeXgen: a task stopped answering",
+    message="{minutes} minutes without a sign of life, even after a restart, so the engine stopped it.",
+    action="sup status",
+    sample={"minutes": "15"},
+)
+
 #: A model used up its allowance in the middle of a job.
 MODEL_OUT_OF_QUOTA = Alert(
     title="NeXgen: a model ran out of quota",

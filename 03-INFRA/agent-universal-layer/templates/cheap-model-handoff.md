@@ -136,5 +136,5 @@ Use this when the handoff should survive a closed terminal and leave nothing run
 - The frontier writes the brief and reviews the result; the cheap worker executes it as a headless `sup` unit on the flat lane with headroom.
 - Read `nexgen quota --line` before launching, and pick a lane with room.
 - `sup run` starts the turn without a window, and the session stays visible in the harness's own app.
-- The guardian closes the turn and its whole process tree when it ends, or at `supervision.turn_timeout_minutes`.
+- The guardian closes the turn and its whole process tree when it ends, when it shows no sign of life for `supervision.idle_timeout_minutes`, or at `supervision.turn_timeout_minutes`; an idle turn is started once more before its unit is called stalled.
 - Brainstorming between frontier models is a Council job, not a `sup` unit.

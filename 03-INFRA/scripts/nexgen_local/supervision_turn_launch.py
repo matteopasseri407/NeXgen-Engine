@@ -27,6 +27,10 @@ class TurnLaunchError(SupervisionError):
     """The harness's command could not be started at all."""
 
 
+#: Where a started turn carries the recipe its guardian needs to start it again.
+RECIPE_ATTR = "nexgen_turn_recipe"
+
+
 def stderr_log(folder: Path, session: str) -> Path:
     """The file a turn's own errors go to, beside the copy and inside the task folder.
 
@@ -63,12 +67,60 @@ def run_turn(adapter, executable: str, session: str, prompt: str, folder: Path, 
         errors.parent.mkdir(parents=True, exist_ok=True)
         with errors.open("a", encoding="utf-8", newline="\n") as err:
             if log is None:
-                return _start(argv, folder, subprocess.DEVNULL, err, env)
-            log.parent.mkdir(parents=True, exist_ok=True)
-            with log.open("a", encoding="utf-8", newline="\n") as handle:
-                return _start(argv, folder, handle, err, env)
+                proc = _start(argv, folder, subprocess.DEVNULL, err, env)
+            else:
+                log.parent.mkdir(parents=True, exist_ok=True)
+                with log.open("a", encoding="utf-8", newline="\n") as handle:
+                    proc = _start(argv, folder, handle, err, env)
     except OSError as exc:
         raise TurnLaunchError(f"sessione {session} non raggiungibile: {exc}") from exc
+    setattr(proc, RECIPE_ATTR, turn_recipe(
+        adapter, executable, session, prompt, folder, model, first=first,
+        logs=[errors] + ([log] if log is not None else []),
+    ))
+    return proc
+
+
+def turn_recipe(adapter, executable: str, session: str, prompt: str, folder: Path,
+                model: str, *, first: bool, logs: list[Path] | None = None) -> dict:
+    """What a guardian needs to start this same turn again after it was stopped for idleness.
+
+    The prompt travels with the recipe: reconstructing it from the brief would send
+    the first round instead of a correction, and the relaunch would silently do the
+    wrong work. The log paths let the guardian see a harness printing its progress.
+    """
+    return {
+        "harness": adapter.name,
+        "executable": executable,
+        "session": session,
+        "prompt": prompt,
+        "folder": str(folder),
+        "model": model,
+        "first": bool(first),
+        "logs": [str(path) for path in logs or ()],
+    }
+
+
+def relaunch_turn(task_id: str, unit: str, recipe: dict):
+    """Start the same turn once more, on the session the journal now names when it has one.
+
+    The first headless turn of a harness that chooses its own session id has no id
+    at launch time; by the time an idle turn is stopped the task's journal names the
+    session it opened, so the retry goes into that session instead of opening a
+    second one beside it.
+    """
+    from . import supervision_adapters as adapters
+
+    record = state.unit_record(task_id, unit)
+    harness = str(record.get("harness") or recipe.get("harness") or "opencode")
+    session = str(record.get("session") or recipe.get("session") or "")
+    folder = Path(str(record.get("worktree") or recipe.get("folder") or ""))
+    model = str(recipe.get("model") or record.get("model") or "")
+    adapter = adapters.get(harness)
+    return run_turn(
+        adapter, str(recipe.get("executable") or adapter.executable), session,
+        str(recipe.get("prompt") or ""), folder, model, first=not session,
+    )
 
 
 def turn_environment(folder: Path, extra: dict[str, str]) -> dict[str, str]:
@@ -90,13 +142,14 @@ def _start(argv: list[str], folder: Path, stdout, stderr, env: dict[str, str]):
     )
 
 
-def hold_turn(task_id: str, unit: str, proc) -> None:
+def hold_turn(task_id: str, unit: str, proc, *, attempt: int = 1) -> None:
     """Put this turn inside the unit's job object and under its guardian.
 
     The job is what lets stopping the unit end the whole tree in one kernel call;
-    the guardian is what ends the tree when the turn finishes or runs out of time.
-    Either one that cannot be had is journalled (`unit_unjobbed`,
-    `turn_unguarded`) instead of pretended: the turn still runs.
+    the guardian is what ends the tree when the turn finishes, runs out of time, or
+    shows no sign of life for the lane's idle threshold. Either one that cannot be
+    had is journalled (`unit_unjobbed`, `turn_unguarded`) instead of pretended: the
+    turn still runs.
     """
     pid = getattr(proc, "pid", None)
     name = jobs.job_name(task_id, unit)
@@ -107,7 +160,9 @@ def hold_turn(task_id: str, unit: str, proc) -> None:
         return
     refused = reaper.watch(
         task_id, unit, proc, timeout_s=policy.turn_timeout_minutes() * 60,
+        idle_s=policy.idle_timeout_minutes() * 60,
         job=name if jobs.available() else "",
+        launch=getattr(proc, RECIPE_ATTR, None), attempt=attempt,
     )
     if refused:
         state.append_event(task_id, "turn_unguarded", unit=unit, pid=pid, reason=refused)

@@ -356,6 +356,30 @@ def test_a_threshold_that_is_not_a_positive_number_is_an_error(lane, value):
         policy.stall_minutes()
 
 
+def test_the_default_idle_threshold_is_fifteen_minutes(lane):
+    assert policy.idle_timeout_minutes() == 15.0
+
+
+def test_an_idle_threshold_written_in_the_lane_is_used(lane):
+    lane.mkdir(parents=True, exist_ok=True)
+    (lane / policy.CONFIG_FILE).write_text(
+        json.dumps({"supervision": {"idle_timeout_minutes": 7}}), encoding="utf-8",
+    )
+
+    assert policy.idle_timeout_minutes() == 7.0
+
+
+@pytest.mark.parametrize("value", [0, -3, "quindici", True])
+def test_an_idle_threshold_that_is_not_a_positive_number_is_an_error(lane, value):
+    lane.mkdir(parents=True, exist_ok=True)
+    (lane / policy.CONFIG_FILE).write_text(
+        json.dumps({"supervision": {"idle_timeout_minutes": value}}), encoding="utf-8",
+    )
+
+    with pytest.raises(policy.PolicyError, match="idle_timeout_minutes"):
+        policy.idle_timeout_minutes()
+
+
 def test_a_session_that_stood_still_is_reported_and_journalled_once(task):
     _attached(task, at=_minutes_ago(60))
     now = time.time()

@@ -407,6 +407,7 @@ Una sessione che l'harness dichiara ferma è finita, non in stallo, e una sessio
 
 La soglia è `supervision.stall_minutes`, venti minuti quando non è scritta.
 Viene scritta una riga `unit_stalled` per ogni immobilità, con chiave unità, sessione e ultimo aggiornamento della sessione stessa, quindi chiedere di nuovo non scrive nulla; una sessione che si muove e si blocca di nuovo prende una riga nuova, e un'unità che torna al lavoro prende `unit_resumed`.
+Questo controllo gira quando qualcuno chiede `sup status`, e si limita a riferire: il turno lo chiude prima il suo guardiano, come descritto in "Chiudere i processi di un turno".
 La riga dice:
 
 ```
@@ -424,6 +425,7 @@ Oggi vengono letti tre gruppi, tutti facoltativi:
     "allowed_models": ["provider/*", "provider/model"],
     "stall_minutes": 20,
     "turn_timeout_minutes": 240,
+    "idle_timeout_minutes": 15,
     "roles": {"esecutore": "opencode", "ricognitore": "agy"},
     "local_model": {
       "model": "provider/model",
@@ -439,6 +441,7 @@ Oggi vengono letti tre gruppi, tutti facoltativi:
 
 `roles` è descritto in "Chi fa cosa".
 `turn_timeout_minutes` è la scadenza di un turno: quando passa, il guardiano chiude il turno e tutto quello che ha lasciato, come descritto in "Chiudere i processi di un turno". È 240 minuti quando non è scritta.
+`idle_timeout_minutes` è quanto a lungo un turno può non dare segni di vita prima che il guardiano lo chiuda e lo rilanci una volta. È 15 minuti quando non è scritta.
 `local_model` è il server su cui gira un'unità `local`: `command` è l'unico campo senza valore predefinito, `port` costruisce l'URL di health quando `health` manca, e le due soglie sono la memoria libera che il motore richiede prima di avviarlo.
 Quando `vram_free_gb` è zero il controllo della VRAM viene saltato, perché una macchina senza un `nvidia-smi` utilizzabile non è una macchina senza GPU.
 Una soglia che non si riesce a leggere è un rifiuto, mai un via libera.
@@ -669,8 +672,21 @@ Registra i discendenti che vede nascere ogni due secondi, perché su Windows un 
 Manda prima `terminate` e, dopo tre secondi, `kill` ai superstiti.
 
 Non tocca mai un pid riciclato (confronta il `create_time` registrato alla partenza, con una tolleranza di 0,5 s), sé stesso, né il server condiviso `opencode serve` e i suoi figli, perché ucciderlo chiuderebbe il lavoro delle altre sessioni.
-Scrive nel diario del compito `turn_reaped` con `reason` (`finito` o `scaduto`), `killed`, `spared` e `refused`.
+Scrive nel diario del compito `turn_reaped` con `reason` (`finito`, `scaduto` o `inattivo`), `killed`, `spared` e `refused`.
 Un turno che il guardiano non riesce a sorvegliare è `turn_unguarded` con il motivo, e un turno che il job non tiene resta `unit_unjobbed`.
+
+### Un turno che smette di dare segni di vita
+
+Un turno headless può bloccarsi prima di stampare qualsiasi cosa o di toccare un file: l'`opencode run` rimasto muto per tre ore il 2026-11-27 è il caso per cui esiste questa guardia.
+Ogni trenta secondi il guardiano legge tre segni di vita: il tempo di CPU dell'albero del turno, il numero, la modifica più recente e la dimensione totale dei file nella cartella di lavoro, e la dimensione dei log del turno.
+Quando nessuno di questi si è mosso per `supervision.idle_timeout_minutes` (15 minuti quando non è scritta), il turno viene chiuso esattamente come uno scaduto, con tutto il suo albero di processi e la stessa riga `turn_reaped`, con `reason` uguale a `inattivo`.
+
+Un turno inattivo non viene abbandonato al primo stop: una partenza a freddo e un provider che ha buttato una connessione una volta sono comuni, quindi il guardiano rilancia lo stesso turno, sulla sessione che il diario ora nomina quando ne ha una, e scrive `turn_idle_relaunch`.
+Un secondo stop per inattività è uno stallo vero: il guardiano scrive `unit_stalled` con `reason="inattivita"` e la soglia, e manda l'avviso `TASK_STALLED` dal megafono, con chiave unità e sessione, così uno stop ripetuto non avvisa due volte dentro la finestra di debounce.
+Il rilancio avviene solo quando il guardiano ha la ricetta del turno che ha sorvegliato: un turno avviato da qualcosa che questo motore non sa ricostruire viene segnato in stallo subito, invece di ripartire con un comando diverso.
+
+La scansione della cartella legge al massimo 4000 voci, quindi resta leggera su una copia con una cartella di dipendenze grande; il tempo di CPU intercetta un turno che sta lavorando senza aver ancora scritto.
+Un turno in cui si muoverebbe solo la misurazione dell'harness (un modello che pensa, senza output e senza file) non conta come vivo: il segnale è quello della macchina, mai un secondo processo dell'harness avviato dal guardiano.
 
 La scadenza è `supervision.turn_timeout_minutes` nel `config.json` della corsia, 240 minuti quando non è scritta.
 
