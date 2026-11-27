@@ -3156,6 +3156,8 @@ MESSAGES: dict[str, str] = {
         'La guardia del contesto non compatta',
     'The last run compacted none of the chats waiting for it. Waiting now: {count}.':
         "L'ultima esecuzione non ha compattato nessuna delle chat in attesa. In attesa ora: {count}.",
+    "The last context guard run could not read the chats, so none was compacted: {error}":
+        "L'ultima esecuzione della guardia del contesto non è riuscita a leggere le chat, quindi non ne ha compattata nessuna: {error}",
     "Run 'nexgen openclaw groom' and read the reason it prints.":
         "Esegui 'nexgen openclaw groom' e leggi il motivo che stampa.",
     # --- I ruoli della macchina: il piano di --check ------------------------

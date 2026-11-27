@@ -336,3 +336,15 @@ def test_a_job_registered_long_ago_that_never_ran_is_still_a_failure(tmp_path: P
 
     assert outcome.severity == Severity.BROKEN
     assert "never finished a run" in outcome.message
+
+
+def test_a_run_that_could_not_read_the_chats_speaks_italian_and_names_the_next_step(tmp_path: Path):
+    """There is no chat to read a reason for: the action points at the reason the run prints."""
+    saved_run(tmp_path, at=NOW - HOUR_MS, error="sessions list: gateway closed")
+    i18n.set_language("it")
+
+    outcome = check_groom([guard_job()], tmp_path, NOW)
+
+    assert "non è riuscita a leggere le chat" in outcome.message
+    assert "gateway closed" in outcome.message
+    assert outcome.action == "Esegui 'nexgen openclaw groom' e leggi il motivo che stampa."

@@ -140,7 +140,7 @@ def _could_not_read(run: Mapping[str, Any] | None) -> CheckOutcome | None:
         severity=Severity.BROKEN,
         message=t("The last context guard run could not read the chats, so none was compacted: {error}",
                   error=error),
-        action=t("Run 'nexgen openclaw groom' and read the reason it prints for each chat."),
+        action=t("Run 'nexgen openclaw groom' and read the reason it prints."),
     )
 
 
