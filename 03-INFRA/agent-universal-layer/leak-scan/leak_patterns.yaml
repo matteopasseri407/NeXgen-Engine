@@ -84,6 +84,8 @@ leak_allow:
   # compare in OGNI commit fatto con lo strumento. Non e' un dato personale
   # (falso positivo trovato durante il collaudo di S0, 2026-07-08).
   - 'noreply@anthropic\.com'
+  # noreply@deepseek.com: lo stesso trailer generico dei worker DeepSeek.
+  - 'noreply@deepseek\.com'
   # Dominio riservato RFC 2606: ogni occorrenza nel repo e' una identita' di
   # fixture nei test sandbox (git config user.email), mai dati personali.
   - 'test@example\.com'

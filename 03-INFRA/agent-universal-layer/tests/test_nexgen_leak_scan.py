@@ -438,3 +438,15 @@ def test_the_real_scanner_passes_identifiers_and_catches_a_mixed_token(tmp_path)
 
     lines = sorted({finding["StartLine"] for finding in json.loads(report.read_text(encoding="utf-8"))})
     assert lines == [3]
+
+
+def test_the_deepseek_co_author_trailer_is_released_and_a_real_address_is_not():
+    """The cheap workers sign their commits like Claude does: the vendor's noreply is not personal data."""
+    policy = tomllib.loads(CONFIG.read_text(encoding="utf-8"))
+    released = [pattern for entry in policy.get("allowlists", []) for pattern in entry.get("regexes", [])]
+
+    def is_released(address: str) -> bool:
+        return any(re.search(pattern, address) for pattern in released)
+
+    assert is_released("noreply@deepseek.com")
+    assert not is_released("someone@deepseek.com")
