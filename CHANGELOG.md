@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [3.1.5] - 2026-11-27
+
 ### Added
 
 - Supervision: a headless turn that shows no sign of life for `supervision.idle_timeout_minutes` (15 minutes when unwritten) is closed with its whole process tree, restarted once automatically, and marked stalled with a megaphone alert when the retry is idle too. The guardian reads the turn tree's CPU time, the working folder and the turn's logs instead of spawning the harness again
