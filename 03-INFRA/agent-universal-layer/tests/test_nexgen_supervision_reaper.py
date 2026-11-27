@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import psutil
 import pytest
 
+from nexgen_local import supervision_idle
 from nexgen_local import supervision_reaper as reaper
 from nexgen_local import supervision_state as state
 
@@ -167,11 +168,11 @@ def test_signs_of_life_change_when_the_copy_changes(tmp_path):
     """Un file scritto nella copia è un segno di vita, anche senza output del processo."""
     folder = tmp_path / "copia"
     folder.mkdir()
-    before = reaper.signs_of_life(os.getpid(), folder, [])
+    before = supervision_idle.signs_of_life(os.getpid(), folder, [])
 
     (folder / "resoconto.md").write_text("lavoro\n", encoding="utf-8")
 
-    assert reaper.signs_of_life(os.getpid(), folder, []) != before
+    assert supervision_idle.signs_of_life(os.getpid(), folder, []) != before
 
 
 def test_a_turn_with_no_sign_of_life_is_stopped_for_idleness(tracked_procs):
@@ -236,7 +237,7 @@ def test_an_idle_turn_is_retried_once_and_only_then_marked_stalled(tmp_path, mon
     def alert(unit, session, minutes):
         alerted.append((unit, session, minutes))
 
-    reaper.guard(
+    supervision_idle.guard(
         task, "prova", 111, 0.0, timeout_s=1, idle_s=900, launch={"folder": str(tmp_path)},
         reap_fn=fake_reap, relaunch_fn=fake_relaunch, hold_fn=fake_hold, alert_fn=alert,
     )
@@ -247,7 +248,7 @@ def test_an_idle_turn_is_retried_once_and_only_then_marked_stalled(tmp_path, mon
     assert "unit_stalled" not in events
     assert alerted == []
 
-    reaper.guard(
+    supervision_idle.guard(
         task, "prova", 222, 0.0, timeout_s=1, idle_s=900, launch={"folder": str(tmp_path)},
         attempt=2, reap_fn=fake_reap, relaunch_fn=fake_relaunch, hold_fn=fake_hold, alert_fn=alert,
     )
@@ -275,11 +276,11 @@ def test_the_stall_alert_carries_the_measured_minutes(tmp_path, monkeypatch):
             return True
 
     monkeypatch.setattr(megaphone_mod, "Megaphone", FakeMegaphone)
-    idle = {"reason": reaper.IDLE_REASON, "idle_s": 900.0, "killed": [], "spared": [], "refused": []}
+    stopped = {"reason": reaper.IDLE_REASON, "idle_s": 900.0, "killed": [], "spared": [], "refused": []}
 
-    reaper.guard(
+    supervision_idle.guard(
         task, "prova", 111, 0.0, timeout_s=1, idle_s=900, launch=None, attempt=2,
-        reap_fn=lambda *a, **k: idle,
+        reap_fn=lambda *a, **k: stopped,
     )
 
     assert sent, "nessun avviso mandato"

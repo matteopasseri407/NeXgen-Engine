@@ -2,9 +2,9 @@
 
 One job: launch the one-shot command an adapter builds, detached and windowless,
 put it in the unit's job object, and hand it to a guardian process that waits
-for the turn to end or time out and then stops every process the turn left
-behind. Before this module a finished `opencode run` could leave MCP servers and
-shells running until reboot, and a turn that hung was never stopped; the
+for the turn to end, go idle or time out and then stops every process the turn
+left behind. Before this module a finished `opencode run` could leave MCP servers
+and shells running until reboot, and a turn that hung was never stopped; the
 supervisor returns at once, so the waiting has to live in a process of its own.
 """
 from __future__ import annotations
