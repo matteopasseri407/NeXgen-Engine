@@ -2636,6 +2636,12 @@ MESSAGES: dict[str, str] = {
         "I limiti dichiarati in {path} non si leggono: {error}",
     "The declared limit for {entry} is not a positive number: ignored.":
         "Il limite dichiarato per {entry} non è un numero positivo: lo ignoro.",
+    "Ignored providers: {providers}.":
+        "Fornitori ignorati: {providers}.",
+    "The 'ignore' key in {path} is not a list of providers: nothing is ignored.":
+        "La chiave 'ignore' in {path} non è una lista di fornitori: non ignoro niente.",
+    "The entry at position {position} of 'ignore' is not a provider name: ignored.":
+        "La voce {position} di 'ignore' non è il nome di un fornitore: la ignoro.",
     "OpenCode: spend is unknown, the harness archive could not be read.":
         "OpenCode: la spesa non si sa, l'archivio del harness non si è potuto leggere.",
     "OpenCode: the harness lane is not installed in this engine.":

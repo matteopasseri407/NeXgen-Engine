@@ -178,6 +178,19 @@ backends:
 
 L'interruttore è per macchina e sta accanto ai tetti di cui fa parte. `NEXGEN_QUOTA_TOKSCALE=off` dice la stessa cosa per una sola esecuzione, senza toccare il file: un job schedulato, uno script, o una sandbox che non deve leggere gli account di chi è collegato.
 
+## Ignorare un fornitore
+
+Un piano che non usi può rispondere lo stesso da qualche parte sulla macchina, e un piano al 100% che nessuno guarda farebbe scattare il suo avviso ogni quattro ore. La chiave `ignore:` nello stesso `quota.yaml` nomina i fornitori le cui righe questa macchina non vuole mai vedere:
+
+```yaml
+# 03-INFRA/agent-universal-layer/quota.yaml
+ignore: [copilot]
+```
+
+Una voce è l'id di un fornitore (`copilot`, `openai`, `anthropic`, `opencode-go`) oppure il nome che stampa il report (`Copilot`, `OpenCode Go`), confrontato senza distinzione di maiuscole. Le righe di un fornitore ignorato spariscono da ogni superficie: `nexgen quota`, la riga con cui parte una sessione, `nexgen doctor` e lo stato di failover, quindi per lui non arriva nessun avviso. Una riga in fondo al report nomina i fornitori ignorati, e il resto non cambia: il fornitore non viene disinstallato, i suoi accessi non vengono toccati, e il motore continua a chiedere gli altri piani.
+
+Un valore che non è una lista viene rifiutato intero e nominato in una riga: una chiave scritta male non deve mai valere "ignora tutti i fornitori". Una voce che non è un nome viene nominata in una riga e saltata, e le altre voci valgono lo stesso.
+
 ## Una percentuale ha bisogno di un tetto
 
 OpenCode riporta quanto è stato speso, mai quanto era concesso.

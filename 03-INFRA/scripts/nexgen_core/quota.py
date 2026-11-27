@@ -21,6 +21,11 @@ a fallback policy in the same file: the report is where a person looks to know
 what happens when a plan stops answering, and the answer belongs next to the
 number that raises the question.
 
+A provider this machine declared it does not use, in the `ignore:` key of the
+same file, is left out before any caller sees its rows: the report, the session
+line, the doctor, the failover state and the alert all read this module, so one
+full plan nobody uses cannot keep announcing itself every four hours.
+
 The report is also the answer `/quota` gives inside OpenClaw, so it carries its
 own rendered lines: the plugin forwards text and never formats a number.
 """
@@ -34,7 +39,9 @@ from pathlib import Path
 
 import yaml
 
-from nexgen_core import quota_agy, quota_antigravity, quota_claude, quota_codex, quota_policy, quota_tokscale
+from nexgen_core import (
+    quota_agy, quota_antigravity, quota_claude, quota_codex, quota_ignore, quota_policy, quota_tokscale,
+)
 from nexgen_core.i18n import t
 from nexgen_core.paths import codex_home, resolve_home, resolve_vault_data
 
@@ -147,23 +154,31 @@ def build_report(*, home: Path | None = None, vault: Path | None = None,
     The tokens are read only when nothing above already answers that plan: a live
     reading is the answer for the plan it measured, and counting the same plan's
     tokens beside it would print one provider twice, from two readers that
-    disagree about what the number means.
+    disagree about what the number means. A plan named in the file's `ignore:`
+    key is not added here either, and one note at the bottom names it.
     """
     moment = time.time() if now is None else float(now)
-    rows, notes = percentage_rows(home=home, vault=vault, now=moment)
-    if not any(row.provider_id == CLAUDE_PROVIDER_ID for row in rows):
+    rows, notes, ignored = _rows_and_ignored(
+        home=home, vault=vault, now=moment, backend_max_age=None)
+    hidden = quota_ignore.folded(ignored)
+    if not quota_ignore.hides("Claude Code", CLAUDE_PROVIDER_ID, hidden) \
+            and not any(row.provider_id == CLAUDE_PROVIDER_ID for row in rows):
         usage = quota_claude.read_usage(resolve_home(home) / ".claude", now=moment)
         if usage.note:
             notes.append(usage.note)
         rows.extend(_claude_rows(usage, moment))
-    if not any(row.provider == "Antigravity" for row in rows):
+    if not quota_ignore.hides("Antigravity", "google-antigravity-cli", hidden) \
+            and not any(row.provider == "Antigravity" for row in rows):
         rows.append(QuotaRow(
             provider="Antigravity", state="unknown",
             note=t("not measured"),
         ))
     policy, unusable = quota_policy.load(home, vault=vault)
+    notes.extend(unusable)
+    if ignored:
+        notes.append(quota_ignore.note(ignored))
     return QuotaReport(read_at=moment, rows=tuple(with_handovers(rows, policy)),
-                       notes=tuple(notes + unusable))
+                       notes=tuple(notes))
 
 
 def with_handovers(rows: list[QuotaRow], policy: quota_policy.Failover) -> list[QuotaRow]:
@@ -192,6 +207,25 @@ def percentage_rows(*, home: Path | None = None, vault: Path | None = None,
     `backend_max_age` reads that backend from its last answer only, never from a
     run: it is what a caller with a deadline of its own states, and a backend
     whose cache is older than that simply has no rows here.
+
+    The rows of a provider the owner named under `ignore:` are not here either,
+    so the alert, the doctor and the failover state cannot act on a plan this
+    machine does not use.
+    """
+    rows, notes, ignored = _rows_and_ignored(
+        home=home, vault=vault, now=now, backend_max_age=backend_max_age)
+    if ignored:
+        notes.append(quota_ignore.note(ignored))
+    return rows, notes
+
+
+def _rows_and_ignored(*, home: Path | None, vault: Path | None, now: float | None,
+                      backend_max_age: float | None) -> tuple[list[QuotaRow], list[str], tuple[str, ...]]:
+    """The rows every caller shares, their notes, and the providers the file hides.
+
+    The one place the rows are assembled, so `percentage_rows` and the full report
+    cannot disagree about what is ignored: the filter happens here, before a row
+    reaches the alert, the doctor or the failover state.
     """
     moment = time.time() if now is None else float(now)
     rows: list[QuotaRow] = []
@@ -201,7 +235,18 @@ def percentage_rows(*, home: Path | None = None, vault: Path | None = None,
     rows.extend(_codex_rows(home, moment, notes))
     rows.extend(_opencode_rows(home, vault, moment, notes))
     rows.extend(_antigravity_rows(home, moment, notes))
-    return quota_tokscale.report_rows(external, rows, notes), notes
+    displayed = quota_tokscale.report_rows(external, rows, notes)
+    ignored, unusable = quota_ignore.load(limits_path(home, vault=vault))
+    notes.extend(unusable)
+    return _visible(displayed, ignored), notes, ignored
+
+
+def _visible(rows: list[QuotaRow], ignored: tuple[str, ...]) -> list[QuotaRow]:
+    """The rows left after the providers the file hides are taken out."""
+    hidden = quota_ignore.folded(ignored)
+    if not hidden:
+        return rows
+    return [row for row in rows if not quota_ignore.hides(row.provider, row.provider_id, hidden)]
 
 
 def render_row(row: QuotaRow, now: float) -> str:

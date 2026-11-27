@@ -181,6 +181,19 @@ backends:
 
 The switch is per machine and lives beside the ceilings it belongs with. `NEXGEN_QUOTA_TOKSCALE=off` says the same thing for a single run, without editing the file: a scheduled job, a script, or a sandbox that must not read the accounts of whoever is logged in.
 
+## Ignoring a provider
+
+A plan you do not use can still answer somewhere on the machine, and a plan at 100% that nobody looks at would raise its alert every four hours. The `ignore:` key in the same `quota.yaml` names the providers whose rows this machine never wants to see:
+
+```yaml
+# 03-INFRA/agent-universal-layer/quota.yaml
+ignore: [copilot]
+```
+
+An entry is a provider id (`copilot`, `openai`, `anthropic`, `opencode-go`) or the name the report prints (`Copilot`, `OpenCode Go`), compared without case. The rows of an ignored provider disappear from every surface: `nexgen quota`, the line a session starts with, `nexgen doctor` and the failover state, so no alert is raised for it. One line at the bottom of the report names the ignored providers, and nothing else changes: the provider is not uninstalled, its logins are not touched, and the engine still asks the other plans.
+
+A value that is not a list is refused whole and named in one line: a misspelt key must never read as "ignore every provider". An entry that is not a name is named in one line and skipped, and the other entries still apply.
+
 ## A percentage needs a ceiling
 
 OpenCode reports what was spent, never how much was allowed.
