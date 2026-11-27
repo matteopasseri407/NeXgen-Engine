@@ -44,10 +44,13 @@ def _git_repo(path: Path) -> Path:
 
 
 def test_the_registry_names_every_adapter_and_resolves_its_aliases():
-    assert registry.names() == ("opencode", "claude", "codex", "agy", "local", "openclaw")
+    assert registry.names() == (
+        "opencode", "claude", "codex", "agy", "local", "openclaw", "dsh",
+    )
     assert registry.get("claude-code") is registry.get("claude")
     assert registry.get("antigravity") is registry.get("agy")
     assert registry.get("local-model") is registry.get("local")
+    assert registry.get("deepseek-harness") is registry.get("dsh")
 
 
 def test_an_unknown_harness_is_refused_with_the_names_that_exist():
@@ -565,12 +568,25 @@ def test_agy_is_a_scout_and_an_executor_with_find_session(tmp_path):
     ]
     assert adapter.scout_argv("agy", "guarda") == ["agy", "--mode", "plan", "--prompt", "guarda"]
     assert adapter.capabilities.has("find_session") is True
-    assert adapter.capabilities.has("send_turn") is False
+    assert adapter.capabilities.has("send_turn") is True
+    assert adapter.capabilities.has("live_state") is True
+    assert adapter.capabilities.has("headless") is True
     assert adapter.capabilities.has("cost") is False
     assert "pushurl" in adapter.capabilities.deny_push
 
-    with pytest.raises(base.Unsupported, match="non sa send_turn"):
-        adapter.send_argv("agy", "c1", "correggi")
+
+def test_agy_sends_a_later_turn_with_print_and_keeps_the_pointer_last(tmp_path):
+    """`--print` takes the pointer as its own value: nothing may sit between the two."""
+    adapter = antigravity.AntigravityAdapter()
+    assert adapter.send_argv("agy", "c1", "correggi") == [
+        "agy", "--mode", "accept-edits", "--conversation", "c1", "--print", "correggi",
+    ]
+    assert adapter.send_argv("agy", "c1", "correggi", model="gemini-3.8-flash")[-2:] == [
+        "--print", "correggi",
+    ]
+    assert adapter.headless_argv("agy", tmp_path, "leggi") == [
+        "agy", "--mode", "accept-edits", "--print", "leggi",
+    ]
 
 
 def test_agy_states_on_the_tab_the_model_the_owner_asked_for(tmp_path):

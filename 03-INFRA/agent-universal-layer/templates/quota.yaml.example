@@ -21,6 +21,16 @@ limits:
   # opencode:
   #   7d: 10.0
 
+# The providers this machine never wants to see in the report or in an alert.
+# Optional and empty by default: every provider that answers is printed. An entry
+# is a provider id (`copilot`, `openai`) or the name the report prints
+# (`Copilot`), compared without case. The rows of an ignored provider disappear
+# from `nexgen quota`, the session line, `nexgen doctor` and the failover state,
+# and one line at the bottom of the report names them. Its login is not touched
+# and the other plans are still read. A value that is not a list is refused and
+# named in one line instead of hiding everything.
+# ignore: [copilot]
+
 # The plans this machine pays for as a subscription, or runs as models of its own.
 # Optional and empty by default: without it every provider this machine can reach
 # stays selectable, and a machine that pays per token never needs this key.

@@ -43,7 +43,7 @@ class OpenCodeAdapter(base.Adapter):
     session_id_pattern = re.compile(r"ses_[A-Za-z0-9]{1,64}")
     session_id_description = "`ses_` seguito da lettere e cifre"
     capabilities = base.Capabilities(
-        open_tab=True, find_session=True, send_turn=True, live_state=True, cost=True,
+        open_tab=True, headless=True, find_session=True, send_turn=True, live_state=True, cost=True,
         tokens=True, write_permissions=True, resume=True, scout=True,
         dispose_location=True, session_model=True, last_turn=True, mcp=True,
         deny_push="profilo del progetto (opencode.json) e pushurl bloccata della copia",
@@ -76,6 +76,11 @@ class OpenCodeAdapter(base.Adapter):
             argv.extend(["-m", model])
         argv.append(prompt)
         return argv
+
+    def headless_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "",
+                      model: str = "") -> list[str]:
+        """`opencode run [-m <model>] <pointer>` from the copy: `run` opens the session itself."""
+        return self.send_argv(executable, "", prompt, model=model)
 
     def resume_argv(self, executable: str, session: str, folder: Path, prompt: str = "") -> list[str]:
         """The TUI on the session the task already has, verified against OpenCode 2's `--session`."""

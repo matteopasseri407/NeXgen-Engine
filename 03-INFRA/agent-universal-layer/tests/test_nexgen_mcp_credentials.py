@@ -250,6 +250,39 @@ def test_the_doctor_reports_a_token_that_is_nowhere(home):
     assert check_tokens_in_env(manifest_with(home, exposure="lazy")).severity is Severity.BROKEN
 
 
+def test_the_doctor_accepts_a_token_the_gateway_reads_from_its_own_environment(home):
+    """Il gateway parte dal suo file `.env`: una shell senza l'export non è un token mancante."""
+    state = home / "home" / ".openclaw"
+    state.mkdir(parents=True)
+    (state / ".env").write_text('SVC_API_TOKEN="from-the-gateway"\n', encoding="utf-8")
+
+    outcome = check_tokens_in_env(manifest_with(home, exposure="eager"), home / "home")
+
+    assert outcome.severity is Severity.OK
+    assert "from-the-gateway" not in outcome.message
+
+
+@pytest.mark.parametrize("filename", [".env", "gateway.systemd.env"])
+def test_the_gateway_environment_copy_the_unit_loads_is_read_too(home, filename):
+    state = home / "home" / ".openclaw"
+    state.mkdir(parents=True)
+    (state / filename).write_text("SVC_API_TOKEN=from-the-unit\n", encoding="utf-8")
+
+    assert check_tokens_in_env(manifest_with(home, exposure="eager"), home / "home").severity is Severity.OK
+
+
+def test_the_gateway_environment_cannot_satisfy_a_server_it_does_not_mount(home):
+    """Un server montato solo in un'altra CLI non riceve il token dal gateway."""
+    state = home / "home" / ".openclaw"
+    state.mkdir(parents=True)
+    (state / ".env").write_text("SVC_API_TOKEN=from-the-gateway\n", encoding="utf-8")
+
+    outcome = check_tokens_in_env(
+        manifest_with(home, exposure="eager", targets=["opencode"]), home / "home")
+
+    assert outcome.severity is Severity.BROKEN and "SVC_API_TOKEN" in outcome.message
+
+
 def test_a_server_switched_off_needs_no_token(home):
     """`enabled: false` vuol dire spento: il suo token mancante non è un difetto.
 

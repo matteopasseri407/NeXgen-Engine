@@ -265,16 +265,27 @@ def cmd_groom(args) -> int:
     import sys
 
     from nexgen_core.megaphone import Megaphone
+    from nexgen_core.openclaw.groom_lines import alert_unreadable
     from nexgen_core.openclaw.sessions_archived import UnreadableSessions
     from nexgen_core.openclaw.sessions_groom import groom
 
+    dry_run = bool(getattr(args, "dry_run", False))
     try:
         # The alert channel is handed in here and nowhere else: the hourly job runs with
         # --no-deliver, so a queue that stopped moving would otherwise reach nobody.
-        report = groom(dry_run=bool(getattr(args, "dry_run", False)), phone=Megaphone())
-    except (FileNotFoundError, UnreadableSessions) as exc:
+        report = groom(dry_run=dry_run, phone=None if dry_run else Megaphone())
+    except FileNotFoundError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
+    except UnreadableSessions as exc:
+        # The scheduler switches a job off after ten failures, so a gateway that was
+        # briefly unreachable must not silence the guard for good. The alert debounces
+        # itself: a delivered one, or one already sent inside the window, means this run
+        # did all it could, and a run nobody could tell is still a failure.
+        print(f"Error: {exc}", file=sys.stderr)
+        if dry_run or not alert_unreadable(Megaphone()):
+            return 1
+        return 0
     if not report.lines:
         print(t("No agent chat needs compacting."))
     # A refused chat is reported, remembered and alerted, never an exit code: the scheduler

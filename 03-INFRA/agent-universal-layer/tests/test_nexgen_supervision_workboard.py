@@ -145,7 +145,7 @@ def test_a_unit_gets_a_card_that_points_at_its_copy_and_brief(board, lane, tmp_p
 
 def test_the_card_follows_run_and_collect(board, task, unit, capsys, monkeypatch):
     state.append_event(task, "workboard_card", unit="prova", card=CARD, status="todo")
-    monkeypatch.setattr(harness, "run_unit", lambda task_id, name: {
+    monkeypatch.setattr(harness, "run_unit", lambda task_id, name, **options: {
         "unit": name, "mode": "run", "session": "agent:sviluppo:sup-prova", "pid": 4321,
         "row": {"cost_usd": 0.1},
     })

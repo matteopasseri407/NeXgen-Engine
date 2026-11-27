@@ -203,6 +203,8 @@ regexes = [
   '''^[A-Za-z0-9._%+-]+@esempio\.it$''',
   '''^test@example\.com$''',
   '''^noreply@anthropic\.com$''',
+  # DeepSeek's generic co-author trailer, the one the cheap workers sign with.
+  '''^noreply@deepseek\.com$''',
   '''^[A-Za-z0-9._%-]+@users\.noreply\.github\.com$''',
   # A public SSH remote, not a credential.
   '''^git@github\.com$''',

@@ -101,7 +101,7 @@ def test_a_turn_the_kernel_will_not_hold_is_journalled_not_dropped(monkeypatch):
 
     seen: dict = {}
     monkeypatch.setattr(
-        harness.jobs, "adopt",
+        harness.launch.jobs, "adopt",
         lambda name, pid: "processo 7 non assegnabile al job: rifiutato",
     )
     monkeypatch.setattr(
@@ -120,7 +120,7 @@ def test_a_turn_the_job_holds_says_nothing_extra(monkeypatch):
     """Il caso normale non sporca il diario: il silence è il segnale che il kernel tiene il turno."""
     from nexgen_local import supervision_harness as harness
 
-    monkeypatch.setattr(harness.jobs, "adopt", lambda name, pid: "")
+    monkeypatch.setattr(harness.launch.jobs, "adopt", lambda name, pid: "")
     monkeypatch.setattr(
         harness.state, "append_event",
         lambda *args, **kwargs: pytest.fail("nessun evento quando il turno è nel job"),

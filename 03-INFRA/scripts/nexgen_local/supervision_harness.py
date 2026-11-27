@@ -11,22 +11,19 @@ command line, never picks a model, and never reads what the terminal prints.
 """
 from __future__ import annotations
 
-import shutil
 import subprocess
-import sys
 import time
 from pathlib import Path
 
-from nexgen_core.processes import no_window_kwargs, windows_command_argv
-
 from . import supervision_adapters as adapters
 from . import supervision_costs as costs
-from . import supervision_job as jobs
 from . import supervision_policy as policy
 from . import supervision_quota as quota_gate
 from . import supervision_state as state
+from . import supervision_turn_launch as launch
 from . import supervision_windows as windows
 from .supervision_prompts import corrections_text, model_note as _model_note, prompt_text
+from .supervision_turn_launch import hold_turn as _hold_turn, stderr_log  # noqa: F401  (the tested seams)
 from .supervision_state import SupervisionError
 
 #: How long a new tab gets to open its session before the attach is left manual.
@@ -60,9 +57,13 @@ class SessionLost(HarnessError):
 def run_unit(
     task_id: str, unit: str, *, harness: str = "", opener=None, runner=None, lister=None,
     measure=None, wait_s: float = SESSION_WAIT_S, model: str = "", limited: bool = False, force_new: bool = False,
-    headless: bool = False,
+    headless: bool | None = None,
 ) -> dict:
-    """Put the unit's work into its harness session, queue it, or open the first tab."""
+    """Put the unit's work into its harness session, queue it, or open the first tab.
+
+    `headless` is the owner's choice on this run: True for the default `sup run`,
+    False for `--tab`, None when the caller made none and the journal decides.
+    """
     from . import routing_tiers
 
     record, folder = _unit_copy(task_id, unit)
@@ -74,7 +75,7 @@ def run_unit(
     if routing_tiers.routing_tiers_exists():
         model, harness = routing_tiers.resolve_worker_candidate(model, harness, limited=limited)
         model, harness, quota_note = quota_gate.gate_unit(
-            task_id, name, model, harness, limited=limited, headless=headless,
+            task_id, name, model, harness, limited=limited, headless=bool(headless),
         )
     chosen = _resolve(task_id, "esecutore", harness)
     local_notes = _prepare_local(task_id, name, chosen)
@@ -107,7 +108,7 @@ def _dispatch_unit_attempt(
     task_id: str, name: str, folder: Path, record: dict, brief: Path,
     chosen: str, model: str, allowed: tuple[str, ...], local_notes: list[str],
     *, opener, runner, lister, measure, wait_s: float, force_new: bool = False,
-    headless: bool = False,
+    headless: bool | None = None,
 ) -> dict:
     """Perform one delivery or tab open attempt for a unit."""
     adapter = _adapter(chosen)
@@ -127,13 +128,13 @@ def _dispatch_unit_attempt(
         opened = _open_first_tab(
             task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
             adapter=adapter, measure=measure, allowed=allowed, runner=runner, model=model, reason=reason,
-            headless=headless,
+            headless=bool(headless),
         )
     else:
         opened = _deliver(
             task_id, name, folder, prompt, previous["session"], event="unit_started", extra={},
             opener=opener, runner=runner, lister=lister, measure=measure, wait_s=wait_s,
-            allowed=allowed, adapter=adapter, model=model,
+            allowed=allowed, adapter=adapter, model=model, headless=headless,
         )
     opened["harness"] = chosen
     opened["notes"] = local_notes
@@ -241,6 +242,7 @@ def send_corrections(
             task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
             event="unit_reworked", extra={"round": round_no}, adapter=adapter,
             measure=measure, allowed=allowed, runner=runner, model=model,
+            headless=_headless_again(task_id, name, adapter),
         )
     elif _foreign_copy(previous.get("folder") or "", folder):
         opened = _handle_foreign_session(
@@ -266,9 +268,13 @@ def send_corrections(
 def _deliver(
     task_id: str, unit: str, folder: Path, prompt: str, session: str, *,
     event: str, extra: dict, opener, runner, lister, measure, wait_s: float,
-    allowed: tuple[str, ...] = (), model: str = "", adapter=None,
+    allowed: tuple[str, ...] = (), model: str = "", adapter=None, headless: bool | None = None,
 ) -> dict:
-    """Send into the task's session; a session the harness no longer has becomes the one new tab."""
+    """Send into the task's session; a session the harness no longer has is opened again.
+
+    `headless` is the owner's choice on this `sup run` (`--tab` or not), which wins;
+    a review round has none, and the new session opens the way the unit last started.
+    """
     adapter = adapter or _adapter("opencode")
     try:
         return _enter_the_session(
@@ -285,6 +291,7 @@ def _deliver(
             task_id, unit, folder, prompt, opener or windows.open_window, lister, wait_s,
             event=event, extra=extra, adapter=adapter, measure=measure, allowed=allowed,
             runner=runner, model=model,
+            headless=_headless_again(task_id, unit, adapter) if headless is None else headless,
         )
         return opened
 
@@ -335,12 +342,12 @@ def _enter_the_session(
 
     A session the harness cannot report is not a busy session: it is gone, and
     queueing on it would leave the unit waiting on nothing for ever. A session
-    on a model outside the owner's list is refused before anything is sent. When
-    the engine closed this task's tab, the work goes into a tab again: a worker
-    the owner cannot see is what this engine exists to prevent.
+    on a model outside the owner's list is refused before anything is sent. A
+    unit the owner chose to watch in a tab (`sup run --tab`) gets its tab back when
+    the engine closed it; a headless unit stays headless, visible in its harness.
     """
     adapter = adapter or _adapter("opencode")
-    if not adapter.capabilities.has("send_turn") or _tab_closed(task_id):
+    if not adapter.capabilities.has("send_turn") or (_tab_closed(task_id) and _ran_in_tab(task_id, unit)):
         return _reopen_tab(
             task_id, unit, session, folder, prompt, event=event, extra=extra,
             opener=opener, model=model, adapter=adapter,
@@ -475,25 +482,24 @@ def _open_first_tab(
     and on a headless turn, where the runner passes it to the harness as `-m`, and the result
     says whether it did.
 
-    `headless` is the owner's explicit "no tab this time": the same detached turn
-    the harnesses without a window already use, started from the copy, bound to the
-    session it creates. It is offered only where a turn can open the session it is
-    about to attach (OpenCode and the local executor); every other harness needs an
-    existing session, so it is refused here rather than failing inside the harness.
+    `headless` is how `sup run` starts work unless the owner asks for `--tab`: a
+    one-shot turn with no window, started from the copy with the adapter's headless
+    form and bound to the session it creates, which the harness's own app shows. A
+    harness without a headless form is refused here rather than failing inside it.
     """
     adapter, executable, chosen = _opening(adapter, task_id, unit)
     preflight = _check_tab_model_preflight(adapter, chosen, model, allowed, folder, task_id, unit)
     if preflight is not None:
         return preflight
-    if headless and adapter.capabilities.window and adapter.name not in _OPENCODE_LIKE:
+    if headless and not adapter.capabilities.has("headless"):
         raise HarnessError(
             f"l'harness {adapter.name} non sa aprire la sua prima sessione senza finestra: "
-            "usa `--harness opencode`, oppure apri la scheda una volta e lascia fare a `sup run`"
+            "usa `--tab` per aprirla in una scheda"
         )
     if headless or not adapter.capabilities.window:
         return _open_turn(
             task_id, unit, folder, prompt, session=chosen, event=event, extra=extra or {},
-            runner=runner or _runner_for(adapter), adapter=adapter, measure=measure,
+            runner=runner or _runner_for(adapter, first=True), adapter=adapter, measure=measure,
             allowed=allowed, lister=lister, wait_s=wait_s, reason=reason, model=model,
         )
     replaced = _replace_previous_tab(task_id, unit)
@@ -685,6 +691,20 @@ def _tab_closed(task_id: str, role: str = "esecutore") -> bool:
     return last == "tab_closed"
 
 
+def _headless_again(task_id: str, unit: str, adapter) -> bool:
+    """A new session for a unit opens the way its last one did: in a tab only if that was a tab."""
+    return adapter.capabilities.has("headless") and not _ran_in_tab(task_id, unit)
+
+
+def _ran_in_tab(task_id: str, unit: str) -> bool:
+    """Whether this unit's work was last started in a visible tab, which the owner asked for."""
+    mode = ""
+    for row in state.read_events(task_id):
+        if row.get("event") in ("unit_started", "unit_reworked") and row.get("unit") == unit:
+            mode = str(row.get("mode") or "")
+    return mode == "tab"
+
+
 def _run_in_session(session: str, prompt: str, folder: Path, model: str = ""):
     """One-shot work inside the task's OpenCode session; the terminal shows it, the engine does not watch.
 
@@ -694,85 +714,32 @@ def _run_in_session(session: str, prompt: str, folder: Path, model: str = ""):
     return _run_turn(_adapter("opencode"), _opencode_executable(), session, prompt, folder, model)
 
 
-def stderr_log(folder: Path, session: str) -> Path:
-    """The file a turn's own errors go to, beside the copy and inside the task folder.
-
-    A turn that dies before its envelope says why on stderr and nowhere else, and a
-    silent death is the one thing the supervisor cannot read afterwards. The copy is
-    `<task>/23-unita-<unit>/`, so the parent is the task folder the owner opens.
-    """
-    safe = "".join(ch if ch.isalnum() or ch in "-_." else "-" for ch in session)[:80]
-    return folder.parent / f"60-stderr-{safe or 'session'}.log"
-
-
-def _run_turn(adapter, executable: str, session: str, prompt: str, folder: Path, model: str = ""):
-    """One turn through this harness, detached: no window of the engine is left holding it.
-
-    The copy is checked first, because one harness runs its turn in a workspace
-    the owner configured and a wrong folder would look like work in the unit. A
-    harness whose numbers are only in what the turn prints writes them into its
-    own log, so a turn that ends on its own leaves its cost behind; whatever the
-    turn says on stderr is kept beside the copy instead of being thrown away.
-    """
-    adapter.check_folder(folder)
-    argv = windows_command_argv(adapter.send_argv(executable, session, prompt, model=model))
-    log = adapter.turn_log(session)
-    errors = stderr_log(folder, session)
+def _run_turn(adapter, executable: str, session: str, prompt: str, folder: Path, model: str = "",
+              *, first: bool = False):
+    """One detached turn through this harness; the launch module starts it and guards its tree."""
     try:
-        errors.parent.mkdir(parents=True, exist_ok=True)
-        with errors.open("a", encoding="utf-8", newline="\n") as err:
-            if log is not None:
-                log.parent.mkdir(parents=True, exist_ok=True)
-                with log.open("a", encoding="utf-8", newline="\n") as handle:
-                    return subprocess.Popen(
-                        argv, cwd=folder,
-                        stdin=subprocess.DEVNULL, stdout=handle, stderr=err,
-                        **_detach_kwargs(),
-                    )
-            return subprocess.Popen(
-                argv, cwd=folder,
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err,
-                **_detach_kwargs(),
-            )
-    except OSError as exc:
-        raise HarnessError(f"sessione {session} non raggiungibile: {exc}") from exc
+        return launch.run_turn(adapter, executable, session, prompt, folder, model, first=first)
+    except launch.TurnLaunchError as exc:
+        raise HarnessError(str(exc)) from exc
 
 
-def _hold_turn(task_id: str, unit: str, proc) -> None:
-    """Put this turn inside the unit's job object, and journal the reason when it cannot hold it.
-
-    The job is what lets stopping the unit end the whole tree in one kernel call. A
-    turn the kernel will not hold still runs: the engine says so in the journal
-    (`unit_unjobbed`) instead of pretending, and the stop falls back to the pids.
-    """
-    note = jobs.adopt(jobs.job_name(task_id, unit), getattr(proc, "pid", None))
-    if note:
-        state.append_event(
-            task_id, "unit_unjobbed", unit=unit, pid=getattr(proc, "pid", None), reason=note,
-        )
-
-
-def _runner_for(adapter):
+def _runner_for(adapter, *, first: bool = False):
     """The one-shot turn of this harness, with its own executable resolved from PATH.
 
     OpenCode keeps the module-level `_run_in_session` as its default: it is the
-    tested seam the callers replace, and its argv is built by the same adapter.
+    tested seam the callers replace, and an empty session is already its headless
+    first turn. `first` picks the adapter's headless form for every other harness.
     """
     if adapter.name in _OPENCODE_LIKE:
         return _run_in_session
     return lambda session, prompt, folder, model="": _run_turn(
-        adapter, _executable_for(adapter), session, prompt, folder, model,
+        adapter, _executable_for(adapter), session, prompt, folder, model, first=first,
     )
 
 
 def _measure_for(adapter):
     """This harness's cost reader, named so an adapter that cannot measure still raises `CostError`."""
     return lambda session: costs.measure_for(adapter.name, session)
-
-
-def _detach_kwargs() -> dict:
-    """Let the harness outlive the command that started it."""
-    return no_window_kwargs() if sys.platform.startswith(("win", "cygwin", "msys")) else {"start_new_session": True}
 
 
 def _unit_copy(task_id: str, unit: str) -> tuple[dict, Path]:
@@ -828,7 +795,7 @@ def _executable_for(adapter) -> str:
     """
     if adapter.name in _OPENCODE_LIKE:
         return _opencode_executable()
-    found = shutil.which(adapter.executable)
+    found = adapter.locate()
     if not found:
         raise HarnessError(
             f"harness {adapter.name} non installato: `{adapter.executable}` non è nel PATH"

@@ -20,10 +20,9 @@ the engine has never invented a percentage, and a guess is a worse reason to
 stop a unit than no reason at all. Only the cheap readers answer here
 (`quota.percentage_rows`): no transcript is opened, and the optional backend
 answers from the cache it shares with the hourly beat, one run at most per
-interval. A `--headless` unit never changes harness: that turn opens its own
-session and only some harnesses can do that without a window, so the move is
-journaled as not made instead of failing later on a harness the owner never
-asked for.
+interval. A headless unit moves only to a harness that can open its first
+session without a window; otherwise the move is journaled as not made instead
+of failing later on a harness the owner never asked for.
 """
 from __future__ import annotations
 
@@ -73,19 +72,25 @@ def gate_unit(task_id: str, unit: str, model: str, harness: str, *, limited: boo
         reason = f"quota al {percent}% ({row.window}): nessun altro candidato, si parte qui"
         _journal(task_id, unit, model, harness, row, decision="nessun candidato", reason=reason)
         return model, harness, reason
-    if headless and str(candidate["harness"]) != harness:
-        # A headless turn opens its own session, and only some harnesses can do
-        # that without a window: the candidate needs one this run will not open, so
-        # the move is recorded as not made instead of refused later in the name of
-        # a harness the owner never asked for.
-        reason = (f"quota al {percent}% ({row.window}): --headless non cambia harness, "
-                  "nessuna finestra da aprire altrove")
+    if headless and not _opens_headless(str(candidate["harness"])):
+        # A headless turn opens its own session, and a harness without a headless
+        # form cannot: the move is recorded as not made instead of refused later in
+        # the name of a harness the owner never asked for.
+        reason = (f"quota al {percent}% ({row.window}): {candidate['harness']} non sa partire "
+                  "senza finestra, resto qui")
         _journal(task_id, unit, model, harness, row, decision="headless", reason=reason)
         return model, harness, reason
     reason = f"quota al {percent}% ({row.window}): passa a {candidate['model']}"
     _journal(task_id, unit, model, harness, row, decision="spostata",
              reason=reason, next_model=str(candidate["model"]))
     return str(candidate["model"]), str(candidate["harness"]), reason
+
+
+def _opens_headless(name: str) -> bool:
+    """Whether this harness can open a unit's first session with no window."""
+    from . import supervision_adapters as adapters
+
+    return adapters.supports(name, "headless")
 
 
 def lane_reading(model: str, harness: str, *, rows: list[quota.QuotaRow] | None = None) -> quota.QuotaRow | None:

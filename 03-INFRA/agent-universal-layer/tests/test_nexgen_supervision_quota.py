@@ -8,6 +8,8 @@ value is the literal the fixture wrote.
 """
 from __future__ import annotations
 
+import shutil
+
 from types import SimpleNamespace
 
 import pytest
@@ -171,50 +173,64 @@ def test_the_shipped_line_and_the_loudest_alert_are_the_same_number(env):
     assert gate.gate_unit("task", "u1", FLAT, "opencode", rows=[reading(94.9)])[0] == FLAT
 
 
-def test_a_headless_unit_is_not_moved_to_another_harness_and_the_journal_says_so(env):
-    """`--headless` opens its own session, which only some harnesses can do without a window.
+def test_a_headless_unit_moves_to_a_harness_that_opens_without_a_window(env):
+    """Un'unità headless può cambiare harness: ogni harness registrato sa aprire la prima sessione."""
+    model, harness, note = gate.gate_unit("task", "u1", FLAT, "opencode",
+                                          rows=[reading(97.0)], headless=True)
 
-    Moving it would either invent a tab or fail later in the name of a harness the
-    owner never asked for; the journal records the reading and the move not made.
-    """
+    assert (model, harness) == (OTHER_PLAN, "antigravity")
+    assert note == "quota al 97% (5h): passa a gemini-3.8-flash"
+    assert env.journal == [{
+        "event": "unit_quota", "unit": "u1", "harness": "opencode", "model": FLAT,
+        "provider": "opencode-go", "window": "5h", "percent": 97.0, "state": "warn",
+        "decision": "spostata", "reason": "quota al 97% (5h): passa a gemini-3.8-flash",
+        "next_model": OTHER_PLAN,
+    }]
+
+
+def test_a_headless_unit_stays_put_when_the_candidate_cannot_open_without_a_window(env, monkeypatch):
+    """Se il candidato non sa partire senza finestra, lo spostamento non si fa e il diario lo dice."""
+    monkeypatch.setattr(gate, "_opens_headless", lambda name: False)
+
     model, harness, note = gate.gate_unit("task", "u1", FLAT, "opencode",
                                           rows=[reading(97.0)], headless=True)
 
     assert (model, harness) == (FLAT, "opencode")
-    assert note == ("quota al 97% (5h): --headless non cambia harness, "
-                    "nessuna finestra da aprire altrove")
+    assert note == ("quota al 97% (5h): antigravity non sa partire senza finestra, resto qui")
     assert env.journal == [{
         "event": "unit_quota", "unit": "u1", "harness": "opencode", "model": FLAT,
         "provider": "opencode-go", "window": "5h", "percent": 97.0, "state": "warn",
         "decision": "headless",
-        "reason": "quota al 97% (5h): --headless non cambia harness, nessuna finestra da aprire altrove",
+        "reason": "quota al 97% (5h): antigravity non sa partire senza finestra, resto qui",
     }]
 
 
-def test_a_headless_dispatch_stays_on_the_lane_the_owner_asked_for(tiers, tmp_path, monkeypatch):
-    """The reported failure: a spent OpenCode plan refused the run in the name of `agy`."""
+def test_a_headless_dispatch_moves_to_the_harness_that_opens_without_a_window(tiers, tmp_path, monkeypatch):
+    """La corsia spesa sposta il turno su `agy`, che sa aprire la sua prima conversazione senza scheda."""
     from nexgen_local import supervision_harness as harness
 
     monkeypatch.setattr(state, "lane_state_dir", lambda: tmp_path / "lane")
     task = _started_unit(tmp_path)
-    folder = state.open_task(task) / "23-unita-prova"
     monkeypatch.setattr(gate.quota, "percentage_rows", lambda **_kw: ([reading(97.0)], []))
-    monkeypatch.setattr(harness, "_opencode_executable", lambda: "oc-finto")
+    monkeypatch.setattr(harness, "_executable_for", lambda adapter: f"{adapter.name}-finto")
+    monkeypatch.setattr(harness, "_hold_turn", lambda *a: None)
     monkeypatch.setattr(harness.costs, "record", lambda *a, **k: {"session": "ses_headless"})
     monkeypatch.setattr(harness.policy, "allowed_models", lambda: ())
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path / "nessuna-conversazione"))
     turns: list[str] = []
 
     result = harness.run_unit(
         task, "prova", harness="opencode", headless=True, wait_s=0,
+        opener=lambda *a, **k: pytest.fail("nessuna scheda su un turno headless"),
         runner=lambda session, prompt, copy, model="": turns.append(model) or SimpleNamespace(pid=7),
-        lister=lambda: [{"id": "ses_headless", "directory": str(folder), "created": 10 ** 13}],
+        lister=lambda: [],
     )
 
-    assert result["harness"] == "opencode", "l'unità resta dove il proprietario l'ha chiesta"
+    assert result["harness"] == "agy", "il turno va dove la corsia spesa manda"
     assert result["mode"] == "run"
-    assert turns == ["opencode-go/flat-a"], "il turno riceve il modello della corsia scelta"
+    assert turns == ["gemini-3.8-flash"], "il turno riceve il modello del candidato scelto"
     decisions = [row.get("decision") for row in state.read_events(task) if row.get("event") == "unit_quota"]
-    assert decisions == ["headless"]
+    assert decisions == ["spostata"]
 
 
 def _started_unit(tmp_path) -> str:
@@ -265,7 +281,7 @@ def test_run_unit_starts_the_unit_on_the_other_plan_when_this_one_is_spent(tiers
         base="0" * 40, allow=["docs/*.md"], verify="", repo=str(tmp_path),
     )
     monkeypatch.setattr(gate.quota, "percentage_rows", lambda **_kw: ([reading(97.0)], []))
-    monkeypatch.setattr(harness.shutil, "which", lambda name: f"{name}-finto")
+    monkeypatch.setattr(shutil, "which", lambda name: f"{name}-finto")
     monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path / "antigravity"))
     opened: list = []
 

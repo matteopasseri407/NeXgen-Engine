@@ -130,6 +130,13 @@ CHATS_PILING_UP = Alert(
     sample={"count": "14"},
 )
 
+#: The tidy-up could not read which chats exist, so it compacted none of them.
+CHATS_UNREADABLE = Alert(
+    title="NeXgen: the tidy-up cannot read the chats",
+    message="OpenClaw did not say which chats exist, so none of them was compacted.",
+    action="nexgen openclaw groom",
+)
+
 #: A model nobody has priced appeared in the inventory.
 MODEL_UNKNOWN_VOLUME = Alert(
     title="NeXgen: a new model has no known cost",
@@ -163,6 +170,14 @@ WORKER_RELAUNCHED = Alert(
 WORKER_STUCK = Alert(
     title="NeXgen: a task is stuck",
     message="One task hit its limit and no other model was free, so it stays stopped.",
+)
+
+#: A task produced nothing even after its turn was restarted, so it stays stopped.
+TASK_STALLED = Alert(
+    title="NeXgen: a task stopped answering",
+    message="{minutes} minutes without a sign of life, even after a restart, so the engine stopped it.",
+    action="sup status",
+    sample={"minutes": "15"},
 )
 
 #: A model used up its allowance in the middle of a job.

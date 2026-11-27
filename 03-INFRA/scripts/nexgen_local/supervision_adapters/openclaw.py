@@ -64,7 +64,7 @@ class OpenClawAdapter(base.Adapter):
     label = "OpenClaw"
     executable = "openclaw"
     capabilities = base.Capabilities(
-        open_tab=True, window=False, find_session=True, send_turn=True, live_state=True,
+        open_tab=True, window=False, headless=True, find_session=True, send_turn=True, live_state=True,
         cost=True, tokens=True, write_permissions=False, resume=True, scout=False,
         dispose_location=False, session_model=True, last_turn=True,
         deny_push="pushurl bloccata della copia; OpenClaw non ha un profilo di progetto che il motore scriva",
@@ -105,6 +105,11 @@ class OpenClawAdapter(base.Adapter):
         if model:
             argv.extend(["--model", model])
         return argv
+
+    def headless_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "",
+                      model: str = "") -> list[str]:
+        """The same turn as `send_argv`: OpenClaw never had a window of the engine."""
+        return self.send_argv(executable, session, prompt, model=model)
 
     def resume_argv(self, executable: str, session: str, folder: Path, prompt: str = "") -> list[str]:
         """A second turn in the same session: there is no TUI to reopen."""

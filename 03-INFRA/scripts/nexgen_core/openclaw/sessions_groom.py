@@ -36,11 +36,14 @@ past a chat whose attempt failed, so one chat the gateway refuses cannot starve
 every other, and a failure that is not about quota waits `FAILED_BACKOFF_MS`
 before it is asked again. A refused chat never fails the run: the scheduler
 switches a job off after ten failed runs, and one chat must not cost every other
-its guard. A run fails only when the sessions cannot be listed. A run that gets
-no due chat through raises one alert, because the hourly job runs with `--no-deliver` and its
-output otherwise reaches nobody; only the command hands in that channel, so
-nothing else alerts on the policy's behalf. What the run did is also written down
-(`groom_run`) for the doctor, which cannot ask the scheduler for it.
+its guard. A run fails only when the sessions cannot be listed: that failure is
+written down (`groom_run`) and the command raises an alert, then exits 0 when the
+alert was delivered, so the scheduler does not switch the job off for a gateway
+that was briefly unreachable. A run that gets no due chat through raises one alert,
+because the hourly job runs with `--no-deliver` and its output otherwise reaches
+nobody; only the command hands in that channel, so nothing else alerts on the
+policy's behalf. What the run did is also written down (`groom_run`) for the
+doctor, which cannot ask the scheduler for it.
 """
 from __future__ import annotations
 
@@ -65,7 +68,7 @@ from nexgen_core.openclaw.groom_lines import (
 )
 from nexgen_core.openclaw.groom_policy import IDLE_MIN_TOKENS, IDLE_SECONDS, plan_groom, priority, unconfirmable
 from nexgen_core.openclaw.node_cli import launch_argv
-from nexgen_core.openclaw.sessions_archived import drop_archived, read_listing
+from nexgen_core.openclaw.sessions_archived import UnreadableSessions, drop_archived, read_listing
 from nexgen_core.openclaw.sessions_blocked import askable, state_dir_of
 
 if TYPE_CHECKING:
@@ -359,6 +362,22 @@ def _switched_off_lines(planned: list[Decision], emit: Callable[[str], None]) ->
     return [note]
 
 
+def _read_sessions(binary: str, home: Path | None, moment: float, dry_run: bool) -> list[dict[str, Any]]:
+    """Every stored session without the archived ones, or a recorded failure.
+
+    An archived session is not a chat: 2026.11.10 lists it without saying so and
+    refuses to compact it. A listing that cannot be read is recorded before it is
+    raised, because the command turns it into an alert and a zero exit and the
+    scheduler's own row can then no longer say what went wrong.
+    """
+    try:
+        return drop_archived(list_sessions(binary), binary, _run)
+    except UnreadableSessions as exc:
+        if not dry_run:
+            groom_run.save(groom_run.failure(at_ms=moment, error=str(exc)), home)
+        raise
+
+
 def groom(
     openclaw: str | None = None,
     now_ms: float | None = None,
@@ -388,8 +407,7 @@ def groom(
     binary = openclaw or _resolve_binary()
     moment = now_ms if now_ms is not None else (clock or _time.time)() * 1000
     state_dir = state_dir_of(home)
-    # An archived session is not a chat: 2026.11.10 lists it without saying so and refuses to compact it.
-    entries = drop_archived(list_sessions(binary), binary, _run)
+    entries = _read_sessions(binary, home, moment, dry_run)
     memory = groom_memory.load_memory(home)
     # Taken before the plugin fix, because forgetting what a repaired backend was
     # refused for is a change this run has to save, not one to compare away.

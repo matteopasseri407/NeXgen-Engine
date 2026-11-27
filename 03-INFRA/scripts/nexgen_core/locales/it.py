@@ -63,6 +63,9 @@ MESSAGES: dict[str, str] = {
     "NeXgen: the chats are piling up": "NeXgen: le chat si stanno accumulando",
     "The last tidy-up closed none of them. Chats still waiting: {count}.":
         "L'ultima pulizia non ne ha chiusa nessuna. Chat ancora in attesa: {count}.",
+    "NeXgen: the tidy-up cannot read the chats": "NeXgen: la pulizia non riesce a leggere le chat",
+    "OpenClaw did not say which chats exist, so none of them was compacted.":
+        "OpenClaw non ha detto quali chat esistono, quindi nessuna è stata compattata.",
     "NeXgen: a new model has no known cost": "NeXgen: un modello nuovo non ha un costo noto",
     "The model {model} turned up, but nobody wrote down how much work it gets.":
         "Il modello {model} è comparso, ma nessuno ha scritto quanto lavoro riceve.",
@@ -80,6 +83,9 @@ MESSAGES: dict[str, str] = {
     "NeXgen: a task is stuck": "NeXgen: un compito è fermo",
     "One task hit its limit and no other model was free, so it stays stopped.":
         "Un compito ha finito la sua quota e non c'era un altro modello libero, quindi resta fermo.",
+    "NeXgen: a task stopped answering": "NeXgen: un compito non risponde più",
+    "{minutes} minutes without a sign of life, even after a restart, so the engine stopped it.":
+        "{minutes} minuti senza segni di vita, anche dopo un riavvio, quindi il motore lo ha fermato.",
     "NeXgen: a model ran out of quota": "NeXgen: un modello ha esaurito la quota",
     "The model {model} has no allowance left ({reason}). The next one takes over.":
         "Il modello {model} non ha più quota ({reason}). Subentra il successivo.",
@@ -2630,6 +2636,12 @@ MESSAGES: dict[str, str] = {
         "I limiti dichiarati in {path} non si leggono: {error}",
     "The declared limit for {entry} is not a positive number: ignored.":
         "Il limite dichiarato per {entry} non è un numero positivo: lo ignoro.",
+    "Ignored providers: {providers}.":
+        "Fornitori ignorati: {providers}.",
+    "The 'ignore' key in {path} is not a list of providers: nothing is ignored.":
+        "La chiave 'ignore' in {path} non è una lista di fornitori: non ignoro niente.",
+    "The entry at position {position} of 'ignore' is not a provider name: ignored.":
+        "La voce {position} di 'ignore' non è il nome di un fornitore: la ignoro.",
     "OpenCode: spend is unknown, the harness archive could not be read.":
         "OpenCode: la spesa non si sa, l'archivio del harness non si è potuto leggere.",
     "OpenCode: the harness lane is not installed in this engine.":
@@ -3150,6 +3162,8 @@ MESSAGES: dict[str, str] = {
         'La guardia del contesto non compatta',
     'The last run compacted none of the chats waiting for it. Waiting now: {count}.':
         "L'ultima esecuzione non ha compattato nessuna delle chat in attesa. In attesa ora: {count}.",
+    "The last context guard run could not read the chats, so none was compacted: {error}":
+        "L'ultima esecuzione della guardia del contesto non è riuscita a leggere le chat, quindi non ne ha compattata nessuna: {error}",
     "Run 'nexgen openclaw groom' and read the reason it prints.":
         "Esegui 'nexgen openclaw groom' e leggi il motivo che stampa.",
     # --- I ruoli della macchina: il piano di --check ------------------------

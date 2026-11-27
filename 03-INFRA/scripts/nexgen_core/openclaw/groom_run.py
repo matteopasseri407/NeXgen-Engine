@@ -75,3 +75,13 @@ def save(recorded: Mapping[str, Any], home: Path | None = None) -> None:
     """Publish the record atomically: a crash never leaves half a run behind."""
     payload = dict(recorded)
     write_private_text(record_path(home), json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+
+
+def failure(*, at_ms: float, error: str) -> dict[str, Any]:
+    """A run that ended before deciding anything, in the one fact the doctor reads.
+
+    It replaces the previous record, because it is the last thing that happened: the
+    job still exited 0 after raising its alert, so the scheduler's own row says "ok"
+    and this is the only place a person can learn the chats were never read.
+    """
+    return {"schema_version": SCHEMA_VERSION, "at": at_ms, "error": error}

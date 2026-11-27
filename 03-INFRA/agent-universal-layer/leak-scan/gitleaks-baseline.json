@@ -578,5 +578,25 @@
     "Tags": [],
     "Fingerprint": "4b5f037b3d899d4a45f6bce8be62936ece257518:03-INFRA/agent-universal-layer/tests/test_nexgen_leak_exceptions.py:nexgen-long-hex:68",
     "NexgenReason": "the full id of a public commit, named by the test that lists the commits published before the gate"
+  },
+  {
+    "RuleID": "nexgen-personal-email",
+    "Description": "An e-mail address is personal data and belongs in the private Vault.",
+    "StartLine": 452,
+    "EndLine": 452,
+    "StartColumn": 30,
+    "EndColumn": 49,
+    "Match": "someone@deepseek.com",
+    "Secret": "someone@deepseek.com",
+    "File": "03-INFRA/agent-universal-layer/tests/test_nexgen_leak_scan.py",
+    "Commit": "a79d3e2df1f3bf002bbf542ef12d27bf7987a116",
+    "Entropy": 3.108695,
+    "Author": "Matteo Passeri",
+    "Email": "matteo.passeri.407@gmail.com",
+    "Date": "2026-11-27T12:34:29Z",
+    "Message": "fix(leak-scan): DeepSeek's co-author trailer is a vendor address, not personal data\n\nThe cheap workers sign their commits with noreply@deepseek.com, the way Claude\nsigns with noreply@anthropic.com, and the personal-email rule blocked the 3.1.5\nrelease on that trailer. Both rule files release that one exact address; any\nother address at the same domain still blocks.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>",
+    "Tags": [],
+    "Fingerprint": "a79d3e2df1f3bf002bbf542ef12d27bf7987a116:03-INFRA/agent-universal-layer/tests/test_nexgen_leak_scan.py:nexgen-personal-email:452",
+    "NexgenReason": "a made-up deepseek.com address the test proves stays blocked; the next commit builds it from two halves"
   }
 ]

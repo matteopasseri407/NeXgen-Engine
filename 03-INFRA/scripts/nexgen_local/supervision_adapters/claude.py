@@ -45,7 +45,7 @@ class ClaudeAdapter(base.Adapter):
     label = "Claude Code"
     executable = "claude"
     capabilities = base.Capabilities(
-        open_tab=True, find_session=True, send_turn=True, live_state=True, cost=True,
+        open_tab=True, headless=True, find_session=True, send_turn=True, live_state=True, cost=True,
         tokens=True, write_permissions=True, resume=True, scout=True,
         session_model=True, last_turn=True,
         deny_push="profilo di progetto .claude/settings.json e pushurl bloccata della copia",
@@ -71,6 +71,21 @@ class ClaudeAdapter(base.Adapter):
     def send_argv(self, executable: str, session: str, prompt: str, *, model: str = "") -> list[str]:
         """`claude -p --resume <id> <pointer>`: one turn, printed, no tab."""
         argv = [executable, "-p", "--resume", session]
+        if model:
+            argv.extend(["--model", model])
+        argv.extend(["--permission-mode", PERMISSION_MODE, prompt])
+        return argv
+
+    def headless_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "",
+                      model: str = "") -> list[str]:
+        """`claude -p --session-id <uuid> <pointer>`: the first turn, printed, on the id the engine chose.
+
+        The session lands in Claude Code's own store under the copy's project, so
+        the owner finds it in `claude --resume` and in the app like any other.
+        """
+        argv = [executable, "-p"]
+        if session:
+            argv.extend(["--session-id", session])
         if model:
             argv.extend(["--model", model])
         argv.extend(["--permission-mode", PERMISSION_MODE, prompt])
