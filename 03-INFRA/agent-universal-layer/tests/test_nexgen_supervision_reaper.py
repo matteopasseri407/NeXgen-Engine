@@ -316,3 +316,38 @@ def test_real_guardian_reaps_orphan_in_background(tmp_path, tracked_procs, monke
         time.sleep(0.2)
 
     assert not _is_pid_alive(child_pid)
+
+
+def test_a_few_hundredths_of_cpu_are_not_a_sign_of_life(monkeypatch):
+    """A hung process ticks its event loop: counted to the hundredth it would never go idle."""
+    spent = iter([1.20, 1.23, 1.31])
+    monkeypatch.setattr(supervision_idle, "_cpu_of", lambda _proc: next(spent))
+    monkeypatch.setattr(supervision_idle.psutil, "Process",
+                        lambda _pid: SimpleNamespace(children=lambda recursive: []))
+
+    readings = {supervision_idle._tree_cpu(1) for _ in range(3)}
+
+    assert len(readings) == 1
+
+
+def test_a_long_prompt_reaches_the_guardian_through_a_file(monkeypatch, tmp_path):
+    """A brief past the Windows command-line limit must not leave the turn unguarded."""
+    started: list[list[str]] = []
+
+    class Launched(reaper._REAL_POPEN):
+        def __init__(self, argv, **_kwargs):
+            started.append(list(argv))
+
+    proc = Launched.__new__(Launched)
+    proc.pid = os.getpid()
+    monkeypatch.setattr(reaper, "_REAL_POPEN", lambda argv, **kwargs: started.append(list(argv)))
+    monkeypatch.setattr(reaper, "watchable", lambda _proc: True)
+    log = tmp_path / "task" / "60-stderr-s.log"
+    prompt = "x" * 40_000
+
+    reaper.watch("t", "u", proc, idle_s=60, launch={"prompt": prompt, "logs": [str(log)]})
+
+    argv = started[-1]
+    assert all(len(part) < 1000 for part in argv)
+    recipe = supervision_idle.recipe_from_file(argv[argv.index("--launch-file") + 1])
+    assert recipe["prompt"] == prompt

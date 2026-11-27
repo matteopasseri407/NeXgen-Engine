@@ -22,6 +22,10 @@ from . import supervision_state as state
 IDLE_REASON = reaper.IDLE_REASON
 #: How many times an idle turn is started again before its unit is called stalled.
 MAX_IDLE_RETRIES = 1
+#: How many CPU seconds make one step of movement. A hung process still spends a few
+#: hundredths now and then on its event loop and timers; counted to the hundredth, it
+#: would look alive forever and the idle stop would never come.
+CPU_STEP_S = 5.0
 #: How many files a progress scan reads before it accepts the partial picture.
 FOLDER_SCAN_LIMIT = 4000
 
@@ -43,7 +47,7 @@ def signs_of_life(pid: int, folder: Path | str = "", logs: list[Path | str] | No
 
 
 def _tree_cpu(pid: int) -> float:
-    """User plus system seconds spent by `pid` and every descendant, rounded to a hundredth."""
+    """User plus system seconds spent by `pid` and every descendant, in steps of `CPU_STEP_S`."""
     try:
         root = psutil.Process(pid)
         total = _cpu_of(root)
@@ -51,7 +55,7 @@ def _tree_cpu(pid: int) -> float:
             total += _cpu_of(child)
     except (psutil.NoSuchProcess, psutil.AccessDenied):  # nexgen: allow reason="un albero che esce mentre lo leggiamo non ha segni di vita da riportare"
         return 0.0
-    return round(total, 2)
+    return float(int(total // CPU_STEP_S))
 
 
 def _cpu_of(proc) -> float:
@@ -111,6 +115,17 @@ def probe_for(pid: int, launch: dict | None):
     folder = str((launch or {}).get("folder") or "")
     logs = [str(path) for path in (launch or {}).get("logs") or []]
     return lambda: signs_of_life(pid, folder, logs)
+
+
+def recipe_from_file(path: str) -> dict | None:
+    """The relaunch recipe the supervisor wrote beside the logs, or None when it is not there."""
+    if not path:
+        return None
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError:  # nexgen: allow reason="una ricetta sparita si comporta come nessuna ricetta: lo stallo viene detto lo stesso"
+        return None
+    return recipe_of(raw)
 
 
 def recipe_of(raw: str) -> dict | None:

@@ -73,8 +73,9 @@ def watch(
         "--created", repr(created), "--timeout", str(timeout_s), "--job", job,
         "--idle", str(idle_s), "--attempt", str(attempt),
     ]
-    if launch:
-        argv.extend(["--launch", json.dumps(launch, ensure_ascii=True)])
+    recipe = _recipe_file(task_id, unit, attempt, launch)
+    if recipe is not None:
+        argv.extend(["--launch-file", str(recipe)])
     try:
         _REAL_POPEN(
             argv, cwd=scripts_dir, env=_guardian_env(scripts_dir),
@@ -164,6 +165,28 @@ def reap(
     if reason == IDLE_REASON:
         result["idle_s"] = round(clock() - last_move, 1)
     return result
+
+
+def _recipe_file(task_id: str, unit: str, attempt: int, launch: dict | None) -> Path | None:
+    """Write the relaunch recipe beside the turn's logs and return its path.
+
+    The recipe carries the whole prompt, and a brief can be longer than the command
+    line Windows accepts (32767 characters): passed as an argument it would stop the
+    guardian from starting at all, leaving the turn with no guard. A recipe that
+    cannot be written costs only the retry; the guardian still watches the turn.
+    """
+    if not launch:
+        return None
+    logs = [str(path) for path in launch.get("logs") or () if path]
+    folder = Path(logs[0]).parent if logs else Path(str(launch.get("folder") or "")).parent
+    safe = "".join(ch if ch.isalnum() or ch in "-_." else "-" for ch in f"{unit}-{attempt}")[:80]
+    target = folder / f"61-rilancio-{safe}.json"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(launch, ensure_ascii=False), encoding="utf-8")
+    except OSError:  # nexgen: allow reason="una ricetta che non si scrive costa solo il rilancio, non la sorveglianza del turno"
+        return None
+    return target
 
 
 def _progress(progress) -> object:
@@ -345,14 +368,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--grace", type=float, default=GRACE_S)
     parser.add_argument("--idle", type=float, default=0.0)
     parser.add_argument("--attempt", type=int, default=1)
-    parser.add_argument("--launch", default="")
+    parser.add_argument("--launch-file", default="")
     args = parser.parse_args(argv)
 
     # The idle module imports this one at import time; asking for it here keeps the
     # guardian loop free of the retry and stall policy it does not run itself.
     from . import supervision_idle as idle
 
-    launch = idle.recipe_of(args.launch)
+    launch = idle.recipe_from_file(args.launch_file)
     # Every idle guardian reads the CPU time, and the folder and logs when the recipe names them.
     progress = idle.probe_for(args.pid, launch) if args.idle > 0 else None
     idle.guard(
